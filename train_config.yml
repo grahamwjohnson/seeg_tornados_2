@@ -21,13 +21,11 @@ duration_stride_str: '10pats'
 freq_bands_str: 'wholeband' # 1to12Hz_12to59Hz_61to179Hz, wholeband
 intrapatient_dataset_style: 2 # 1 all data (no SPES), 2 all data (with SPES), 3 ONLY SPES
 train_hour_dataset_range: kwargs['train_hour_dataset_range'] = [-1, -1]  # [-1, -1] means all, [X, -1] means from X to end
-rand_name_json: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code/animals.json'
+rand_name_json: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/utilities/animals.json'
 
 # Training settings
 continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 cont_train_model_dir: '' # '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/irishsetter_Sat_Oct_19_15_41_58_2024' 
-
-epoch_used_for_inference: kwargs['epoch_used_for_inference'] = kwargs['num_eons'] * kwargs['epochs_per_eon'] - 1 # Set up to run inference after designated number of eons 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 decode_samples: 8 #64  
@@ -46,7 +44,7 @@ num_rand_recon_plots: 4
 epochs_to_train: 999999 
 
 # Beta VAE controls
-KL_max: kwargs['KL_max'] = 5e-1 # 5e-1 # 5e-4 was used before going multipatient, 5e-3 was used for first long multipat
+KL_max: kwargs['KL_max'] = 1e-3 # 5e-1 # 5e-4 was used before going multipatient, 5e-3 was used for first long multipat
 KL_min: kwargs['KL_min'] = 0
 KL_epochs_AT_max: 5
 KL_epochs_TO_max: 5
@@ -86,9 +84,7 @@ val_subsample_file_factor: 64 # Only iterates through file_lnegth/X
 delete_old_checkpoints: False   
 
 # Model settings
-mini_batch_window_size: kwargs['mini_batch_window_size'] = kwargs['precode_samples'] + kwargs['decode_samples'] + kwargs['postcode_samples']
 mini_batch_stride: kwargs['mini_batch_stride'] = kwargs['decode_samples'] # For RANDOM dataset this does not matter
-past_sequence_length: kwargs['past_sequence_length'] = kwargs['mini_batch_window_size'] - kwargs['decode_samples']
 enc_conv_depth: 6 
 enc_conv_resblock_size: 1
 enc_kernel_sizes: [3,5,7,9] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
@@ -157,7 +153,7 @@ pic_types: kwargs['pic_types'] = ['JPEGs','SVGs']
 
 
 # LBM
-lbm_seq_length: 128
+transformer_seq_length: 128
 
 adamW_wd: 0
 transformer_dim: kwargs['transformer_dim'] = kwargs['latent_dim'] # Currently no additional layers, so needs to be same as VAE

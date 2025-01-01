@@ -18,23 +18,42 @@ from torch import nn
 
 @dataclass
 class ModelArgs:
-    dim: int = 256
-    vae_dim: int = 1024
-    n_layers: int = 16
-    n_heads: int = 16
-    n_kv_heads: Optional[int] = None
-    vocab_size: int = -1
-    multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
-    ffn_dim_multiplier: Optional[float] = None
-    norm_eps: float = 1e-5
-    rope_theta: float = 500000
+    def __init__(
+        self, 
+        latent_dim: int = None,
+        n_layers: int = 16,
+        n_heads: int = 16,
+        n_kv_heads: Optional[int] = None,
+        vocab_size: int = -1,
+        multiple_of: int = 256, # make SwiGLU hidden layer size multiple of large power of 2
+        ffn_dim_multiplier: Optional[float] = None,
+        norm_eps: float = 1e-5,
+        rope_theta: float = 500000,
+        # Hardware limitations
+        max_batch_size: int = 32,
+        max_seq_len: int = 2048,
+        device: int = None,
+        **kwargs):
 
-    # Hardware limitations
-    max_batch_size: int = 32
-    max_seq_len: int = 2048
+        super().__init__()
+        self.dim = latent_dim
+        self.vae_dim= latent_dim
+        self.n_layers = n_layers
+        self.n_heads = n_heads
+        self.n_kv_heads = n_kv_heads
+        self.vocab_size = vocab_size
+        self.multiple_of = multiple_of
+        self.ffn_dim_multiplier = ffn_dim_multiplier
+        self.norm_eps = norm_eps
+        self.rope_theta = rope_theta
+        # Hardware limitations
+        self.max_batch_size = max_batch_size
+        self.max_seq_len = max_seq_len
+        self.device = device
 
-    device: int = None 
 
+        # for key, value in kwargs.items():
+        #     setattr(self, key, value)
 
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -315,7 +334,7 @@ class Transformer(nn.Module):
         )
 
     # @torch.inference_mode()
-    def forward(self, h_in_vae: torch.Tensor, start_pos: int):
+    def forward(self, h_in_vae: torch.Tensor, start_pos: int=0):
         # _bsz, seqlen = tokens.shape
         # h = self.tok_embeddings(tokens)
 

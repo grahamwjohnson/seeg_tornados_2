@@ -50,6 +50,8 @@ from tkinter import filedialog
 import re
 from functools import partial
 
+from models.VAE_core import print_models_flow
+
 # exec all kwargs in case there is python code
 def exec_kwargs(kwargs):
 
@@ -70,6 +72,728 @@ def rgbtoint32(rgb):
     return color
 
 def int32torgb(color):
+    if color == np.nan: return np.nan
+    rgb = []
+    for i in range(3):
+        rgb.append(color&0xff)
+        color = color >> 8
+    rgb = np.array(float(rgb)/256)
+    return rgb
+
+def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
+    new_cmap = colors.LinearSegmentedColormap.from_list(
+        'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
+        cmap(np.linspace(minval, maxval, n)))
+    return new_cmap
+
+def fill_hist_by_channel(data_in: np.ndarray, histo_bin_edges: np.ndarray, zero_island_delete_idxs: list):
+
+    if zero_island_delete_idxs != []:
+        zero_island_delete_idxs.sort()
+        # Delete zero islands
+        for ir in reversed(range(len(zero_island_delete_idxs))):
+            data_in = data_in[:, np.concatenate([np.arange(0,zero_island_delete_idxs[ir][0]), np.arange(zero_island_delete_idxs[ir][1]+1, data_in.shape[1])], axis=0)]
+
+    # initialize output 2D array
+    num_channels = data_in.shape[0]
+    histo_bin_counts = np.zeros([num_channels, len(histo_bin_edges)-1]) # Save a histo count for every channel (will just be sum if scaling same for all channels)
+
+    # Store the counts of datapoints within the histogram bins of interest
+    for ch_idx in range(0, num_channels):
+        sys.stdout.write("\rComputing histogram for channel ID: " + str(ch_idx) + '/' + str(num_channels-1))
+        sys.stdout.flush()    
+        # Pull out this channel's data
+        data_ch = data_in[ch_idx,:]
+        histo_bin_counts[ch_idx, :] = np.histogram(data_ch, histo_bin_edges)[0][:]
+    
+    return histo_bin_counts
+
+def assemble_model_save_path(base_path: str,
+                        bipole_or_monopole: str,
+                        channel_scale_style: str,
+                        freq_bands_str: str,
+                        scale_type: str,
+                        scale_epoch_str: str,
+                        duration_stride_str: str,
+                        # pat_id: str,
+                        **kwargs):
+    
+    # Check that strings fall within acceptable options
+    if (bipole_or_monopole != 'Bipole_datasets') & (bipole_or_monopole != 'Monopole_datasets'):
+        raise Exception("Assemble path error: 'bipole_or_monopole' must equal: 'Bipole_datasets' or 'Monopole_datasets' ")
+    
+    if (channel_scale_style != 'Same_Scale_For_All_Channels') & (channel_scale_style != 'By_Channel_Scale'):
+        raise Exception("Assemble path error: 'channel_scale_style' must equal: 'Same_Scale_For_All_Channels' or 'By_Channel_Scale' ")
+    
+    if (scale_type != 'LinearScale') & (scale_type != 'HyperTanScaling') & (scale_type != 'CubeRootScale') & (scale_type != 'HistEqualScale'):
+        raise Exception("Assemble path error: 'scale_type' must equal: 'LinearScale', 'HyperTanScaling', 'CubeRootScale' or 'HistEqualScale'")
+    
+    return base_path + '/' + bipole_or_monopole + '/' + channel_scale_style + '/' + scale_type + '/' + scale_epoch_str + f'/{freq_bands_str}/' + duration_stride_str # + '/' + pat_id
+
+def append_timestamp(filename):
+    ts = time.asctime(time.localtime(time.time()))
+    ts = ts.replace(" ", "_")
+    ts = ts.replace(":", "_")
+    return filename + ts
+
+def random_animal(rand_name_json, **kwargs):
+    # Read in animal names, pull random name
+    with open(rand_name_json) as json_file:
+        json_data = json.load(json_file)
+    
+    np.random.seed(seed=None) # should replace with Generator for newer code
+    rand_idx = np.random.randint(0, len(json_data))
+    rand_name = json_data[rand_idx]
+
+    return f"{rand_name}"
+
+def filename_to_datetimes(list_file_names):
+        start_datetimes = [datetime.datetime.min]*len(list_file_names)
+        stop_datetimes = [datetime.datetime.min]*len(list_file_names)
+        for i in range(0, len(list_file_names)):
+            splits = list_file_names[i].split('_')
+            aD = splits[1]
+            aT = splits[2]
+            start_datetimes[i] = datetime.datetime(int(aD[4:8]), int(aD[0:2]), int(aD[2:4]), int(aT[0:2]), int(aT[2:4]), int(aT[4:6]), int(int(aT[6:8])*1e4))
+            bD = splits[4]
+            bT = splits[5]
+            stop_datetimes[i] = datetime.datetime(int(bD[4:8]), int(bD[0:2]), int(bD[2:4]), int(bT[0:2]), int(bT[2:4]), int(bT[4:6]), int(int(bT[6:8])*1e4))
+        return start_datetimes, stop_datetimes
+
+def datetimes_to_filename(start_dt, stop_dt):
+    if len(start_dt) != 1: raise Exception("Expected only one datetime for start and one for stop")
+    start_microsec_trunc_str = start_dt[0].strftime('%f')[0:2]
+    start_str = f"{start_dt[0].strftime('%m%d%Y_%H%M%S')}{start_microsec_trunc_str}"
+    stop_microsec_trunc_str = stop_dt[0].strftime('%f')[0:2]
+    stop_str = f"{stop_dt[0].strftime('%m%d%Y_%H%M%S')}{stop_microsec_trunc_str}"
+
+    out = f"{start_str}_to_{stop_str}"
+    if out == None: raise Exception("ERROR: out string formatted to none")
+
+    return out
+
+def get_training_dir_name(train_val_pat_perc, **kwargs):
+    
+    train_str = str(train_val_pat_perc[0]*100)
+    val_str = str(train_val_pat_perc[1]*100)
+    run_params_dir_name = "dataset_train" + train_str + "_val" + val_str 
+
+    return run_params_dir_name
+
+def get_hours_inferred_str(intrapatient_dataset_style):
+
+    if intrapatient_dataset_style[0] == 0: f = 'seizure_based_inference'
+    elif intrapatient_dataset_style[0] == 1: f = 'inference_on_all_epochs_withoutSPES'
+    elif intrapatient_dataset_style[0] == 2: f = 'inference_on_all_epochs_withSPES'
+    return f
+
+def get_pat_seiz_datetimes(
+    pat_id, 
+    atd_file='/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/all_time_data_01092023_112957.csv',
+    FBTC_bool=True, 
+    FIAS_bool=True, 
+    FAS_to_FIAS_bool=True,
+    FAS_bool=True, 
+    subclinical_bool=True, 
+    focal_unknown_bool=True,
+    unknown_bool=True, 
+    non_electro_bool=False,
+    **kwargs
+    ):
+
+
+    # Debugging
+    print(pat_id)
+
+    # Original ATD file from Derek was tab seperated
+    atd_df = pd.read_csv(atd_file, sep=',', header='infer')
+    pat_seizure_bool = (atd_df['Pat ID'] == pat_id) & (atd_df['Type'] == "Seizure")
+    pat_seizurebool_AND_desiredTypes = pat_seizure_bool
+    
+    # Look for each seizure type individually & delete if not desired
+    # seiz_type_list = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Subclinical', 'Focal, unknown awareness', 'Unknown', 'Non-electrographic']
+    seiz_type_list = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Subclinical', 'Focal unknown awareness', 'Unknown', 'Non-electrographic']
+    delete_seiz_type_bool_list = [FBTC_bool, FIAS_bool, FAS_to_FIAS_bool, FAS_bool, subclinical_bool, focal_unknown_bool, unknown_bool, non_electro_bool]
+    for i in range(0,len(seiz_type_list)):
+        if delete_seiz_type_bool_list[i]==False:
+            find_str = seiz_type_list[i]
+            curr_bool = pat_seizure_bool & (atd_df.loc[:,'Seizure Type (FAS; FIAS; FBTC; Non-electrographic; Subclinical; Unknown)'] == find_str)
+            pat_seizurebool_AND_desiredTypes[curr_bool] = False
+
+    df_subset = atd_df.loc[pat_seizurebool_AND_desiredTypes, ['Type','Seizure Type (FAS; FIAS; FBTC; Non-electrographic; Subclinical; Unknown)', 'Date (MM:DD:YYYY)', 'Onset String (HH:MM:SS)', 'Offset String (HH:MM:SS)']]
+    
+    pat_seiz_startdate_str = df_subset.loc[:,'Date (MM:DD:YYYY)'].astype(str).values.tolist() 
+    pat_seiz_starttime_str = df_subset.loc[:,'Onset String (HH:MM:SS)'].astype(str).values.tolist()
+    pat_seiz_stoptime_str = df_subset.loc[:,'Offset String (HH:MM:SS)'].astype(str).values.tolist()
+    pat_seiz_types_str = df_subset.loc[:,'Seizure Type (FAS; FIAS; FBTC; Non-electrographic; Subclinical; Unknown)'].astype(str).values.tolist()
+
+    # Skip any lines that have nan/none or unknown time entries
+    delete_list_A = [i for i, val in enumerate(pat_seiz_starttime_str) if (val=='nan' or val=='Unknown')]
+    delete_list_B = [i for i, val in enumerate(pat_seiz_stoptime_str) if (val=='nan' or val=='Unknown')]
+    delete_list = list(set(delete_list_A + delete_list_B))
+    delete_list.sort()
+    if len(delete_list) > 0:
+        print(f"WARNING: deleting {len(delete_list)} seizure(s) out of {len(pat_seiz_startdate_str)} due to 'nan'/'none'/'Unknown' in master time sheet")
+        print(f"Delete list is: {delete_list}")
+        [pat_seiz_startdate_str.pop(del_idx) for del_idx in reversed(delete_list)]
+        [pat_seiz_starttime_str.pop(del_idx) for del_idx in reversed(delete_list)]
+        [pat_seiz_stoptime_str.pop(del_idx) for del_idx in reversed(delete_list)]
+        [pat_seiz_types_str.pop(del_idx) for del_idx in reversed(delete_list)]
+
+    # Initialize datetimes
+    pat_seiz_start_datetimes = [0]*len(pat_seiz_starttime_str)
+    pat_seiz_stop_datetimes = [0]*len(pat_seiz_stoptime_str)
+
+    for i in range(0,len(pat_seiz_startdate_str)):
+        sD_splits = pat_seiz_startdate_str[i].split(':')
+        sT_splits = pat_seiz_starttime_str[i].split(':')
+        start_time = datetime.time(
+                            int(sT_splits[0]),
+                            int(sT_splits[1]),
+                            int(sT_splits[2]))
+        pat_seiz_start_datetimes[i] = datetime.datetime(int(sD_splits[2]), # Year
+                                            int(sD_splits[0]), # Month
+                                            int(sD_splits[1]), # Day
+                                            int(sT_splits[0]), # Hour
+                                            int(sT_splits[1]), # Minute
+                                            int(sT_splits[2])) # Second
+        
+        sTstop_splits = pat_seiz_stoptime_str[i].split(':')
+        stop_time = datetime.time(
+                            int(sTstop_splits[0]),
+                            int(sTstop_splits[1]),
+                            int(sTstop_splits[2]))
+
+        if stop_time > start_time: # if within same day (i.e. the TIME advances, no date included), assign same date to datetime, otherwise assign next day
+            pat_seiz_stop_datetimes[i] = datetime.datetime.combine(pat_seiz_start_datetimes[i], stop_time)
+        else: 
+            pat_seiz_stop_datetimes[i] = datetime.datetime.combine(pat_seiz_start_datetimes[i] + datetime.timedelta(days=1), stop_time)
+
+    return pat_seiz_start_datetimes, pat_seiz_stop_datetimes, pat_seiz_types_str
+
+def get_desired_fnames(
+        gpu_id: int,
+        pat_id: str, 
+        atd_file: str, 
+        data_dir: str, 
+        intrapatient_dataset_style: list, 
+        hour_dataset_range: list, 
+        dataset_pic_dir: str,
+        eon: int,
+        ):
+    
+    # This will have all of the desired file names before splitting into train/val/test
+    curr_fnames = []  
+
+    # Get all data without SPES
+    if intrapatient_dataset_style == 1:
+        curr_fnames = glob.glob(data_dir + '/all_epochs_woSPES/*.pkl') # relies of directory naming to be consistent
+        curr_fnames = sort_filenames(curr_fnames)
+    
+    # Get all data with SPES
+    elif intrapatient_dataset_style == 2:
+        curr_fnames = glob.glob(data_dir + '/*/*.pkl')
+        curr_fnames = sort_filenames(curr_fnames)
+
+    # Get ONLY SPES data
+    elif intrapatient_dataset_style == 3:
+        curr_fnames = glob.glob(data_dir + '/SPES/*.pkl')
+        curr_fnames = sort_filenames(curr_fnames)
+
+    else:
+        raise Exception(f"[GPU{str(gpu_id)}] Invalid 'dataset_style' choice, must be 1, 2, or 3")
+
+
+    # Now split up the data according to dataset range
+    end_names = [x.split('/')[-1] for x in curr_fnames]
+    start_dts, end_dts = filename_to_datetimes(end_names)
+
+
+    if (hour_dataset_range[0] == -1) & (hour_dataset_range[1] == -1):
+        curr_fnames = curr_fnames # Do nothing
+
+    elif hour_dataset_range[1] == -1:
+        # Start time givem, but end is -1 meaning give all
+        found_hours = False
+        for i in range(len(start_dts)):
+            if start_dts[i] > (start_dts[0] + datetime.timedelta(hours=hour_dataset_range[0])):
+                curr_fnames = curr_fnames[i:-1]
+                found_hours = True
+                break
+        if not found_hours: raise Exception("Hours desired not found")
+    
+    elif hour_dataset_range[0] == -1:
+        # Run from beginning to given end hours
+        found_hours = False
+        print("ToDO")
+        for i in range(len(end_dts)):
+            if end_dts[i] > (start_dts[0] + datetime.timedelta(hours=hour_dataset_range[1])):
+                curr_fnames = curr_fnames[0:i-1]
+                found_hours = True
+                break
+        if not found_hours: raise Exception("Hours desired not found")
+
+    else:
+        # Should have 2 valid numbers in range
+        found_hours = False
+        for i in range(len(start_dts)):
+            if start_dts[i] > (start_dts[0] + datetime.timedelta(hours=hour_dataset_range[0])):
+                for j in range(i, len(end_dts)):
+                    if end_dts[j] > (start_dts[0] + datetime.timedelta(hours=hour_dataset_range[1])):
+                        curr_fnames = curr_fnames[i:j-1]
+                        found_hours = True
+                        break
+                break
+        if not found_hours: raise Exception("Hours desired not found")
+
+    if gpu_id == 0:
+        print_dataset_bargraphs(pat_id, curr_fnames, curr_fnames, dataset_pic_dir, eon)
+
+    return curr_fnames
+
+def sort_filenames(file_list):
+    # Ensure just have the filename and not whole path
+    fnames = [x.split("/")[-1] for x in file_list]
+    all_datetimes = filename_to_datetimes(fnames)
+    all_start_seconds = [int((x - x.min).total_seconds()) for x in all_datetimes[0]]
+
+    sort_idxs = np.argsort(all_start_seconds)
+
+    sorted_file_list = [file_list[i] for i in sort_idxs]
+
+    return sorted_file_list
+
+def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, eon, pre_ictal_taper_sec=120, post_ictal_taper_sec=120):
+
+    # Get the end of the path (i.e. filename)
+    potential_fnames = [x.split("/")[-1] for x in curr_fpaths]
+    train_fnames = [x.split("/")[-1] for x in curr_file_list]
+    val_fnames = []
+    test_fnames = []
+
+    # Convert the filenames to datetime objects
+    all_datetimes = filename_to_datetimes(potential_fnames)
+    first_starttime = all_datetimes[0][0]
+
+    train_datetimes = filename_to_datetimes(train_fnames)
+    val_datetimes = filename_to_datetimes(val_fnames)
+    test_datetimes = filename_to_datetimes(test_fnames)
+
+    # Convert the datetimes to seconds from first file (files SHOULD be in order, but check along the way)
+    all_start_seconds = [int((x - first_starttime).total_seconds()) for x in all_datetimes[0]]
+    all_end_seconds = [int((x - first_starttime).total_seconds()) for x in all_datetimes[1]]
+    file_seconds = all_end_seconds[0] - all_start_seconds[0]
+    file_seconds_nonoverlap = all_start_seconds[1] - all_start_seconds[0]
+    # file_seconds_check = [all_start_seconds[i-1] - all_start_seconds[i] for i in range(1, len(all_start_seconds))]
+    # if file_seconds_nonoverlap != file_seconds_check: raise Exception("Error: nonoverlap seconds miscalculated, probably due to skipped time periods when making data epochs")
+    all_middle_seconds = [int((all_start_seconds[i] + file_seconds_nonoverlap/2)) for i in range(len(all_start_seconds))]
+    all_delta_seconds = [all_middle_seconds[i+1]- all_middle_seconds[i] for i in range(0, len(all_middle_seconds)-1)]
+    most_common_delta = np.argmax(np.bincount(all_delta_seconds))
+    break_idxs = np.append(np.append(0, np.where(all_delta_seconds[:]%most_common_delta != 0)[0] + 1), len(all_middle_seconds)-1)
+
+    # Convert the dataset to seconds
+    train_middle_seconds = [int((x - first_starttime).total_seconds() + file_seconds_nonoverlap/2) for x in train_datetimes[0]]
+    val_middle_seconds = [int((x - first_starttime).total_seconds() + file_seconds_nonoverlap/2) for x in val_datetimes[0]]
+    test_middle_seconds = [int((x - first_starttime).total_seconds() + file_seconds_nonoverlap/2) for x in test_datetimes[0]]
+
+    # Get the seizure seconds from file start
+    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id)
+    seiz_start_seconds = [(x - first_starttime).total_seconds() for x in seiz_start_dt]
+    seiz_stop_seconds = [(x - first_starttime).total_seconds() for x in seiz_stop_dt]
+
+    # Calculate the file time and get all the possible time indexes for graph
+    # Construct the x_vals carefully to accomodate shifts in timing due to RAW EDF file splits
+    x_vals = np.zeros(0, dtype=int)
+    for i in range(len(break_idxs)-1):
+        x_vals = np.append(x_vals, np.arange(all_middle_seconds[break_idxs[i]], all_middle_seconds[break_idxs[i+1]], int(file_seconds_nonoverlap), dtype=int))
+    # Add the last value in manually
+    x_vals = np.append(x_vals, all_middle_seconds[-1])
+
+    # Iterate through all of the possible x_vals and fill with periictal info
+    interictal_perc = np.zeros(len(x_vals))
+    preictal_perc = np.zeros(len(x_vals))
+    ictal_perc = np.zeros(len(x_vals))
+    postictal_perc = np.zeros(len(x_vals))
+    trainset = np.zeros(len(x_vals))
+    valset = np.zeros(len(x_vals))
+    testset = np.zeros(len(x_vals))
+    for i in range(0, len(x_vals)):
+        x_val_curr = x_vals[i]
+        if x_val_curr in all_middle_seconds:
+            if x_val_curr in train_middle_seconds:
+                if trainset[i] != 0: print("WARNING: file in more than one dataset")
+                trainset[i] = [v == x_val_curr for v in train_middle_seconds].count(True) * 10
+            
+            if x_val_curr in val_middle_seconds:
+                if trainset[i] != 0: print("WARNING: file in more than one dataset")
+                valset[i] = [v == x_val_curr for v in val_middle_seconds].count(True) * 10
+
+            if x_val_curr in test_middle_seconds:
+                if trainset[i] != 0: print("WARNING: file in more than one dataset")
+                testset[i] =  [v == x_val_curr for v in test_middle_seconds].count(True) * 10
+
+            # Iterate through seizures and determine periictal percentages that this file spans
+            for j in range(0, len(seiz_start_seconds)):
+                seiz_start = seiz_start_seconds[j]
+                seiz_stop = seiz_stop_seconds[j]
+                buffered_seiz_start = seiz_start - pre_ictal_taper_sec
+                buffered_seiz_stop = seiz_stop + post_ictal_taper_sec
+
+                file_nonoverlap_start = x_val_curr - file_seconds_nonoverlap/2
+                file_nonoverlap_stop = x_val_curr + file_seconds_nonoverlap/2
+
+                # No part of buffered seizure within file
+                if buffered_seiz_start > file_nonoverlap_stop: continue
+                elif buffered_seiz_stop < file_nonoverlap_start: continue
+
+                # Check if ictal totally within
+                if (seiz_start > file_nonoverlap_start) & (seiz_stop < file_nonoverlap_stop):
+                    # Buffered totally within
+                    if (buffered_seiz_start > file_nonoverlap_start) & (buffered_seiz_stop < file_nonoverlap_stop):
+                        preictal_perc[i] = preictal_perc[i] + ((seiz_start - buffered_seiz_start)/file_seconds_nonoverlap) * 100
+                        postictal_perc[i] = postictal_perc[i] + ((buffered_seiz_stop - seiz_stop)/file_seconds_nonoverlap) * 100
+                        ictal_perc[i] = ictal_perc[i] + ((seiz_stop - seiz_start)/file_seconds_nonoverlap) * 100
+                        continue
+
+                    # Buffered start begins before file AND buffered stop ends after file
+                    elif (buffered_seiz_start < file_nonoverlap_start) & (buffered_seiz_stop > file_nonoverlap_stop):
+                        preictal_perc[i] = preictal_perc[i] + ((seiz_start - file_nonoverlap_start)/file_seconds_nonoverlap) * 100
+                        postictal_perc[i] = postictal_perc[i] + ((file_nonoverlap_stop - seiz_stop)/file_seconds_nonoverlap) * 100
+                        ictal_perc[i] = ictal_perc[i] + ((seiz_stop - seiz_start)/file_seconds_nonoverlap) * 100
+                        continue
+
+                    # Thus, not all within and not all over
+                    # Buffered ends before file end
+                    elif buffered_seiz_stop < file_nonoverlap_stop:
+                        preictal_perc[i] = preictal_perc[i] + ((seiz_start - file_nonoverlap_start)/file_seconds_nonoverlap) * 100
+                        postictal_perc[i] = postictal_perc[i] + ((buffered_seiz_stop - seiz_stop)/file_seconds_nonoverlap) * 100
+                        ictal_perc[i] = ictal_perc[i] + ((seiz_stop - seiz_start)/file_seconds_nonoverlap) * 100    
+                        continue     
+
+                    # Buffered start begins after file start
+                    elif buffered_seiz_start > file_nonoverlap_start:
+                        preictal_perc[i] = preictal_perc[i] + ((seiz_start - buffered_seiz_start)/file_seconds_nonoverlap) * 100
+                        postictal_perc[i] = postictal_perc[i] + ((file_nonoverlap_stop - seiz_stop)/file_seconds_nonoverlap) * 100
+                        ictal_perc[i] = ictal_perc[i] + ((seiz_stop - seiz_start)/file_seconds_nonoverlap) * 100
+                        continue
+
+                    else: raise Exception("Error: Should not be able to get here, A")       
+
+                # Only preictal in file
+                elif seiz_start > file_nonoverlap_stop:
+                    preictal_perc[i] = preictal_perc[i] + ((file_nonoverlap_stop - buffered_seiz_start)/file_seconds_nonoverlap) * 100
+                    continue
+                # Only postictal in file
+                elif seiz_stop < file_nonoverlap_start:
+                    postictal_perc[i] = postictal_perc[i] + ((buffered_seiz_stop - file_nonoverlap_start)/file_seconds_nonoverlap) * 100
+                    continue
+
+                # Now only the end OR only the start of seiz should be within
+                # End only within
+                elif seiz_stop < file_nonoverlap_stop:
+                        if buffered_seiz_stop > file_nonoverlap_stop:
+                            postictal_perc[i] = postictal_perc[i] + ((file_nonoverlap_stop - seiz_stop)/file_seconds_nonoverlap) * 100
+                            ictal_perc[i] = ictal_perc[i] + ((seiz_stop - file_nonoverlap_start)/file_seconds_nonoverlap) * 100
+                            continue
+                        else:
+                            postictal_perc[i] = postictal_perc[i] + ((buffered_seiz_stop - seiz_stop)/file_seconds_nonoverlap) * 100
+                            ictal_perc[i] = ictal_perc[i] + ((seiz_stop - file_nonoverlap_start)/file_seconds_nonoverlap) * 100
+
+                # Beginning of seizure only within
+                elif seiz_start > file_nonoverlap_start:
+                        if buffered_seiz_start > file_nonoverlap_start:
+                            preictal_perc[i] = preictal_perc[i] + ((seiz_start - buffered_seiz_start)/file_seconds_nonoverlap) * 100
+                            ictal_perc[i] = ictal_perc[i] + ((file_nonoverlap_stop - seiz_start)/file_seconds_nonoverlap) * 100
+                            continue
+                        else:
+                            preictal_perc[i] = preictal_perc[i] + ((seiz_start - file_nonoverlap_start)/file_seconds_nonoverlap) * 100
+                            ictal_perc[i] = ictal_perc[i] + ((file_nonoverlap_stop - seiz_start)/file_seconds_nonoverlap) * 100
+                            continue
+                
+                # else: raise Exception("Error: Should not be able to get here, B") 
+                else:
+                    # Entire file must be seizure...
+                    print("WARNING: Entire file is labeled as ictal")
+                    ictal_perc[i] = 1 * 100
+                    
+            # Calculate the interictal percentage
+            buffered_perc = preictal_perc[i] + ictal_perc[i] + postictal_perc[i]
+            # Not very scientific, but shrink the percents if they add up to over 100 due to back tio back seizures overlapping thee buffer periods
+            if buffered_perc > 100:
+                preictal_perc[i] = (preictal_perc[i] / buffered_perc) * 100
+                ictal_perc[i] = (ictal_perc[i] / buffered_perc) * 100
+                postictal_perc[i] = (postictal_perc[i] / buffered_perc) * 100
+            else:
+                interictal_perc[i] = 100 - buffered_perc
+            
+                
+    # Now that the Train/Val/Test and periictal designations are made, it's time to plot
+            
+    df = pd.DataFrame({
+        'inter': interictal_perc,
+        'pre': preictal_perc,
+        'ictal': ictal_perc,
+        'post': postictal_perc,
+        'train': trainset,
+        'val': valset,
+        'infer': testset
+        },
+        index=x_vals
+        )        
+
+    # create stacked bar chart 
+    ax = df.plot(kind='bar', stacked=True, width=1, color=['silver', 'indianred', 'midnightblue', 'cornflowerblue', 'mediumturquoise', 'orchid', 'orange'], figsize=(14,3))
+    ax.legend(bbox_to_anchor=(1.005, 1), loc='upper left', ncol=1)
+    ax.get_xaxis().set_ticks([])
+    
+    # labels for x & y axis
+    pl.xlabel('Files')
+    pl.ylabel('Percent of File')
+    
+    # title of plot
+    pl.title(f'Dataset Breakdown: Eon {eon}')
+
+    if not os.path.exists(dataset_pic_dir): os.makedirs(dataset_pic_dir)
+    savename = dataset_pic_dir + f"/{pat_id}_Dataset_Breakdown_Eon_{eon}.jpg"
+    pl.savefig(savename)
+    pl.close('all')
+
+def get_num_channels(pat_id, pat_num_channels_LUT):
+
+    df = pd.read_csv(pat_num_channels_LUT)
+
+    return int(df.loc[df['pat_id'] == pat_id, 'num_channels'].iloc[0])
+
+def create_bip_mont(channels: list[str], pat_id: str, ch_names_to_ignore: list, save_dir: str):
+    bip_names = []
+    mont_idxs = []
+
+    # Delete unused channels, whole strings must match
+    ch_idx_to_delete = []
+    ch_names_found_to_delete = []
+    for j in range(len(channels)):
+        for i in range(len(ch_names_to_ignore)):
+            if ch_names_to_ignore[i] == channels[j]:
+                ch_idx_to_delete = ch_idx_to_delete + [j]
+                ch_names_found_to_delete = ch_names_found_to_delete + [channels[j]]
+                continue
+    
+    # TODO Should be sorting channel names now to deal with Edge cases for patients collected on NK 
+    # where 2 channels are listed out of order, but this may actually introduce MORE errors than 
+    # if we leave it where we assume channels are in order
+
+    # Find all numbers at ends of channel labels
+    nums = np.ones(len(channels), dtype=int)*-1
+    for i in range(0,len(channels)):
+
+        # Skip unused channels
+        if i in ch_idx_to_delete: 
+            continue
+
+        str_curr = channels[i]
+        still_number = True
+        ch_idx = -1
+        while still_number:
+            curr_chunk = str_curr[ch_idx:]
+            if not curr_chunk.isnumeric():
+                nums[i] = str_curr[ch_idx+1:]
+                still_number = False
+            ch_idx = ch_idx - 1
+    
+    # Base the lead change on when numbers switch because this is more
+    # robust to weird naming strategies that use numbers in base name
+    for i in range(0,len(nums) - 1):
+        if nums[i] + 1 == nums[i+1]:
+            # Valid monotonically increasing bipolar pair
+            bip_names.append(channels[i] + channels[i+1])
+            mont_idxs.append([i,i+1])
+
+    # Save a CSV to output directory with bip names and mont_idxs 
+    if not os.path.exists(save_dir): os.mkdir(save_dir)
+    df_bipmont = pd.DataFrame({'mont_idxs': mont_idxs, 
+                       'bip_names': bip_names})
+    df_bipmont.to_csv(save_dir + '/' + pat_id + '_bipolar_montage_names_and_indexes_from_rawEDF.csv')
+
+    return mont_idxs, bip_names
+
+def highpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 8):
+    sos = scipy.signal.butter(poles, cutoff, 'highpass', fs=sample_rate, output='sos')
+    filtered_data = scipy.signal.sosfiltfilt(sos, data)
+    return filtered_data
+
+def bandstop(data: np.ndarray, edges: list[float], sample_rate: float, poles: int = 8):
+    sos = scipy.signal.butter(poles, edges, 'bandstop', fs=sample_rate, output='sos')
+    filtered_data = scipy.signal.sosfiltfilt(sos, data)
+    return filtered_data
+
+def lowpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 8):
+    sos = scipy.signal.butter(poles, cutoff, 'lowpass', fs=sample_rate, output='sos')
+    filtered_data = scipy.signal.sosfiltfilt(sos, data)
+    return filtered_data
+
+def apply_wholeband_filter(y0, fs):
+
+    # Hardcoded filter values, Hz - This is done before splitting into desired freq ranges
+    FILT_HP = 1
+    FILT_BS_RANGE_1 = [59, 61]
+    FILT_BS_RANGE_2 = [119, 121]
+    FILT_LP = 179
+    
+    y1 = highpass(y0, FILT_HP, fs)
+    y2 = bandstop(y1, FILT_BS_RANGE_1, fs)
+    y3 = bandstop(y2, FILT_BS_RANGE_2, fs)
+    y4 = lowpass(y3, FILT_LP, fs)
+
+    return y4
+
+def apply_banded_filter(y0, freq_bands, fs, arbitrary_scaling_perc_range=[1, 99]):
+    tmp = np.empty((len(freq_bands), y0.shape[0]), dtype=np.float64)
+    for b in range(len(freq_bands)):
+        curr_range = freq_bands[b]
+        y1 = highpass(y0, curr_range[0], fs)
+        y2 = lowpass(y1, curr_range[1], fs)
+
+        # Resccale to maximize float16 format
+        min_perc_y2 = np.percentile(np.abs(y2), arbitrary_scaling_perc_range[0])
+        max_perc_y2 = np.percentile(np.abs(y2), arbitrary_scaling_perc_range[1])
+
+        tmp[b] = y2/(max_perc_y2 - min_perc_y2)
+
+    return tmp.astype(np.float16)
+
+def read_channel(f, i):
+    return f.readSignal(i)
+
+def montage_filter_pickle_edfs(pat_id: str, dir_edf: str, save_dir: str, desired_samp_freq: int, freq_bands: list, expected_unit: str, montage: str, ch_names_to_ignore: list, ignore_channel_units: bool):
+                    
+        files =  glob.glob(dir_edf + "/*.EDF")
+
+        # CREATE BIPOLAR MONTAGE
+        # Find a suitable file to mnake the montage first because of "c_label" problem
+        # Find a file WITHOUT clabel in the name
+        print("Finding file without 'clabel' problem to make bipolar montage")
+        file_idx = -1
+        total_files = len(files)
+        for file in files:
+            file_idx += 1
+            print("[" + str(file_idx) + '/' + str(total_files) + ']: ' + file)
+            if "clabel" not in file.split("/")[-1]:
+                print(f"Found file [{file}], calculating bipolar montage")
+                # Use PyEDFLib to read in files
+                # (MNE broke for large files) 
+                f = pyedflib.EdfReader(file)
+                channels = f.getSignalLabels()
+                mont_idxs, bip_names = create_bip_mont(channels, pat_id, ch_names_to_ignore, save_dir + '/metadata')
+                print("Montage created")
+                f._close()
+                del f
+                break
+
+
+        file_idx = -1
+        total_files = len(files)
+        print("Processing all files:")
+        for file in files:
+            file_idx += 1
+            print("[" + str(file_idx) + '/' + str(total_files) + ']: ' + file)
+            print("Reading in EDF")
+            gc.collect()
+     
+            # Use PyEDFLib to read in files
+            # (MNE broke for large files) 
+            f = pyedflib.EdfReader(file)
+            n = f.signals_in_file
+            channels = f.getSignalLabels()
+            all_samp_freqs = np.array(f.getSampleFrequencies())
+                        
+            # Ensure all channel units are the same
+            if not ignore_channel_units:
+                sig_headers = f.getSignalHeaders()
+                ch_units = np.empty(len(channels), dtype=object)
+                for i in range(0,len(channels)):
+                    ch_units[i] = sig_headers[i]['dimension']
+                if not np.all(ch_units == ch_units[0]): raise Exception("Not all channel units are the same for file: " + file)  
+                # Compare this unit to the expected file units
+                if ch_units[0] != expected_unit: raise Exception("Current file's channel units do not equal expected units: " + expected_unit + ". Current file: " + file)
+                # Store this unit to compare to next EDF file
+            
+            start_t = time.time()
+            raw_data = np.zeros((n, f.getNSamples()[0]), dtype=np.float16)
+            for i in np.arange(n):
+                raw_data[i, :] = f.readSignal(i)
+            print(f"Time read EDF in: {time.time()-start_t}")
+            f._close()
+            del f
+            print("EDF read in")
+
+            # Ensure sampling freq are all equal to eachother
+            if not np.all(all_samp_freqs == all_samp_freqs[0]): raise Exception("Not all sampling freqs units are the same for file: " + file)
+            
+            # Check sampling frequency is as desired, resample if not:
+            fs = all_samp_freqs[0] # all should be equal, can just pull first one
+            if fs != desired_samp_freq: 
+                # raise Exception(f"Sampling frequency resampling to {desired_samp_freq} not yet coded, needed for file: {file}, this file was sampled at {fs}" )
+                print(f"Resampling to {desired_samp_freq} for file: {file}, this file was sampled at {fs} Hz")
+                if fs%desired_samp_freq == 0:
+                    fs_mult = int(fs/desired_samp_freq)
+                    print(f"Sampling frequency of file [{fs}] is exact multiple of desired sampling frequency [{desired_samp_freq}], so simply indexing at interval of {fs_mult}")
+                    # Simply index at the multiple
+                    raw_data = raw_data[:, 0::fs_mult]
+                    fs = desired_samp_freq
+                else:
+                    raise Exception(f"FS [{fs}] NOT MULTIPLE OF DESIRED SAMPLING FREQUENCY - NOT CODED UP YET")
+            else:
+                print(f"Sampling frequency confirmed to be {fs} Hz")
+
+            # If doing bipolar montage
+            if montage == 'BIPOLE':
+                print("Assigning bipolar montage")
+                # Check that bip names match based on already created montage from previous files
+                new_bip_names = ["" for x in range(len(bip_names))]
+                for i in range(0,len(bip_names)):
+                    new_bip_names[i] = channels[mont_idxs[i][0]] + channels[mont_idxs[i][1]]
+                if new_bip_names != bip_names: 
+                    print("WARNING: Current file's created bip montage does not exactly equal original file montage. Current file: " + file)
+                    print("Assuming that channels are in proper order, just with wrong names (i.e. bad Natus template)")
+
+                # If we made it this far, then the montage aligns across EDF files
+                # Re-assign data to bipolar montage (i.e. subtraction: A-B)
+                new_raw_data = np.empty([len(bip_names),raw_data.shape[1]], dtype=np.float16)
+                for i in range(0,len(bip_names)):
+                    new_raw_data[i,:] = raw_data[mont_idxs[i][0],:] - raw_data[mont_idxs[i][1],:]
+                raw_data = new_raw_data
+                del new_raw_data
+                gc.collect()
+
+                # Re-assign channel names to bipolar
+                channels = bip_names
+                print("Bipolar montage assignment complete")
+
+            # Filter with IIR zero phase sosfiltfilt pass bands)
+            # Do each channel sepreately (#TODO: parallelize)
+            # filt_data = np.empty(raw_data.shape, dtype=np.float16)
+            print("Filtering the data")
+            filt_data = np.asarray([apply_wholeband_filter(raw_data[i,:], fs) for i in range(0, len(channels))], dtype=np.float16)
+
+            print("Data wholeband filtered, with line noise notch filters")
+            if freq_bands == []:
+                filt_data_banded = filt_data
+            else:
+                print(f"Filtering into subbands {freq_bands} Hz")
+                # filt_data_banded = np.empty(raw_data.shape[0] * len(freq_bands), raw_data.shape[1], dtype=np.float16) 
+                filt_data_banded = np.concatenate([apply_banded_filter(filt_data[i,:], freq_bands, fs) for i in range(0, len(channels))], axis=0).astype(np.float16)
+
+            del raw_data
+            del filt_data
+            gc.collect()
+
+            # Save the entire UNSCALED filtered data as a pickle file
+            freq_str = f"{freq_bands}".replace("], [", "Hz_").replace(", ", "to").replace("[[","").replace("]]","Hz")
+            if montage == 'BIPOLE': save_name = save_dir + '/' + file.split('/')[-1].replace('.EDF','_resampled_' + str(fs) + f'_Hz_bipole_filtered_{freq_str}.pkl')
+            if montage == 'MONOPOLE': save_name = save_dir + '/' + file.split('/')[-1].replace('.EDF','_resampled_' + str(fs) + f'_Hz_monopole_filtered_{freq_str}.pkl')
+            with open(save_name, "wb") as f:
+                pickle.dump(filt_data_banded, f)
+            print("Big pickle saved")
 
 def pacmap_latent(  
     FS, 
@@ -2169,30 +2893,16 @@ def delete_old_checkpoints_BSE(dir: str, curr_epoch: int):
 
     return
 
-def initialize_run(
+def initialize_directories(
         run_notes,
         cont_train_model_dir,
         pic_sub_dirs,
         pic_types,
         **kwargs):
-    
-    # *** ONLY INFERENCE initialization ***
-
-    if kwargs['run_inference_now']:
-        kwargs['model_dir'] = cont_train_model_dir
-        kwargs['pic_save_dir'] = kwargs['model_dir'] + '/latent_snapshots_BSE'
-        kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE'        
-        start_eon = int((kwargs['epoch_used_for_inference'])/kwargs['epochs_per_eon'])
-        start_epoch = kwargs['epoch_used_for_inference'] % kwargs['epochs_per_eon']
-
-        # Check that designated eon has proper dim reduction and clustering models
-        if not epoch_contains_pacmap_hdbscan(model_dir=kwargs['model_dir'], epoch=kwargs['epoch_used_for_inference']):
-            raise Exception(f"Eon {start_eon} does NOT contain all files for inference with: 2D PacMap, MedDim PaCMAP, HDBSCAN ... etc. Ensure validation has been run on this eon.")
-        
 
     # *** CONTINUE EXISTING RUN initialization ***
 
-    elif kwargs['continue_existing_training']:
+    if kwargs['continue_existing_training']:
 
         raise Exception("ERROR: NEED TO CODE UP LBM weight load")
 
@@ -2200,7 +2910,7 @@ def initialize_run(
         kwargs['pic_save_dir'] = kwargs['model_dir'] + '/latent_snapshots_BSE'
         kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE'
 
-        # Find the eon to start training
+        # Find the epoch to start training
         check_dir = kwargs['model_dir'] + "/checkpoints_BSE"
         epoch_dirs = glob.glob(check_dir + '/Epoch*')
         epoch_nums = [int(f.split("/")[-1].replace("Epoch_","")) for f in epoch_dirs]
@@ -2214,9 +2924,8 @@ def initialize_run(
         kwargs['core_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vaecore_opt.pt'
         kwargs['heads_prev_dir'] = check_dir + f'/Epoch_{str(max_epoch)}/heads_checkpoints'
         
-        # Set the start epoch 1 greater than max trained, i.e. next eon
-        start_eon = int((max_epoch + 1)/kwargs['epochs_per_eon'])
-        start_epoch = (max_epoch + 1) % kwargs['epochs_per_eon'] 
+        # Set the start epoch 1 greater than max trained
+        kwargs['start_epoch'] = (max_epoch + 1) 
         
 
     # *** NEW RUN initialization ***  
@@ -2231,18 +2940,41 @@ def initialize_run(
         os.makedirs(kwargs['pic_dataset_dir'])
         [os.makedirs(f"{kwargs['pic_save_dir']}/{pic_sub_dirs[i]}/{ptype}") for i in range(0, len(pic_sub_dirs)) for ptype in pic_types]
 
-        # # Copy the code directory to the root save dir, but ignore TB run folder
-        # print("Copying code folder")
-        # shutil.copytree(os.getcwd(), f"{kwargs['model_dir']}/code_used", ignore = shutil.ignore_patterns('runs/', 'old_runs/', '*pycache*', 'tmp_files/', 'tmp_files_LSE', '*.pt', '*.conda', '*.vscode'))
-        shutil.copyfile(f"{os.getcwd()}/config_train_BSE.yml", f"{kwargs['model_dir']}/config_train_BSE.yml")
+        # Fresh run 
+        kwargs['start_epoch'] = 0
 
-        # Hyperparameter checks
-        if kwargs['mini_batch_stride'] > kwargs['mini_batch_window_size']: raise Exception("Stride must be same or smaller than window size")
-
-        # Fresh run starts at eon 0
-        start_eon = 0
-        start_epoch = 0
-
-    return start_eon, start_epoch, kwargs
+    return kwargs
 
 
+def run_setup(**kwargs):
+    # Print to console
+    print("\n\n***************** MAIN START " + datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y") + "******************\n\n")        
+    os.environ['KMP_DUPLICATE_LIB_OK']='True'    
+    mp.set_start_method('spawn', force=True)
+    mp_lock = mp.Lock()
+
+    # All Time Data file to get event timestamps
+    kwargs['root_save_dir'] = assemble_model_save_path(**kwargs)
+    # kwargs['data_dir'] = kwargs['root_save_dir'] + kwargs['data_dir_subfolder']
+    kwargs['tmp_model_dir'] = os.getcwd() + kwargs['tmp_file_dir']                             
+    kwargs['run_params_dir_name'] = get_training_dir_name(**kwargs)
+
+    # Set world size to number of GPUs in system available to CUDA
+    world_size = torch.cuda.device_count()
+        
+    # Random animal name
+    run_notes = random_animal(**kwargs) 
+
+    # Call the initialization script to start new run or continue existing run
+    kwargs = initialize_directories(run_notes=run_notes, **kwargs)
+
+    # Print the model forward pass sizes
+    fake_data = torch.rand(kwargs['wdecode_batch_size'], 200, kwargs['precode_samples'])
+    print_models_flow(x_pre=fake_data, **kwargs)
+
+    # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)
+    s = kwargs['model_dir'].split("/")[-1]
+    kwargs['timestamp_id'] = ''.join(map(str, s))
+    kwargs['run_name'] = '_'.join(map(str,s.split('_')[0:2]))
+
+    return world_size, kwargs

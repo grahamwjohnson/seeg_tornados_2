@@ -5,7 +5,8 @@ from torch import Tensor
 from torchinfo import summary
 
 # Local imports
-from VAE_heads import BSE_Enc_Head, BSE_Dec_Head, BSE_Dec_Hint_Prep
+from .VAE_heads import BSE_Enc_Head, BSE_Dec_Head, BSE_Dec_Hint_Prep
+from .Transformer import ModelArgs, Transformer
 
 # Takes input from Swappable_Enc_Head 
 class Enc_CNN_TimeReducer(nn.Module):
@@ -182,9 +183,8 @@ class Dec_CNN_FlatTimeFlatChannel(nn.Module):
 class BSE_Middle_VAE(nn.Module):
     def __init__(
             self, 
-            gpu_id, 
             common_ENC_cnn_channels,
-            past_sequence_length, 
+            precode_samples, 
             latent_dim, 
             decode_samples, 
             hidden_encode_dims,
@@ -199,6 +199,7 @@ class BSE_Middle_VAE(nn.Module):
             dec_conv_dilator_resblock_size,
             dec_conv_flat_resblock_size,
             hint_size_factor,
+            gpu_id=None, 
             **kwargs):
         
         super(BSE_Middle_VAE, self).__init__()
@@ -224,7 +225,7 @@ class BSE_Middle_VAE(nn.Module):
         self.dec_conv_dilator_resblock_size = dec_conv_dilator_resblock_size
         self.dec_conv_flat_resblock_size = dec_conv_flat_resblock_size
 
-        self.past_sequence_length = past_sequence_length 
+        self.precode_samples = precode_samples 
         self.decode_samples = decode_samples
 
         self.latent_dim = latent_dim
@@ -241,7 +242,7 @@ class BSE_Middle_VAE(nn.Module):
             poolsize=self.enc_conv_poolsize, 
             poolstride=self.enc_conv_poolstride)
         
-        self.top_enc_dims = int((self.common_ENC_cnn_channels) * ((self.past_sequence_length) / (2 ** self.enc_conv_depth)))
+        self.top_enc_dims = int((self.common_ENC_cnn_channels) * ((self.precode_samples) / (2 ** self.enc_conv_depth)))
 
         self.top_to_hidden = nn.Sequential(
             nn.LeakyReLU(0.2),
@@ -329,103 +330,71 @@ class BSE_Middle_VAE(nn.Module):
         return out_prehead, mean, logvar, z
         
 
-if __name__ == "__main__":
-    train_pats_list = ['EpatX', 'Epaty']
-    pat_num_channels = [135, 182]
-
-    kwargs={
-        'common_ENC_cnn_channels':256,
-        'common_DEC_cnn_channels':1024,
-        'past_sequence_length':1024, 
-        'latent_dim':512,
-        'decode_samples':8, 
-        'hidden_encode_dims':2048,
-        'dropout_dec':0.1,
-        'dropout_enc':0.0,
-        'enc_conv_depth': 6, 
-        'enc_conv_resblock_size': 1,
-        'enc_kernel_sizes': [3,5,7,9], # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
-        'dec_conv_dilator_depth': 3,
-        'dec_conv_dilator_resblock_size': 1,
-        'dec_conv_flat_depth': 3,
-        'dec_conv_flat_resblock_size': 1,
-        'transconv_kernel_sizes': [3,5,7,9], # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [2,4,8,16,32,64]
-        'hint_size_factor':8,
-        'feedforward_hint_samples':1
-    }
-
-    gpu_id = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    train_enc_heads = [-1]*len(train_pats_list)
-    train_dec_heads = [-1]*len(train_pats_list)
-    train_hint_preppers = [-1]*len(train_pats_list)
-    for i in range(0, len(train_pats_list)):
-        train_enc_heads[i] = BSE_Enc_Head(pat_id=train_pats_list[i], num_channels=pat_num_channels[i], **kwargs).to(gpu_id)
-        train_dec_heads[i] = BSE_Dec_Head(pat_id=train_pats_list[i], num_channels=pat_num_channels[i], **kwargs).to(gpu_id)
-        train_hint_preppers[i] = BSE_Dec_Hint_Prep(pat_id=train_pats_list[i], num_channels=pat_num_channels[i], **kwargs).to(gpu_id)
-
-    # Build the core model
-    vae_core = BSE_Middle_VAE(gpu_id=gpu_id, **kwargs) 
-    vae_core = vae_core.to(gpu_id) # move to GPU here to avoid opt_core problems when loading states
-
-
+# Builds models on CPU and prints sizes of forward passes
+def print_models_flow(x_pre, feedforward_hint_samples, transformer_seq_length, **kwargs):
     
+    batch_size = x_pre.shape[0]
+    pat_num_channels = x_pre.shape[1]
+    data_length = x_pre.shape[2]
 
-
-
-
-    # # Build the optimizers, one for core and individual opts for swappable heads
-    # opt_core = torch.optim.AdamW(vae_core.parameters(), lr=kwargs['LR_min_core'], weight_decay=core_weight_decay)
-    # opts_train = Head_Optimizers(heads=train_heads, wd=head_weight_decay, lr=kwargs['LR_min_heads'])
-    # opts_val = Head_Optimizers(heads=val_heads, wd=head_weight_decay, lr=kwargs['LR_min_heads'])
-
-
-
-
-    # FORWARD EpatX
-
-    fake_pat = 0
-    batch_size = 4
-    data_length = 1024
-    feedforward_hint_samples = 1
-
-    enc_head = train_enc_heads[fake_pat]
-    hint_prepper = train_hint_preppers[fake_pat]
-    dec_head = train_dec_heads[fake_pat]
-
-    x_pre = torch.rand(batch_size, pat_num_channels[fake_pat], data_length).to(gpu_id)
-
-
-    
-
+    train_enc_head = BSE_Enc_Head(pat_id="na", num_channels=pat_num_channels, **kwargs)
+    train_dec_head = BSE_Dec_Head(pat_id="na", num_channels=pat_num_channels, **kwargs)
+    train_hint_prepper = BSE_Dec_Hint_Prep(pat_id="na", feedforward_hint_samples=feedforward_hint_samples, num_channels=pat_num_channels, **kwargs)
 
     # Break off the last samples of pre and first samples of post to provide hint to decoder for phase alignment
     x_pre_hint = x_pre[:, :, -feedforward_hint_samples:]
-    
+
+    # Build the core model
+    vae_core = BSE_Middle_VAE(**kwargs) 
+
+    # Build the Transformer
+    transformer = Transformer(ModelArgs(**kwargs))
+
     # Run through Enc Head
     print(f"INPUT TO <ENC HEAD>\n"
     f"x_pre:{x_pre.shape}")
-    summary(enc_head, input_size=x_pre.shape, depth=999)
-    x_pre_posthead = enc_head(x_pre)
+    x_pre_posthead = train_enc_head(x_pre)
+    summary(train_enc_head, input_size=x_pre.shape, depth=999, device="cpu")
+    print(f"x_pre_posthead:{x_pre_posthead.shape}\n")
 
     # Prep the phase hints
     print(f"\n\n\nINPUT TO <HINT PREPPER>\n"
     f"x_pre_hint:{x_pre_hint.shape}")
-    summary(hint_prepper, input_size=x_pre_hint.shape, depth=999)
-    x_pre_hint_flat_prepped = hint_prepper(x_pre_hint)
+    x_pre_hint_flat_prepped = train_hint_prepper(x_pre_hint)
+    summary(train_hint_prepper, input_size=x_pre_hint.shape, depth=999, device="cpu")
+    print(f"x_pre_hint_flat_prepped:{x_pre_hint_flat_prepped.shape}\n")
 
     # Run through full VAE Core
     print(f"\n\n\nINPUT TO <VAE CORE>\n"
     f"x_pre_posthead:{x_pre_posthead.shape}\n"
     f"x_pre_hint_flat_prepped:{x_pre_hint_flat_prepped.shape}")
-    summary(vae_core, input_size=(x_pre_posthead.shape, x_pre_hint_flat_prepped.shape), depth=999)
     core_out, mean, logvar, latent = vae_core(x_pre_posthead, x_pre_hint_flat_prepped)  
+    summary(vae_core, input_size=(x_pre_posthead.shape, x_pre_hint_flat_prepped.shape), depth=999, device="cpu")
+    print(
+    f"mean:{mean.shape}\n"
+    f"logvar:{logvar.shape}\n"
+    f"latent:{latent.shape}\n"
+    f"core_out:{core_out.shape}\n")
+
+    # Run through Transformer
+    # Generate fake seuqential latents and shift the latent
+    latent_shifted = torch.rand(latent.shape[0], transformer_seq_length-1, latent.shape[1])
+    print(f"\n\n\nINPUT TO <Transformer>\n"
+    f"Multiple enoder passes to get sequential latents: latent_shifted:{latent_shifted.shape}\n")
+    trans_out = transformer(latent_shifted)  
+    summary(transformer, input_size=(latent_shifted.shape), depth=999, device="cpu")
+    f"trans_out:{trans_out.shape}\n"
 
     # Run through Dec Head
     print(f"\n\n\nINPUT TO <DEC HEAD>\n"
     f"core_out:{core_out.shape}")
-    summary(dec_head, input_size=core_out.shape, depth=999)
-    x_hat = dec_head(core_out)
-    
+    x_hat = train_dec_head(core_out)
+    summary(train_dec_head, input_size=core_out.shape, depth=999, device="cpu")
     print(f"\n\n\n<FINAL OUTPUT>\n"
     f"x_pre_posthead:{x_hat.shape}\n")
+
+    del train_enc_head, vae_core, train_hint_prepper, train_dec_head, transformer
+
+if __name__ == "__main__":
+    
+    print("Nothing here")
