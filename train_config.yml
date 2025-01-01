@@ -27,27 +27,23 @@ rand_name_json: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code/ani
 continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 cont_train_model_dir: '' # '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/irishsetter_Sat_Oct_19_15_41_58_2024' 
 
-run_inference_now: False  # If triggered here, will skip any training and run inference immediately and kill script after inference is done   
 epoch_used_for_inference: kwargs['epoch_used_for_inference'] = kwargs['num_eons'] * kwargs['epochs_per_eon'] - 1 # Set up to run inference after designated number of eons 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
-decode_samples: 256 #64  
+decode_samples: 8 #64  
 precode_samples: 1024
-postcode_samples: 1024
-feedforward_hint_samples: 4 # Numnber of samples on each side of embedded sequence to give to decoder (presumably to give it phase info)
+feedforward_hint_samples: 1 # Numnber of samples on each side of embedded sequence to give to decoder (presumably to give it phase info)
 hint_size_factor: 8 # How much info is allowed to exist for phase when passed forward after latent bottleneck: latent_dim/hint_size_factor --> conc to latent vector for decoder
-common_cnn_channels: 256 # How many channels at the top of core model
-train_seq_minis: 1 # Number of sequential raw inputs to feed into model, NA if not using GRU
-train_subsample_file_factor: 128 # randomly decreases training passes per file per epoch, Max subsampling is num_samples / (decode_samples * train_seq_minis)
-wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
+common_ENC_cnn_channels: 256 # How many channels at the top of core model on ENCODE SIDE
+common_DEC_cnn_channels: 1024 # How many channels at the top of core model on DECODE SIDE
+train_subsample_file_factor: 32000 # randomly decreases training passes per file per epoch, Max subsampling is num_samples / (decode_samples * train_seq_minis)
+wdecode_batch_size: 1 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 8 # this is for when loss is not being calculated
-pacmap_every: 80 # Must be within a 'quick_recon_val_every' to be reached
-val_every: 99999 # logic in training adds 1. e.g. if val_every=10 (2 eons, 10 epochs per eon) then will save at epoch 9, 19
+pacmap_every: 10 # Must be within a 'quick_recon_val_every' to be reached
 quick_recon_val_every: 10  # this will just run a few recon iterations on the VALIDATE dataset
 quickval_red: 8 # This will divide num_samples in a file to do a very quick validation recon by truncating mid file
-num_rand_recon_plots: 8
-num_eons: 1
-epochs_per_eon: 999999 # From old code, leave at 999999
+num_rand_recon_plots: 4
+epochs_to_train: 999999 
 
 # Beta VAE controls
 KL_max: kwargs['KL_max'] = 5e-1 # 5e-1 # 5e-4 was used before going multipatient, 5e-3 was used for first long multipat
@@ -56,20 +52,24 @@ KL_epochs_AT_max: 5
 KL_epochs_TO_max: 5
 
 # Train heads learning rate controls
-LR_max_heads: kwargs['LR_max_heads'] = 1e-4
-LR_min_heads: kwargs['LR_min_heads'] = 1e-4
+LR_max_heads: kwargs['LR_max_heads'] = 1e-5
+LR_min_heads: kwargs['LR_min_heads'] = 1e-7
 LR_epochs_TO_max_heads: 1
 LR_epochs_AT_max_heads: 99999
 manual_gamma_heads: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
 manual_step_size_heads: 320
 
 # Core learning rate controls
-LR_max_core: kwargs['LR_max_core'] = 1e-4
-LR_min_core: kwargs['LR_min_core'] = 1e-4
+LR_max_core: kwargs['LR_max_core'] = 1e-5
+LR_min_core: kwargs['LR_min_core'] = 1e-7
 LR_epochs_TO_max_core: 1
 LR_epochs_AT_max_core: 99999
 manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
 manual_step_size_core: 320
+
+transformer_LR: kwargs['transformer_LR'] = 2e-8
+
+
 
 # Val FineTune controls
 val_finetune_hour_dataset_range: kwargs['val_finetune_hour_dataset_range'] = [2, 50]
@@ -91,23 +91,20 @@ mini_batch_stride: kwargs['mini_batch_stride'] = kwargs['decode_samples'] # For 
 past_sequence_length: kwargs['past_sequence_length'] = kwargs['mini_batch_window_size'] - kwargs['decode_samples']
 enc_conv_depth: 6 
 enc_conv_resblock_size: 1
-enc_kernel_sizes: [3,7,11,15] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
-dec_conv_dilator_depth: 5
+enc_kernel_sizes: [3,5,7,9] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
+dec_conv_dilator_depth: 3
 dec_conv_dilator_resblock_size: 1
-dec_conv_flat_depth: 1
+dec_conv_flat_depth: 3
 dec_conv_flat_resblock_size: 1
-transconv_kernel_sizes: [3,7,11,15] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [2,4,8,16,32,64]
-latent_dim: 1024  # 1024
-hidden_encode_dims: 4096
+transconv_kernel_sizes: [3,5,7,9] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [2,4,8,16,32,64]
+latent_dim: 512  # 1024
+hidden_encode_dims: 2048
 backprop_sec: kwargs['backprop_sec'] = kwargs['decode_samples'] / kwargs['FS'] # 0.125 # Will backprop after sequential forward pass of this many single epochs worth of data
 dropout_enc: 0.0
 dropout_dec: 0.1 
 core_weight_decay: 0
 head_weight_decay: 0
 head_names: ['enc', 'dec', 'hinter']
-
-# Loss Settings
-LogCosh_loss_fn: kwargs['LogCosh_loss_fn'] = auraloss.time.LogCoshLoss(a = 1, reduction='sum') 
 
 # Previous model initial params
 tmp_file_dir: '/tmp_files'
@@ -160,18 +157,16 @@ pic_types: kwargs['pic_types'] = ['JPEGs','SVGs']
 
 
 # LBM
-lbm_seq_length: 32
+lbm_seq_length: 128
 
 adamW_wd: 0
 transformer_dim: kwargs['transformer_dim'] = kwargs['latent_dim'] # Currently no additional layers, so needs to be same as VAE
 
 # Model hardware limits
-max_seq_len: 32
+max_seq_len: 256
 max_batch_size: 16
 
 # Model size
 n_layers: 32
 n_heads: 32
 multiple_of: 256 # Feedforward scaling?
-
-transformer_LR: kwargs['transformer_LR'] = 2e-8

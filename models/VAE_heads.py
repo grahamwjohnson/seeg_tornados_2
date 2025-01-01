@@ -70,21 +70,19 @@ class Head_Optimizers():
 
 # Single depth apadpter from raw to VAE
 class Swappable_Enc_Head(nn.Module):
-    def __init__(self, in_channels, out_channels, enc_kernel_sizes, stride, poolsize, poolstride):
+    def __init__(self, in_channels, out_channels, enc_kernel_sizes, stride):
         super(Swappable_Enc_Head, self).__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
 
         self.stride = stride
-        # self.poolsize = poolsize
-        # self.poolstride = poolstride
 
         self.kernel_columns = nn.ModuleList()
         for k in enc_kernel_sizes:
             unit = nn.Sequential(
                 nn.Conv1d(in_channels=self.in_channels, out_channels=self.out_channels, kernel_size=k, stride=self.stride, padding=int((k-1)/2)),
-                # nn.MaxPool1d(self.poolsize, stride=poolstride),
+                nn.Conv1d(in_channels=self.out_channels, out_channels=self.out_channels, kernel_size=k, stride=self.stride, padding=int((k-1)/2)),
                 nn.LeakyReLU(0.2)
             )
             self.kernel_columns.append(unit)
@@ -115,8 +113,8 @@ class Swappable_Dec_Head(nn.Module):
         for k in kernel_sizes:
             # Generate the trans conv layers so that data is upsampled without overlap
             unit = nn.Sequential(
+                nn.ConvTranspose1d(self.in_channels, self.in_channels, kernel_size=k, stride=stride, padding=int((k-1)/2), output_padding=0),
                 nn.ConvTranspose1d(self.in_channels, self.num_channels, kernel_size=k, stride=stride, padding=int((k-1)/2), output_padding=0),
-                # nn.LeakyReLU(0.2)
             )
             self.dec_cnn_level.append(unit)
 
@@ -139,7 +137,7 @@ class BSE_Enc_Head(nn.Module):
             pat_id,
             enc_kernel_sizes,
             num_channels,
-            common_cnn_channels,
+            common_ENC_cnn_channels,
             **kwargs):
         
         super(BSE_Enc_Head, self).__init__()  
@@ -147,27 +145,23 @@ class BSE_Enc_Head(nn.Module):
         self.pat_id = pat_id
 
         self.enc_conv_stride = 1
-        self.enc_conv_poolsize = 2
-        self.enc_conv_poolstride = 2
-        self.common_cnn_channels = common_cnn_channels
+        self.common_ENC_cnn_channels = common_ENC_cnn_channels
         self.enc_kernel_sizes = enc_kernel_sizes
         self.num_channels = num_channels
 
-        self.swappable_enc_cnn_head_PRE = Swappable_Enc_Head(in_channels=self.num_channels, out_channels=self.common_cnn_channels, enc_kernel_sizes=enc_kernel_sizes, stride=self.enc_conv_stride, poolsize=self.enc_conv_poolsize, poolstride=self.enc_conv_poolstride)
-        self.swappable_enc_cnn_head_POST = Swappable_Enc_Head(in_channels=self.num_channels, out_channels=self.common_cnn_channels, enc_kernel_sizes=enc_kernel_sizes, stride=self.enc_conv_stride, poolsize=self.enc_conv_poolsize, poolstride=self.enc_conv_poolstride)
+        self.swappable_enc_cnn_head_PRE = Swappable_Enc_Head(in_channels=self.num_channels, out_channels=self.common_ENC_cnn_channels, enc_kernel_sizes=enc_kernel_sizes, stride=self.enc_conv_stride)
             
-    def forward(self, x_pre, x_post):
+    def forward(self, x_pre):
         x_pre_posthead = self.swappable_enc_cnn_head_PRE(x_pre)
-        x_post_posthead = self.swappable_enc_cnn_head_POST(x_post)
 
-        return x_pre_posthead, x_post_posthead
+        return x_pre_posthead
 
 class BSE_Dec_Head(nn.Module):
     def __init__(
             self,
             pat_id,
             num_channels,
-            common_cnn_channels,
+            common_DEC_cnn_channels,
             transconv_kernel_sizes,
             hidden_encode_dims,
             **kwargs):
@@ -177,12 +171,12 @@ class BSE_Dec_Head(nn.Module):
         self.pat_id = pat_id
 
         self.num_channels = num_channels
-        self.common_cnn_channels = common_cnn_channels
+        self.common_DEC_cnn_channels = common_DEC_cnn_channels
         self.transconv_kernel_sizes = transconv_kernel_sizes
         self.hidden_encode_dims = hidden_encode_dims
 
         self.trans_conv_block = Swappable_Dec_Head(
-            in_channels=self.common_cnn_channels,
+            in_channels=self.common_DEC_cnn_channels,
             out_channels=self.num_channels, 
             kernel_sizes=self.transconv_kernel_sizes)
 
@@ -208,16 +202,19 @@ class BSE_Dec_Hint_Prep(nn.Module):
         self.latent_dim = latent_dim
 
         self.latent_hint_size = int(self.latent_dim/hint_size_factor)
-        self.prep_hint_PRE = nn.Linear(self.feedforward_hint_samples * self.num_channels, self.latent_hint_size)
-        self.prep_hint_POST = nn.Linear(self.feedforward_hint_samples * self.num_channels, self.latent_hint_size)
+        self.prep_hint_PRE = nn.Sequential(
+            nn.Linear(self.feedforward_hint_samples * self.num_channels, self.latent_hint_size),
+            nn.Linear(self.feedforward_hint_samples * self.latent_hint_size, self.latent_hint_size),
+            nn.Linear(self.feedforward_hint_samples * self.latent_hint_size, self.latent_hint_size),
+            nn.ReLU(0.2)
+        )
 
-    def forward(self, x_pre_hint, x_post_hint):
+
+    def forward(self, x_pre_hint):
         # Flatten hint, send through FC layer, and add to latent before decoding
         x_pre_hint_flat = x_pre_hint.flatten(start_dim=1)
         x_pre_hint_flat_prepped = self.prep_hint_PRE(x_pre_hint_flat)
-        x_post_hint_flat = x_post_hint.flatten(start_dim=1)
-        x_post_hint_flat_prepped = self.prep_hint_POST(x_post_hint_flat)
 
-        return x_pre_hint_flat_prepped, x_post_hint_flat_prepped
+        return x_pre_hint_flat_prepped
 
         

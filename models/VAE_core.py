@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import math
 from torch import Tensor
+from torchinfo import summary
 
 # Local imports
 from VAE_heads import BSE_Enc_Head, BSE_Dec_Head, BSE_Dec_Hint_Prep
@@ -182,7 +183,7 @@ class BSE_Middle_VAE(nn.Module):
     def __init__(
             self, 
             gpu_id, 
-            common_cnn_channels,
+            common_ENC_cnn_channels,
             past_sequence_length, 
             latent_dim, 
             decode_samples, 
@@ -205,7 +206,7 @@ class BSE_Middle_VAE(nn.Module):
         self.gpu_id = gpu_id
         self.hidden_encode_dims = hidden_encode_dims
 
-        self.common_cnn_channels = common_cnn_channels # all subjects will go to these channels in middle of autoencoder
+        self.common_ENC_cnn_channels = common_ENC_cnn_channels # all subjects will go to these channels in middle of autoencoder
 
         self.decoder_drop_val = dropout_dec
         self.encoder_drop_val = dropout_enc
@@ -232,7 +233,7 @@ class BSE_Middle_VAE(nn.Module):
         self.enc_conv_poolsize = 2
         self.enc_conv_poolstride = 2
         self.enc_cnn_PRE = Enc_CNN_TimeReducer(
-            in_channels=self.common_cnn_channels, 
+            in_channels=self.common_ENC_cnn_channels, 
             enc_kernel_sizes=enc_kernel_sizes, 
             stride=self.enc_conv_stride, 
             depth=self.enc_conv_depth, 
@@ -240,8 +241,7 @@ class BSE_Middle_VAE(nn.Module):
             poolsize=self.enc_conv_poolsize, 
             poolstride=self.enc_conv_poolstride)
         
-        # self.top_enc_dims = 2 * len(enc_kernel_sizes) * int((self.common_cnn_channels/2) / (self.enc_conv_depth + 1)) * int(self.past_sequence_length/((self.enc_conv_stride * self.enc_conv_poolstride) ** (self.enc_conv_depth + 1)))
-        self.top_enc_dims = int((self.common_cnn_channels) * ((self.past_sequence_length) / (2 ** self.enc_conv_depth)))
+        self.top_enc_dims = int((self.common_ENC_cnn_channels) * ((self.past_sequence_length) / (2 ** self.enc_conv_depth)))
 
         self.top_to_hidden = nn.Sequential(
             nn.LeakyReLU(0.2),
@@ -258,11 +258,11 @@ class BSE_Middle_VAE(nn.Module):
 
         self.dec_hidden_1_size = self.hidden_encode_dims
         self.dec_hidden_2_size = self.top_enc_dims
-        self.length_dec_bottom = 8
+        self.length_dec_bottom = 1
         self.num_cnn_chans_start_dec = int(self.dec_hidden_2_size / len(self.transconv_kernel_sizes) / self.length_dec_bottom)
 
         self.latent_to_top = nn.Sequential(
-            nn.Linear(self.latent_dim + 2 * self.latent_hint_size, self.dec_hidden_1_size),
+            nn.Linear(self.latent_dim + self.latent_hint_size, self.dec_hidden_1_size),
             nn.LeakyReLU(0.2),
             nn.Linear(self.dec_hidden_1_size, self.dec_hidden_2_size)
         )
@@ -275,26 +275,12 @@ class BSE_Middle_VAE(nn.Module):
         )
 
         self.dec_cnn_flat = Dec_CNN_FlatTimeFlatChannel(
-            in_channels=self.common_cnn_channels, 
+            in_channels=self.num_cnn_chans_start_dec, 
             dec_kernel_sizes=self.transconv_kernel_sizes, 
             depth=dec_conv_flat_depth,
             resblock_size=self.dec_conv_flat_resblock_size
         )
         
-    def print_model_size_flow(self):
-        print(''
-            # f"Input: [{self.num_channels}x{self.past_sequence_length}: {self.num_channels*self.past_sequence_length}]-->"
-            # f"GRU-->[{self.gru_dim_mult * self.num_channels * self.bidir_mult}x{self.past_sequence_length}: {self.gru_dim_mult * self.num_channels * self.past_sequence_length * self.bidir_mult}]"
-            # f"-->Subsample hidden spacing: {self.past_hidden_samp_spacing}-->"
-            # f"[{int((self.gru_dim_mult * self.num_channels * self.past_sequence_length * self.bidir_mult))/(self.past_hidden_samp_spacing)}]-->FC-->"
-            # f"DROPOUT({self.encoder_drop_val}[1x{self.hidden_encode_dims_1}])-->"
-            # f"mean(GRU)/logvar FC-->"
-            # f"Latent: 1x{self.latent_dim}-->"
-            # f"DROPOUT({self.decoder_drop_val}({self.num_channels}x{self.hidden_decode_dims_1/self.num_channels}[{self.hidden_decode_dims_1}])-->" +
-            # f"TransConv Block-->"
-            # f"Output: [{self.num_channels}x{self.decode_samples}: {self.num_channels*self.decode_samples}]"
-              )
-
     def get_script_filename(self):
         return __file__
     
@@ -319,9 +305,9 @@ class BSE_Middle_VAE(nn.Module):
 
         return y
 
-    def get_latent(self, x_pre_posthead, x_post_posthead):
+    def get_latent(self, x_pre_posthead):
         # Encode
-        mean, logvar = self.encode(x_pre_posthead, x_post_posthead)
+        mean, logvar = self.encode(x_pre_posthead)
 
         # Reparameterize
         z = self.reparameterization(mean, logvar)
@@ -341,30 +327,31 @@ class BSE_Middle_VAE(nn.Module):
         out_prehead = self.decode(z_with_hints)
 
         return out_prehead, mean, logvar, z
-    
+        
 
 if __name__ == "__main__":
     train_pats_list = ['EpatX', 'Epaty']
     pat_num_channels = [135, 182]
 
     kwargs={
-        'common_cnn_channels':256,
+        'common_ENC_cnn_channels':256,
+        'common_DEC_cnn_channels':1024,
         'past_sequence_length':1024, 
-        'latent_dim':2048,
-        'decode_samples':256, 
-        'hidden_encode_dims':4096,
+        'latent_dim':512,
+        'decode_samples':8, 
+        'hidden_encode_dims':2048,
         'dropout_dec':0.1,
         'dropout_enc':0.0,
         'enc_conv_depth': 6, 
-        'enc_conv_resblock_size': 4,
+        'enc_conv_resblock_size': 1,
         'enc_kernel_sizes': [3,5,7,9], # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
-        'dec_conv_dilator_depth': 5,
-        'dec_conv_dilator_resblock_size': 4,
-        'dec_conv_flat_depth': 2,
-        'dec_conv_flat_resblock_size': 4,
+        'dec_conv_dilator_depth': 3,
+        'dec_conv_dilator_resblock_size': 1,
+        'dec_conv_flat_depth': 3,
+        'dec_conv_flat_resblock_size': 1,
         'transconv_kernel_sizes': [3,5,7,9], # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [2,4,8,16,32,64]
         'hint_size_factor':8,
-        'feedforward_hint_samples':4
+        'feedforward_hint_samples':1
     }
 
     gpu_id = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -381,6 +368,12 @@ if __name__ == "__main__":
     vae_core = BSE_Middle_VAE(gpu_id=gpu_id, **kwargs) 
     vae_core = vae_core.to(gpu_id) # move to GPU here to avoid opt_core problems when loading states
 
+
+    
+
+
+
+
     # # Build the optimizers, one for core and individual opts for swappable heads
     # opt_core = torch.optim.AdamW(vae_core.parameters(), lr=kwargs['LR_min_core'], weight_decay=core_weight_decay)
     # opts_train = Head_Optimizers(heads=train_heads, wd=head_weight_decay, lr=kwargs['LR_min_heads'])
@@ -394,7 +387,7 @@ if __name__ == "__main__":
     fake_pat = 0
     batch_size = 4
     data_length = 1024
-    feedforward_hint_samples = 4
+    feedforward_hint_samples = 1
 
     enc_head = train_enc_heads[fake_pat]
     hint_prepper = train_hint_preppers[fake_pat]
@@ -402,19 +395,37 @@ if __name__ == "__main__":
 
     x_pre = torch.rand(batch_size, pat_num_channels[fake_pat], data_length).to(gpu_id)
 
+
+    
+
+
     # Break off the last samples of pre and first samples of post to provide hint to decoder for phase alignment
     x_pre_hint = x_pre[:, :, -feedforward_hint_samples:]
     
     # Run through Enc Head
+    print(f"INPUT TO <ENC HEAD>\n"
+    f"x_pre:{x_pre.shape}")
+    summary(enc_head, input_size=x_pre.shape, depth=999)
     x_pre_posthead = enc_head(x_pre)
 
     # Prep the phase hints
+    print(f"\n\n\nINPUT TO <HINT PREPPER>\n"
+    f"x_pre_hint:{x_pre_hint.shape}")
+    summary(hint_prepper, input_size=x_pre_hint.shape, depth=999)
     x_pre_hint_flat_prepped = hint_prepper(x_pre_hint)
 
     # Run through full VAE Core
+    print(f"\n\n\nINPUT TO <VAE CORE>\n"
+    f"x_pre_posthead:{x_pre_posthead.shape}\n"
+    f"x_pre_hint_flat_prepped:{x_pre_hint_flat_prepped.shape}")
+    summary(vae_core, input_size=(x_pre_posthead.shape, x_pre_hint_flat_prepped.shape), depth=999)
     core_out, mean, logvar, latent = vae_core(x_pre_posthead, x_pre_hint_flat_prepped)  
 
     # Run through Dec Head
+    print(f"\n\n\nINPUT TO <DEC HEAD>\n"
+    f"core_out:{core_out.shape}")
+    summary(dec_head, input_size=core_out.shape, depth=999)
     x_hat = dec_head(core_out)
     
-    print(x_hat.shape)
+    print(f"\n\n\n<FINAL OUTPUT>\n"
+    f"x_pre_posthead:{x_hat.shape}\n")
