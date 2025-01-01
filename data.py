@@ -31,11 +31,8 @@ class SEEG_Tornado_Dataset(Dataset):
             num_samples,
             mini_batch_window_size,
             decode_samples,
-            single_pat_seq,
             **kwargs
             ):
-
-        self.single_pat_seq = single_pat_seq
 
         self.gpu_id = gpu_id
         self.num_samples = num_samples
@@ -91,14 +88,25 @@ class SEEG_Tornado_Dataset(Dataset):
     def get_pat_count(self):
         return len(self.pat_ids)
 
-    def __len__(self):
+    def set_single_pat_seq(x: bool)
+        self.single_pat_seq = x
 
-        # Return file_count for the patient with min number of files
-        file_counts = [-1] * len(self.pat_fnames)
-        for i in range(0, len(self.pat_fnames)):
-            file_counts[i] = len(self.pat_fnames[i])
+    def read_single_pat_seq()
+        return self.single_pat_seq
 
-        return min(file_counts)
+    def __len__(self, pat_id):
+
+
+        if self.single_pat_seq:
+            return len(self.pat_fnames[pat_id])
+
+        else:
+            # Return file_count for the patient with min number of files
+            file_counts = [-1] * len(self.pat_fnames)
+            for i in range(0, len(self.pat_fnames)):
+                file_counts[i] = len(self.pat_fnames[i])
+
+            return min(file_counts)
     
     def __getitem__(self, idx):
         

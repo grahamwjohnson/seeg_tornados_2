@@ -34,7 +34,7 @@ feedforward_hint_samples: 1 # Numnber of samples on each side of embedded sequen
 hint_size_factor: 8 # How much info is allowed to exist for phase when passed forward after latent bottleneck: latent_dim/hint_size_factor --> conc to latent vector for decoder
 common_ENC_cnn_channels: 256 # How many channels at the top of core model on ENCODE SIDE
 common_DEC_cnn_channels: 1024 # How many channels at the top of core model on DECODE SIDE
-train_subsample_file_factor: 32000 # randomly decreases training passes per file per epoch, Max subsampling is num_samples / (decode_samples * train_seq_minis)
+train_subsample_file_factor: 2048 # randomly decreases training passes per file per epoch, Max subsampling is num_samples / (decode_samples * train_seq_minis)
 wdecode_batch_size: 1 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 8 # this is for when loss is not being calculated
 pacmap_every: 10 # Must be within a 'quick_recon_val_every' to be reached
