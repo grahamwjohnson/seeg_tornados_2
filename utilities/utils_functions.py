@@ -278,8 +278,7 @@ def get_desired_fnames(
         data_dir: str, 
         intrapatient_dataset_style: list, 
         hour_dataset_range: list, 
-        dataset_pic_dir: str,
-        eon: int,
+        dataset_pic_dir: str
         ):
     
     # This will have all of the desired file names before splitting into train/val/test
@@ -347,7 +346,7 @@ def get_desired_fnames(
         if not found_hours: raise Exception("Hours desired not found")
 
     if gpu_id == 0:
-        print_dataset_bargraphs(pat_id, curr_fnames, curr_fnames, dataset_pic_dir, eon)
+        print_dataset_bargraphs(pat_id, curr_fnames, curr_fnames, dataset_pic_dir)
 
     return curr_fnames
 
@@ -363,7 +362,7 @@ def sort_filenames(file_list):
 
     return sorted_file_list
 
-def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, eon, pre_ictal_taper_sec=120, post_ictal_taper_sec=120):
+def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, pre_ictal_taper_sec=120, post_ictal_taper_sec=120):
 
     # Get the end of the path (i.e. filename)
     potential_fnames = [x.split("/")[-1] for x in curr_fpaths]
@@ -551,10 +550,10 @@ def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir
     pl.ylabel('Percent of File')
     
     # title of plot
-    pl.title(f'Dataset Breakdown: Eon {eon}')
+    pl.title(f'Dataset Breakdown')
 
     if not os.path.exists(dataset_pic_dir): os.makedirs(dataset_pic_dir)
-    savename = dataset_pic_dir + f"/{pat_id}_Dataset_Breakdown_Eon_{eon}.jpg"
+    savename = dataset_pic_dir + f"/{pat_id}_Dataset_Breakdown.jpg"
     pl.savefig(savename)
     pl.close('all')
 
@@ -1152,258 +1151,6 @@ def pacmap_latent(
     # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
     return reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS, cluster_reorder_indexes # save_tuple
 
-def pacmap_latent_LBM(  
-    FS, 
-    latent_data_cpu,
-    in_data_samples,
-    decode_samples,
-    start_datetimes_epoch,
-    stop_datetimes_epoch,
-    epoch, 
-    iter, 
-    b_iter,
-    gpu_id, 
-    win_sec, 
-    stride_sec, 
-    absolute_latent,
-    file_name,
-    savedir,
-    targ_vs_out_str,
-    pat_id,
-    plot_dict,
-    premade_PaCMAP,
-    premade_PaCMAP_MedDim,
-    premade_PCA,
-    premade_HDBSCAN,
-    xy_lims,
-    info_score_idxs,
-    xy_lims_RAW_DIMS,
-    xy_lims_PCA,
-    interictal_contour=False,
-    **kwargs):
-
-    WIN_STYLE='end'
-
-    # Use premade PaCMAPs and HDBSCAN
-    reducer = premade_PaCMAP
-    reducer_MedDim = premade_PaCMAP_MedDim
-    hdb = premade_HDBSCAN
-
-    # Set PaCMAP verbose false
-    reducer.verbose = False
-    reducer_MedDim.verbose = False
-
-    # Project data through reducer (i.e. PaCMAP)
-    latent_postPaCMAP = reducer.transform(latent_data_cpu).swapaxes(0,1)
-    latent_embedding_expanded = latent_expander(latent_postPaCMAP, in_data_samples, interp=True)
-    
-    # Project data through reducer (i.e. PaCMAP)
-    latent_postPaCMAP_MedDim = reducer_MedDim.transform(latent_data_cpu) # not swapped
-
-    # Get HDBSCAN cluster nearest labels
-    hdb_labels, hdb_probabilities = hdbscan.prediction.approximate_predict(hdb, latent_postPaCMAP_MedDim)
-    
-
-    # # Destaurate according to probability of being in cluster
-    # hdb_c_prob_flat = np.array([sns.desaturate(hdb_color_palette[hdb_labels_flat[i]], hdb_probabilities_flat[i])
-    #         for i in range(len(hdb_labels_flat))])
-
-    # Reshape the labels and probabilities for plotting
-    hdb_labels_doubled = np.stack([hdb_labels, hdb_labels], axis=1) # Double it to work with latent expander
-    hdb_probabilities_doubled = np.stack([hdb_probabilities, hdb_probabilities], axis=1) # Double it to work with latent expander
-    hdb_labels_doubled_expanded = latent_expander(hdb_labels_doubled, in_data_samples, interp=False) # Do not interp cluster classes
-    hdb_probabilities_doubled_expanded = latent_expander(hdb_probabilities_doubled, in_data_samples, interp=False) # Do not interp cluster classes
-    # Strip second dimension (was passed as dummy to use latent expander)
-    hdb_labels_expanded = hdb_labels_doubled_expanded[0:1, :]     
-    hdb_probabilities_expanded = hdb_probabilities_doubled_expanded[0:1, :]     
-
-    # Intialize master figure 
-    fig = pl.figure(figsize=(40, 25))
-    gs = gridspec.GridSpec(3, 5, figure=fig)
-
-    # **** PACMAP PLOTTING ****
-
-    print(f"[GPU{str(gpu_id)}] PaCMAP Plotting")
-    ax20 = fig.add_subplot(gs[2, 0]) 
-    ax21 = fig.add_subplot(gs[2, 1]) 
-    ax22 = fig.add_subplot(gs[2, 2]) 
-    ax23 = fig.add_subplot(gs[2, 3]) 
-    ax24 = fig.add_subplot(gs[2, 4]) 
-
-    # Latent space plot
-    # NOTE: datetimes are unsorted at this time, but will be sorted within plot_latent
-    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id)
-    ax20, ax21, ax22, ax23, ax24, xy_lims = plot_latent(
-        ax=ax20, 
-        interCont_ax=ax21,
-        seiztype_ax=ax22,
-        time_ax=ax23,
-        cluster_ax=ax24,
-        latent_data=np.expand_dims(latent_embedding_expanded, axis=0), 
-        win_style=WIN_STYLE,
-        samp_freq=FS,
-        start_datetimes=[start_datetimes_epoch], 
-        stop_datetimes=[stop_datetimes_epoch], 
-        abs_start_datetime=start_datetimes_epoch,
-        abs_stop_datetime=stop_datetimes_epoch,
-        win_sec=win_sec,
-        stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt, 
-        seiz_stop_dt=seiz_stop_dt, 
-        seiz_types=seiz_types,
-        preictal_dur=plot_dict["plot_preictal_color"],
-        postictal_dur=plot_dict["plot_postictal_color"],
-        absolute_latent=absolute_latent,
-        max_latent=False,
-        plot_ictal=True,
-        hdb_labels_allFiles_expanded=np.expand_dims(hdb_labels_expanded, axis=0),
-        hdb_probabilities_allFiles_expanded=np.expand_dims(hdb_probabilities_expanded, axis=0),
-        hdb=hdb,
-        # hdb_c_prob=hdb_c_prob,  #TODO HERE &**************************************************
-        # hdb_colormap=hdb_color_palette,
-        xy_lims=xy_lims,
-        **kwargs)        
-
-    ax20.title.set_text('PaCMAP Latent Space: ' + str(latent_embedding_expanded.shape[1]/FS) + 
-        ' second epoch, Window mean, dur/str=' + str(win_sec) + 
-        '/' + str(stride_sec) +' seconds,')
-    if interictal_contour:
-        ax21.title.set_text('Interictal Contour (no peri-ictal data)')
-
-
-    # ***** PCA PLOTTING *****
-        
-    print("Calculating PCA")
-        
-    pca = premade_PCA
-    latent_PCA = pca.transform(latent_data_cpu).swapaxes(0,1)
-    latent_PCA_expanded = latent_expander(latent_PCA, in_data_samples, interp=True)
-
-    print(f"[GPU{str(gpu_id)}] PCA Plotting")
-
-    ax10 = fig.add_subplot(gs[1, 0]) 
-    ax11 = fig.add_subplot(gs[1, 1]) 
-    ax12 = fig.add_subplot(gs[1, 2]) 
-    ax13 = fig.add_subplot(gs[1, 3]) 
-    ax14 = fig.add_subplot(gs[1, 4]) 
-
-    # Latent space plot
-    # NOTE: datetimes are unsorted at this time, but will be sorted within plot_latent
-    ax10, ax11, ax12, ax13, ax14, xy_lims_PCA = plot_latent(
-        ax=ax10, 
-        interCont_ax=ax11,
-        seiztype_ax=ax12,
-        time_ax=ax13,
-        cluster_ax=ax14,
-        latent_data=np.expand_dims(latent_PCA_expanded, axis=0), 
-        win_style=WIN_STYLE,
-        samp_freq=FS,
-        start_datetimes=[start_datetimes_epoch], 
-        stop_datetimes=[stop_datetimes_epoch], 
-        abs_start_datetime=start_datetimes_epoch,
-        abs_stop_datetime=stop_datetimes_epoch,
-        win_sec=win_sec,
-        stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt, 
-        seiz_stop_dt=seiz_stop_dt, 
-        seiz_types=seiz_types,
-        preictal_dur=plot_dict["plot_preictal_color"],
-        postictal_dur=plot_dict["plot_postictal_color"],
-        absolute_latent=absolute_latent,
-        max_latent=False,
-        plot_ictal=True,
-        hdb_labels_allFiles_expanded=np.expand_dims(hdb_labels_expanded, axis=0),
-        hdb_probabilities_allFiles_expanded=np.expand_dims(hdb_probabilities_expanded, axis=0),
-        hdb=hdb,
-        xy_lims=xy_lims_PCA,
-        **kwargs)        
-
-    ax10.title.set_text("PCA Components 1,2")
-    ax11.title.set_text('Interictal Contour (no peri-ictal data)')
-
-
-    # **** INFO RAW DIM PLOTTING *****
-
-    raw_dims_to_plot = info_score_idxs[-2:]
-
-    # Check for dims greater than length of possible dims (WHY DOES THIS HAPPEN??)
-    for dim in raw_dims_to_plot:
-        if dim > latent_data_cpu.shape[1] - 1:
-            raw_dims_to_plot = np.array([1, 2])
-            break
-
-    raw_dims_latent_expanded = latent_expander(latent_data_cpu[:, raw_dims_to_plot].swapaxes(0,1), in_data_samples, interp=True)
-
-    print(f"[GPU{str(gpu_id)}] Raw Dims Plotting")
-
-    ax00 = fig.add_subplot(gs[0, 0]) 
-    ax01 = fig.add_subplot(gs[0, 1]) 
-    ax02 = fig.add_subplot(gs[0, 2]) 
-    ax03 = fig.add_subplot(gs[0, 3]) 
-    ax04 = fig.add_subplot(gs[0, 4])
-
-    # Latent space plot
-    # NOTE: datetimes are unsorted at this time, but will be sorted within plot_latent
-    ax00, ax01, ax02, ax03, ax04, xy_lims_RAW_DIMS = plot_latent(
-        ax=ax00, 
-        interCont_ax=ax01,
-        seiztype_ax=ax02,
-        time_ax=ax03,
-        cluster_ax=ax04,
-        latent_data=np.expand_dims(raw_dims_latent_expanded, axis=0), 
-        win_style=WIN_STYLE,
-        samp_freq=FS,
-        start_datetimes=[start_datetimes_epoch], 
-        stop_datetimes=[stop_datetimes_epoch], 
-        abs_start_datetime=start_datetimes_epoch,
-        abs_stop_datetime=stop_datetimes_epoch,
-        win_sec=win_sec,
-        stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt, 
-        seiz_stop_dt=seiz_stop_dt, 
-        seiz_types=seiz_types,
-        preictal_dur=plot_dict["plot_preictal_color"],
-        postictal_dur=plot_dict["plot_postictal_color"],
-        absolute_latent=absolute_latent,
-        max_latent=False,
-        plot_ictal=True,
-        hdb_labels_allFiles_expanded=np.expand_dims(hdb_labels_expanded, axis=0),
-        hdb_probabilities_allFiles_expanded=np.expand_dims(hdb_probabilities_expanded, axis=0),
-        hdb=hdb,
-        xy_lims=xy_lims_RAW_DIMS,
-        **kwargs)        
-
-    ax00.title.set_text(f'Dims [{raw_dims_to_plot[0]},{raw_dims_to_plot[1]}] Latent Space: ' + str(latent_embedding_expanded.shape[1]/FS) + 
-        ' second epoch, Window mean, dur/str=' + str(win_sec) + 
-        '/' + str(stride_sec) +' seconds,' 
-        )
-    
-    ax01.title.set_text('Interictal Contour (no peri-ictal data)')
-
-
-    # **** Save entire figure *****
-
-    fig.suptitle(file_name + create_metadata_subtitle(plot_dict))
-    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-    if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-
-    save_str = f"{pat_id}_latent_smoothsec{win_sec}Stride{stride_sec}_epoch{epoch}_iter{iter}_batchiter{b_iter}_{targ_vs_out_str}_gpu{gpu_id}"
-    savename_jpg = savedir + f"/JPEGs/{save_str}.jpg"
-    savename_svg = savedir + f"/SVGs/{save_str}.svg"
-    pl.savefig(savename_jpg, dpi=300)
-    pl.savefig(savename_svg)
-
-
-    # Upload fig to WandB
-
-
-    pl.close(fig)
-
-    # Bundle the save metrics together
-    # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
-
-    return # save_tuple
-
 def epoch_contains_pacmap_hdbscan(model_dir, epoch, return_paths=False):
 
     needed_files = [
@@ -1917,10 +1664,10 @@ def get_PaCMAP_model(model_common_prefix, pre_PaCMAP_window_sec_path, pre_PaCMAP
 
     return PaCMAP, pre_PaCMAP_window_sec, pre_PaCMAP_stride_sec
 
-def LBM_LR_schedule(eon_wide_epoch, iter, iters_per_epoch, LR_max, LR_min, LR_epochs_TO_max, LR_epochs_AT_max, manual_gamma, manual_step_size, LR_rise_first=True, **kwargs):
+def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_size, LR_epochs_TO_max, LR_epochs_AT_max, iters_per_epoch, LR_rise_first=True):
 
     # Adjust max and min based on gamma value
-    LR_gamma_iter = np.floor(eon_wide_epoch / manual_step_size)
+    LR_gamma_iter = np.floor(epoch / manual_step_size)
     gamma_curr = manual_gamma ** LR_gamma_iter 
     LR_max_curr = LR_max * gamma_curr
     LR_min_curr = LR_min * gamma_curr
@@ -1928,40 +1675,7 @@ def LBM_LR_schedule(eon_wide_epoch, iter, iters_per_epoch, LR_max, LR_min, LR_ep
 
     # Get current residual
     LR_epoch_period = LR_epochs_TO_max + LR_epochs_AT_max
-    LR_epoch_residual = eon_wide_epoch % LR_epoch_period
-
-    # START with rise
-    if LR_rise_first:    
-
-        if LR_epoch_residual < LR_epochs_TO_max:
-            LR_floor = LR_min_curr + ( LR_range * (LR_epoch_residual/LR_epochs_TO_max) )
-            LR_ceil = LR_floor + ( LR_range * (LR_epoch_residual + 1) /LR_epochs_TO_max)
-            LR_val = LR_floor + iter/iters_per_epoch * (LR_ceil - LR_floor) 
-
-        else: 
-            LR_val = LR_max_curr
-        
-    else:
-        # LR_ceil = LR_max_curr - ( LR_range * (LR_epoch_residual/LR_epochs_cycle) )
-        # LR_floor = LR_ceil - ( LR_range * (LR_epoch_residual + 1) /LR_epochs_cycle)
-        # LR_val = LR_ceil - iter/iters_per_epoch * (LR_ceil - LR_floor)        
-        raise Exception("ERROR: not coded up")
-
-
-    return LR_val
-
-def LR_subfunction(iter_curr, LR_min, LR_max, eon_wide_epoch, manual_gamma, manual_step_size, LR_epochs_TO_max, LR_epochs_AT_max, iters_per_epoch, LR_rise_first=True):
-
-    # Adjust max and min based on gamma value
-    LR_gamma_iter = np.floor(eon_wide_epoch / manual_step_size)
-    gamma_curr = manual_gamma ** LR_gamma_iter 
-    LR_max_curr = LR_max * gamma_curr
-    LR_min_curr = LR_min * gamma_curr
-    LR_range = LR_max_curr - LR_min_curr
-
-    # Get current residual
-    LR_epoch_period = LR_epochs_TO_max + LR_epochs_AT_max
-    LR_epoch_residual = eon_wide_epoch % LR_epoch_period
+    LR_epoch_residual = epoch % LR_epoch_period
 
     # START with rise
     if LR_rise_first:    
@@ -1984,7 +1698,7 @@ def LR_subfunction(iter_curr, LR_min, LR_max, eon_wide_epoch, manual_gamma, manu
     return LR_val
 
 def BSE_KL_LR_schedule(
-        eon_wide_epoch, iter_curr, iters_per_epoch, 
+        epoch, iter_curr, iters_per_epoch, 
         KL_max, KL_min, KL_epochs_TO_max, KL_epochs_AT_max, 
         LR_max_heads, LR_min_heads, 
         LR_max_core, LR_min_core, 
@@ -1998,7 +1712,7 @@ def BSE_KL_LR_schedule(
     # *** KL SCHEDULE ***
     
     KL_epoch_period = KL_epochs_TO_max + KL_epochs_AT_max
-    KL_epoch_residual = eon_wide_epoch % KL_epoch_period
+    KL_epoch_residual = epoch % KL_epoch_period
 
     KL_range = 10**KL_max - 10**KL_min
     # KL_range = KL_max - KL_min
@@ -2037,7 +1751,7 @@ def BSE_KL_LR_schedule(
         iter_curr=iter_curr,
         LR_min=LR_min_core,
         LR_max=LR_max_core,
-        eon_wide_epoch=eon_wide_epoch, 
+        epoch=epoch, 
         manual_gamma=manual_gamma_core, 
         manual_step_size=manual_step_size_core, 
         LR_epochs_TO_max=LR_epochs_TO_max_core, 
@@ -2051,7 +1765,7 @@ def BSE_KL_LR_schedule(
         iter_curr=iter_curr,
         LR_min=LR_min_heads,
         LR_max=LR_max_heads,
-        eon_wide_epoch=eon_wide_epoch, 
+        epoch=epoch, 
         manual_gamma=manual_gamma_heads, 
         manual_step_size=manual_step_size_heads, 
         LR_epochs_TO_max=LR_epochs_TO_max_heads, 
@@ -2850,30 +2564,6 @@ def flatten(list_of_lists):
 
 def delete_old_checkpoints(dir: str, curr_epoch: int):
 
-    SAVE_KEYWORDS = ["hdbscan", "PaCMAP"]
-
-    all_files = glob.glob(f"{dir}/*")
-
-    # Get the epoch number for each file
-    epoch = flatten([[int(f.split("/")[-1].split("_")[i].replace("epoch", "").split(".")[0]) for i in range(len(f.split("/")[-1].split("_"))) if "epoch" in f.split("/")[-1].split("_")[i]] for f in all_files])
-    if len(epoch) != len(all_files): raise Exception(f"ERROR: epoch list length {len(epoch)} does not match length of all_files {len(all_files)} in checkpoint folder, make sure keyword 'epoch<num>' is in filename")
-
-    # Add current epoch to save files
-    save_epochs = [curr_epoch]
-    unique_epochs = np.unique(epoch)
-    for i in range(len(unique_epochs)):
-        epoch_files = [f.split("/")[-1] for f in glob.glob(f"{dir}/*_epoch{unique_epochs[i]}_*")]
-        for f in epoch_files:
-            if any(substr in f for substr in SAVE_KEYWORDS):
-                save_epochs.append(unique_epochs[i])
-                break
-
-    [os.remove(all_files[i]) if epoch[i] not in save_epochs else print(f"saved: {all_files[i].split('/')[-1]}") for i in range(len(all_files))]
-
-    return
-
-def delete_old_checkpoints_BSE(dir: str, curr_epoch: int):
-
     SAVE_KEYWORDS = ["hdbscan", "pacmap"]
 
     all_dir_names = glob.glob(f"{dir}/Epoch*")
@@ -2904,14 +2594,12 @@ def initialize_directories(
 
     if kwargs['continue_existing_training']:
 
-        raise Exception("ERROR: NEED TO CODE UP LBM weight load")
-
         kwargs['model_dir'] = cont_train_model_dir
         kwargs['pic_save_dir'] = kwargs['model_dir'] + '/latent_snapshots_BSE'
         kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE'
 
         # Find the epoch to start training
-        check_dir = kwargs['model_dir'] + "/checkpoints_BSE"
+        check_dir = kwargs['model_dir'] + "/checkpoints"
         epoch_dirs = glob.glob(check_dir + '/Epoch*')
         epoch_nums = [int(f.split("/")[-1].replace("Epoch_","")) for f in epoch_dirs]
 
@@ -2923,7 +2611,9 @@ def initialize_directories(
         kwargs['core_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vaecore.pt'
         kwargs['core_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vaecore_opt.pt'
         kwargs['heads_prev_dir'] = check_dir + f'/Epoch_{str(max_epoch)}/heads_checkpoints'
-        
+        kwargs['transformer_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/transformer_checkpoints/checkpoint_epoch{str(max_epoch)}_transformer.pt'
+        kwargs['transformer_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/transformer_checkpoints/checkpoint_epoch{str(max_epoch)}_transformer_opt.pt'
+
         # Set the start epoch 1 greater than max trained
         kwargs['start_epoch'] = (max_epoch + 1) 
         

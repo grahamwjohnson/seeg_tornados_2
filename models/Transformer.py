@@ -51,10 +51,6 @@ class ModelArgs:
         self.max_seq_len = max_seq_len
         self.device = device
 
-
-        # for key, value in kwargs.items():
-        #     setattr(self, key, value)
-
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()

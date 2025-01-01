@@ -390,7 +390,7 @@ def print_models_flow(x_pre, feedforward_hint_samples, transformer_seq_length, *
     f"core_out:{core_out.shape}")
     x_hat = train_dec_head(core_out)
     summary(train_dec_head, input_size=core_out.shape, depth=999, device="cpu")
-    print(f"\n\n\n<FINAL OUTPUT>\n"
+    print(f"\n<FINAL OUTPUT>\n"
     f"x_pre_posthead:{x_hat.shape}\n")
 
     del train_enc_head, vae_core, train_hint_prepper, train_dec_head, transformer

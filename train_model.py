@@ -53,10 +53,8 @@ def ddp_setup(gpu_id, world_size):
 
     init_process_group(backend="nccl", rank=gpu_id, world_size=world_size, timeout=datetime.timedelta(minutes=999999))
 
-
 def load_train_objs(
-    gpu_id, 
-    eon, 
+    gpu_id,  
     pat_dir, 
     train_val_pat_perc, 
     intrapatient_dataset_style, 
@@ -75,10 +73,8 @@ def load_train_objs(
     n_layers,
     n_heads, 
     multiple_of,
-    transformer_dim,
     adamW_wd,
-    transformer_LR,
-    
+    transformer_LR,    
     **kwargs):
 
     # Split pats into train and test
@@ -99,7 +95,6 @@ def load_train_objs(
         gpu_id=gpu_id, 
         pat_list=train_pats_list,
         pat_dirs=train_pats_dirs,
-        eon=eon, 
         intrapatient_dataset_style=intrapatient_dataset_style, 
         hour_dataset_range=train_hour_dataset_range,
         single_pat_seq = False, 
@@ -109,7 +104,6 @@ def load_train_objs(
     kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE/Val_Grouped_Finetune'
     val_finetune_set = SEEG_Tornado_Dataset(
         gpu_id=gpu_id, 
-        eon=eon, 
         pat_list=val_pats_list,
         pat_dirs=val_pats_dirs,
         intrapatient_dataset_style=intrapatient_dataset_style, 
@@ -121,57 +115,16 @@ def load_train_objs(
     kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE/Val_Grouped_Unseen'
     val_unseen_set = SEEG_Tornado_Dataset(
         gpu_id=gpu_id, 
-        eon=eon, 
         pat_list=val_pats_list,
         pat_dirs=val_pats_dirs,
         intrapatient_dataset_style=intrapatient_dataset_style, 
         hour_dataset_range=val_unseen_hour_dataset_range,
         single_pat_seq = False,  
         **kwargs)
-    
-    print(f"[GPU{str(gpu_id)}] Generating INDIVIDUAL TRAIN dataset")
-    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE/Train_Individual'
-    ind_train_datasets = [-1]*len(train_pats_list)
-    for pat_idx in range(0, len(train_pats_list)):
-        ind_train_datasets[pat_idx] = SEEG_Tornado_Dataset(
-            gpu_id=gpu_id, 
-            eon=eon, 
-            pat_list=[train_pats_list[pat_idx]],
-            pat_dirs=[train_pats_dirs[pat_idx]],
-            intrapatient_dataset_style=intrapatient_dataset_style, 
-            hour_dataset_range=train_hour_dataset_range,
-            single_pat_seq = True,  
-            **kwargs)
+     
+    # ### VAE HEADS ###
 
-    print(f"[GPU{str(gpu_id)}] Generating INDIVIDUAL VALIDATION FINETUNE dataset")
-    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE/Val_Individual_Finetune'
-    ind_val_finetune_datasets = [-1]*len(val_pats_list)
-    for pat_idx in range(0, len(val_pats_list)):
-        ind_val_finetune_datasets[pat_idx] = SEEG_Tornado_Dataset(
-            gpu_id=gpu_id, 
-            eon=eon, 
-            pat_list=[val_pats_list[pat_idx]],
-            pat_dirs=[val_pats_dirs[pat_idx]],
-            intrapatient_dataset_style=intrapatient_dataset_style, 
-            hour_dataset_range=val_finetune_hour_dataset_range,
-            single_pat_seq = True,  
-            **kwargs)
-
-    print(f"[GPU{str(gpu_id)}] Generating INDIVIDUAL VALIDATION UNSEEN dataset")
-    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE/Val_Individual_Unseen'
-    ind_val_unseen_datasets = [-1]*len(val_pats_list)
-    for pat_idx in range(0, len(val_pats_list)):
-        ind_val_unseen_datasets[pat_idx] = SEEG_Tornado_Dataset(
-            gpu_id=gpu_id, 
-            eon=eon, 
-            pat_list=[val_pats_list[pat_idx]],
-            pat_dirs=[val_pats_dirs[pat_idx]],
-            intrapatient_dataset_style=intrapatient_dataset_style, 
-            hour_dataset_range=val_unseen_hour_dataset_range,
-            single_pat_seq = True,  
-            **kwargs)
-    
-    # Build the model with swappable heads
+    # Train
     train_enc_heads = [-1]*len(train_pats_list)
     train_dec_heads = [-1]*len(train_pats_list)
     train_hint_preppers = [-1]*len(train_pats_list)
@@ -179,8 +132,11 @@ def load_train_objs(
         train_enc_heads[i] = BSE_Enc_Head(pat_id=train_pats_list[i], num_channels=train_set.pat_num_channels[i], **kwargs).to(gpu_id)
         train_dec_heads[i] = BSE_Dec_Head(pat_id=train_pats_list[i], num_channels=train_set.pat_num_channels[i], **kwargs).to(gpu_id)
         train_hint_preppers[i] = BSE_Dec_Hint_Prep(pat_id=train_pats_list[i], num_channels=train_set.pat_num_channels[i], **kwargs).to(gpu_id)
+    
     train_heads = (train_enc_heads, train_dec_heads, train_hint_preppers)
+    opts_train = Head_Optimizers(heads=train_heads, wd=head_weight_decay, lr=kwargs['LR_min_heads'])
 
+    # Val
     val_enc_heads = [-1]*len(val_pats_list)
     val_dec_heads = [-1]*len(val_pats_list)
     val_hint_preppers = [-1]*len(val_pats_list)
@@ -188,47 +144,29 @@ def load_train_objs(
         val_enc_heads[i] = BSE_Enc_Head(pat_id=val_pats_list[i], num_channels=val_finetune_set.pat_num_channels[i], **kwargs).to(gpu_id)
         val_dec_heads[i] = BSE_Dec_Head(pat_id=val_pats_list[i], num_channels=val_finetune_set.pat_num_channels[i], **kwargs).to(gpu_id)
         val_hint_preppers[i] = BSE_Dec_Hint_Prep(pat_id=val_pats_list[i], num_channels=val_finetune_set.pat_num_channels[i], **kwargs).to(gpu_id)
+    
     val_heads = (val_enc_heads, val_dec_heads, val_hint_preppers)
+    opts_val = Head_Optimizers(heads=val_heads, wd=head_weight_decay, lr=kwargs['LR_min_heads'])
 
-    # Build the core model
+    # ### VAE CORE ###
     vae_core = BSE_Middle_VAE(gpu_id=gpu_id, **kwargs) 
     vae_core = vae_core.to(gpu_id) # move to GPU here to avoid opt_core problems when loading states
-
-    # Build the optimizers, one for core and individual opts for swappable heads
     opt_core = torch.optim.AdamW(vae_core.parameters(), lr=kwargs['LR_min_core'], weight_decay=core_weight_decay)
-    opts_train = Head_Optimizers(heads=train_heads, wd=head_weight_decay, lr=kwargs['LR_min_heads'])
-    opts_val = Head_Optimizers(heads=val_heads, wd=head_weight_decay, lr=kwargs['LR_min_heads'])
-    
 
     ### Transformer ###
-    
-    # Make the transformer based on Llama3
-    model_args: ModelArgs = ModelArgs(
-        dim=transformer_dim,
-        vae_dim=kwargs['latent_dim'],
-        max_seq_len=max_seq_len,
-        max_batch_size=max_batch_size,
-        n_layers=n_layers,
-        n_heads=n_heads,
-        multiple_of=multiple_of,
-        device=gpu_id
-    )
-    transformer = Transformer(model_args)
+    transformer = Transformer(ModelArgs(**kwargs))
     transformer = transformer.to(gpu_id)
-    # opt = torch.optim.Adam(transformer.parameters(), lr=LR_min)
     transformer_opt = torch.optim.AdamW(transformer.parameters(), lr=transformer_LR, weight_decay=adamW_wd)
     print(f"[GPU{gpu_id}] transformer loaded")
 
-    return train_set, val_finetune_set, val_unseen_set, ind_train_datasets, ind_val_finetune_datasets, ind_val_unseen_datasets, transformer, transformer_opt, vae_core, train_heads, val_heads, opt_core, opts_train, opts_val  #infer_set
-
-
-
+    return train_set, val_finetune_set, val_unseen_set, transformer, transformer_opt, vae_core, train_heads, val_heads, opt_core, opts_train, opts_val  #infer_set
 
 def main(         
     # Ordered variables
     gpu_id: int, 
     world_size: int, 
     config, # aka kwargs
+    
     # Passed by kwargs
     run_name: str,
     timestamp_id: int,
@@ -238,7 +176,10 @@ def main(
     PaCMAP_model_to_infer = [],
     core_state_dict_prev_path = [],
     core_opt_state_dict_prev_path = [],
+    transformer_state_dict_prev_path = [],
+    transformer_opt_state_dict_prev_path = [],
     heads_prev_dir = [],
+    epochs_to_train: int = -1,
     **kwargs):
 
     # Initialize new WandB here aand group GPUs together with DDP
@@ -258,32 +199,30 @@ def main(
     # Initialize DDP 
     ddp_setup(gpu_id, world_size)
 
-    print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, model, opt_core)")
-    train_dataset, val_finetune_dataset, val_unseen_dataset, ind_train_datasets, ind_val_finetune_datasets, ind_val_unseen_datasets, transformer, transformer_opt, vae_core, train_heads, val_heads, opt_core, opts_train, opts_val  = load_train_objs(gpu_id=gpu_id, eon=eon, **kwargs) 
+    print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
+    train_dataset, val_finetune_dataset, val_unseen_dataset, transformer, transformer_opt, vae_core, train_heads, val_heads, opt_core, opts_train, opts_val  = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
-
     # Build dataloaders from datasets
     seq_workers = kwargs['num_dataloader_workers_SEQUENTIAL']
-    train_wdecode_dataloader =  utils_functions.prepare_dataloader(train_dataset, batch_size=wdecode_batch_size, num_workers=seq_workers)
-    train_onlylatent_dataloader = utils_functions.prepare_dataloader(train_dataset, batch_size=onlylatent_batch_size, num_workers=seq_workers, droplast=False)
-    val_finetune_wdecode_dataloader =  utils_functions.prepare_dataloader(val_finetune_dataset, batch_size=wdecode_batch_size, num_workers=seq_workers) 
-    val_finetune_onlylatent_dataloader =  utils_functions.prepare_dataloader(val_finetune_dataset, batch_size=onlylatent_batch_size, num_workers=seq_workers, droplast=False) 
-    val_unseen_wdecode_dataloader =  utils_functions.prepare_dataloader(val_unseen_dataset, batch_size=wdecode_batch_size, num_workers=seq_workers) 
-    val_unseen_onlylatent_dataloader =  utils_functions.prepare_dataloader(val_unseen_dataset, batch_size=onlylatent_batch_size, num_workers=seq_workers, droplast=False) 
-    ind_train_wdecode_dataloaders = [utils_functions.prepare_dataloader(ind_train_datasets[i], batch_size=wdecode_batch_size, num_workers=seq_workers) for i in range(len(ind_train_datasets))] 
-    ind_train_onlylatent_dataloaders = [utils_functions.prepare_dataloader(ind_train_datasets[i], batch_size=onlylatent_batch_size, num_workers=seq_workers, droplast=False) for i in range(len(ind_train_datasets))] 
-    ind_val_finetune_wdecode_dataloaders = [utils_functions.prepare_dataloader(ind_val_finetune_datasets[i], batch_size=wdecode_batch_size, num_workers=seq_workers) for i in range(len(ind_val_finetune_datasets))] 
-    ind_val_finetune_onlylatent_dataloaders = [utils_functions.prepare_dataloader(ind_val_finetune_datasets[i], batch_size=onlylatent_batch_size, num_workers=seq_workers, droplast=False) for i in range(len(ind_val_finetune_datasets))] 
-    ind_val_unseen_wdecode_dataloaders = [utils_functions.prepare_dataloader(ind_val_unseen_datasets[i], batch_size=wdecode_batch_size, num_workers=seq_workers) for i in range(len(ind_val_unseen_datasets))] 
-    ind_val_unseen_onlylatent_dataloaders = [utils_functions.prepare_dataloader(ind_val_unseen_datasets[i], batch_size=onlylatent_batch_size, num_workers=seq_workers, droplast=False) for i in range(len(ind_val_unseen_datasets))] 
+    train_dataloader =  utils_functions.prepare_dataloader(train_dataset, batch_size=wdecode_batch_size, num_workers=seq_workers)
+    valfinetune_dataloader = utils_functions.prepare_dataloader(val_finetune_dataset, batch_size=wdecode_batch_size, num_workers=seq_workers) 
+    valunseen_dataloader =  utils_functions.prepare_dataloader(val_unseen_dataset, batch_size=wdecode_batch_size, num_workers=seq_workers) 
 
     # Load the model/opt/sch states if not first epoch & if in training mode
     if (start_epoch > 0):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % gpu_id}
+
+        # Load in VAE Core weights and opts
         core_state_dict_prev = torch.load(core_state_dict_prev_path, map_location=map_location)
         vae_core.load_state_dict(core_state_dict_prev)
         core_opt_state_dict_prev = torch.load(core_opt_state_dict_prev_path, map_location=map_location)
         opt_core.load_state_dict(core_opt_state_dict_prev)
+
+        # Load in Transformer model weights and opt
+        transformer_state_dict_prev = torch.load(transformer_state_dict_prev_path, map_location=map_location)
+        transformer.load_state_dict(transformer_state_dict_prev)
+        transformer_opt_state_dict_prev = torch.load(transformer_opt_state_dict_prev_path, map_location=map_location)
+        transformer_opt.load_state_dict(transformer_opt_state_dict_prev)
 
         # Load in train heads and opts, val heads are never pretrained by design
         enc_head_weight_files = glob.glob(heads_prev_dir + "/*enc_head.pt")
@@ -344,20 +283,10 @@ def main(
         vae_core=vae_core, 
         train_heads=train_heads,
         val_heads=val_heads,
-        eon=eon,
         start_epoch=start_epoch,
-        train_wdecode_dataloader=train_wdecode_dataloader, 
-        train_onlylatent_dataloader=train_onlylatent_dataloader,
-        val_finetune_wdecode_dataloader=val_finetune_wdecode_dataloader,
-        val_finetune_onlylatent_dataloader=val_finetune_onlylatent_dataloader,
-        val_unseen_wdecode_dataloader=val_unseen_wdecode_dataloader,
-        val_unseen_onlylatent_dataloader=val_unseen_onlylatent_dataloader,
-        ind_train_wdecode_dataloaders = ind_train_wdecode_dataloaders,
-        ind_train_onlylatent_dataloaders = ind_train_onlylatent_dataloaders,
-        ind_val_finetune_wdecode_dataloaders = ind_val_finetune_wdecode_dataloaders,
-        ind_val_finetune_onlylatent_dataloaders = ind_val_finetune_onlylatent_dataloaders,
-        ind_val_unseen_wdecode_dataloaders = ind_val_unseen_wdecode_dataloaders,
-        ind_val_unseen_onlylatent_dataloaders = ind_val_unseen_onlylatent_dataloaders,
+        train_dataloader=train_dataloader, 
+        valfinetune_dataloader=valfinetune_dataloader,
+        valunseen_dataloader=valunseen_dataloader,
         opt_core=opt_core, 
         opts_train=opts_train,
         opts_val=opts_val,
@@ -367,14 +296,317 @@ def main(
         wandb_run=wandb_run,
         **kwargs)
     
-    # Run training & val
-    if not kwargs['run_inference_now']: trainer._train_and_val(**kwargs)
+    # Run through all epochs
+    for epoch in range(start_epoch, epochs_to_train):
+        trainer.epoch = epoch
+        
+        # QUICK RECON
+        if (trainer.epoch + 1) % trainer.quick_recon_val_every == 0:
+            trainer._quick_recon(**kwargs)
 
-    print(f"[GPU{gpu_id}]: End of main loop, killing process")
+        # PACMAP
+        if (trainer.epoch + 1) % trainer.pacmap_every == 0:
+            trainer._pacmap(**kwargs)
+            # Checkpoint after PACMAP, do not save finetuned model weights
+            print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
+            barrier()
+            if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=False, savePaCMAP=True, **kwargs)
+        
+        # TRAIN
+        trainer._train_epoch(epoch, **kwargs)
+        # Checkpoint after every train epoch, optionally delete old checkpoints
+        print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
+        barrier()
+        if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=True, savePaCMAP=False, **kwargs)
+
+    # Kill the process after training loop completes
+    print(f"[GPU{gpu_id}]: End of train loop, killing subprocess")
     wandb.finish()
     destroy_process_group() 
 
+class Trainer:
+    def __init__(
+        self,
+        world_size: int,
+        gpu_id: int,
+        transformer: torch.nn.Module,
+        transformer_opt: torch.optim.Optimizer,
+        vae_core: torch.nn.Module,
+        train_heads: tuple,
+        val_heads: tuple,
+        start_epoch: int,
+        train_dataloader: DataLoader,
+        valfinetune_dataloader: DataLoader,
+        valunseen_dataloader: DataLoader,
+        opt_core: torch.optim.Optimizer,
+        opts_train,
+        opts_val,
+        wdecode_batch_size: int,
+        onlylatent_batch_size: int,
+        wandb_run,
+        model_dir: str,
+        quick_recon_val_every: int,
+        finetune_quickrecon: bool,
+        pacmap_every: int,
+        finetune_pacmap: bool,
+        pic_save_dir: str,
+        mini_batch_window_size: int, 
+        mini_batch_stride: int,
+        latent_dim: int,
+        decode_samples: int,
+        precode_samples: int,
+        feedforward_hint_samples: int,
+        num_samples: int,
+        transformer_seq_length: int,
+        FS: int,
+        intrapatient_dataset_style: list,
+        atd_file: str,
+        PaCMAP_model_to_infer,
+        pre_PaCMAP_window_sec: float,
+        pre_PaCMAP_stride_sec: float,
+        recent_display_iters: int,
+        **kwargs
+    ) -> None:
+        self.world_size = world_size
+        self.gpu_id = gpu_id
+        self.transformer = transformer
+        self.transformer_opt = transformer_opt
+        self.vae_core = vae_core
+        self.train_heads = train_heads
+        self.val_heads = val_heads
+        self.start_epoch = start_epoch
+        self.train_dataloader = train_dataloader
+        self.valfinetune_dataloader = valfinetune_dataloader
+        self.valunseen_dataloader = valunseen_dataloader
+        self.opt_core = opt_core
+        self.opts_train = opts_train
+        self.opts_val = opts_val
+        self.wdecode_batch_size = wdecode_batch_size
+        self.onlylatent_batch_size = onlylatent_batch_size
+        self.model_dir = model_dir
+        self.quick_recon_val_every = quick_recon_val_every
+        self.finetune_quickrecon = finetune_quickrecon
+        self.pacmap_every = pacmap_every
+        self.finetune_pacmap = finetune_pacmap
+        self.pic_save_dir = pic_save_dir
+        self.mini_batch_window_size = mini_batch_window_size
+        self.mini_batch_stride = mini_batch_stride
+        self.latent_dim = latent_dim
+        self.decode_samples = decode_samples
+        self.precode_samples = precode_samples
+        self.feedforward_hint_samples = feedforward_hint_samples
+        self.num_samples = num_samples
+        self.transformer_seq_length = transformer_seq_length
+        self.FS = FS
+        self.intrapatient_dataset_style = intrapatient_dataset_style
+        self.curr_LR_core = -1
+        self.curr_LR_heads = -1
+        self.atd_file = atd_file
+        self.PaCMAP_model_to_infer = PaCMAP_model_to_infer
+        self.pre_PaCMAP_window_sec = pre_PaCMAP_window_sec
+        self.pre_PaCMAP_stride_sec = pre_PaCMAP_stride_sec
+        self.recent_display_iters = recent_display_iters
+        self.wandb_run = wandb_run
+        self.kwargs = kwargs
 
+        self.KL_multiplier = -1 # dummy variable, only needed when debugging and training is skipped
+
+        # Set up Core/Heads & transformer with DDP
+        self.vae_core = DDP(vae_core, device_ids=[gpu_id])   # find_unused_parameters=True
+        self.transformer = DDP(transformer, device_ids=[gpu_id])   # find_unused_parameters=True
+        
+        self.train_heads = [[-1]*len(train_heads[i]) for i in range(len(train_heads))]
+        for i in range(0, len(train_heads)):
+            for j in range(len(train_heads[i])):
+                self.train_heads[i][j] = DDP(train_heads[i][j], device_ids=[gpu_id])
+
+        self.val_heads = [[-1]*len(val_heads[i]) for i in range(len(val_heads))]
+        for i in range(0, len(val_heads)):
+            for j in range(len(val_heads[i])):
+                self.val_heads[i][j] = DDP(val_heads[i][j], device_ids=[gpu_id])
+
+        self.num_train_pats = len(train_heads[0]) 
+        self.train_pat_ids = [self.train_heads[0][i].module.pat_id for i in range(len(self.train_heads[0]))]
+
+        self.num_val_pats = len(val_heads[0])
+        self.val_pat_ids = [self.val_heads[0][i].module.pat_id for i in range(len(self.val_heads[0]))]
+                
+        # Watch with WandB
+        # TODO: watch heads as well?
+        wandb.watch(self.vae_core)
+        wandb.watch(self.transformer)
+        
+    def _save_checkpoint(self, epoch, saveModels, savePaCMAP, delete_old_checkpoints, head_names, **kwargs):
+            
+            print("CHECKPOINT SAVE")
+
+            # Create new directory for this epoch
+            base_checkpoint_dir = self.model_dir + f"/checkpoints"
+            check_epoch_dir = base_checkpoint_dir + f"/Epoch_{str(epoch)}"
+
+            # MODEL SAVES
+            if saveModels:
+
+                print("Saving core/head model weights")
+
+                ### CORE CHECKPOINT 
+                check_core_dir = check_epoch_dir + "/core_checkpoints"
+                if not os.path.exists(check_core_dir): os.makedirs(check_core_dir)
+
+                # Save core model
+                ckp = self.vae_core.module.state_dict()
+                check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vaecore.pt"
+                torch.save(ckp, check_path)
+                
+                # Save opt_core
+                opt_ckp = self.opt_core.state_dict()
+                opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vaecore_opt.pt"
+                torch.save(opt_ckp, opt_path)
+
+                ### HEADS CHECKPOINT
+                check_heads_dir = check_epoch_dir + "/heads_checkpoints"
+                if not os.path.exists(check_heads_dir): os.makedirs(check_heads_dir)
+
+                # Save train heads model
+                if len(head_names) != len(self.train_heads): raise Exception(f"Got {len(self.train_heads)} from self.train_heads, but expected {len(head_names)} based on provided head names in config.yml file")
+                for head_style in range(0, len(self.train_heads)):
+                    for pat_idx in range(0, len(self.train_heads[head_style])):
+                        ckp = self.train_heads[head_style][pat_idx].module.state_dict()
+                        check_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_{head_names[head_style]}_head.pt"
+                        torch.save(ckp, check_path)
+
+                # Opts are indexed by head name, thus must iterate #TODO not hardcoded
+                for pat_idx in range(0, len(self.train_heads[0])):
+                    opt_ckp = self.opts_train.enc_head_opts[pat_idx].state_dict()
+                    opt_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_enc_head_opt.pt"
+                    torch.save(opt_ckp, opt_path)
+
+                    opt_ckp = self.opts_train.dec_head_opts[pat_idx].state_dict()
+                    opt_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_dec_head_opt.pt"
+                    torch.save(opt_ckp, opt_path)
+
+                    opt_ckp = self.opts_train.hint_preppers_opts[pat_idx].state_dict()
+                    opt_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_hinter_head_opt.pt"
+                    torch.save(opt_ckp, opt_path)
+
+
+                ### Transformer ###
+
+                print("Saving Transformer model weights")
+
+                # Save transformer model
+                check_transformer_dir = check_epoch_dir + "/transformer_checkpoints"
+                if not os.path.exists(check_transformer_dir): os.makedirs(check_transformer_dir)
+                ckp = self.transformer.module.state_dict()
+                check_path = check_transformer_dir + "/checkpoint_epoch" +str(epoch) + "_transformer.pt"
+                torch.save(ckp, check_path)
+                
+                # Save transformer optimizer
+                opt_ckp = self.transformer_opt.state_dict()
+                opt_path = check_transformer_dir + "/checkpoint_epoch" +str(epoch) + "_transformer_opt.pt"
+                torch.save(opt_ckp, opt_path)
+
+                print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
+
+
+            ### PACMAP & HDBSCAN
+            if savePaCMAP:
+
+                print("Saving PaCMAP models")
+
+                # Path
+                pacmap_dir = check_epoch_dir + "/pacmap"
+                if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir) 
+
+                # Save the PaCMAP model for use in inference
+                PaCMAP_common_prefix = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_PaCMAP"
+                pacmap.save(self.PaCMAP, PaCMAP_common_prefix)
+
+                PaCMAP_common_prefix_MedDim = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_PaCMAP_MedDim"
+                pacmap.save(self.PaCMAP_MedDim, PaCMAP_common_prefix_MedDim)
+
+                pre_PaCMAP_window_sec_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_pre_PaCMAP_window_sec.pkl"
+                output_obj2 = open(pre_PaCMAP_window_sec_path, 'wb')
+                pickle.dump(self.pre_PaCMAP_window_sec, output_obj2)
+                output_obj2.close()
+
+                pre_PaCMAP_stride_sec_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_pre_PaCMAP_stride_sec.pkl"
+                output_obj3 = open(pre_PaCMAP_stride_sec_path, 'wb')
+                pickle.dump(self.pre_PaCMAP_stride_sec, output_obj3)
+                output_obj3.close()
+                print("Saved PaCMAP 2-dim and MedDim models")
+
+                hdbscan_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_hdbscan.pkl"
+                output_obj4 = open(hdbscan_path, 'wb')
+                pickle.dump(self.HDBSCAN, output_obj4)
+                output_obj4.close()
+                print("Saved HDBSCAN model")
+
+                pca_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_PCA.pkl"
+                output_obj5 = open(pca_path, 'wb')
+                pickle.dump(self.pca, output_obj5)
+                output_obj5.close()
+                print("Saved PCA model")
+
+                reorder_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_cluster_reorder_indexes.pkl"
+                output_obj6 = open(reorder_path, 'wb')
+                pickle.dump(self.cluster_reorder_indexes, output_obj6)
+                output_obj6.close()
+                print("Saved cluster reorder indexes")
+
+                xylim_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_xy_lims.pkl"
+                output_obj7 = open(xylim_path, 'wb')
+                pickle.dump(self.xy_lims, output_obj7)
+                output_obj7.close()
+                print("Saved xy_lims for PaCMAP")
+
+                xylims_RAWDIMS_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_xy_lims_RAW_DIMS.pkl"
+                output_obj8 = open(xylims_RAWDIMS_path, 'wb')
+                pickle.dump(self.xy_lims_RAW_DIMS, output_obj8)
+                output_obj8.close()
+                print("Saved xy_lims RAW DIMS")
+
+                xylims_PCA_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_xy_lims_PCA.pkl"
+                output_obj9 = open(xylims_PCA_path, 'wb')
+                pickle.dump(self.xy_lims_PCA, output_obj9)
+                output_obj9.close()
+                print("Saved xy_lims PCA")
+
+                infoscore_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_info_score_idxs.pkl"
+                output_obj10 = open(infoscore_path, 'wb')
+                pickle.dump(self.info_score_idxs, output_obj10)
+                output_obj10.close()
+                print("Saved info score indexes for raw dims")
+
+            if delete_old_checkpoints:
+                utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch)
+                print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
+
+    def _quick_recon(self, **kwargs):
+
+        # Train Pats pre-valfinetune
+
+        if self.finetune_quickrecon:
+             raise Exception("TODO")
+
+            # Val Finetune
+
+            # Val Unseen
+
+            # Train Pats post-valfinetune
+
+        raise Exception("TODO")
+
+    def _pacmap(self, **kwargs):
+
+        if self.finetune_pacmap:
+            raise Exception("TODO")
+
+        
+        raise Exception("TODO")
+
+    def _train_epoch(self, epoch, **kwargs):
+        print(f"TODO: epoch: {epoch}")
 
 if __name__ == "__main__":
 

@@ -28,7 +28,6 @@ class SEEG_Tornado_Dataset(Dataset):
             intrapatient_dataset_style, 
             hour_dataset_range,
             dataset_pic_dir, 
-            eon,
             num_samples,
             mini_batch_window_size,
             decode_samples,
@@ -84,8 +83,7 @@ class SEEG_Tornado_Dataset(Dataset):
                 data_dir = f"{pat_dirs[i]}{data_dir_subfolder}", 
                 intrapatient_dataset_style = intrapatient_dataset_style, 
                 hour_dataset_range = hour_dataset_range,
-                dataset_pic_dir = dataset_pic_dir,
-                eon = eon)
+                dataset_pic_dir = dataset_pic_dir)
 
     def get_script_filename(self):
         return __file__
