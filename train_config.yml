@@ -48,7 +48,7 @@ num_rand_recon_plots: 4
 epochs_to_train: 999999 
 
 realtime_latent_printing: True
-realtime_printing_interval: 50
+realtime_printing_interval: 100
 num_realtime_dims: 5
 
 # Beta VAE controls

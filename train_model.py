@@ -863,6 +863,9 @@ class Trainer:
 
                         # Realtime latent visualizations
                         if realtime_latent_printing & ((iter_curr + 1) % realtime_printing_interval == 0):
+                            # # Regenerate random GPU idx each call
+                            # np.random.seed(seed=None)
+                            # rand_gpu = int(random.uniform(0, torch.cuda.device_count()))
                             if self.gpu_id == 0:
                                 print("Realtime Latent Printing Enabled (SLOWS TRAINING TREMENDOUSLY)")
                                 utils_functions.print_latent_realtime(

@@ -482,7 +482,6 @@ def flatten(list_of_lists):
 # PLOTTING
 
 def print_latent_realtime(target_emb, predicted_emb, savedir, epoch, iter_curr, pat_id, num_realtime_dims, **kwargs):
-    print("Need to code up")
 
     dims_to_plot = np.arange(0,num_realtime_dims)
 
@@ -507,8 +506,8 @@ def print_latent_realtime(target_emb, predicted_emb, savedir, epoch, iter_curr, 
 
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
     if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-    savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_{pat_id}_epoch{epoch}_iter{iter_curr}.jpg"
-    savename_svg = f"{savedir}/SVGs/RealtimeLatent_{pat_id}_epoch{epoch}_iter{iter_curr}.svg"
+    savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}_.jpg"
+    savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}.svg"
     pl.savefig(savename_jpg)
     pl.savefig(savename_svg)
     pl.close(fig)    
