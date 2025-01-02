@@ -284,6 +284,7 @@ class VAE_Dec(nn.Module):
         latent_dim, 
         decode_samples, 
         hidden_encode_dims,
+        hidden_decode_dims,
         dropout_dec, 
         dec_conv_dilator_depth,
         dec_conv_flat_depth,
@@ -297,7 +298,7 @@ class VAE_Dec(nn.Module):
         super(VAE_Dec, self).__init__()
         
         self.gpu_id = gpu_id
-        self.hidden_encode_dims = hidden_encode_dims
+        self.hidden_decode_dims = hidden_decode_dims
 
         self.decoder_drop_val = dropout_dec
         print(f"Dropout Decoder: {self.decoder_drop_val}")
@@ -312,15 +313,16 @@ class VAE_Dec(nn.Module):
         self.latent_dim = latent_dim
         self.latent_hint_size = int(self.latent_dim/hint_size_factor)
 
-        self.dec_hidden_1_size = self.hidden_encode_dims
-        self.dec_hidden_2_size = self.hidden_encode_dims * 2
+        self.dec_hidden_1_size = self.hidden_decode_dims
+        self.dec_hidden_2_size = self.hidden_decode_dims * 2
         self.length_dec_bottom = 1
         self.num_cnn_chans_start_dec = int(self.dec_hidden_2_size / len(self.transconv_kernel_sizes) / self.length_dec_bottom)
 
         self.latent_to_top = nn.Sequential(
             nn.Linear(self.latent_dim + self.latent_hint_size, self.dec_hidden_1_size),
+            nn.Linear(self.dec_hidden_1_size, self.dec_hidden_2_size),
+            nn.Linear(self.dec_hidden_2_size, self.dec_hidden_2_size),
             nn.LeakyReLU(0.2),
-            nn.Linear(self.dec_hidden_1_size, self.dec_hidden_2_size)
         )
 
         self.dec_cnn_dilator = Dec_CNN_TimeDilator(

@@ -735,7 +735,7 @@ class Trainer:
 
             # Get miniepoch start indexes. Same random indexes will be used for all patients' files.
             start_idxs = self._train_start_idxs(random_bool=random_bool, subsample_file_factor=subsample_file_factor_curr)
-            total_train_iters = int(len(dataloader_curr) * len(start_idxs) * num_pats_curr)
+            total_train_iters = int(len(dataloader_curr) * len(start_idxs) * num_pats_curr) # 
             iter_curr = 0 # Iteration across all sequential trian files
 
             for data_tensor_by_pat, file_name_by_pat in dataloader_curr: # Paralell random file pull accross patients
@@ -755,6 +755,11 @@ class Trainer:
                     recon_loss = 0
                     transformer_loss = 0
                     self._zero_all_grads()
+
+                    # # Save mean/logvar across all patients' transformer sequences so we can calculate KLD across patient cohort instead on individual transformer sequences
+                    # # [pat, batch, transformer seq idx, vals]
+                    # mean_allpats = torch.zeros(num_pats_curr, batchsize, self.transformer_seq_length, self.latent_dim).to(self.gpu_id)
+                    # logvar_allpats = torch.zeros(num_pats_curr, batchsize, self.transformer_seq_length, self.latent_dim).to(self.gpu_id)
 
                     # Iterate through all patients and accumulate losses before stepping optimizers
                     for pat_idx in np.arange(0,num_pats_curr): 
@@ -790,8 +795,16 @@ class Trainer:
                         mean_batched, logvar_batched, latent_batched, = self.vae_enc(x_pre_posthead)
 
                         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
-                        latent = torch.split(latent_batched, self.wdecode_batch_size, dim=0)
+                        latent = torch.split(latent_batched, batchsize, dim=0)
                         latent_seq = torch.stack(latent, dim=1)
+                        # mean = torch.split(mean_batched, batchsize, dim=0)
+                        # mean_seq = torch.stack(mean, dim=1)                        
+                        # logvar = torch.split(logvar_batched, batchsize, dim=0)
+                        # logvar_seq = torch.stack(logvar, dim=1)
+
+                        # # Store mean/logvar for KLD calc later
+                        # mean_allpats[pat_idx, :, :, :] = mean_seq
+                        # logvar_allpats[pat_idx, :, :, :] = logvar_seq
   
                         ### TRANSFORMER
                         # Run sequence through transformer and get transformer loss
@@ -807,27 +820,38 @@ class Trainer:
                         core_out = self.vae_dec(predicted_embeddings_batched, x_pre_hint_flat_prepped)  
                         x_hat_batched = dec_head(core_out)
 
-                        # LOSSES
-                        transformer_loss = loss_functions.lbm_loss_function(target_embeddings, predicted_embeddings, trasformer_weight=self.transformer_weight)
-                        recon_loss, kld_loss = loss_functions.vae_loss_function(
+                        # # LOSSES: Intra-Patient 
+                        transformer_loss = loss_functions.transformer_loss_function(
+                            target_embeddings,  
+                            predicted_embeddings, 
+                            transformer_weight=self.transformer_weight)
+
+                        recon_loss = loss_functions.recon_loss_function(
                             x=x_decode_batched[1:, :, :], # Shifted by 1 due to predictions having gone through transformer
-                            x_hat=x_hat_batched, 
+                            x_hat=x_hat_batched,
+                            recon_weight=self.recon_weight)
+
+                        kld_loss = loss_functions.kld_loss_function(
                             mean=mean_batched, 
                             logvar=logvar_batched, 
-                            KL_multiplier=self.KL_multiplier,
-                            recon_weight=self.recon_weight,
-                            **kwargs)
-                        
-                        loss = recon_loss + kld_loss + transformer_loss
-                        loss.backward()
+                            KL_multiplier=self.KL_multiplier)
 
+                        # Intrapatient backprop
+                        loss = recon_loss + kld_loss # + transformer_loss                       ################ TRANSFORMER NOT INCLUDED ##############
+                        loss.backward()
+                        
+                        # # Accumlate losses for visualization at optim step level later
+                        # transformer_loss = transformer_loss + transformer_loss_curr
+                        # recon_loss = recon_loss + recon_loss_curr
+                        # kld_loss = kld_loss_curr + kld_loss
+                        
                         # Realtime info as epoch is running
                         if (iter_curr%self.recent_display_iters==0):
                             if val_finetune: state_str = "VAL FINETUNE"
                             else: state_str = "TRAIN"
                             now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
                             if (self.gpu_id == 1):
-                                sys.stdout.write(f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, Iter [BatchSize:{self.wdecode_batch_size}]: " + 
+                                sys.stdout.write(f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, Iter [BatchSize:{batchsize}]: " + 
                                                 str(iter_curr) + "/" + str(total_train_iters) + 
                                                 ", MeanLoss: " + str(round(loss.detach().item(), 2)) + ", [" + 
                                                     "Rec: " + str(round(recon_loss.detach().item(), 2)) + " + " + 
@@ -855,6 +879,7 @@ class Trainer:
                                     train_LR_heads=head_opts_curr.get_lr(),
                                     train_KL_Beta=self.KL_multiplier, 
                                     train_ReconWeight=self.recon_weight,
+                                    train_Transformer_weight=self.transformer_weight,
                                     train_epoch=self.epoch)
                             else:
                                 metrics = dict(
@@ -868,9 +893,13 @@ class Trainer:
                                     val_finetune_LR_transformer=self.transformer_opt.param_groups[0]['lr'],
                                     val_finetune_KL_Beta=self.KL_multiplier, 
                                     val_finetune_ReconWeight=self.recon_weight,
+                                    val_finetune_Transformer_weight=self.transformer_weight,
                                     val_finetune_epoch=self.epoch)
 
                             wandb.log({**metrics, 'Steps': train_step})
+
+                        # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
+                        iter_curr = iter_curr + 1
 
                         # Realtime latent visualizations
                         if realtime_latent_printing & ((iter_curr + 1) % realtime_printing_interval == 0):
@@ -888,8 +917,22 @@ class Trainer:
                                     pat_id = dataset_curr.pat_ids[pat_idx],
                                     **kwargs)
 
-                        # Advance the iteration counter
-                        iter_curr = iter_curr + 1
+                    ### AFTER PATIENT LOOP ###
+
+                    # # LOSSES: Inter-patient, calculate KLD across all patients
+                    # kld_loss = loss_functions.kld_loss_function(
+                    #     mean=mean_allpats.reshape(mean_allpats.shape[0]*mean_allpats.shape[1]*mean_allpats.shape[2], mean_allpats.shape[3]), # Reshape to [pseudobatch, latent dim]
+                    #     logvar=logvar_allpats.reshape(logvar_allpats.shape[0]*logvar_allpats.shape[1]*logvar_allpats.shape[2], logvar_allpats.shape[3]), # Reshape to [pseudobatch, latent dim]
+                    #     KL_multiplier=self.KL_multiplier)
+
+                    # # Normalize transformer and recon loss against patient count
+                    # transformer_loss = transformer_loss / num_pats_curr
+                    # recon_loss = recon_loss / num_pats_curr
+                    # kld_loss = kld_loss / num_pats_curr
+                    
+                    # Combine all loss
+                    # loss = recon_loss + kld_loss + transformer_loss 
+                    # loss.backward()
 
                     # Step optimizers after all patients have been backpropgated
                     self.transformer_opt.step()

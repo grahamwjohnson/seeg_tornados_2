@@ -34,8 +34,8 @@ decode_samples: 8 #64
 precode_samples: 1024
 feedforward_hint_samples: 1 # Numnber of samples on each side of embedded sequence to give to decoder (presumably to give it phase info)
 hint_size_factor: 8 # How much info is allowed to exist for phase when passed forward after latent bottleneck: latent_dim/hint_size_factor --> conc to latent vector for decoder
-common_ENC_cnn_channels: 512 # How many channels at the top of core model on ENCODE SIDE
-common_DEC_cnn_channels: 1024 # How many channels at the top of core model on DECODE SIDE
+common_ENC_cnn_channels: 128 # How many channels at the top of core model on ENCODE SIDE
+common_DEC_cnn_channels: 1024 # calculated based on number of kernels and decision to sequentially group after FC layers or not
 train_subsample_file_factor: 32000 # randomly decreases training passes per file per epoch, Max subsampling is num_samples / (decode_samples * train_seq_minis)
 wdecode_batch_size: 1 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 8 # this is for when loss is not being calculated
@@ -52,10 +52,10 @@ realtime_printing_interval: 250
 num_realtime_dims: 5
 
 # Beta VAE controls
-KL_max: kwargs['KL_max'] = 0.1 # 5e-1 # 5e-4 was used before going multipatient, 5e-3 was used for first long multipat
+KL_max: kwargs['KL_max'] = 1e-3 # 1e-3 
 KL_min: kwargs['KL_min'] = 0
-KL_epochs_AT_max: 99999
-KL_epochs_TO_max: 0
+KL_epochs_AT_max: 5
+KL_epochs_TO_max: 5
 
 # Recon Weight
 recon_weight: 1
@@ -100,16 +100,17 @@ delete_old_checkpoints: True
 # Model settings
 mini_batch_stride: kwargs['mini_batch_stride'] = kwargs['decode_samples'] # For RANDOM dataset this does not matter
 mini_batch_window_size: kwargs['mini_batch_window_size'] = kwargs['precode_samples'] + kwargs['decode_samples']
-enc_conv_depth: 7 
+enc_conv_depth: 4 
 enc_conv_resblock_size: 1
-enc_kernel_sizes: [3,5,7,9] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
+enc_kernel_sizes: [3,9,27,65] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
 dec_conv_dilator_depth: 3
 dec_conv_dilator_resblock_size: 1
-dec_conv_flat_depth: 3
+dec_conv_flat_depth: 1
 dec_conv_flat_resblock_size: 1
-transconv_kernel_sizes: [3,5,7,9] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [2,4,8,16,32,64]
+transconv_kernel_sizes: [3,7] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [2,4,8,16,32,64]
 latent_dim: 512  # 1024
 hidden_encode_dims: 2048
+hidden_decode_dims: 1024
 backprop_sec: kwargs['backprop_sec'] = kwargs['decode_samples'] / kwargs['FS'] # 0.125 # Will backprop after sequential forward pass of this many single epochs worth of data
 dropout_enc: 0.0
 dropout_dec: 0.1 
@@ -168,12 +169,12 @@ pic_types: kwargs['pic_types'] = ['JPEGs','SVGs']
 
 
 # LBM
-transformer_seq_length: 32
+transformer_seq_length: 256
 
 adamW_wd: 0
 
 # Model hardware limits
-max_seq_len: 256
+max_seq_len: 512
 max_batch_size: 16
 
 # Model size
