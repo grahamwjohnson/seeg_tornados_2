@@ -512,6 +512,8 @@ def print_latent_realtime(target_emb, predicted_emb, savedir, epoch, iter_curr, 
         pl.savefig(savename_jpg)
         pl.savefig(savename_svg)
         pl.close(fig)    
+
+        pl.close('all') 
     
 
 def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat_id, num_realtime_channels_recon, **kwargs):
@@ -560,7 +562,9 @@ def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat
     savename_svg = f"{savedir}/SVGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{pat_id}_allbatch.svg"
     pl.savefig(savename_jpg)
     pl.savefig(savename_svg)
-    pl.close(fig)    
+    pl.close(fig)   
+
+    pl.close('all') 
 
 def plot_MeanStd(plot_mean, plot_std, plot_dict, file_name, epoch, savedir, gpu_id, pat_id, iter): # plot_weights
 
@@ -604,6 +608,8 @@ def plot_MeanStd(plot_mean, plot_std, plot_dict, file_name, epoch, savedir, gpu_
     mean_of_plot_std = np.mean(plot_std)
     std_of_plot_std = np.std(plot_std)
     std_zscores = np.mean((plot_std - mean_of_plot_std)/std_of_plot_std , axis=0)
+
+    pl.close('all') 
 
     return mean_zscores, std_zscores
 

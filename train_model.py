@@ -832,7 +832,7 @@ class Trainer:
                             KL_multiplier=self.KL_multiplier)
 
                         # Intrapatient backprop
-                        loss = recon_loss + kld_loss # + transformer_loss                       ################ TRANSFORMER NOT INCLUDED ##############
+                        loss = recon_loss + kld_loss              ################ TRANSFORMER NOT INCLUDED ##############
                         loss.backward()
 
                         # Realtime info as epoch is running
@@ -918,26 +918,8 @@ class Trainer:
                                     pat_id = dataset_curr.pat_ids[pat_idx],
                                     **kwargs
                                 )
-
-                    
-                    
+            
                     ### AFTER PATIENT LOOP ###
-
-                    # # LOSSES: Inter-patient, calculate KLD across all patients
-                    # kld_loss = loss_functions.kld_loss_function(
-                    #     mean=mean_allpats.reshape(mean_allpats.shape[0]*mean_allpats.shape[1]*mean_allpats.shape[2], mean_allpats.shape[3]), # Reshape to [pseudobatch, latent dim]
-                    #     logvar=logvar_allpats.reshape(logvar_allpats.shape[0]*logvar_allpats.shape[1]*logvar_allpats.shape[2], logvar_allpats.shape[3]), # Reshape to [pseudobatch, latent dim]
-                    #     KL_multiplier=self.KL_multiplier)
-
-                    # # Normalize transformer and recon loss against patient count
-                    # transformer_loss = transformer_loss / num_pats_curr
-                    # recon_loss = recon_loss / num_pats_curr
-                    # kld_loss = kld_loss / num_pats_curr
-                    
-                    # Combine all loss
-                    # loss = recon_loss + kld_loss + transformer_loss 
-                    # loss.backward()
-
                     # Step optimizers after all patients have been backpropgated
                     self.transformer_opt.step()
                     self.opt_enc.step()
