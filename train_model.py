@@ -32,11 +32,15 @@ import wandb
 # Local Imports
 from utilities import latent_plotting
 from utilities import utils_functions
-from utilities import loss
+from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
 from models.Transformer import ModelArgs, Transformer
-from models.VAE_core import BSE_Middle_VAE
+from models.VAE_core import VAE_Enc, VAE_Dec
 from models.VAE_heads import BSE_Enc_Head, BSE_Dec_Head, BSE_Dec_Hint_Prep, Head_Optimizers
+
+
+######
+torch.autograd.set_detect_anomaly(True)
 
 
 def ddp_setup(gpu_id, world_size):
@@ -145,18 +149,23 @@ def load_train_objs(
     val_heads = (val_enc_heads, val_dec_heads, val_hint_preppers)
     opts_val = Head_Optimizers(heads=val_heads, wd=head_weight_decay, lr=kwargs['LR_min_heads'])
 
-    # ### VAE CORE ###
-    vae_core = BSE_Middle_VAE(gpu_id=gpu_id, **kwargs) 
-    vae_core = vae_core.to(gpu_id) # move to GPU here to avoid opt_core problems when loading states
-    opt_core = torch.optim.AdamW(vae_core.parameters(), lr=kwargs['LR_min_core'], weight_decay=core_weight_decay)
+    ### VAE Enc ###
+    vae_enc = VAE_Enc(gpu_id=gpu_id, **kwargs) 
+    vae_enc = vae_enc.to(gpu_id) 
+    opt_enc = torch.optim.AdamW(vae_enc.parameters(), lr=kwargs['LR_min_core'], weight_decay=core_weight_decay)
+    
+    ### VAE Dec ###
+    vae_dec = VAE_Dec(gpu_id=gpu_id, **kwargs) 
+    vae_dec = vae_dec.to(gpu_id) 
+    opt_dec = torch.optim.AdamW(vae_dec.parameters(), lr=kwargs['LR_min_core'], weight_decay=core_weight_decay)
 
     ### Transformer ###
-    transformer = Transformer(ModelArgs(**kwargs))
+    transformer = Transformer(ModelArgs(device=gpu_id, **kwargs))
     transformer = transformer.to(gpu_id)
     transformer_opt = torch.optim.AdamW(transformer.parameters(), lr=transformer_LR, weight_decay=adamW_wd)
     print(f"[GPU{gpu_id}] transformer loaded")
 
-    return train_set, val_finetune_set, val_unseen_set, transformer, transformer_opt, vae_core, train_heads, val_heads, opt_core, opts_train, opts_val  #infer_set
+    return train_set, val_finetune_set, val_unseen_set, transformer, transformer_opt, vae_enc, vae_dec, train_heads, val_heads, opt_enc, opt_dec, opts_train, opts_val  #infer_set
 
 def main(         
     # Ordered variables
@@ -172,8 +181,10 @@ def main(
     onlylatent_batch_size: int,
     train_subsample_file_factor: int,
     PaCMAP_model_to_infer = [],
-    core_state_dict_prev_path = [],
-    core_opt_state_dict_prev_path = [],
+    enc_state_dict_prev_path = [],
+    enc_opt_state_dict_prev_path = [],
+    dec_state_dict_prev_path = [],
+    dec_opt_state_dict_prev_path = [],
     transformer_state_dict_prev_path = [],
     transformer_opt_state_dict_prev_path = [],
     heads_prev_dir = [],
@@ -198,17 +209,22 @@ def main(
     ddp_setup(gpu_id, world_size)
 
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
-    train_dataset, valfinetune_dataset, valunseen_dataset, transformer, transformer_opt, vae_core, train_heads, val_heads, opt_core, opts_train, opts_val  = load_train_objs(gpu_id=gpu_id, **kwargs) 
+    train_dataset, valfinetune_dataset, valunseen_dataset, transformer, transformer_opt, vae_enc, vae_dec, train_heads, val_heads, opt_enc, opt_dec, opts_train, opts_val = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
     # Load the model/opt/sch states if not first epoch & if in training mode
     if (start_epoch > 0):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % gpu_id}
 
         # Load in VAE Core weights and opts
-        core_state_dict_prev = torch.load(core_state_dict_prev_path, map_location=map_location)
-        vae_core.load_state_dict(core_state_dict_prev)
-        core_opt_state_dict_prev = torch.load(core_opt_state_dict_prev_path, map_location=map_location)
-        opt_core.load_state_dict(core_opt_state_dict_prev)
+        enc_state_dict_prev = torch.load(enc_state_dict_prev_path, map_location=map_location)
+        vae_enc.load_state_dict(enc_state_dict_prev)
+        enc_opt_state_dict_prev = torch.load(enc_opt_state_dict_prev_path, map_location=map_location)
+        opt_enc.load_state_dict(enc_opt_state_dict_prev)
+
+        dec_state_dict_prev = torch.load(dec_state_dict_prev_path, map_location=map_location)
+        vae_dec.load_state_dict(dec_state_dict_prev)
+        dec_opt_state_dict_prev = torch.load(dec_opt_state_dict_prev_path, map_location=map_location)
+        opt_dec.load_state_dict(dec_opt_state_dict_prev)
 
         # Load in Transformer model weights and opt
         transformer_state_dict_prev = torch.load(transformer_state_dict_prev_path, map_location=map_location)
@@ -272,14 +288,16 @@ def main(
         gpu_id=gpu_id, 
         transformer=transformer,
         transformer_opt=transformer_opt,
-        vae_core=vae_core, 
+        vae_enc=vae_enc, 
+        vae_dec=vae_dec, 
         train_heads=train_heads,
         val_heads=val_heads,
         start_epoch=start_epoch,
         train_dataset=train_dataset, 
         valfinetune_dataset=valfinetune_dataset,
         valunseen_dataset=valunseen_dataset,
-        opt_core=opt_core, 
+        opt_enc=opt_enc,
+        opt_dec=opt_dec, 
         opts_train=opts_train,
         opts_val=opts_val,
         wdecode_batch_size=wdecode_batch_size,
@@ -292,10 +310,6 @@ def main(
     for epoch in range(start_epoch, epochs_to_train):
         trainer.epoch = epoch
         
-        # QUICK RECON
-        if (trainer.epoch + 1) % trainer.quick_recon_val_every == 0:
-            trainer._quick_recon(**kwargs)
-
         # PACMAP
         if (trainer.epoch + 1) % trainer.pacmap_every == 0:
             trainer._pacmap(**kwargs)
@@ -304,7 +318,13 @@ def main(
             barrier()
             if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=False, savePaCMAP=True, **kwargs)
         
+
+        # QUICK RECON
+        if (trainer.epoch + 1) % trainer.quick_recon_val_every == 0:
+            trainer._quick_recon(**kwargs)
+
         # TRAIN
+        trainer._set_to_train()
         trainer._run_epoch(
                 dataset_curr = trainer.train_dataset, 
                 batchsize=trainer.wdecode_batch_size,
@@ -312,10 +332,12 @@ def main(
                 head_opts_curr = trainer.opts_train,
                 random_bool = True, # will subsample and randomize
                 subsample_file_factor_curr = train_subsample_file_factor, # only valid if 'random_bool' is True
-                only_latent = False,
-                save_latents = False,
-                all_files_bool = False, # this will run every file for every patient instead of subsampling
+                only_latent = False, # Do not run decoder or transformer
+                save_latents = False, # will save the latents to tmp_directory
+                all_files_bool = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+                val_finetune = False,
                 **kwargs)
+        
         # Checkpoint after every train epoch, optionally delete old checkpoints
         print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
         barrier()
@@ -333,14 +355,16 @@ class Trainer:
         gpu_id: int,
         transformer: torch.nn.Module,
         transformer_opt: torch.optim.Optimizer,
-        vae_core: torch.nn.Module,
+        vae_enc: torch.nn.Module,
+        vae_dec: torch.nn.Module,
         train_heads: tuple,
         val_heads: tuple,
         start_epoch: int,
         train_dataset: SEEG_Tornado_Dataset,
         valfinetune_dataset: SEEG_Tornado_Dataset,
         valunseen_dataset: SEEG_Tornado_Dataset,
-        opt_core: torch.optim.Optimizer,
+        opt_enc: torch.optim.Optimizer,
+        opt_dec: torch.optim.Optimizer,
         opts_train,
         opts_val,
         wdecode_batch_size: int,
@@ -373,14 +397,16 @@ class Trainer:
         self.gpu_id = gpu_id
         self.transformer = transformer
         self.transformer_opt = transformer_opt
-        self.vae_core = vae_core
+        self.vae_enc = vae_enc
+        self.vae_dec = vae_dec
         self.train_heads = train_heads
         self.val_heads = val_heads
         self.start_epoch = start_epoch
         self.train_dataset = train_dataset
         self.valfinetune_dataset = valfinetune_dataset
         self.valunseen_dataset = valunseen_dataset
-        self.opt_core = opt_core
+        self.opt_enc = opt_enc
+        self.opt_dec = opt_dec
         self.opts_train = opts_train
         self.opts_val = opts_val
         self.wdecode_batch_size = wdecode_batch_size
@@ -414,7 +440,8 @@ class Trainer:
         self.KL_multiplier = -1 # dummy variable, only needed when debugging and training is skipped
 
         # Set up Core/Heads & transformer with DDP
-        self.vae_core = DDP(vae_core, device_ids=[gpu_id])   # find_unused_parameters=True
+        self.vae_enc = DDP(vae_enc, device_ids=[gpu_id])   # find_unused_parameters=True
+        self.vae_dec = DDP(vae_dec, device_ids=[gpu_id])   # find_unused_parameters=True
         self.transformer = DDP(transformer, device_ids=[gpu_id])   # find_unused_parameters=True
         
         self.train_heads = [[-1]*len(train_heads[i]) for i in range(len(train_heads))]
@@ -435,9 +462,41 @@ class Trainer:
                 
         # Watch with WandB
         # TODO: watch heads as well?
-        wandb.watch(self.vae_core)
+        wandb.watch(self.vae_enc)
+        wandb.watch(self.vae_dec)
         wandb.watch(self.transformer)
         
+    def _set_to_train(self):
+        self.vae_enc.train()
+        self.vae_dec.train()
+        self.transformer.train()
+        self._set_heads_to_train(self.train_heads)
+        self._set_heads_to_train(self.val_heads)
+
+    def _set_to_eval(self):
+        self.vae_enc.eval()
+        self.vae_dec.eval()
+        self.transformer.eval()
+        self._set_heads_to_eval(self.train_heads)
+        self._set_heads_to_eval(self.val_heads)
+
+    def _set_heads_to_train(self, head_tuple):
+        for i in range(0, len(head_tuple)):
+            for j in range(0, len(head_tuple[i])):
+                head_tuple[i][j].train()
+                           
+    def _set_heads_to_eval(self, head_tuple):
+        for i in range(0, len(head_tuple)):
+            for j in range(0, len(head_tuple[i])):
+                head_tuple[i][j].eval()
+
+    def _zero_all_grads(self):
+        self.opt_enc.zero_grad()
+        self.opt_dec.zero_grad()
+        self.transformer_opt.zero_grad()
+        self.opts_train.zero_grad()
+        self.opts_val.zero_grad()
+
     def _save_checkpoint(self, epoch, saveModels, savePaCMAP, delete_old_checkpoints, head_names, **kwargs):
             
             print("CHECKPOINT SAVE")
@@ -456,13 +515,21 @@ class Trainer:
                 if not os.path.exists(check_core_dir): os.makedirs(check_core_dir)
 
                 # Save core model
-                ckp = self.vae_core.module.state_dict()
-                check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vaecore.pt"
+                ckp = self.vae_enc.module.state_dict()
+                check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_enc.pt"
                 torch.save(ckp, check_path)
                 
-                # Save opt_core
-                opt_ckp = self.opt_core.state_dict()
-                opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vaecore_opt.pt"
+                ckp = self.vae_dec.module.state_dict()
+                check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_dec.pt"
+                torch.save(ckp, check_path)
+
+                # Save opt core
+                opt_ckp = self.opt_enc.state_dict()
+                opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_enc_opt.pt"
+                torch.save(opt_ckp, opt_path)
+
+                opt_ckp = self.opt_dec.state_dict()
+                opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_dec_opt.pt"
                 torch.save(opt_ckp, opt_path)
 
                 ### HEADS CHECKPOINT
@@ -632,158 +699,176 @@ class Trainer:
         only_latent,
         save_latents, 
         all_files_bool,
+        num_dataloader_workers_SEQUENTIAL,
+        val_finetune,
         **kwargs):
 
         print(f"Past/Decode Samples: {self.precode_samples}/{self.decode_samples}")
 
-        # Build the dataloader
-        # If wanting all files from every patiet, need to run dataloaders seperately
-        if all_files_bool: dataset_curr.set_single_pat_seq(True)
-        else: dataset_curr.set_single_pat_seq(False)
-
-        # Build dataloader from dataset
-        seq_workers = kwargs['num_dataloader_workers_SEQUENTIAL']
-        dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=seq_workers)
+        ### ALL FILES ### 
+        # If wanting all files from every patiet, need to run patients serially
+        if all_files_bool: 
+            # Go through every subject 
+            for pat_idx in range(0,len(dataset_curr.pat_ids)):
+                dataset_curr.set_pat_curr(pat_idx)
+                dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
+                raise Exception("not coded up")
 
         
-        
-        
-        
-        
-        
-        
-        
-        num_pats_curr = dataloader_curr.dataset.get_pat_count()
+        ### SUBSET OF FILES ###
+        # Can run the patients in parallel
+        else: 
+            dataset_curr.set_pat_curr(-1) # -1 enables all pat mode
 
-        # Number of iterations per file
-        self.num_windows = int((self.num_samples - self.mini_batch_window_size)/self.decode_samples) - 2
+            # Build dataloader from dataset
+            dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
+            num_pats_curr = dataloader_curr.dataset.get_pat_count()
+            
+            # Number of iterations per file
+            self.num_windows = int((self.num_samples - self.transformer_seq_length * self.decode_samples - self.mini_batch_window_size)/self.decode_samples) - 2
 
-        # Get miniepoch start indexes. Same random indexes will be used for all patients' files.
-        start_idxs = self._train_start_idxs(random_bool=random_bool, subsample_file_factor=subsample_file_factor_curr)
-        total_train_iters = int(len(dataloader_curr) * len(start_idxs) * num_pats_curr)
-        iter = 0 # Iteration across all sequential trian files
+            # Get miniepoch start indexes. Same random indexes will be used for all patients' files.
+            start_idxs = self._train_start_idxs(random_bool=random_bool, subsample_file_factor=subsample_file_factor_curr)
+            total_train_iters = int(len(dataloader_curr) * len(start_idxs) * num_pats_curr)
+            iter = 0 # Iteration across all sequential trian files
 
-        for data_tensor_by_pat, file_name_by_pat in dataloader_curr:
-            # print("Iter: " + str(iter))
-            # print(f"[GPU ID: {self.gpu_id}]: DataTensor Length: " + str(len(data_tensor_by_pat)))
-
-            for start_idx in start_idxs:
-               
-                for pat_idx in np.arange(0,num_pats_curr):
-
-                    data_tensor = data_tensor_by_pat[pat_idx]
-
-                    # Reset the BSE vars and put on GPU
-                    x = torch.zeros(self.transformer_seq_length, data_tensor.shape[0], data_tensor.shape[1], self.mini_batch_window_size).to(self.gpu_id)
-                    x_decode = torch.zeros(self.transformer_seq_length, data_tensor.shape[0], data_tensor.shape[1], self.decode_samples).to(self.gpu_id)
-
-                    # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
-                    for embedding_idx in range(0, self.transformer_seq_length):
-
-                        # Pull out data for this window
-                        end_idx = start_idx + self.decode_samples * embedding_idx + self.mini_batch_window_size 
-                        x[embedding_idx, :, :, :] = data_tensor[:, :, end_idx-self.mini_batch_window_size : end_idx]
-                        x_decode[embedding_idx, :, :, :] = x[embedding_idx, :, :, :] [:, :, self.precode_samples:self.precode_samples + self.decode_samples]
-
-                    # Stack the vars into batch dimension
-                    x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
-                    x_decode_batched = x_decode.reshape([x_decode.shape[0]*x_decode.shape[1], x_decode.shape[2], x_decode.shape[3]])
+            for data_tensor_by_pat, file_name_by_pat in dataloader_curr: # Paralell random file pull accross patients
+                for start_idx in start_idxs: # Same start_idx for all patients (has no biological meaning)
 
                     # Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
                     self.KL_multiplier, self.curr_LR_core, self.curr_LR_heads = utils_functions.BSE_KL_LR_schedule(
-                        eon_wide_epoch=self.eon_wide_epoch, iter_curr=iter, iters_per_epoch=int(total_train_iters), **self.kwargs)
-
-                    # Manually update optimizer with LR
-                    if not val_finetune: 
-                        self.opt_core.param_groups[0]['lr'] = self.curr_LR_core
-                        head_opts_curr.set_all_lr(self.curr_LR_heads)
-
-                    # Forward pass in stacked batch through BSE
-                    x_hat_batched, mean_batched, logvar_batched, latent_batched, = self._forward_BSE(
-                        x_pre = x_batched[:, :, 0:self.precode_samples],
-                        x_post = x_batched[:, :, -self.postcode_samples:],
-                        enc_head=heads_curr[0][pat_idx],
-                        dec_head=heads_curr[1][pat_idx],
-                        hint_prepper=heads_curr[2][pat_idx],
-                        train_mode=True,
-                        only_latent=False)
-
-                    # BSE LOSS
-                    # Loss, Backward Pass, Update Core and Individual Subject's Head Optimizers
-                    bse_loss, recon_loss, kld_loss = loss_functions.vae_loss_function(
-                        x=x_decode_batched, 
-                        x_hat=x_hat_batched, 
-                        mean=mean_batched, 
-                        logvar=logvar_batched, 
-                        KL_multiplier=self.KL_multiplier,
-                        **kwargs)
-
-                    # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
-                    latent = torch.split(latent_batched, self.wdecode_batch_size, dim=0)
-                    latent_seq = torch.stack(latent, dim=1)
-
-                    # Run sequence through transformer and get transformer loss
-                    transformer_loss = self._forward_transformer(latent_seq=latent_seq, train_bool=True)
+                        epoch=self.epoch, iter_curr=iter, iters_per_epoch=int(total_train_iters), **self.kwargs)
                     
-                    # Backpropogate and step optimizers
-                    loss = bse_loss + transformer_loss
-                    loss.backward()
+                    # Update Core and Head LR
+                    self.opt_enc.param_groups[0]['lr'] = self.curr_LR_core
+                    self.opt_dec.param_groups[0]['lr'] = self.curr_LR_core
+                    head_opts_curr.set_all_lr(self.curr_LR_heads)
 
-                    # Step optimizers
+                    # Reset the cumulative losses & zero gradients
+                    kld_loss = 0
+                    recon_loss = 0
+                    transformer_loss = 0
+                    self._zero_all_grads()
+
+                    # Iterate through all patients and accumulate losses before stepping optimizers
+                    for pat_idx in np.arange(0,num_pats_curr): 
+
+                        # Pull out the patient's heads
+                        enc_head=heads_curr[0][pat_idx] # Heads are [enc, dec, hint_prepper]
+                        dec_head=heads_curr[1][pat_idx]
+                        hint_prepper=heads_curr[2][pat_idx]
+
+                        # Pull patient's data
+                        data_tensor = data_tensor_by_pat[pat_idx]
+
+                        # Reset the data vars for Transformer Sequence and put on GPU
+                        x = torch.zeros(self.transformer_seq_length, data_tensor.shape[0], data_tensor.shape[1], self.mini_batch_window_size).to(self.gpu_id)
+                        x_decode = torch.zeros(self.transformer_seq_length, data_tensor.shape[0], data_tensor.shape[1], self.decode_samples).to(self.gpu_id)
+
+                        # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
+                        for embedding_idx in range(0, self.transformer_seq_length):
+
+                            # Pull out data for this window
+                            end_idx = start_idx + self.decode_samples * embedding_idx + self.mini_batch_window_size 
+                            x[embedding_idx, :, :, :] = data_tensor[:, :, end_idx-self.mini_batch_window_size : end_idx]
+                            x_decode[embedding_idx, :, :, :] = x[embedding_idx, :, :, :] [:, :, self.precode_samples:self.precode_samples + self.decode_samples]
+
+                        # Stack the vars into batch dimension
+                        x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
+                        x_decode_batched = x_decode.reshape([x_decode.shape[0]*x_decode.shape[1], x_decode.shape[2], x_decode.shape[3]])
+
+                        ### VAE ENCODER
+                        # Forward pass in stacked batch through head then VAE encoder
+                        x_pre = x_batched[:, :, 0:self.precode_samples]
+                        x_pre_posthead = enc_head(x_pre)
+                        mean_batched, logvar_batched, latent_batched, = self.vae_enc(x_pre_posthead)
+
+                        # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
+                        latent = torch.split(latent_batched, self.wdecode_batch_size, dim=0)
+                        latent_seq = torch.stack(latent, dim=1)
+  
+                        ### TRANSFORMER
+                        # Run sequence through transformer and get transformer loss
+                        transformer_input = latent_seq[:, :-1, :]
+                        target_embeddings = latent_seq[:, 1:, :]
+                        predicted_embeddings = self.transformer(transformer_input)
+                        
+                        ### VAE DECODER
+                        # Run the predicted embeddings through decoder
+                        predicted_embeddings_batched = predicted_embeddings.reshape(predicted_embeddings.shape[0]*predicted_embeddings.shape[1], predicted_embeddings.shape[2])
+                        # Prep the phase hints (shifted by 1 because it's after transformer) then run through VAE Core encoder and head
+                        x_pre_hint_flat_prepped = hint_prepper(x_batched[1:, :, -self.feedforward_hint_samples:])
+                        core_out = self.vae_dec(predicted_embeddings_batched, x_pre_hint_flat_prepped)  
+                        x_hat_batched = dec_head(core_out)
+
+                        # LOSSES
+                        transformer_loss = loss_functions.lbm_loss_function(target_embeddings, predicted_embeddings)
+                        recon_loss, kld_loss = loss_functions.vae_loss_function(
+                            x=x_decode_batched[1:, :, :], # Shifted by 1 due to predictions having gone through transformer
+                            x_hat=x_hat_batched, 
+                            mean=mean_batched, 
+                            logvar=logvar_batched, 
+                            KL_multiplier=self.KL_multiplier,
+                            **kwargs)
+                        
+                        loss = recon_loss + kld_loss + transformer_loss
+                        loss.backward()
+
+                        # Realtime info as epoch is running
+                        if (iter%self.recent_display_iters==0):
+                            if val_finetune: state_str = "VAL FINETUNE"
+                            else: state_str = "TRAIN"
+                            now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
+                            if (self.gpu_id == 1):
+                                sys.stdout.write(f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, Iter [BatchSize:{self.wdecode_batch_size}]: " + 
+                                                str(iter) + "/" + str(total_train_iters) + 
+                                                ", MeanLoss: " + str(round(loss.detach().item(), 2)) + ", [" + 
+                                                    "Rec: " + str(round(recon_loss.detach().item(), 2)) + " + " + 
+                                                    "KLD: {:0.3e}".format(kld_loss.detach().item(), 2) + " + " +
+                                                    "Trnsfr {:0.3e}".format(transformer_loss.detach().item(), 2) + "], " + 
+                                                    "Core LR: {:0.3e}".format(self.opt_enc.param_groups[0]['lr']) + 
+                                                    ", Head LR: {:0.3e}".format(head_opts_curr.get_lr()) + 
+                                                    ", Transformer LR: {:0.3e}".format(self.transformer_opt.param_groups[0]['lr']) +
+                                                ", Beta: {:0.3e}".format(self.KL_multiplier) + "         ")
+                                sys.stdout.flush() 
+
+                            # Log to WandB
+                            wandb.define_metric('Steps')
+                            wandb.define_metric("*", step_metric="Steps")
+                            train_step = self.epoch * int(total_train_iters) + iter
+                            if not val_finetune:
+                                metrics = dict(
+                                    train_loss=loss,
+                                    train_transformer_loss=transformer_loss,
+                                    train_recon_loss=recon_loss, 
+                                    train_kld_loss=kld_loss, 
+                                    train_LR_core=self.opt_enc.param_groups[0]['lr'], 
+                                    train_LR_heads=head_opts_curr.get_lr(),
+                                    train_KL_Beta=self.KL_multiplier, 
+                                    train_epoch=self.epoch)
+                            else:
+                                metrics = dict(
+                                    val_finetune_loss=loss, 
+                                    val_finetune_transformer_loss=transformer_loss,
+                                    val_finetune_recon_loss=recon_loss, 
+                                    val_finetune_kld_loss=kld_loss, 
+                                    val_finetune_LR_heads=head_opts_curr.get_lr(),
+                                    val_finetune_LR_core=self.opt_enc.param_groups[0]['lr'], 
+                                    val_finetune_KL_Beta=self.KL_multiplier, 
+                                    val_finetune_epoch=self.epoch)
+
+                            wandb.log({**metrics, 'Steps': train_step})
+
+                        # Advance the iteration counter
+                        iter = iter + 1
+
+                    # Step optimizers after all patients have been backpropgated
                     self.transformer_opt.step()
-                    self.opt_core.step()
-                    head_opts_curr.step(pat_idx)
-                    
-                    # Realtime info as epoch is running
-                    if (iter%self.recent_display_iters==0):
-                        if val_finetune: state_str = "VAL FINETUNE"
-                        else: state_str = "TRAIN"
-                        now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
-                        if (self.gpu_id == 1):
-                            sys.stdout.write(f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, Iter [BatchSize:{self.wdecode_batch_size}]: " + 
-                                            str(iter) + "/" + str(total_train_iters) + 
-                                            ", MeanLoss: " + str(round(loss.detach().item(), 2)) + ", [" + 
-                                                "Rec: " + str(round(recon_loss.detach().item(), 2)) + " + " + 
-                                                "KLD: {:0.3e}".format(kld_loss.detach().item(), 2) + " + " +
-                                                "Trnsfr {:0.3e}".format(transformer_loss.detach().item(), 2) + "], " + 
-                                                "Core LR: {:0.3e}".format(self.opt_core.param_groups[0]['lr']) + 
-                                                ", Head LR: {:0.3e}".format(head_opts_curr.get_lr()) + 
-                                                ", Transformer LR: {:0.3e}".format(self.transformer_opt.param_groups[0]['lr']) +
-                                            ", Beta: {:0.3e}".format(self.KL_multiplier) + "         ")
-                            sys.stdout.flush() 
-
-                        # Log to WandB
-                        wandb.define_metric('Steps')
-                        wandb.define_metric("*", step_metric="Steps")
-                        train_step = self.eon_wide_epoch * int(total_train_iters) + iter
-                        if not val_finetune:
-                            metrics = dict(
-                                train_loss=loss,
-                                train_bse_loss=bse_loss, 
-                                train_transformer_loss=transformer_loss,
-                                train_recon_loss=recon_loss, 
-                                train_kld_loss=kld_loss, 
-                                train_LR_core=self.opt_core.param_groups[0]['lr'], 
-                                train_LR_heads=head_opts_curr.get_lr(),
-                                train_KL_Beta=self.KL_multiplier, 
-                                train_epoch=self.eon_wide_epoch)
-                        else:
-                            metrics = dict(
-                                val_finetune_loss=loss, 
-                                val_finetune_bse_loss=bse_loss, 
-                                val_finetune_transformer_loss=transformer_loss,
-                                val_finetune_recon_loss=recon_loss, 
-                                val_finetune_kld_loss=kld_loss, 
-                                val_finetune_LR_heads=head_opts_curr.get_lr(),
-                                val_finetune_LR_core=self.opt_core.param_groups[0]['lr'], 
-                                val_finetune_KL_Beta=self.KL_multiplier, 
-                                val_finetune_epoch=self.eon_wide_epoch)
-
-                        wandb.log({**metrics, 'Steps': train_step})
-
-                    # Advance the iteration counter
-                    iter = iter + 1
-    
+                    self.opt_enc.step()
+                    self.opt_dec.step()
+                    for pat_idx in np.arange(0,num_pats_curr): 
+                        head_opts_curr.step(pat_idx)
+                        
         return self
         
 

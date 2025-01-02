@@ -31,6 +31,8 @@ class SEEG_Tornado_Dataset(Dataset):
             num_samples,
             mini_batch_window_size,
             decode_samples,
+            periictal_augmentation_perc,
+            preictal_augmentation_seconds,
             **kwargs
             ):
 
@@ -40,6 +42,9 @@ class SEEG_Tornado_Dataset(Dataset):
         self.decode_samples = decode_samples
         self.FS = FS
         self.kwargs = kwargs
+
+        self.periictal_augmentation_perc = periictal_augmentation_perc
+        self.preictal_augmentation_seconds = preictal_augmentation_seconds
 
         self.num_windows = int((self.num_samples - self.mini_batch_window_size)/self.decode_samples) - 2
     
@@ -82,23 +87,28 @@ class SEEG_Tornado_Dataset(Dataset):
                 hour_dataset_range = hour_dataset_range,
                 dataset_pic_dir = dataset_pic_dir)
 
+            # Sort the filenames
+            self.pat_fnames[i] = utils_functions.sort_filenames(self.pat_fnames[i])
+
     def get_script_filename(self):
         return __file__
 
     def get_pat_count(self):
         return len(self.pat_ids)
 
-    def set_single_pat_seq(x: bool)
-        self.single_pat_seq = x
+    def set_pat_curr(self, idx):
+        self.pat_curr = idx
+        
+        if idx < 0: self.single_pat_seq = False # resets back to all pats
+        else: self.single_pat_seq = True # mandated if setting current pat
 
-    def read_single_pat_seq()
-        return self.single_pat_seq
+    def get_pat_curr(self):
+        return self.pat_curr, self.pat_ids[self.pat_curr], self.pat_dirs[self.pat_curr], self.pat_fnames[self.pat_curr]
 
-    def __len__(self, pat_id):
-
+    def __len__(self):
 
         if self.single_pat_seq:
-            return len(self.pat_fnames[pat_id])
+            return len(self.pat_fnames[self.pat_curr])
 
         else:
             # Return file_count for the patient with min number of files
@@ -113,12 +123,12 @@ class SEEG_Tornado_Dataset(Dataset):
 
         if self.single_pat_seq:
             
-            file = open(self.pat_fnames[0][idx],'rb')
+            file = open(self.pat_fnames[self.pat_curr][idx],'rb')
             data = pickle.load(file) 
             file.close()
             data_tensor = torch.FloatTensor(data)
 
-            file_name = self.pat_fnames[0][idx].split("/")[-1].split(".")[0]         
+            file_name = self.pat_fnames[self.pat_curr][idx].split("/")[-1].split(".")[0]         
 
             return data_tensor, file_name
 
@@ -131,6 +141,11 @@ class SEEG_Tornado_Dataset(Dataset):
                 # Regenerate random file idxs each call
                 np.random.seed(seed=None)
                 rand_idx = int(random.uniform(0, len(self.pat_fnames[pat_idx]) -1))
+
+
+                # TODO this is probably the better place to implement random peri-ictal augmentation
+
+
 
                 # Load the epoch's pickle
                 file = open(self.pat_fnames[pat_idx][rand_idx],'rb')

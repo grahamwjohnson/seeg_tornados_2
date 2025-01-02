@@ -278,7 +278,7 @@ def get_desired_fnames(
         data_dir: str, 
         intrapatient_dataset_style: list, 
         hour_dataset_range: list, 
-        dataset_pic_dir: str
+        dataset_pic_dir: str,
         ):
     
     # This will have all of the desired file names before splitting into train/val/test
@@ -1253,7 +1253,7 @@ def print_model_summary(model):
     mem = (mem_params + mem_bufs) / 1e9  # in bytes
     print("Expected GPU memory requirement (parameters + buffers): " + str(mem) +" GB")
 
-def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=True, num_workers=6):
+def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=True, num_workers=0):
 
     if num_workers > 0:
         print("WARNING: num workers >0, have experienced odd errors...")
@@ -1261,7 +1261,7 @@ def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=True, num_wor
     return DataLoader(
         dataset,
         batch_size=batch_size,
-        num_workers=num_workers,    #6 works
+        num_workers=num_workers,    
         pin_memory=True,
         shuffle=False,
         sampler=DistributedSampler(dataset),
@@ -2608,8 +2608,10 @@ def initialize_directories(
         print(f"Resuming training after saved epoch: {str(max_epoch)}")
         
         # Construct the proper file names to get CORE state dicts
-        kwargs['core_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vaecore.pt'
-        kwargs['core_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vaecore_opt.pt'
+        kwargs['enc_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_enc.pt'
+        kwargs['enc_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_enc_opt.pt'
+        kwargs['dec_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_dec.pt'
+        kwargs['dec_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_dec_opt.pt'
         kwargs['heads_prev_dir'] = check_dir + f'/Epoch_{str(max_epoch)}/heads_checkpoints'
         kwargs['transformer_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/transformer_checkpoints/checkpoint_epoch{str(max_epoch)}_transformer.pt'
         kwargs['transformer_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/transformer_checkpoints/checkpoint_epoch{str(max_epoch)}_transformer_opt.pt'

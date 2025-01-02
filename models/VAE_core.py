@@ -180,7 +180,7 @@ class Dec_CNN_FlatTimeFlatChannel(nn.Module):
         return y
 
 
-class BSE_Middle_VAE(nn.Module):
+class VAE_Enc(nn.Module):
     def __init__(
             self, 
             common_ENC_cnn_channels,
@@ -202,18 +202,15 @@ class BSE_Middle_VAE(nn.Module):
             gpu_id=None, 
             **kwargs):
         
-        super(BSE_Middle_VAE, self).__init__()
+        super(VAE_Enc, self).__init__()
 
         self.gpu_id = gpu_id
         self.hidden_encode_dims = hidden_encode_dims
 
         self.common_ENC_cnn_channels = common_ENC_cnn_channels # all subjects will go to these channels in middle of autoencoder
 
-        self.decoder_drop_val = dropout_dec
         self.encoder_drop_val = dropout_enc
-        print(f"Dropout Decoder: {self.decoder_drop_val}")
         print(f"Dropout Encoder: {self.encoder_drop_val}")
-        # self.dropout_decoder = nn.Dropout(self.decoder_drop_val) # Only cripple the decoder
         self.dropout_encoder = nn.Dropout(self.encoder_drop_val) 
 
         self.enc_conv_depth = enc_conv_depth
@@ -254,11 +251,69 @@ class BSE_Middle_VAE(nn.Module):
         self.mean_fc_layer = nn.Linear(self.hidden_encode_dims, self.latent_dim)
         self.logvar_fc_layer = nn.Linear(self.hidden_encode_dims, self.latent_dim)
 
-        # Decoder 
+    def get_script_filename(self):
+        return __file__
+
+    def reparameterization(self, mean, logvar):
+        std = torch.exp(0.5 * logvar)  
+        epsilon = torch.randn_like(std).to(self.gpu_id) 
+        z = mean + std * epsilon
+        return z
+      
+    def encode(self, x_pre_posthead):
+        y = self.enc_cnn_PRE(x_pre_posthead)
+        y = y.flatten(start_dim=1)
+        y = self.dropout_encoder(self.top_to_hidden(y))    
+        mean, logvar = self.mean_fc_layer(y), self.logvar_fc_layer(y)
+        return mean, logvar
+
+    def forward(self, x_pre_posthead):
+        
+        # Encode
+        mean, logvar = self.encode(x_pre_posthead)
+
+        # Reparameterize
+        z = self.reparameterization(mean, logvar)
+
+        return mean, logvar, z
+        
+        
+class VAE_Dec(nn.Module):
+    def __init__(
+        self, 
+        latent_dim, 
+        decode_samples, 
+        hidden_encode_dims,
+        dropout_dec, 
+        dec_conv_dilator_depth,
+        dec_conv_flat_depth,
+        transconv_kernel_sizes, 
+        dec_conv_dilator_resblock_size,
+        dec_conv_flat_resblock_size,
+        hint_size_factor,
+        gpu_id=None, 
+        **kwargs):
+        
+        super(VAE_Dec, self).__init__()
+        
+        self.gpu_id = gpu_id
+        self.hidden_encode_dims = hidden_encode_dims
+
+        self.decoder_drop_val = dropout_dec
+        print(f"Dropout Decoder: {self.decoder_drop_val}")
+
+        self.dec_conv_dilator_depth = dec_conv_dilator_depth
+        self.transconv_kernel_sizes = transconv_kernel_sizes
+
+        self.dec_conv_dilator_resblock_size = dec_conv_dilator_resblock_size
+        self.dec_conv_flat_resblock_size = dec_conv_flat_resblock_size
+
+        self.decode_samples = decode_samples
+        self.latent_dim = latent_dim
         self.latent_hint_size = int(self.latent_dim/hint_size_factor)
 
         self.dec_hidden_1_size = self.hidden_encode_dims
-        self.dec_hidden_2_size = self.top_enc_dims
+        self.dec_hidden_2_size = self.hidden_encode_dims * 2
         self.length_dec_bottom = 1
         self.num_cnn_chans_start_dec = int(self.dec_hidden_2_size / len(self.transconv_kernel_sizes) / self.length_dec_bottom)
 
@@ -285,19 +340,6 @@ class BSE_Middle_VAE(nn.Module):
     def get_script_filename(self):
         return __file__
     
-    def encode(self, x_pre_posthead):
-        y = self.enc_cnn_PRE(x_pre_posthead)
-        y = y.flatten(start_dim=1)
-        y = self.dropout_encoder(self.top_to_hidden(y))    
-        mean, logvar = self.mean_fc_layer(y), self.logvar_fc_layer(y)
-        return mean, logvar
-
-    def reparameterization(self, mean, logvar):
-        std = torch.exp(0.5 * logvar)  
-        epsilon = torch.randn_like(std).to(self.gpu_id) 
-        z = mean + std * epsilon
-        return z
-    
     def decode(self, z_with_hints):
         # y = self.latent_to_parallel_hidden(z)
         y = self.latent_to_top(z_with_hints)
@@ -306,30 +348,16 @@ class BSE_Middle_VAE(nn.Module):
 
         return y
 
-    def get_latent(self, x_pre_posthead):
-        # Encode
-        mean, logvar = self.encode(x_pre_posthead)
 
-        # Reparameterize
-        z = self.reparameterization(mean, logvar)
-
-        return mean, logvar, z
-
-    def forward(self, x_pre_posthead, x_pre_hint_flat_prepped):
+    def forward(self, z, x_pre_hint_flat_prepped):
         
-        # Encode
-        mean, logvar = self.encode(x_pre_posthead)
-
-        # Reparameterize
-        z = self.reparameterization(mean, logvar)
         z_with_hints = torch.cat([z, x_pre_hint_flat_prepped], dim=1)
 
         # Decode TODO: consider having parallel architecture to encoder
         out_prehead = self.decode(z_with_hints)
 
-        return out_prehead, mean, logvar, z
+        return out_prehead
         
-
 # Builds models on CPU and prints sizes of forward passes
 def print_models_flow(x_pre, feedforward_hint_samples, transformer_seq_length, **kwargs):
     
@@ -344,8 +372,9 @@ def print_models_flow(x_pre, feedforward_hint_samples, transformer_seq_length, *
     # Break off the last samples of pre and first samples of post to provide hint to decoder for phase alignment
     x_pre_hint = x_pre[:, :, -feedforward_hint_samples:]
 
-    # Build the core model
-    vae_core = BSE_Middle_VAE(**kwargs) 
+    # Build the core models
+    vae_enc = VAE_Enc(**kwargs) 
+    vae_dec = VAE_Dec(**kwargs) 
 
     # Build the Transformer
     transformer = Transformer(ModelArgs(**kwargs))
@@ -364,17 +393,15 @@ def print_models_flow(x_pre, feedforward_hint_samples, transformer_seq_length, *
     summary(train_hint_prepper, input_size=x_pre_hint.shape, depth=999, device="cpu")
     print(f"x_pre_hint_flat_prepped:{x_pre_hint_flat_prepped.shape}\n")
 
-    # Run through full VAE Core
-    print(f"\n\n\nINPUT TO <VAE CORE>\n"
-    f"x_pre_posthead:{x_pre_posthead.shape}\n"
-    f"x_pre_hint_flat_prepped:{x_pre_hint_flat_prepped.shape}")
-    core_out, mean, logvar, latent = vae_core(x_pre_posthead, x_pre_hint_flat_prepped)  
-    summary(vae_core, input_size=(x_pre_posthead.shape, x_pre_hint_flat_prepped.shape), depth=999, device="cpu")
+    # Run through VAE Enc
+    print(f"\n\n\nINPUT TO <VAE ENC>\n"
+    f"x_pre_posthead:{x_pre_posthead.shape}\n")
+    mean, logvar, latent = vae_enc(x_pre_posthead)  
+    summary(vae_enc, input_size=(x_pre_posthead.shape), depth=999, device="cpu")
     print(
     f"mean:{mean.shape}\n"
     f"logvar:{logvar.shape}\n"
-    f"latent:{latent.shape}\n"
-    f"core_out:{core_out.shape}\n")
+    f"latent:{latent.shape}\n")
 
     # Run through Transformer
     # Generate fake seuqential latents and shift the latent
@@ -383,7 +410,15 @@ def print_models_flow(x_pre, feedforward_hint_samples, transformer_seq_length, *
     f"Multiple enoder passes to get sequential latents: latent_shifted:{latent_shifted.shape}\n")
     trans_out = transformer(latent_shifted)  
     summary(transformer, input_size=(latent_shifted.shape), depth=999, device="cpu")
-    f"trans_out:{trans_out.shape}\n"
+    print(f"trans_out:{trans_out.shape}\n")
+
+    # Run through VAE decoder
+    print(f"\n\n\nINPUT TO <VAE DEC>\n"
+    f"z:{latent.shape}\n"
+    f"x_pre_hint_flat_prepped:{x_pre_hint_flat_prepped.shape}")
+    core_out = vae_dec(latent, x_pre_hint_flat_prepped )  
+    summary(vae_dec, input_size=(latent.shape, x_pre_hint_flat_prepped.shape), depth=999, device="cpu")
+    print(f"core_out:{core_out.shape}\n")
 
     # Run through Dec Head
     print(f"\n\n\nINPUT TO <DEC HEAD>\n"
@@ -393,7 +428,7 @@ def print_models_flow(x_pre, feedforward_hint_samples, transformer_seq_length, *
     print(f"\n<FINAL OUTPUT>\n"
     f"x_pre_posthead:{x_hat.shape}\n")
 
-    del train_enc_head, vae_core, train_hint_prepper, train_dec_head, transformer
+    del train_enc_head, vae_enc, vae_dec, train_hint_prepper, train_dec_head, transformer
 
 if __name__ == "__main__":
     

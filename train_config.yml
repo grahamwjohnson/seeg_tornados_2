@@ -22,6 +22,8 @@ freq_bands_str: 'wholeband' # 1to12Hz_12to59Hz_61to179Hz, wholeband
 intrapatient_dataset_style: 2 # 1 all data (no SPES), 2 all data (with SPES), 3 ONLY SPES
 train_hour_dataset_range: kwargs['train_hour_dataset_range'] = [-1, -1]  # [-1, -1] means all, [X, -1] means from X to end
 rand_name_json: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/utilities/animals.json'
+periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if enabled
+preictal_augmentation_seconds: 1800
 
 # Training settings
 continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
@@ -32,9 +34,9 @@ decode_samples: 8 #64
 precode_samples: 1024
 feedforward_hint_samples: 1 # Numnber of samples on each side of embedded sequence to give to decoder (presumably to give it phase info)
 hint_size_factor: 8 # How much info is allowed to exist for phase when passed forward after latent bottleneck: latent_dim/hint_size_factor --> conc to latent vector for decoder
-common_ENC_cnn_channels: 256 # How many channels at the top of core model on ENCODE SIDE
+common_ENC_cnn_channels: 512 # How many channels at the top of core model on ENCODE SIDE
 common_DEC_cnn_channels: 1024 # How many channels at the top of core model on DECODE SIDE
-train_subsample_file_factor: 2048 # randomly decreases training passes per file per epoch, Max subsampling is num_samples / (decode_samples * train_seq_minis)
+train_subsample_file_factor: 32000 # randomly decreases training passes per file per epoch, Max subsampling is num_samples / (decode_samples * train_seq_minis)
 wdecode_batch_size: 1 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 8 # this is for when loss is not being calculated
 pacmap_every: 10 # Must be within a 'quick_recon_val_every' to be reached
@@ -46,10 +48,13 @@ num_rand_recon_plots: 4
 epochs_to_train: 999999 
 
 # Beta VAE controls
-KL_max: kwargs['KL_max'] = 1e-3 # 5e-1 # 5e-4 was used before going multipatient, 5e-3 was used for first long multipat
+KL_max: kwargs['KL_max'] = 1 # 5e-1 # 5e-4 was used before going multipatient, 5e-3 was used for first long multipat
 KL_min: kwargs['KL_min'] = 0
-KL_epochs_AT_max: 5
-KL_epochs_TO_max: 5
+KL_epochs_AT_max: 99999
+KL_epochs_TO_max: 0
+
+# Recon Weight
+recon_weight: 1
 
 # Train heads learning rate controls
 LR_max_heads: kwargs['LR_max_heads'] = 1e-5
@@ -88,7 +93,7 @@ delete_old_checkpoints: True
 # Model settings
 mini_batch_stride: kwargs['mini_batch_stride'] = kwargs['decode_samples'] # For RANDOM dataset this does not matter
 mini_batch_window_size: kwargs['mini_batch_window_size'] = kwargs['precode_samples'] + kwargs['decode_samples']
-enc_conv_depth: 6 
+enc_conv_depth: 7 
 enc_conv_resblock_size: 1
 enc_kernel_sizes: [3,5,7,9] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
 dec_conv_dilator_depth: 3
@@ -142,7 +147,7 @@ num_dataloader_workers_RANDOM: 0
 num_dataloader_workers_SEQUENTIAL: 0
 
 # Printing settings
-recent_display_iters: 10 # How often to print to console when training
+recent_display_iters: 1 # How often to print to console when training
 
 # Plotting variables
 plot_alpha: 0.5
@@ -156,7 +161,7 @@ pic_types: kwargs['pic_types'] = ['JPEGs','SVGs']
 
 
 # LBM
-transformer_seq_length: 128
+transformer_seq_length: 32
 
 adamW_wd: 0
 
