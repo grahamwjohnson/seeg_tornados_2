@@ -194,7 +194,7 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 
         if LR_epoch_residual < LR_epochs_TO_max:
             LR_floor = LR_min_curr + ( LR_range * (LR_epoch_residual/LR_epochs_TO_max) )
-            LR_ceil = LR_floor + ( LR_range * (LR_epoch_residual + 1) /LR_epochs_TO_max)
+            LR_ceil = LR_min_curr + ( LR_range * (LR_epoch_residual+1) /LR_epochs_TO_max)
             LR_val = LR_floor + iter_curr/iters_per_epoch * (LR_ceil - LR_floor) 
 
         else: 
@@ -205,7 +205,6 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
         # LR_floor = LR_ceil - ( LR_range * (LR_epoch_residual + 1) /LR_epochs_cycle)
         # LR_val = LR_ceil - iter/iters_per_epoch * (LR_ceil - LR_floor)        
         raise Exception("ERROR: not coded up")
-
 
     return LR_val
 

@@ -3,7 +3,7 @@ from torch import nn
 import heapq
 
 
-def lbm_loss_function(target_embeddings, out_embeddings):
+def lbm_loss_function(target_embeddings, out_embeddings, transformer_weight):
     
     # criterion = nn.MSELoss(reduction='mean')
     # loss = criterion(target_embeddings, out_embeddings)
@@ -11,7 +11,7 @@ def lbm_loss_function(target_embeddings, out_embeddings):
     criterion = nn.CosineSimilarity(dim = 2)
     loss = 1 - criterion(target_embeddings, out_embeddings).mean()
 
-    return loss #/ in_embeddings.shape[0] / in_embeddings.shape[1] # normalize by batch size and seq length
+    return transformer_weight * loss #/ in_embeddings.shape[0] / in_embeddings.shape[1] # normalize by batch size and seq length
 
 
 def vae_loss_function(x, x_hat, mean, logvar, KL_multiplier, recon_weight, **kwargs):

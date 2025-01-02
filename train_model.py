@@ -386,6 +386,8 @@ class Trainer:
         transformer_seq_length: int,
         FS: int,
         intrapatient_dataset_style: list,
+        transformer_weight: float,
+        recon_weight: float,
         atd_file: str,
         PaCMAP_model_to_infer,
         pre_PaCMAP_window_sec: float,
@@ -429,6 +431,8 @@ class Trainer:
         self.intrapatient_dataset_style = intrapatient_dataset_style
         self.curr_LR_core = -1
         self.curr_LR_heads = -1
+        self.transformer_weight = transformer_weight
+        self.recon_weight = recon_weight
         self.atd_file = atd_file
         self.PaCMAP_model_to_infer = PaCMAP_model_to_infer
         self.pre_PaCMAP_window_sec = pre_PaCMAP_window_sec
@@ -804,13 +808,14 @@ class Trainer:
                         x_hat_batched = dec_head(core_out)
 
                         # LOSSES
-                        transformer_loss = loss_functions.lbm_loss_function(target_embeddings, predicted_embeddings)
+                        transformer_loss = loss_functions.lbm_loss_function(target_embeddings, predicted_embeddings, trasformer_weight=self.transformer_weight)
                         recon_loss, kld_loss = loss_functions.vae_loss_function(
                             x=x_decode_batched[1:, :, :], # Shifted by 1 due to predictions having gone through transformer
                             x_hat=x_hat_batched, 
                             mean=mean_batched, 
                             logvar=logvar_batched, 
                             KL_multiplier=self.KL_multiplier,
+                            recon_weight=self.recon_weight,
                             **kwargs)
                         
                         loss = recon_loss + kld_loss + transformer_loss
@@ -846,8 +851,10 @@ class Trainer:
                                     train_kld_loss=kld_loss, 
                                     train_LR_encoder=self.opt_enc.param_groups[0]['lr'], 
                                     train_LR_decoder=self.opt_dec.param_groups[0]['lr'], 
+                                    train_LR_transformer=self.transformer_opt.param_groups[0]['lr'],
                                     train_LR_heads=head_opts_curr.get_lr(),
                                     train_KL_Beta=self.KL_multiplier, 
+                                    train_ReconWeight=self.recon_weight,
                                     train_epoch=self.epoch)
                             else:
                                 metrics = dict(
@@ -858,7 +865,9 @@ class Trainer:
                                     val_finetune_LR_heads=head_opts_curr.get_lr(),
                                     val_finetune_LR_encoder=self.opt_enc.param_groups[0]['lr'], 
                                     val_finetune_LR_decoder=self.opt_dec.param_groups[0]['lr'], 
+                                    val_finetune_LR_transformer=self.transformer_opt.param_groups[0]['lr'],
                                     val_finetune_KL_Beta=self.KL_multiplier, 
+                                    val_finetune_ReconWeight=self.recon_weight,
                                     val_finetune_epoch=self.epoch)
 
                             wandb.log({**metrics, 'Steps': train_step})
