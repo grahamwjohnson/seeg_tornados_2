@@ -484,29 +484,80 @@ def print_latent_realtime(target_emb, predicted_emb, savedir, epoch, iter_curr, 
 
     dims_to_plot = np.arange(0,num_realtime_dims)
 
-    # Only print for [batch index 0, all transformer sequence, latent dimensions 0-9]
-    target_emb = target_emb[0, :, 0:len(dims_to_plot)]
-    predicted_emb = predicted_emb[0, :, 0:len(dims_to_plot)]
+    batchsize = target_emb.shape[0]
 
-    df = pd.DataFrame({
-        'dimension': np.tile(dims_to_plot, target_emb.shape[0]),
-        'target_emb': target_emb.flatten(),
-        'predicted_emb': predicted_emb.flatten() 
-    })
+    for b in range(0, batchsize):
+        
+        # Make new grid/fig
+        gs = gridspec.GridSpec(1, 2)
+        fig = pl.figure(figsize=(20, 14))
 
-    gs = gridspec.GridSpec(1, 1)
+        # Only print for one batch index at a time
+        target_emb_plot = target_emb[b, :, 0:len(dims_to_plot)]
+        predicted_emb_plot = predicted_emb[b, :, 0:len(dims_to_plot)]
+
+        df = pd.DataFrame({
+            'dimension': np.tile(dims_to_plot, target_emb_plot.shape[0]),
+            'target_emb': target_emb_plot.flatten(),
+            'predicted_emb': predicted_emb_plot.flatten() 
+        })
+
+        sns.jointplot(data=df, x="target_emb", y="predicted_emb", hue="dimension")
+        fig.suptitle(f"{pat_id}, epoch: {epoch}, iter: {iter_curr}")
+
+        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+        if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+        savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}_batch{b}.jpg"
+        savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}_batch_{b}.svg"
+        pl.savefig(savename_jpg)
+        pl.savefig(savename_svg)
+        pl.close(fig)    
+    
+
+def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat_id, num_realtime_channels_recon, **kwargs):
+
+    x_hat = x_hat.detach().cpu().numpy()
+    x_decode_shifted = x_decode_shifted.detach().cpu().numpy()
+
+    # Fuse the sequential decodes/predictions together
+    x_decode_shifted_fused = np.moveaxis(x_decode_shifted, 3, 1)
+    x_decode_shifted_fused = x_decode_shifted_fused.reshape(x_decode_shifted_fused.shape[0] * x_decode_shifted_fused.shape[1], x_decode_shifted_fused.shape[2], x_decode_shifted_fused.shape[3])
+    x_decode_shifted_fused = np.moveaxis(x_decode_shifted_fused, 0, 2)
+
+    x_hat_fused = np.moveaxis(x_hat, 3, 1)
+    x_hat_fused = x_hat_fused.reshape(x_hat_fused.shape[0] * x_hat_fused.shape[1], x_hat_fused.shape[2], x_hat_fused.shape[3])
+    x_hat_fused = np.moveaxis(x_hat_fused, 0, 2)
+
+    batchsize = x_hat.shape[1]
+
+    np.random.seed(seed=None) # should replace with Generator for newer code
+    r = np.arange(0,x_hat_fused.shape[1])
+    np.random.shuffle(r)
+    random_ch_idxs = r[0:num_realtime_channels_recon]
+
+    # Make new grid/fig
+    gs = gridspec.GridSpec(batchsize, num_realtime_channels_recon)
     fig = pl.figure(figsize=(20, 14))
-    ax = pl.subplot(gs[0, 0])
+    palette = sns.cubehelix_palette(n_colors=2, start=3, rot=1) 
+    for b in range(0, batchsize):
+        for c in range(0,len(random_ch_idxs)):
+            x_decode_plot = x_decode_shifted_fused[b, random_ch_idxs[c], :]
+            x_hat_plot = x_hat_fused[b, random_ch_idxs[c], :]
 
-    sns.jointplot(data=df, x="target_emb", y="predicted_emb", hue="dimension")
+            df = pd.DataFrame({
+                "Target": x_decode_plot,
+                "Prediction": x_hat_plot
+            })
 
-    fig.suptitle(f"{pat_id}, epoch: {epoch}, iter: {iter_curr}")
-
-
+            ax = fig.add_subplot(gs[b, c]) 
+            sns.lineplot(data=df, palette=palette, linewidth=2.5, dashes=False, ax=ax)
+            ax.set_title(f"B:{b}, Ch:{c}")
+            
+    fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
     if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-    savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}_.jpg"
-    savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}.svg"
+    savename_jpg = f"{savedir}/JPEGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{pat_id}_allbatch.jpg"
+    savename_svg = f"{savedir}/SVGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{pat_id}_allbatch.svg"
     pl.savefig(savename_jpg)
     pl.savefig(savename_svg)
     pl.close(fig)    

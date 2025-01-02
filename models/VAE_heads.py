@@ -113,8 +113,8 @@ class Swappable_Dec_Head(nn.Module):
         for k in kernel_sizes:
             # Generate the trans conv layers so that data is upsampled without overlap
             unit = nn.Sequential(
-                nn.ConvTranspose1d(self.in_channels, self.in_channels, kernel_size=k, stride=stride, padding=int((k-1)/2), output_padding=0),
                 nn.ConvTranspose1d(self.in_channels, self.num_channels, kernel_size=k, stride=stride, padding=int((k-1)/2), output_padding=0),
+                # nn.ConvTranspose1d(self.in_channels, self.num_channels, kernel_size=k, stride=stride, padding=int((k-1)/2), output_padding=0),
             )
             self.dec_cnn_level.append(unit)
 

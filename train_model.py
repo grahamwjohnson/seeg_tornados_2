@@ -786,7 +786,8 @@ class Trainer:
 
                         # Stack the vars into batch dimension
                         x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
-                        x_decode_batched = x_decode.reshape([x_decode.shape[0]*x_decode.shape[1], x_decode.shape[2], x_decode.shape[3]])
+                        x_decode_shifted = x_decode[1:, :, :, :]
+                        x_decode_shifted_batched = x_decode_shifted.reshape([x_decode_shifted.shape[0]*x_decode_shifted.shape[1], x_decode_shifted.shape[2], x_decode_shifted.shape[3]])
 
                         ### VAE ENCODER
                         # Forward pass in stacked batch through head then VAE encoder
@@ -797,14 +798,6 @@ class Trainer:
                         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
                         latent = torch.split(latent_batched, batchsize, dim=0)
                         latent_seq = torch.stack(latent, dim=1)
-                        # mean = torch.split(mean_batched, batchsize, dim=0)
-                        # mean_seq = torch.stack(mean, dim=1)                        
-                        # logvar = torch.split(logvar_batched, batchsize, dim=0)
-                        # logvar_seq = torch.stack(logvar, dim=1)
-
-                        # # Store mean/logvar for KLD calc later
-                        # mean_allpats[pat_idx, :, :, :] = mean_seq
-                        # logvar_allpats[pat_idx, :, :, :] = logvar_seq
   
                         ### TRANSFORMER
                         # Run sequence through transformer and get transformer loss
@@ -829,7 +822,7 @@ class Trainer:
                             transformer_weight=self.transformer_weight)
 
                         recon_loss = loss_functions.recon_loss_function(
-                            x=x_decode_batched[1:, :, :], # Shifted by 1 due to predictions having gone through transformer
+                            x=x_decode_shifted_batched, # Shifted by 1 due to predictions having gone through transformer
                             x_hat=x_hat_batched,
                             recon_weight=self.recon_weight)
 
@@ -841,12 +834,7 @@ class Trainer:
                         # Intrapatient backprop
                         loss = recon_loss + kld_loss # + transformer_loss                       ################ TRANSFORMER NOT INCLUDED ##############
                         loss.backward()
-                        
-                        # # Accumlate losses for visualization at optim step level later
-                        # transformer_loss = transformer_loss + transformer_loss_curr
-                        # recon_loss = recon_loss + recon_loss_curr
-                        # kld_loss = kld_loss_curr + kld_loss
-                        
+
                         # Realtime info as epoch is running
                         if (iter_curr%self.recent_display_iters==0):
                             if val_finetune: state_str = "VAL FINETUNE"
@@ -909,7 +897,6 @@ class Trainer:
                             # np.random.seed(seed=None)
                             # rand_gpu = int(random.uniform(0, torch.cuda.device_count()))
                             if self.gpu_id == 0:
-                                print("Realtime Latent Printing Enabled (SLOWS TRAINING TREMENDOUSLY)")
                                 utils_functions.print_latent_realtime(
                                     target_emb = target_embeddings.cpu().detach().numpy(), 
                                     predicted_emb = predicted_embeddings.cpu().detach().numpy(),
@@ -919,6 +906,21 @@ class Trainer:
                                     pat_id = dataset_curr.pat_ids[pat_idx],
                                     **kwargs)
 
+                                # Un-pseudobatch the x_hat_batched
+                                x_hat = torch.split(x_hat_batched, batchsize, dim=0)
+                                x_hat = torch.stack(x_hat, dim=0)
+                                utils_functions.print_recon_realtime(
+                                    x_decode_shifted=x_decode_shifted, 
+                                    x_hat=x_hat, 
+                                    savedir = self.model_dir + "/realtime_recon",
+                                    epoch = self.epoch,
+                                    iter_curr = iter_curr,
+                                    pat_id = dataset_curr.pat_ids[pat_idx],
+                                    **kwargs
+                                )
+
+                    
+                    
                     ### AFTER PATIENT LOOP ###
 
                     # # LOSSES: Inter-patient, calculate KLD across all patients
