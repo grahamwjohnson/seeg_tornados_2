@@ -37,7 +37,7 @@ hint_size_factor: 8 # How much info is allowed to exist for phase when passed fo
 common_ENC_cnn_channels: 128 # How many channels at the top of core model on ENCODE SIDE
 common_DEC_cnn_channels: 1024 # calculated based on number of kernels and decision to sequentially group after FC layers or not
 train_subsample_file_factor: 32000 # randomly decreases training passes per file per epoch, Max subsampling is num_samples / (decode_samples * train_seq_minis)
-wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
+wdecode_batch_size: 2 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 8 # this is for when loss is not being calculated
 pacmap_every: 99999 # Must be within a 'quick_recon_val_every' to be reached
 finetune_pacmap: True

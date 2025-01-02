@@ -816,7 +816,9 @@ class Trainer:
                         # Run the predicted embeddings through decoder
                         predicted_embeddings_batched = predicted_embeddings.reshape(predicted_embeddings.shape[0]*predicted_embeddings.shape[1], predicted_embeddings.shape[2])
                         # Prep the phase hints (shifted by 1 because it's after transformer) then run through VAE Core encoder and head
-                        x_pre_hint_flat_prepped = hint_prepper(x_batched[1:, :, -self.feedforward_hint_samples:])
+                        x_hints = x[1:, :, :, -(self.decode_samples + self.feedforward_hint_samples):-self.decode_samples]
+                        x_hints_batched = x_hints.reshape(x_hints.shape[0]*x_hints.shape[1], x_hints.shape[2], x_hints.shape[3])
+                        x_pre_hint_flat_prepped = hint_prepper(x_hints_batched)
                         core_out = self.vae_dec(predicted_embeddings_batched, x_pre_hint_flat_prepped)  
                         x_hat_batched = dec_head(core_out)
 
