@@ -26,7 +26,7 @@ periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if
 preictal_augmentation_seconds: 1800
 
 # Training settings
-continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/kudu_Wed_Jan__1_21_59_17_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
@@ -39,16 +39,16 @@ common_DEC_cnn_channels: 1024 # How many channels at the top of core model on DE
 train_subsample_file_factor: 32000 # randomly decreases training passes per file per epoch, Max subsampling is num_samples / (decode_samples * train_seq_minis)
 wdecode_batch_size: 1 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 8 # this is for when loss is not being calculated
-pacmap_every: 10 # Must be within a 'quick_recon_val_every' to be reached
+pacmap_every: 99999 # Must be within a 'quick_recon_val_every' to be reached
 finetune_pacmap: True
-quick_recon_val_every: 10  # this will just run a few recon iterations on the VALIDATE dataset
+quick_recon_val_every: 99999  # this will just run a few recon iterations on the VALIDATE dataset
 finetune_quickrecon: True
 quickval_red: 8 # This will divide num_samples in a file to do a very quick validation recon by truncating mid file
 num_rand_recon_plots: 4
 epochs_to_train: 999999 
 
 realtime_latent_printing: True
-realtime_printing_interval: 100
+realtime_printing_interval: 250
 num_realtime_dims: 5
 
 # Beta VAE controls
@@ -64,17 +64,17 @@ recon_weight: 1
 LR_max_heads: kwargs['LR_max_heads'] = 1e-5
 LR_min_heads: kwargs['LR_min_heads'] = 1e-7
 LR_epochs_TO_max_heads: 1
-LR_epochs_AT_max_heads: 99999
+LR_epochs_AT_max_heads: 1
 manual_gamma_heads: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
-manual_step_size_heads: 320
+manual_step_size_heads: 99999
 
 # Core learning rate controls
 LR_max_core: kwargs['LR_max_core'] = 1e-5
 LR_min_core: kwargs['LR_min_core'] = 1e-7
-LR_epochs_TO_max_core: 1
-LR_epochs_AT_max_core: 99999
+LR_epochs_TO_max_core: 2
+LR_epochs_AT_max_core: 2
 manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
-manual_step_size_core: 320
+manual_step_size_core: 99999
 
 # Transdformer LR Controls
 transformer_LR: kwargs['transformer_LR'] = 2e-8

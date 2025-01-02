@@ -844,7 +844,8 @@ class Trainer:
                                     train_transformer_loss=transformer_loss,
                                     train_recon_loss=recon_loss, 
                                     train_kld_loss=kld_loss, 
-                                    train_LR_core=self.opt_enc.param_groups[0]['lr'], 
+                                    train_LR_enc=self.opt_enc.param_groups[0]['lr'], 
+                                    train_LR_dec=self.opt_dec.param_groups[0]['lr'], 
                                     train_LR_heads=head_opts_curr.get_lr(),
                                     train_KL_Beta=self.KL_multiplier, 
                                     train_epoch=self.epoch)
@@ -855,7 +856,8 @@ class Trainer:
                                     val_finetune_recon_loss=recon_loss, 
                                     val_finetune_kld_loss=kld_loss, 
                                     val_finetune_LR_heads=head_opts_curr.get_lr(),
-                                    val_finetune_LR_core=self.opt_enc.param_groups[0]['lr'], 
+                                    val_finetune_LR_enc=self.opt_enc.param_groups[0]['lr'], 
+                                    val_finetune_LR_dec=self.opt_dec.param_groups[0]['lr'], 
                                     val_finetune_KL_Beta=self.KL_multiplier, 
                                     val_finetune_epoch=self.epoch)
 
