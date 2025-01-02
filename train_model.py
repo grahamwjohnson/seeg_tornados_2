@@ -701,6 +701,8 @@ class Trainer:
         all_files_bool,
         num_dataloader_workers_SEQUENTIAL,
         val_finetune,
+        realtime_latent_printing,
+        realtime_printing_interval,
         **kwargs):
 
         print(f"Past/Decode Samples: {self.precode_samples}/{self.decode_samples}")
@@ -730,14 +732,14 @@ class Trainer:
             # Get miniepoch start indexes. Same random indexes will be used for all patients' files.
             start_idxs = self._train_start_idxs(random_bool=random_bool, subsample_file_factor=subsample_file_factor_curr)
             total_train_iters = int(len(dataloader_curr) * len(start_idxs) * num_pats_curr)
-            iter = 0 # Iteration across all sequential trian files
+            iter_curr = 0 # Iteration across all sequential trian files
 
             for data_tensor_by_pat, file_name_by_pat in dataloader_curr: # Paralell random file pull accross patients
                 for start_idx in start_idxs: # Same start_idx for all patients (has no biological meaning)
 
                     # Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
                     self.KL_multiplier, self.curr_LR_core, self.curr_LR_heads = utils_functions.BSE_KL_LR_schedule(
-                        epoch=self.epoch, iter_curr=iter, iters_per_epoch=int(total_train_iters), **self.kwargs)
+                        epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
                     
                     # Update Core and Head LR
                     self.opt_enc.param_groups[0]['lr'] = self.curr_LR_core
@@ -815,13 +817,13 @@ class Trainer:
                         loss.backward()
 
                         # Realtime info as epoch is running
-                        if (iter%self.recent_display_iters==0):
+                        if (iter_curr%self.recent_display_iters==0):
                             if val_finetune: state_str = "VAL FINETUNE"
                             else: state_str = "TRAIN"
                             now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
                             if (self.gpu_id == 1):
                                 sys.stdout.write(f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, Iter [BatchSize:{self.wdecode_batch_size}]: " + 
-                                                str(iter) + "/" + str(total_train_iters) + 
+                                                str(iter_curr) + "/" + str(total_train_iters) + 
                                                 ", MeanLoss: " + str(round(loss.detach().item(), 2)) + ", [" + 
                                                     "Rec: " + str(round(recon_loss.detach().item(), 2)) + " + " + 
                                                     "KLD: {:0.3e}".format(kld_loss.detach().item(), 2) + " + " +
@@ -835,7 +837,7 @@ class Trainer:
                             # Log to WandB
                             wandb.define_metric('Steps')
                             wandb.define_metric("*", step_metric="Steps")
-                            train_step = self.epoch * int(total_train_iters) + iter
+                            train_step = self.epoch * int(total_train_iters) + iter_curr
                             if not val_finetune:
                                 metrics = dict(
                                     train_loss=loss,
@@ -859,8 +861,21 @@ class Trainer:
 
                             wandb.log({**metrics, 'Steps': train_step})
 
+                        # Realtime latent visualizations
+                        if realtime_latent_printing & ((iter_curr + 1) % realtime_printing_interval == 0):
+                            if self.gpu_id == 0:
+                                print("Realtime Latent Printing Enabled (SLOWS TRAINING TREMENDOUSLY)")
+                                utils_functions.print_latent_realtime(
+                                    target_emb = target_embeddings.cpu().detach().numpy(), 
+                                    predicted_emb = predicted_embeddings.cpu().detach().numpy(),
+                                    savedir = self.model_dir + "/realtime_latents",
+                                    epoch = self.epoch,
+                                    iter_curr = iter_curr,
+                                    pat_id = dataset_curr.pat_ids[pat_idx],
+                                    **kwargs)
+
                         # Advance the iteration counter
-                        iter = iter + 1
+                        iter_curr = iter_curr + 1
 
                     # Step optimizers after all patients have been backpropgated
                     self.transformer_opt.step()

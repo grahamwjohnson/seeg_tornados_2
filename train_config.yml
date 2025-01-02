@@ -26,8 +26,8 @@ periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if
 preictal_augmentation_seconds: 1800
 
 # Training settings
-continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/woodchuck_Wed_Jan__1_14_37_55_2025' 
+continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/kudu_Wed_Jan__1_21_59_17_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 decode_samples: 8 #64  
@@ -46,6 +46,10 @@ finetune_quickrecon: True
 quickval_red: 8 # This will divide num_samples in a file to do a very quick validation recon by truncating mid file
 num_rand_recon_plots: 4
 epochs_to_train: 999999 
+
+realtime_latent_printing: True
+realtime_printing_interval: 50
+num_realtime_dims: 5
 
 # Beta VAE controls
 KL_max: kwargs['KL_max'] = 1 # 5e-1 # 5e-4 was used before going multipatient, 5e-3 was used for first long multipat
