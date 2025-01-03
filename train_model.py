@@ -745,7 +745,7 @@ class Trainer:
                     self.KL_multiplier, self.curr_LR_core, self.curr_LR_heads = utils_functions.BSE_KL_LR_schedule(
                         epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
                     
-                    # Update Core and Head LR
+                    # Update Core and Heads LR
                     self.opt_enc.param_groups[0]['lr'] = self.curr_LR_core
                     self.opt_dec.param_groups[0]['lr'] = self.curr_LR_core
                     head_opts_curr.set_all_lr(self.curr_LR_heads)
@@ -773,21 +773,25 @@ class Trainer:
                         data_tensor = data_tensor_by_pat[pat_idx]
 
                         # Reset the data vars for Transformer Sequence and put on GPU
-                        x = torch.zeros(self.transformer_seq_length, data_tensor.shape[0], data_tensor.shape[1], self.mini_batch_window_size).to(self.gpu_id)
-                        x_decode = torch.zeros(self.transformer_seq_length, data_tensor.shape[0], data_tensor.shape[1], self.decode_samples).to(self.gpu_id)
+                        x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.mini_batch_window_size).to(self.gpu_id)
+                        x_decode = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.decode_samples).to(self.gpu_id)
 
                         # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
                         for embedding_idx in range(0, self.transformer_seq_length):
 
                             # Pull out data for this window
                             end_idx = start_idx + self.decode_samples * embedding_idx + self.mini_batch_window_size 
-                            x[embedding_idx, :, :, :] = data_tensor[:, :, end_idx-self.mini_batch_window_size : end_idx]
-                            x_decode[embedding_idx, :, :, :] = x[embedding_idx, :, :, :] [:, :, self.precode_samples:self.precode_samples + self.decode_samples]
+                            x[:,embedding_idx, :, :] = data_tensor[:, :, end_idx-self.mini_batch_window_size : end_idx]
+                            x_decode[:, embedding_idx, :, :] = x[:, embedding_idx, :, :] [:, :, self.precode_samples:self.precode_samples + self.decode_samples]
 
-                        # Stack the vars into batch dimension
+                        # Stack the vars into batch dimension 
                         x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
-                        x_decode_shifted = x_decode[1:, :, :, :]
+                        x_decode_shifted = x_decode[:, 1:, :, :]
                         x_decode_shifted_batched = x_decode_shifted.reshape([x_decode_shifted.shape[0]*x_decode_shifted.shape[1], x_decode_shifted.shape[2], x_decode_shifted.shape[3]])
+
+                        # To remeber how to split back to original
+                        # a = torch.split(x_decode_shifted_batched, self.transformer_seq_length-1, dim=0)
+                        # b = torch.stack(a, dim=0)
 
                         ### VAE ENCODER
                         # Forward pass in stacked batch through head then VAE encoder
@@ -796,8 +800,8 @@ class Trainer:
                         mean_batched, logvar_batched, latent_batched, = self.vae_enc(x_pre_posthead)
 
                         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
-                        latent = torch.split(latent_batched, batchsize, dim=0)
-                        latent_seq = torch.stack(latent, dim=1)
+                        latent = torch.split(latent_batched, self.transformer_seq_length, dim=0)
+                        latent_seq = torch.stack(latent, dim=0)
   
                         ### TRANSFORMER
                         # Run sequence through transformer and get transformer loss
@@ -809,11 +813,16 @@ class Trainer:
                         # Run the predicted embeddings through decoder
                         predicted_embeddings_batched = predicted_embeddings.reshape(predicted_embeddings.shape[0]*predicted_embeddings.shape[1], predicted_embeddings.shape[2])
                         # Prep the phase hints (shifted by 1 because it's after transformer) then run through VAE Core encoder and head
-                        x_hints = x[1:, :, :, -(self.decode_samples + self.feedforward_hint_samples):-self.decode_samples]
+                        x_hints = x[:, 1:, :, -(self.decode_samples + self.feedforward_hint_samples):-self.decode_samples]
                         x_hints_batched = x_hints.reshape(x_hints.shape[0]*x_hints.shape[1], x_hints.shape[2], x_hints.shape[3])
                         x_pre_hint_flat_prepped = hint_prepper(x_hints_batched)
+                        
                         core_out = self.vae_dec(predicted_embeddings_batched, x_pre_hint_flat_prepped)  
                         x_hat_batched = dec_head(core_out)
+                        
+                        # For use later
+                        x_hat = torch.split(x_hat_batched, self.transformer_seq_length-1, dim=0)
+                        x_hat = torch.stack(x_hat, dim=0)
 
                         # # LOSSES: Intra-Patient 
                         transformer_loss = loss_functions.transformer_loss_function(
@@ -905,10 +914,6 @@ class Trainer:
                                     iter_curr = iter_curr,
                                     pat_id = dataset_curr.pat_ids[pat_idx],
                                     **kwargs)
-
-                                # Un-pseudobatch the x_hat_batched
-                                x_hat = torch.split(x_hat_batched, batchsize, dim=0)
-                                x_hat = torch.stack(x_hat, dim=0)
                                 utils_functions.print_recon_realtime(
                                     x_decode_shifted=x_decode_shifted, 
                                     x_hat=x_hat, 

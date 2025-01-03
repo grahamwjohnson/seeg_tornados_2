@@ -522,15 +522,15 @@ def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat
     x_decode_shifted = x_decode_shifted.detach().cpu().numpy()
 
     # Fuse the sequential decodes/predictions together
-    x_decode_shifted_fused = np.moveaxis(x_decode_shifted, 3, 1)
-    x_decode_shifted_fused = x_decode_shifted_fused.reshape(x_decode_shifted_fused.shape[0] * x_decode_shifted_fused.shape[1], x_decode_shifted_fused.shape[2], x_decode_shifted_fused.shape[3])
-    x_decode_shifted_fused = np.moveaxis(x_decode_shifted_fused, 0, 2)
+    x_decode_shifted_fused = np.moveaxis(x_decode_shifted, 3, 2)
+    x_decode_shifted_fused = x_decode_shifted_fused.reshape(x_decode_shifted_fused.shape[0], x_decode_shifted_fused.shape[1] * x_decode_shifted_fused.shape[2], x_decode_shifted_fused.shape[3])
+    x_decode_shifted_fused = np.moveaxis(x_decode_shifted_fused, 1, 2)
 
-    x_hat_fused = np.moveaxis(x_hat, 3, 1)
-    x_hat_fused = x_hat_fused.reshape(x_hat_fused.shape[0] * x_hat_fused.shape[1], x_hat_fused.shape[2], x_hat_fused.shape[3])
-    x_hat_fused = np.moveaxis(x_hat_fused, 0, 2)
+    x_hat_fused = np.moveaxis(x_hat, 3, 2)
+    x_hat_fused = x_hat_fused.reshape(x_hat_fused.shape[0], x_hat_fused.shape[1] * x_hat_fused.shape[2], x_hat_fused.shape[3])
+    x_hat_fused = np.moveaxis(x_hat_fused, 1, 2)
 
-    batchsize = x_hat.shape[1]
+    batchsize = x_hat.shape[0]
 
     np.random.seed(seed=None) # should replace with Generator for newer code
     r = np.arange(0,x_hat_fused.shape[1])
@@ -552,7 +552,7 @@ def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat
             })
 
             ax = fig.add_subplot(gs[b, c]) 
-            sns.lineplot(data=df, palette=palette, linewidth=2.5, dashes=False, ax=ax)
+            sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
             ax.set_title(f"B:{b}, Ch:{c}")
             
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")

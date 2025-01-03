@@ -118,6 +118,8 @@ class Swappable_Dec_Head(nn.Module):
             )
             self.dec_cnn_level.append(unit)
 
+            self.tanh_out=nn.Tanh()
+
     def forward(self, x_stack):
 
         outs = []
@@ -129,7 +131,9 @@ class Swappable_Dec_Head(nn.Module):
             outs.append(o)
         x = torch.sum(torch.stack(outs, dim=0), dim=0)
 
-        return x
+        x_tanh=self.tanh_out(x)
+
+        return x_tanh
 
 class BSE_Enc_Head(nn.Module):
     def __init__(
@@ -204,9 +208,9 @@ class BSE_Dec_Hint_Prep(nn.Module):
         self.latent_hint_size = int(self.latent_dim/hint_size_factor)
         self.prep_hint_PRE = nn.Sequential(
             nn.Linear(self.feedforward_hint_samples * self.num_channels, self.latent_hint_size),
-            nn.Linear(self.feedforward_hint_samples * self.latent_hint_size, self.latent_hint_size),
-            nn.Linear(self.feedforward_hint_samples * self.latent_hint_size, self.latent_hint_size),
-            nn.ReLU(0.2)
+            nn.Linear(self.latent_hint_size, self.latent_hint_size),
+            nn.Linear(self.latent_hint_size, self.latent_hint_size),
+            nn.LeakyReLU(0.2)
         )
 
 
