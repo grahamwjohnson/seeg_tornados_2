@@ -828,7 +828,7 @@ class Trainer:
                         transformer_loss = loss_functions.transformer_loss_function(
                             target_embeddings,  
                             predicted_embeddings, 
-                            transformer_weight=self.transformer_weight)
+                            transformer_weight=self.transformer_weight) 
 
                         recon_loss = loss_functions.recon_loss_function(
                             x=x_decode_shifted_batched, # Shifted by 1 due to predictions having gone through transformer
