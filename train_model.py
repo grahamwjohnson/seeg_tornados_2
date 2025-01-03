@@ -813,9 +813,9 @@ class Trainer:
                         x_hat_batched = dec_head(core_out)
                         x_hat = torch.split(x_hat_batched, self.transformer_seq_length-1, dim=0)
                         x_hat = torch.stack(x_hat, dim=0)
-
+ 
                         # LOSSES: Intra-Patient 
-                        transformer_loss = loss_functions.transformer_loss_function(
+                        transformer_loss = loss_functions.transformer_loss_function( 
                             latent_seq[:, 1:, :],  
                             predicted_embeddings, 
                             transformer_weight=self.transformer_weight) 
