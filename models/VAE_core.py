@@ -94,7 +94,7 @@ class Dec_CNN_TimeDilator(nn.Module):
                         unit = nn.Sequential(
                             # nn.ConvTranspose1d(in_channels=int(self.in_channels*(2**l)), out_channels=int(self.in_channels*(2**(l+1))), kernel_size=k, stride=2, padding=int((k-1)/2), output_padding=1),
                             nn.ConvTranspose1d(in_channels=self.in_channels, out_channels=self.in_channels, kernel_size=k, stride=2, padding=int((k-1)/2), output_padding=1),
-                            # nn.LeakyReLU(0.2)
+                            nn.LeakyReLU(0.2)
                         )
 
                     # No time or channel expansion
@@ -102,7 +102,7 @@ class Dec_CNN_TimeDilator(nn.Module):
                         unit = nn.Sequential(
                             nn.ConvTranspose1d(in_channels=self.in_channels, out_channels=self.in_channels, kernel_size=k, stride=1, padding=int((k-1)/2), output_padding=0),
                             # nn.ConvTranspose1d(in_channels=int(self.in_channels*(2**(l+1))), out_channels=int(self.in_channels*(2**(l+1))), kernel_size=k, stride=1, padding=int((k-1)/2), output_padding=0),
-                            # nn.LeakyReLU(0.2)
+                            nn.LeakyReLU(0.2)
                         )
                     resblock.append(unit)
                 column.append(resblock)
@@ -235,8 +235,8 @@ class VAE_Enc(nn.Module):
 
         self.top_to_hidden = nn.Sequential(
             nn.LeakyReLU(0.2),
-            nn.Linear(self.top_enc_dims, self.hidden_encode_dims)
-            # nn.LeakyReLU(0.2)
+            nn.Linear(self.top_enc_dims, self.hidden_encode_dims),
+            nn.LeakyReLU(0.2)
         )
         
         # Variational layers

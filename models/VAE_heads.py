@@ -118,8 +118,6 @@ class Swappable_Dec_Head(nn.Module):
             )
             self.dec_cnn_level.append(unit)
 
-            self.tanh_out=nn.Tanh()
-
     def forward(self, x_stack):
 
         outs = []
@@ -130,10 +128,8 @@ class Swappable_Dec_Head(nn.Module):
             o = unit(x_k)
             outs.append(o)
         x = torch.sum(torch.stack(outs, dim=0), dim=0)
-
-        x_tanh=self.tanh_out(x)
-
-        return x_tanh
+        
+        return x
 
 class BSE_Enc_Head(nn.Module):
     def __init__(

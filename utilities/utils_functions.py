@@ -208,15 +208,18 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 
     return LR_val
 
-def BSE_KL_LR_schedule(
+def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         KL_max, KL_min, KL_epochs_TO_max, KL_epochs_AT_max, 
         LR_max_heads, LR_min_heads, 
         LR_max_core, LR_min_core, 
+        LR_max_transformer, LR_min_transformer, 
         LR_epochs_TO_max_core, LR_epochs_AT_max_core, 
         LR_epochs_TO_max_heads, LR_epochs_AT_max_heads, 
+        LR_epochs_TO_max_transformer, LR_epochs_AT_max_transformer, 
         manual_gamma_core, manual_step_size_core,
         manual_gamma_heads, manual_step_size_heads,
+        manual_gamma_transformer, manual_step_size_transformer,
         KL_rise_first=True, LR_rise_first=True, **kwargs):
             
     
@@ -285,8 +288,22 @@ def BSE_KL_LR_schedule(
         LR_rise_first=LR_rise_first
     )
 
+    # TRANSFORMER
+    LR_val_transformer = LR_subfunction(
+        iter_curr=iter_curr,
+        LR_min=LR_min_transformer,
+        LR_max=LR_max_transformer,
+        epoch=epoch, 
+        manual_gamma=manual_gamma_transformer, 
+        manual_step_size=manual_step_size_transformer, 
+        LR_epochs_TO_max=LR_epochs_TO_max_transformer, 
+        LR_epochs_AT_max=LR_epochs_AT_max_transformer, 
+        iters_per_epoch=iters_per_epoch,
+        LR_rise_first=LR_rise_first
+    )
+
             
-    return KL_val, LR_val_core, LR_val_heads
+    return KL_val, LR_val_core, LR_val_heads, LR_val_transformer
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
@@ -516,7 +533,7 @@ def print_latent_realtime(target_emb, predicted_emb, savedir, epoch, iter_curr, 
         pl.close('all') 
     
 
-def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat_id, num_realtime_channels_recon, **kwargs):
+def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat_id, num_realtime_channels_recon, num_recon_samples, **kwargs):
 
     x_hat = x_hat.detach().cpu().numpy()
     x_decode_shifted = x_decode_shifted.detach().cpu().numpy()
@@ -543,8 +560,8 @@ def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat
     palette = sns.cubehelix_palette(n_colors=2, start=3, rot=1) 
     for b in range(0, batchsize):
         for c in range(0,len(random_ch_idxs)):
-            x_decode_plot = x_decode_shifted_fused[b, random_ch_idxs[c], :]
-            x_hat_plot = x_hat_fused[b, random_ch_idxs[c], :]
+            x_decode_plot = x_decode_shifted_fused[b, random_ch_idxs[c], -num_recon_samples:]
+            x_hat_plot = x_hat_fused[b, random_ch_idxs[c], -num_recon_samples:]
 
             df = pd.DataFrame({
                 "Target": x_decode_plot,

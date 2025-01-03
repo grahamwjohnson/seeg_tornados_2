@@ -78,7 +78,6 @@ def load_train_objs(
     n_heads, 
     multiple_of,
     adamW_wd,
-    transformer_LR,    
     **kwargs):
 
     # Split pats into train and test
@@ -162,7 +161,7 @@ def load_train_objs(
     ### Transformer ###
     transformer = Transformer(ModelArgs(device=gpu_id, **kwargs))
     transformer = transformer.to(gpu_id)
-    transformer_opt = torch.optim.AdamW(transformer.parameters(), lr=transformer_LR, weight_decay=adamW_wd)
+    transformer_opt = torch.optim.AdamW(transformer.parameters(), lr=kwargs['LR_min_transformer'], weight_decay=adamW_wd)
     print(f"[GPU{gpu_id}] transformer loaded")
 
     return train_set, val_finetune_set, val_unseen_set, transformer, transformer_opt, vae_enc, vae_dec, train_heads, val_heads, opt_enc, opt_dec, opts_train, opts_val  #infer_set
@@ -738,13 +737,14 @@ class Trainer:
                 for start_idx in start_idxs: # Same start_idx for all patients (has no biological meaning)
 
                     # Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                    self.KL_multiplier, self.curr_LR_core, self.curr_LR_heads = utils_functions.BSE_KL_LR_schedule(
+                    self.KL_multiplier, self.curr_LR_core, self.curr_LR_heads, self.transformer_LR = utils_functions.LR_and_weight_schedules(
                         epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
                     
                     # Update Core and Heads LR
                     self.opt_enc.param_groups[0]['lr'] = self.curr_LR_core
                     self.opt_dec.param_groups[0]['lr'] = self.curr_LR_core
                     head_opts_curr.set_all_lr(self.curr_LR_heads)
+                    self.transformer_opt.param_groups[0]['lr'] = self.transformer_LR
 
                     # Reset the cumulative losses & zero gradients
                     kld_loss = 0
@@ -897,7 +897,7 @@ class Trainer:
                             # rand_gpu = int(random.uniform(0, torch.cuda.device_count()))
                             if self.gpu_id == 0:
                                 utils_functions.print_latent_realtime(
-                                    target_emb = target_embeddings.cpu().detach().numpy(), 
+                                    target_emb = latent_seq[:, 1:, :].cpu().detach().numpy(), 
                                     predicted_emb = predicted_embeddings.cpu().detach().numpy(),
                                     savedir = self.model_dir + "/realtime_latents",
                                     epoch = self.epoch,
