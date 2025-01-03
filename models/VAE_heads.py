@@ -9,16 +9,13 @@ class Head_Optimizers():
 
         enc_heads = heads[0]
         dec_heads = heads[1]
-        hint_preppers = heads[2]
 
         self.enc_head_opts = [-1]*len(enc_heads)
         self.dec_head_opts = [-1]*len(dec_heads)
-        self.hint_preppers_opts = [-1]*len(hint_preppers)
 
         for i in range(0, len(enc_heads)):
             self.enc_head_opts[i] = torch.optim.AdamW(enc_heads[i].parameters(), lr=lr, weight_decay=wd)
             self.dec_head_opts[i] = torch.optim.AdamW(dec_heads[i].parameters(), lr=lr, weight_decay=wd)
-            self.hint_preppers_opts[i] = torch.optim.AdamW(hint_preppers[i].parameters(), lr=lr, weight_decay=wd)
 
     def set_all_lr(self, lr):
         for i in range(0, len(self.enc_head_opts)):
@@ -27,10 +24,6 @@ class Head_Optimizers():
         
         for i in range(0, len(self.dec_head_opts)):
             for g in self.dec_head_opts[i].param_groups:
-                g['lr'] = lr
-        
-        for i in range(0, len(self.hint_preppers_opts)):
-            for g in self.hint_preppers_opts[i].param_groups:
                 g['lr'] = lr
 
     def get_lr(self):
@@ -41,10 +34,6 @@ class Head_Optimizers():
         
         for i in range(0, len(self.dec_head_opts)):
             for g in self.dec_head_opts[i].param_groups:
-                lrs.append(g['lr'])
-        
-        for i in range(0, len(self.hint_preppers_opts)):
-            for g in self.hint_preppers_opts[i].param_groups:
                 lrs.append(g['lr'])
 
         if len(set(lrs)) <= 1:
@@ -59,14 +48,9 @@ class Head_Optimizers():
         for i in range(0, len(self.dec_head_opts)):
             self.dec_head_opts[i].zero_grad()
         
-        for i in range(0, len(self.hint_preppers_opts)):
-            self.hint_preppers_opts[i].zero_grad()
-        
-
     def step(self, idx):
         self.enc_head_opts[idx].step()
         self.dec_head_opts[idx].step()
-        self.hint_preppers_opts[idx].step()
 
 # Single depth apadpter from raw to VAE
 class Swappable_Enc_Head(nn.Module):
@@ -183,39 +167,3 @@ class BSE_Dec_Head(nn.Module):
     def forward(self, x):
         return self.trans_conv_block(x)
 
-class BSE_Dec_Hint_Prep(nn.Module):
-    def __init__(
-            self,
-            pat_id,
-            feedforward_hint_samples_start,
-            feedforward_hint_samples_end,
-            latent_dim,
-            num_channels,
-            hint_size_factor,
-            **kwargs):
-        
-        super(BSE_Dec_Hint_Prep, self).__init__()
-
-        self.pat_id = pat_id
-
-        self.feedforward_hint_samples = feedforward_hint_samples_start + feedforward_hint_samples_end
-        self.num_channels = num_channels
-        self.latent_dim = latent_dim
-
-        self.latent_hint_size = int(self.latent_dim/hint_size_factor)
-        self.prep_hint_PRE = nn.Sequential(
-            nn.Linear(self.feedforward_hint_samples * self.num_channels, self.latent_hint_size),
-            nn.Linear(self.latent_hint_size, self.latent_hint_size),
-            nn.Linear(self.latent_hint_size, self.latent_hint_size),
-            nn.LeakyReLU(0.2)
-        )
-
-
-    def forward(self, x_hint):
-        # Flatten hint, send through FC layer, and add to latent before decoding
-        x_hint_flat = x_hint.flatten(start_dim=1)
-        x_hint_flat_prepped = self.prep_hint_PRE(x_hint_flat)
-
-        return x_hint_flat_prepped
-
-        

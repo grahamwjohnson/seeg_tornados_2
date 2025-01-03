@@ -5,7 +5,7 @@ from torch import Tensor
 from torchinfo import summary
 
 # Local imports
-from .VAE_heads import BSE_Enc_Head, BSE_Dec_Head, BSE_Dec_Hint_Prep
+from .VAE_heads import BSE_Enc_Head, BSE_Dec_Head
 from .Transformer import ModelArgs, Transformer
 
 # Takes input from Swappable_Enc_Head 
@@ -199,7 +199,6 @@ class VAE_Enc(nn.Module):
             enc_conv_resblock_size,
             dec_conv_dilator_resblock_size,
             dec_conv_flat_resblock_size,
-            hint_size_factor,
             gpu_id=None, 
             **kwargs):
         
@@ -235,6 +234,10 @@ class VAE_Enc(nn.Module):
 
         self.top_to_hidden = nn.Sequential(
             nn.LeakyReLU(0.2),
+            nn.Linear(self.top_enc_dims, self.top_enc_dims),
+            nn.Linear(self.top_enc_dims, self.top_enc_dims),
+            nn.LeakyReLU(0.2),
+            nn.Linear(self.top_enc_dims, self.top_enc_dims),
             nn.Linear(self.top_enc_dims, self.hidden_encode_dims),
             nn.LeakyReLU(0.2)
         )
@@ -281,7 +284,6 @@ class VAE_Dec(nn.Module):
         transconv_kernel_sizes, 
         dec_conv_dilator_resblock_size,
         dec_conv_flat_resblock_size,
-        hint_size_factor,
         gpu_id=None, 
         **kwargs):
         
@@ -300,19 +302,21 @@ class VAE_Dec(nn.Module):
         self.dec_conv_flat_resblock_size = dec_conv_flat_resblock_size
 
         self.latent_dim = latent_dim
-        self.latent_hint_size = int(self.latent_dim/hint_size_factor)
 
         self.dec_hidden_1_size = self.hidden_decode_dims
-        self.dec_hidden_2_size = self.hidden_decode_dims * 2
-        self.length_dec_bottom = 4  # MUST CHANGE BASED ON ENCODER  $#######
+        self.dec_hidden_2_size = self.hidden_decode_dims   ############## NOT SIFT CODED (was x2 before)
+        self.length_dec_bottom = 4                                 # MUST CHANGE BASED ON ENCODER  $#######
         # self.num_cnn_chans_start_dec = int(self.dec_hidden_2_size / len(self.transconv_kernel_sizes) / self.length_dec_bottom)
         self.num_cnn_chans_start_dec = int(self.dec_hidden_2_size / self.length_dec_bottom)
 
         self.latent_to_top = nn.Sequential(
-            nn.Linear(self.latent_dim + self.latent_hint_size, self.dec_hidden_1_size),
+            nn.Linear(self.latent_dim, self.dec_hidden_1_size),
             nn.Linear(self.dec_hidden_1_size, self.dec_hidden_2_size),
             # nn.Linear(self.dec_hidden_2_size, self.dec_hidden_2_size),
             nn.LeakyReLU(0.2),
+            nn.Linear(self.dec_hidden_2_size, self.dec_hidden_2_size),
+            nn.Linear(self.dec_hidden_2_size, self.dec_hidden_2_size),
+            nn.LeakyReLU(0.2)
         )
 
         self.dec_cnn_dilator = Dec_CNN_TimeDilator(
@@ -332,26 +336,24 @@ class VAE_Dec(nn.Module):
     def get_script_filename(self):
         return __file__
     
-    def decode(self, z_with_hints):
+    def decode(self, z):
         # y = self.latent_to_parallel_hidden(z)
-        y = self.latent_to_top(z_with_hints)
+        y = self.latent_to_top(z)
         y = self.dec_cnn_dilator(y)
         y = self.dec_cnn_flat(y)
 
         return y
 
 
-    def forward(self, z, x_hint_flat_prepped):
+    def forward(self, z):
         
-        z_with_hints = torch.cat([z, x_hint_flat_prepped], dim=1)
-
         # Decode TODO: consider having parallel architecture to encoder
-        out_prehead = self.decode(z_with_hints)
+        out_prehead = self.decode(z)
 
         return out_prehead
         
 # Builds models on CPU and prints sizes of forward passes
-def print_models_flow(x, feedforward_hint_samples_start, feedforward_hint_samples_end, transformer_seq_length, **kwargs):
+def print_models_flow(x, transformer_seq_length, **kwargs):
     
     batch_size = x.shape[0]
     pat_num_channels = x.shape[1]
@@ -359,10 +361,6 @@ def print_models_flow(x, feedforward_hint_samples_start, feedforward_hint_sample
 
     train_enc_head = BSE_Enc_Head(pat_id="na", num_channels=pat_num_channels, **kwargs)
     train_dec_head = BSE_Dec_Head(pat_id="na", num_channels=pat_num_channels, **kwargs)
-    train_hint_prepper = BSE_Dec_Hint_Prep(pat_id="na", feedforward_hint_samples_start=feedforward_hint_samples_start, feedforward_hint_samples_end=feedforward_hint_samples_end, num_channels=pat_num_channels, **kwargs)
-
-    # Break off the last samples of pre and first samples of post to provide hint to decoder for phase alignment
-    x_hint = torch.cat((x[:, :, :feedforward_hint_samples_start], x[:, :, -feedforward_hint_samples_end:]), dim=1)
 
     # Build the core models
     vae_enc = VAE_Enc(**kwargs) 
@@ -377,13 +375,6 @@ def print_models_flow(x, feedforward_hint_samples_start, feedforward_hint_sample
     x_posthead = train_enc_head(x)
     summary(train_enc_head, input_size=x.shape, depth=999, device="cpu")
     print(f"x_posthead:{x_posthead.shape}\n")
-
-    # Prep the phase hints
-    print(f"\n\n\nINPUT TO <HINT PREPPER>\n"
-    f"x_hint:{x_hint.shape}")
-    x_hint_flat_prepped = train_hint_prepper(x_hint)
-    summary(train_hint_prepper, input_size=x_hint.shape, depth=999, device="cpu")
-    print(f"x_hint_flat_prepped:{x_hint_flat_prepped.shape}\n")
 
     # Run through VAE Enc
     print(f"\n\n\nINPUT TO <VAE ENC>\n"
@@ -406,10 +397,9 @@ def print_models_flow(x, feedforward_hint_samples_start, feedforward_hint_sample
 
     # Run through VAE decoder
     print(f"\n\n\nINPUT TO <VAE DEC>\n"
-    f"z:{latent.shape}\n"
-    f"x_hint_flat_prepped:{x_hint_flat_prepped.shape}")
-    core_out = vae_dec(latent, x_hint_flat_prepped )  
-    summary(vae_dec, input_size=(latent.shape, x_hint_flat_prepped.shape), depth=999, device="cpu")
+    f"z:{latent.shape}\n")
+    core_out = vae_dec(latent)  
+    summary(vae_dec, input_size=(latent.shape), depth=999, device="cpu")
     print(f"core_out:{core_out.shape}\n")
 
     # Run through Dec Head
@@ -420,7 +410,7 @@ def print_models_flow(x, feedforward_hint_samples_start, feedforward_hint_sample
     print(f"\n<FINAL OUTPUT>\n"
     f"x_hat:{x_hat.shape}\n")
 
-    del train_enc_head, vae_enc, vae_dec, train_hint_prepper, train_dec_head, transformer
+    del train_enc_head, vae_enc, vae_dec, train_dec_head, transformer
 
 if __name__ == "__main__":
     

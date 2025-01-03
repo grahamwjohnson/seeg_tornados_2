@@ -36,7 +36,7 @@ from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
 from models.Transformer import ModelArgs, Transformer
 from models.VAE_core import VAE_Enc, VAE_Dec
-from models.VAE_heads import BSE_Enc_Head, BSE_Dec_Head, BSE_Dec_Hint_Prep, Head_Optimizers
+from models.VAE_heads import BSE_Enc_Head, BSE_Dec_Head, Head_Optimizers
 
 
 ######
@@ -127,25 +127,21 @@ def load_train_objs(
     # Train
     train_enc_heads = [-1]*len(train_pats_list)
     train_dec_heads = [-1]*len(train_pats_list)
-    train_hint_preppers = [-1]*len(train_pats_list)
     for i in range(0, len(train_pats_list)):
         train_enc_heads[i] = BSE_Enc_Head(pat_id=train_pats_list[i], num_channels=train_set.pat_num_channels[i], **kwargs).to(gpu_id)
         train_dec_heads[i] = BSE_Dec_Head(pat_id=train_pats_list[i], num_channels=train_set.pat_num_channels[i], **kwargs).to(gpu_id)
-        train_hint_preppers[i] = BSE_Dec_Hint_Prep(pat_id=train_pats_list[i], num_channels=train_set.pat_num_channels[i], **kwargs).to(gpu_id)
     
-    train_heads = (train_enc_heads, train_dec_heads, train_hint_preppers)
+    train_heads = (train_enc_heads, train_dec_heads)
     opts_train = Head_Optimizers(heads=train_heads, wd=head_weight_decay, lr=kwargs['LR_min_heads'])
 
     # Val
     val_enc_heads = [-1]*len(val_pats_list)
     val_dec_heads = [-1]*len(val_pats_list)
-    val_hint_preppers = [-1]*len(val_pats_list)
     for i in range(0, len(val_pats_list)):
         val_enc_heads[i] = BSE_Enc_Head(pat_id=val_pats_list[i], num_channels=val_finetune_set.pat_num_channels[i], **kwargs).to(gpu_id)
         val_dec_heads[i] = BSE_Dec_Head(pat_id=val_pats_list[i], num_channels=val_finetune_set.pat_num_channels[i], **kwargs).to(gpu_id)
-        val_hint_preppers[i] = BSE_Dec_Hint_Prep(pat_id=val_pats_list[i], num_channels=val_finetune_set.pat_num_channels[i], **kwargs).to(gpu_id)
     
-    val_heads = (val_enc_heads, val_dec_heads, val_hint_preppers)
+    val_heads = (val_enc_heads, val_dec_heads)
     opts_val = Head_Optimizers(heads=val_heads, wd=head_weight_decay, lr=kwargs['LR_min_heads'])
 
     ### VAE Enc ###
@@ -236,19 +232,15 @@ def main(
         enc_head_opt_files = glob.glob(heads_prev_dir + "/*enc_head_opt.pt")
         dec_head_weight_files = glob.glob(heads_prev_dir + "/*dec_head.pt")
         dec_head_opt_files = glob.glob(heads_prev_dir + "/*dec_head_opt.pt")
-        hinter_head_weight_files = glob.glob(heads_prev_dir + "/*hinter_head.pt")
-        hinter_head_opt_files = glob.glob(heads_prev_dir + "/*hinter_head_opt.pt")
 
         # Sort the file names to line up with pat idxs
         enc_head_weight_files.sort()
         enc_head_opt_files.sort()
         dec_head_weight_files.sort()
         dec_head_opt_files.sort()
-        hinter_head_weight_files.sort()
-        hinter_head_opt_files.sort()
 
         for pat_idx in range(len(train_heads[0])):
-            # Load model weights for heads (enc, dec, hinter)
+            # Load model weights for heads (enc, dec)
             filename_enc = enc_head_weight_files[pat_idx]
             pat_idx_in_filename = int(filename_enc.split("/")[-1].split("_")[2].replace("patidx",""))
             if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
@@ -258,11 +250,6 @@ def main(
             pat_idx_in_filename = int(filename_dec.split("/")[-1].split("_")[2].replace("patidx",""))
             if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
             train_heads[1][pat_idx].load_state_dict(torch.load(filename_dec, map_location=map_location))
-
-            filename_hinter = hinter_head_weight_files[pat_idx]
-            pat_idx_in_filename = int(filename_hinter.split("/")[-1].split("_")[2].replace("patidx",""))
-            if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
-            train_heads[2][pat_idx].load_state_dict(torch.load(filename_hinter, map_location=map_location))
 
             # Load the optimizers
             filename_enc_OPT = enc_head_opt_files[pat_idx]
@@ -274,11 +261,6 @@ def main(
             pat_idx_in_filename = int(filename_dec_OPT.split("/")[-1].split("_")[2].replace("patidx",""))
             if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
             opts_train.dec_head_opts[pat_idx].load_state_dict(torch.load(filename_dec_OPT, map_location=map_location))
-
-            filename_hinter_OPT = hinter_head_opt_files[pat_idx]
-            pat_idx_in_filename = int(filename_hinter_OPT.split("/")[-1].split("_")[2].replace("patidx",""))
-            if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
-            opts_train.hint_preppers_opts[pat_idx].load_state_dict(torch.load(filename_hinter_OPT, map_location=map_location))
 
         print("Core and Head Weights and Opts loaded from checkpoints")
 
@@ -377,8 +359,6 @@ class Trainer:
         pic_save_dir: str,
         latent_dim: int,
         autoencode_samples: int,
-        feedforward_hint_samples_end: int,
-        feedforward_hint_samples_start: int,
         num_samples: int,
         transformer_seq_length: int,
         FS: int,
@@ -418,8 +398,6 @@ class Trainer:
         self.pic_save_dir = pic_save_dir
         self.latent_dim = latent_dim
         self.autoencode_samples = autoencode_samples
-        self.feedforward_hint_samples_start = feedforward_hint_samples_start
-        self.feedforward_hint_samples_end = feedforward_hint_samples_end
         self.num_samples = num_samples
         self.transformer_seq_length = transformer_seq_length
         self.FS = FS
@@ -552,11 +530,6 @@ class Trainer:
                     opt_ckp = self.opts_train.dec_head_opts[pat_idx].state_dict()
                     opt_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_dec_head_opt.pt"
                     torch.save(opt_ckp, opt_path)
-
-                    opt_ckp = self.opts_train.hint_preppers_opts[pat_idx].state_dict()
-                    opt_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_hinter_head_opt.pt"
-                    torch.save(opt_ckp, opt_path)
-
 
                 ### Transformer ###
 
@@ -761,16 +734,14 @@ class Trainer:
                     for pat_idx in np.arange(0,num_pats_curr): 
 
                         # Pull out the patient's heads
-                        enc_head=heads_curr[0][pat_idx] # Heads are [enc, dec, hint_prepper]
+                        enc_head=heads_curr[0][pat_idx] # Heads are [enc, dec]
                         dec_head=heads_curr[1][pat_idx]
-                        hint_prepper=heads_curr[2][pat_idx]
 
                         # Pull patient's data
                         data_tensor = data_tensor_by_pat[pat_idx]
 
                         # Reset the data vars for Transformer Sequence and put on GPU
                         x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.autoencode_samples).to(self.gpu_id)
-                        x_hint = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], (self.feedforward_hint_samples_start + self.feedforward_hint_samples_end)).to(self.gpu_id)
 
                         # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
                         for embedding_idx in range(0, self.transformer_seq_length):
@@ -778,9 +749,6 @@ class Trainer:
                             # Pull out data for this window
                             end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
                             x[:, embedding_idx, :, :] = data_tensor[:, :, end_idx-self.autoencode_samples : end_idx]
-                            x_hint_start = x[:, embedding_idx, :, :][:, :, :self.feedforward_hint_samples_start]
-                            x_hint_end = x[:, embedding_idx, :, :][:, :, -self.feedforward_hint_samples_end:]
-                            x_hint[:, embedding_idx, :, :] = torch.cat((x_hint_start, x_hint_end), dim=2)
 
                         # Stack the vars into batch dimension 
                         x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
@@ -804,12 +772,8 @@ class Trainer:
                         
                         ### VAE DECODER
                         # Run the predicted embeddings through decoder
-                        predicted_embeddings_batched = predicted_embeddings.reshape(predicted_embeddings.shape[0]*predicted_embeddings.shape[1], predicted_embeddings.shape[2])
-                        # Prep the phase hints (shifted by 1 because it's after transformer) then run through VAE Core decoder and head
-                        x_hint_batched = x_hint[:,1:,:,:].reshape(x_hint[:,1:,:,:].shape[0]*x_hint[:,1:,:,:].shape[1], x_hint[:,1:,:,:].shape[2], x_hint[:,1:,:,:].shape[3])
-                        x_pre_hint_flat_prepped = hint_prepper(x_hint_batched)
-                        
-                        core_out = self.vae_dec(predicted_embeddings_batched, x_pre_hint_flat_prepped)  
+                        predicted_embeddings_batched = predicted_embeddings.reshape(predicted_embeddings.shape[0]*predicted_embeddings.shape[1], predicted_embeddings.shape[2])                        
+                        core_out = self.vae_dec(predicted_embeddings_batched)  
                         x_hat_batched = dec_head(core_out)
                         x_hat = torch.split(x_hat_batched, self.transformer_seq_length-1, dim=0)
                         x_hat = torch.stack(x_hat, dim=0)
