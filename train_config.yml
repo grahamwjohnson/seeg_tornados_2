@@ -175,7 +175,7 @@ pic_types: kwargs['pic_types'] = ['JPEGs','SVGs']
 
 
 # LBM
-transformer_seq_length: 128
+transformer_seq_length: 512
 
 adamW_wd: 0
 

@@ -67,6 +67,8 @@ class Swappable_Enc_Head(nn.Module):
             unit = nn.Sequential(
                 nn.Conv1d(in_channels=self.in_channels, out_channels=self.out_channels, kernel_size=k, stride=self.stride, padding=int((k-1)/2)),
                 nn.Conv1d(in_channels=self.out_channels, out_channels=self.out_channels, kernel_size=k, stride=self.stride, padding=int((k-1)/2)),
+                nn.Conv1d(in_channels=self.out_channels, out_channels=self.out_channels, kernel_size=k, stride=self.stride, padding=int((k-1)/2)),
+                nn.Conv1d(in_channels=self.out_channels, out_channels=self.out_channels, kernel_size=k, stride=self.stride, padding=int((k-1)/2)),
                 nn.LeakyReLU(0.2)
             )
             self.kernel_columns.append(unit)
@@ -97,10 +99,14 @@ class Swappable_Dec_Head(nn.Module):
         for k in kernel_sizes:
             # Generate the trans conv layers so that data is upsampled without overlap
             unit = nn.Sequential(
+                nn.ConvTranspose1d(self.in_channels, self.in_channels, kernel_size=k, stride=stride, padding=int((k-1)/2), output_padding=0),
+                nn.ConvTranspose1d(self.in_channels, self.in_channels, kernel_size=k, stride=stride, padding=int((k-1)/2), output_padding=0),
+                nn.ConvTranspose1d(self.in_channels, self.in_channels, kernel_size=k, stride=stride, padding=int((k-1)/2), output_padding=0),
                 nn.ConvTranspose1d(self.in_channels, self.num_channels, kernel_size=k, stride=stride, padding=int((k-1)/2), output_padding=0),
-                # nn.ConvTranspose1d(self.in_channels, self.num_channels, kernel_size=k, stride=stride, padding=int((k-1)/2), output_padding=0),
             )
             self.dec_cnn_level.append(unit)
+
+            self.final_tanh = nn.Tanh()
 
     def forward(self, x_stack):
 
@@ -112,6 +118,8 @@ class Swappable_Dec_Head(nn.Module):
             o = unit(x_k)
             outs.append(o)
         x = torch.sum(torch.stack(outs, dim=0), dim=0)
+
+        x = self.final_tanh(x)
         
         return x
 
