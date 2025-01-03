@@ -2261,8 +2261,8 @@ def run_setup(**kwargs):
     kwargs = initialize_directories(run_notes=run_notes, **kwargs)
 
     # Print the model forward pass sizes
-    fake_data = torch.rand(kwargs['wdecode_batch_size'], 200, kwargs['precode_samples'])
-    print_models_flow(x_pre=fake_data, **kwargs)
+    fake_data = torch.rand(kwargs['wdecode_batch_size'], 200, kwargs['autoencode_samples'])
+    print_models_flow(x=fake_data, **kwargs)
 
     # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)
     s = kwargs['model_dir'].split("/")[-1]

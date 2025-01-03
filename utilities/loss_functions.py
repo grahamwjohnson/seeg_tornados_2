@@ -4,14 +4,11 @@ import heapq
 
 def recon_loss_function(x, x_hat, recon_weight):
 
-    batch_size = x.shape[0]
-    num_channels = x.shape[1]
-
     # recon_loss = LogCosh_weight * LogCosh_loss_fn(x, x_hat) 
-    loss_fn = nn.MSELoss(reduction='sum')
-    recon_loss_sum = recon_weight * loss_fn(x, x_hat) / batch_size # Normalize to batch size
+    loss_fn = nn.MSELoss(reduction='mean')
+    recon_loss = recon_weight * loss_fn(x, x_hat) 
 
-    return recon_loss_sum/num_channels  # Normalize to num_channels to compare across patients
+    return recon_loss
 
 def kld_loss_function(mean, logvar, KL_multiplier):
 

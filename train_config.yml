@@ -32,11 +32,8 @@ inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES
 
 
 # Model settings
-mini_batch_stride: kwargs['mini_batch_stride'] = kwargs['decode_samples'] # For RANDOM dataset this does not matter
-mini_batch_window_size: kwargs['mini_batch_window_size'] = kwargs['precode_samples'] + kwargs['decode_samples']
-
-precode_samples: 1024
-common_ENC_cnn_channels: 128 # How many channels at the top of core model on ENCODE SIDE
+autoencode_samples: 256
+common_ENC_cnn_channels: 256 # How many channels at the top of core model on ENCODE SIDE
 enc_conv_depth: 5 
 enc_conv_resblock_size: 1
 enc_kernel_sizes: [3,9,15,27] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
@@ -44,25 +41,24 @@ hidden_encode_dims: 1024
 
 latent_dim: 256  # 1024
 
-feedforward_hint_samples: 4 # Numnber of samples on each side of embedded sequence to give to decoder (presumably to give it phase info)
+feedforward_hint_samples_end: 1 # Numnber of samples from END of embedded sequence to give to decoder (presumably to give it phase info)
+feedforward_hint_samples_start: 1 # Numnber of samples from START of embedded sequence to give to decoder (presumably to give it phase info)
 hint_size_factor: 2 # How much info is allowed to exist for phase when passed forward after latent bottleneck: latent_dim/hint_size_factor --> conc to latent vector for decoder
-hidden_decode_dims: 512
-common_DEC_cnn_channels: 512 # calculated based on number of kernels and decision to sequentially group after FC layers or not
+hidden_decode_dims: 1024
+common_DEC_cnn_channels: 256 # calculated based on number of kernels and decision to sequentially group after FC layers or not
 transconv_kernel_sizes: [3,9,15,27] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [2,4,8,16,32,64]
-dec_conv_dilator_depth: 3
+dec_conv_dilator_depth: 5
 dec_conv_dilator_resblock_size: 1
-dec_conv_flat_depth: 2
+dec_conv_flat_depth: 1
 dec_conv_flat_resblock_size: 1
-decode_samples: 8 #64  
 
-backprop_sec: kwargs['backprop_sec'] = kwargs['decode_samples'] / kwargs['FS'] # 0.125 # Will backprop after sequential forward pass of this many single epochs worth of data
 dropout_enc: 0.0
 dropout_dec: 0.1 
 core_weight_decay: 0
 head_weight_decay: 0
 head_names: ['enc', 'dec', 'hinter']
 
-train_subsample_file_factor: 8192 # randomly decreases training passes per file per epoch, Max subsampling is num_samples / (decode_samples * train_seq_minis)
+train_subsample_file_factor: 8192 # randomly decreases training passes per file per epoch
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 8 # this is for when loss is not being calculated
 pacmap_every: 99999 # Must be within a 'quick_recon_val_every' to be reached
@@ -142,8 +138,8 @@ tmp_file_dir: '/tmp_files'
   # w_MN = 0.0
   # w_neighbors = 1.
   # w_FP = 1.
-pre_PaCMAP_window_sec: 10 # kwargs['pre_PaCMAP_window_sec'] = kwargs['decode_samples'] / kwargs['FS']  #  10 ##############################
-pre_PaCMAP_stride_sec: 5 # kwargs['pre_PaCMAP_stride_sec'] = kwargs['decode_samples'] / kwargs['FS']  # 1
+pre_PaCMAP_window_sec: 10 
+pre_PaCMAP_stride_sec: 5 
 pacmap_LR: 1 # 0.5                                                                                              #################
 pacmap_NumIters: kwargs['pacmap_NumIters'] = (300,150,150) # (Phase 1,2,3), default (100, 100, 250) ##################################
 pacmap_NN: kwargs['pacmap_NN'] = None

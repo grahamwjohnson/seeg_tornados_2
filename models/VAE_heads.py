@@ -191,7 +191,8 @@ class BSE_Dec_Hint_Prep(nn.Module):
     def __init__(
             self,
             pat_id,
-            feedforward_hint_samples,
+            feedforward_hint_samples_start,
+            feedforward_hint_samples_end,
             latent_dim,
             num_channels,
             hint_size_factor,
@@ -201,7 +202,7 @@ class BSE_Dec_Hint_Prep(nn.Module):
 
         self.pat_id = pat_id
 
-        self.feedforward_hint_samples = feedforward_hint_samples
+        self.feedforward_hint_samples = feedforward_hint_samples_start + feedforward_hint_samples_end
         self.num_channels = num_channels
         self.latent_dim = latent_dim
 
@@ -214,11 +215,11 @@ class BSE_Dec_Hint_Prep(nn.Module):
         )
 
 
-    def forward(self, x_pre_hint):
+    def forward(self, x_hint):
         # Flatten hint, send through FC layer, and add to latent before decoding
-        x_pre_hint_flat = x_pre_hint.flatten(start_dim=1)
-        x_pre_hint_flat_prepped = self.prep_hint_PRE(x_pre_hint_flat)
+        x_hint_flat = x_hint.flatten(start_dim=1)
+        x_hint_flat_prepped = self.prep_hint_PRE(x_hint_flat)
 
-        return x_pre_hint_flat_prepped
+        return x_hint_flat_prepped
 
         

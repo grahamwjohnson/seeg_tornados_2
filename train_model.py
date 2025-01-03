@@ -376,12 +376,10 @@ class Trainer:
         pacmap_every: int,
         finetune_pacmap: bool,
         pic_save_dir: str,
-        mini_batch_window_size: int, 
-        mini_batch_stride: int,
         latent_dim: int,
-        decode_samples: int,
-        precode_samples: int,
-        feedforward_hint_samples: int,
+        autoencode_samples: int,
+        feedforward_hint_samples_end: int,
+        feedforward_hint_samples_start: int,
         num_samples: int,
         transformer_seq_length: int,
         FS: int,
@@ -419,12 +417,10 @@ class Trainer:
         self.pacmap_every = pacmap_every
         self.finetune_pacmap = finetune_pacmap
         self.pic_save_dir = pic_save_dir
-        self.mini_batch_window_size = mini_batch_window_size
-        self.mini_batch_stride = mini_batch_stride
         self.latent_dim = latent_dim
-        self.decode_samples = decode_samples
-        self.precode_samples = precode_samples
-        self.feedforward_hint_samples = feedforward_hint_samples
+        self.autoencode_samples = autoencode_samples
+        self.feedforward_hint_samples_start = feedforward_hint_samples_start
+        self.feedforward_hint_samples_end = feedforward_hint_samples_end
         self.num_samples = num_samples
         self.transformer_seq_length = transformer_seq_length
         self.FS = FS
@@ -682,10 +678,10 @@ class Trainer:
 
         np.random.seed(seed=None) # should replace with Generator for newer code
         
-        if random_bool: frame_shift = int(random.uniform(0, self.precode_samples + self.decode_samples -1))
+        if random_bool: frame_shift = int(random.uniform(0, self.autoencode_samples -1))
         else: frame_shift = 0
         
-        start_idxs = np.arange(0,self.num_windows - self.transformer_seq_length - 1) * self.decode_samples + frame_shift
+        start_idxs = np.arange(0,self.num_windows - self.transformer_seq_length - 1) * self.autoencode_samples + frame_shift
         if random_bool: np.random.shuffle(start_idxs)
 
         if random_bool: start_idxs = start_idxs[0::subsample_file_factor]
@@ -709,7 +705,7 @@ class Trainer:
         realtime_printing_interval,
         **kwargs):
 
-        print(f"Past/Decode Samples: {self.precode_samples}/{self.decode_samples}")
+        print(f"autoencode_samples: {self.autoencode_samples}")
 
         ### ALL FILES ### 
         # If wanting all files from every patiet, need to run patients serially
@@ -731,7 +727,7 @@ class Trainer:
             num_pats_curr = dataloader_curr.dataset.get_pat_count()
             
             # Number of iterations per file
-            self.num_windows = int((self.num_samples - self.transformer_seq_length * self.decode_samples - self.mini_batch_window_size)/self.decode_samples) - 2
+            self.num_windows = int((self.num_samples - self.transformer_seq_length * self.autoencode_samples - self.autoencode_samples)/self.autoencode_samples) - 2
 
             # Get miniepoch start indexes. Same random indexes will be used for all patients' files.
             start_idxs = self._train_start_idxs(random_bool=random_bool, subsample_file_factor=subsample_file_factor_curr)
@@ -773,66 +769,60 @@ class Trainer:
                         data_tensor = data_tensor_by_pat[pat_idx]
 
                         # Reset the data vars for Transformer Sequence and put on GPU
-                        x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.mini_batch_window_size).to(self.gpu_id)
-                        x_decode = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.decode_samples).to(self.gpu_id)
+                        x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.autoencode_samples).to(self.gpu_id)
+                        x_hint = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], (self.feedforward_hint_samples_start + self.feedforward_hint_samples_end)).to(self.gpu_id)
 
                         # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
                         for embedding_idx in range(0, self.transformer_seq_length):
 
                             # Pull out data for this window
-                            end_idx = start_idx + self.decode_samples * embedding_idx + self.mini_batch_window_size 
-                            x[:,embedding_idx, :, :] = data_tensor[:, :, end_idx-self.mini_batch_window_size : end_idx]
-                            x_decode[:, embedding_idx, :, :] = x[:, embedding_idx, :, :] [:, :, self.precode_samples:self.precode_samples + self.decode_samples]
+                            end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
+                            x[:, embedding_idx, :, :] = data_tensor[:, :, end_idx-self.autoencode_samples : end_idx]
+                            x_hint_start = x[:, embedding_idx, :, :][:, :, :self.feedforward_hint_samples_start]
+                            x_hint_end = x[:, embedding_idx, :, :][:, :, -self.feedforward_hint_samples_end:]
+                            x_hint[:, embedding_idx, :, :] = torch.cat((x_hint_start, x_hint_end), dim=2)
 
                         # Stack the vars into batch dimension 
                         x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
-                        x_decode_shifted = x_decode[:, 1:, :, :]
-                        x_decode_shifted_batched = x_decode_shifted.reshape([x_decode_shifted.shape[0]*x_decode_shifted.shape[1], x_decode_shifted.shape[2], x_decode_shifted.shape[3]])
 
-                        # To remeber how to split back to original
+                        # To remember how to split back to original:
                         # a = torch.split(x_decode_shifted_batched, self.transformer_seq_length-1, dim=0)
                         # b = torch.stack(a, dim=0)
 
                         ### VAE ENCODER
                         # Forward pass in stacked batch through head then VAE encoder
-                        x_pre = x_batched[:, :, 0:self.precode_samples]
-                        x_pre_posthead = enc_head(x_pre)
-                        mean_batched, logvar_batched, latent_batched, = self.vae_enc(x_pre_posthead)
+                        x_posthead = enc_head(x_batched)
+                        mean_batched, logvar_batched, latent_batched, = self.vae_enc(x_posthead)
 
                         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
-                        latent = torch.split(latent_batched, self.transformer_seq_length, dim=0)
-                        latent_seq = torch.stack(latent, dim=0)
+                        latent_seq = torch.split(latent_batched, self.transformer_seq_length, dim=0)
+                        latent_seq = torch.stack(latent_seq, dim=0)
   
                         ### TRANSFORMER
                         # Run sequence through transformer and get transformer loss
-                        transformer_input = latent_seq[:, :-1, :]
-                        target_embeddings = latent_seq[:, 1:, :]
-                        predicted_embeddings = self.transformer(transformer_input)
+                        predicted_embeddings = self.transformer(latent_seq[:, :-1, :])
                         
                         ### VAE DECODER
                         # Run the predicted embeddings through decoder
                         predicted_embeddings_batched = predicted_embeddings.reshape(predicted_embeddings.shape[0]*predicted_embeddings.shape[1], predicted_embeddings.shape[2])
-                        # Prep the phase hints (shifted by 1 because it's after transformer) then run through VAE Core encoder and head
-                        x_hints = x[:, 1:, :, -(self.decode_samples + self.feedforward_hint_samples):-self.decode_samples]
-                        x_hints_batched = x_hints.reshape(x_hints.shape[0]*x_hints.shape[1], x_hints.shape[2], x_hints.shape[3])
-                        x_pre_hint_flat_prepped = hint_prepper(x_hints_batched)
+                        # Prep the phase hints (shifted by 1 because it's after transformer) then run through VAE Core decoder and head
+                        x_hint_batched = x_hint[:,1:,:,:].reshape(x_hint[:,1:,:,:].shape[0]*x_hint[:,1:,:,:].shape[1], x_hint[:,1:,:,:].shape[2], x_hint[:,1:,:,:].shape[3])
+                        x_pre_hint_flat_prepped = hint_prepper(x_hint_batched)
                         
                         core_out = self.vae_dec(predicted_embeddings_batched, x_pre_hint_flat_prepped)  
                         x_hat_batched = dec_head(core_out)
-                        
-                        # For use later
                         x_hat = torch.split(x_hat_batched, self.transformer_seq_length-1, dim=0)
                         x_hat = torch.stack(x_hat, dim=0)
 
-                        # # LOSSES: Intra-Patient 
+                        # LOSSES: Intra-Patient 
                         transformer_loss = loss_functions.transformer_loss_function(
-                            target_embeddings,  
+                            latent_seq[:, 1:, :],  
                             predicted_embeddings, 
                             transformer_weight=self.transformer_weight) 
 
                         recon_loss = loss_functions.recon_loss_function(
-                            x=x_decode_shifted_batched, # Shifted by 1 due to predictions having gone through transformer
-                            x_hat=x_hat_batched,
+                            x=x[:, 1:, :, :], # Shifted by 1 due to predictions having gone through transformer
+                            x_hat=x_hat,
                             recon_weight=self.recon_weight)
 
                         kld_loss = loss_functions.kld_loss_function(
@@ -915,7 +905,7 @@ class Trainer:
                                     pat_id = dataset_curr.pat_ids[pat_idx],
                                     **kwargs)
                                 utils_functions.print_recon_realtime(
-                                    x_decode_shifted=x_decode_shifted, 
+                                    x_decode_shifted=x[:, 1:, :, :], 
                                     x_hat=x_hat, 
                                     savedir = self.model_dir + "/realtime_recon",
                                     epoch = self.epoch,

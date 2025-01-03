@@ -110,16 +110,19 @@ class Dec_CNN_TimeDilator(nn.Module):
 
     def forward(self, x):
         
-        x_stack = x.reshape(x.shape[0], self.in_channels, -1, len(self.dec_kernel_sizes))
+        # x_stack = x.reshape(x.shape[0], self.in_channels, -1, len(self.dec_kernel_sizes))
+        x_reshaped = x.reshape(x.shape[0], self.in_channels, -1)
 
         # Send up the layers seperately, so iterate kernel in top 'for' loop
         kernel_outs = []
         for k in range(len(self.kernel_columns)):
-            x_k = x_stack[:, :, :, k]
+            # x_k = x_stack[:, :, :, k]
+            x_k = x_reshaped
             for l in range(0, self.depth):
                 x0 = []
                 for r in range(0, self.resblock_size):
                     unit = self.kernel_columns[k][l][r]
+                    # x_k = unit(x_k)
                     x_k = unit(x_k)
                     if r == 0: x0 = x_k # save for skip connection
                 
@@ -183,9 +186,8 @@ class VAE_Enc(nn.Module):
     def __init__(
             self, 
             common_ENC_cnn_channels,
-            precode_samples, 
+            autoencode_samples, 
             latent_dim, 
-            decode_samples, 
             hidden_encode_dims,
             dropout_dec, 
             dropout_enc, 
@@ -204,10 +206,9 @@ class VAE_Enc(nn.Module):
         super(VAE_Enc, self).__init__()
 
         self.gpu_id = gpu_id
+        self.autoencode_samples = autoencode_samples
         self.hidden_encode_dims = hidden_encode_dims
-
         self.common_ENC_cnn_channels = common_ENC_cnn_channels # all subjects will go to these channels in middle of autoencoder
-
         self.encoder_drop_val = dropout_enc
         print(f"Dropout Encoder: {self.encoder_drop_val}")
         self.dropout_encoder = nn.Dropout(self.encoder_drop_val) 
@@ -216,7 +217,6 @@ class VAE_Enc(nn.Module):
         self.enc_kernel_sizes = enc_kernel_sizes
         self.enc_conv_resblock_size = enc_conv_resblock_size
 
-        self.precode_samples = precode_samples 
         self.latent_dim = latent_dim
             
         self.enc_conv_stride = 1
@@ -231,7 +231,7 @@ class VAE_Enc(nn.Module):
             poolsize=self.enc_conv_poolsize, 
             poolstride=self.enc_conv_poolstride)
         
-        self.top_enc_dims = int((self.common_ENC_cnn_channels) * ((self.precode_samples) / (2 ** self.enc_conv_depth)))
+        self.top_enc_dims = int((self.common_ENC_cnn_channels) * ((self.autoencode_samples) / (2 ** self.enc_conv_depth)))
 
         self.top_to_hidden = nn.Sequential(
             nn.LeakyReLU(0.2),
@@ -252,17 +252,17 @@ class VAE_Enc(nn.Module):
         z = mean + std * epsilon
         return z
       
-    def encode(self, x_pre_posthead):
-        y = self.enc_cnn_PRE(x_pre_posthead)
+    def encode(self, x_posthead):
+        y = self.enc_cnn_PRE(x_posthead)
         y = y.flatten(start_dim=1)
         y = self.dropout_encoder(self.top_to_hidden(y))    
         mean, logvar = self.mean_fc_layer(y), self.logvar_fc_layer(y)
         return mean, logvar
 
-    def forward(self, x_pre_posthead):
+    def forward(self, x_posthead):
         
         # Encode
-        mean, logvar = self.encode(x_pre_posthead)
+        mean, logvar = self.encode(x_posthead)
 
         # Reparameterize
         z = self.reparameterization(mean, logvar)
@@ -274,8 +274,6 @@ class VAE_Dec(nn.Module):
     def __init__(
         self, 
         latent_dim, 
-        decode_samples, 
-        hidden_encode_dims,
         hidden_decode_dims,
         dropout_dec, 
         dec_conv_dilator_depth,
@@ -301,14 +299,14 @@ class VAE_Dec(nn.Module):
         self.dec_conv_dilator_resblock_size = dec_conv_dilator_resblock_size
         self.dec_conv_flat_resblock_size = dec_conv_flat_resblock_size
 
-        self.decode_samples = decode_samples
         self.latent_dim = latent_dim
         self.latent_hint_size = int(self.latent_dim/hint_size_factor)
 
         self.dec_hidden_1_size = self.hidden_decode_dims
         self.dec_hidden_2_size = self.hidden_decode_dims * 2
-        self.length_dec_bottom = 1
-        self.num_cnn_chans_start_dec = int(self.dec_hidden_2_size / len(self.transconv_kernel_sizes) / self.length_dec_bottom)
+        self.length_dec_bottom = 8  # MUST CHANGE BASED ON ENCODER  $#######
+        # self.num_cnn_chans_start_dec = int(self.dec_hidden_2_size / len(self.transconv_kernel_sizes) / self.length_dec_bottom)
+        self.num_cnn_chans_start_dec = int(self.dec_hidden_2_size / self.length_dec_bottom)
 
         self.latent_to_top = nn.Sequential(
             nn.Linear(self.latent_dim + self.latent_hint_size, self.dec_hidden_1_size),
@@ -343,9 +341,9 @@ class VAE_Dec(nn.Module):
         return y
 
 
-    def forward(self, z, x_pre_hint_flat_prepped):
+    def forward(self, z, x_hint_flat_prepped):
         
-        z_with_hints = torch.cat([z, x_pre_hint_flat_prepped], dim=1)
+        z_with_hints = torch.cat([z, x_hint_flat_prepped], dim=1)
 
         # Decode TODO: consider having parallel architecture to encoder
         out_prehead = self.decode(z_with_hints)
@@ -353,18 +351,18 @@ class VAE_Dec(nn.Module):
         return out_prehead
         
 # Builds models on CPU and prints sizes of forward passes
-def print_models_flow(x_pre, feedforward_hint_samples, transformer_seq_length, **kwargs):
+def print_models_flow(x, feedforward_hint_samples_start, feedforward_hint_samples_end, transformer_seq_length, **kwargs):
     
-    batch_size = x_pre.shape[0]
-    pat_num_channels = x_pre.shape[1]
-    data_length = x_pre.shape[2]
+    batch_size = x.shape[0]
+    pat_num_channels = x.shape[1]
+    data_length = x.shape[2]
 
     train_enc_head = BSE_Enc_Head(pat_id="na", num_channels=pat_num_channels, **kwargs)
     train_dec_head = BSE_Dec_Head(pat_id="na", num_channels=pat_num_channels, **kwargs)
-    train_hint_prepper = BSE_Dec_Hint_Prep(pat_id="na", feedforward_hint_samples=feedforward_hint_samples, num_channels=pat_num_channels, **kwargs)
+    train_hint_prepper = BSE_Dec_Hint_Prep(pat_id="na", feedforward_hint_samples_start=feedforward_hint_samples_start, feedforward_hint_samples_end=feedforward_hint_samples_end, num_channels=pat_num_channels, **kwargs)
 
     # Break off the last samples of pre and first samples of post to provide hint to decoder for phase alignment
-    x_pre_hint = x_pre[:, :, -feedforward_hint_samples:]
+    x_hint = torch.cat((x[:, :, :feedforward_hint_samples_start], x[:, :, -feedforward_hint_samples_end:]), dim=1)
 
     # Build the core models
     vae_enc = VAE_Enc(**kwargs) 
@@ -375,23 +373,23 @@ def print_models_flow(x_pre, feedforward_hint_samples, transformer_seq_length, *
 
     # Run through Enc Head
     print(f"INPUT TO <ENC HEAD>\n"
-    f"x_pre:{x_pre.shape}")
-    x_pre_posthead = train_enc_head(x_pre)
-    summary(train_enc_head, input_size=x_pre.shape, depth=999, device="cpu")
-    print(f"x_pre_posthead:{x_pre_posthead.shape}\n")
+    f"x:{x.shape}")
+    x_posthead = train_enc_head(x)
+    summary(train_enc_head, input_size=x.shape, depth=999, device="cpu")
+    print(f"x_posthead:{x_posthead.shape}\n")
 
     # Prep the phase hints
     print(f"\n\n\nINPUT TO <HINT PREPPER>\n"
-    f"x_pre_hint:{x_pre_hint.shape}")
-    x_pre_hint_flat_prepped = train_hint_prepper(x_pre_hint)
-    summary(train_hint_prepper, input_size=x_pre_hint.shape, depth=999, device="cpu")
-    print(f"x_pre_hint_flat_prepped:{x_pre_hint_flat_prepped.shape}\n")
+    f"x_hint:{x_hint.shape}")
+    x_hint_flat_prepped = train_hint_prepper(x_hint)
+    summary(train_hint_prepper, input_size=x_hint.shape, depth=999, device="cpu")
+    print(f"x_hint_flat_prepped:{x_hint_flat_prepped.shape}\n")
 
     # Run through VAE Enc
     print(f"\n\n\nINPUT TO <VAE ENC>\n"
-    f"x_pre_posthead:{x_pre_posthead.shape}\n")
-    mean, logvar, latent = vae_enc(x_pre_posthead)  
-    summary(vae_enc, input_size=(x_pre_posthead.shape), depth=999, device="cpu")
+    f"x_posthead:{x_posthead.shape}\n")
+    mean, logvar, latent = vae_enc(x_posthead)  
+    summary(vae_enc, input_size=(x_posthead.shape), depth=999, device="cpu")
     print(
     f"mean:{mean.shape}\n"
     f"logvar:{logvar.shape}\n"
@@ -409,9 +407,9 @@ def print_models_flow(x_pre, feedforward_hint_samples, transformer_seq_length, *
     # Run through VAE decoder
     print(f"\n\n\nINPUT TO <VAE DEC>\n"
     f"z:{latent.shape}\n"
-    f"x_pre_hint_flat_prepped:{x_pre_hint_flat_prepped.shape}")
-    core_out = vae_dec(latent, x_pre_hint_flat_prepped )  
-    summary(vae_dec, input_size=(latent.shape, x_pre_hint_flat_prepped.shape), depth=999, device="cpu")
+    f"x_hint_flat_prepped:{x_hint_flat_prepped.shape}")
+    core_out = vae_dec(latent, x_hint_flat_prepped )  
+    summary(vae_dec, input_size=(latent.shape, x_hint_flat_prepped.shape), depth=999, device="cpu")
     print(f"core_out:{core_out.shape}\n")
 
     # Run through Dec Head
