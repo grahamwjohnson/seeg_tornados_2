@@ -570,7 +570,7 @@ def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat
 
             ax = fig.add_subplot(gs[b, c]) 
             sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
-            ax.set_title(f"B:{b}, Ch:{c}")
+            ax.set_title(f"B:{b}, Ch:{random_ch_idxs[c]}")
             
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
@@ -2278,7 +2278,7 @@ def run_setup(**kwargs):
     kwargs = initialize_directories(run_notes=run_notes, **kwargs)
 
     # Print the model forward pass sizes
-    fake_data = torch.rand(kwargs['wdecode_batch_size'], 200, kwargs['autoencode_samples'])
+    fake_data = torch.rand(kwargs['wdecode_batch_size'], 199, kwargs['autoencode_samples']) # 199 is just an example of number of patient channels
     print_models_flow(x=fake_data, **kwargs)
 
     # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)

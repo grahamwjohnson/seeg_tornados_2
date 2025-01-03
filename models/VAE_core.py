@@ -304,7 +304,7 @@ class VAE_Dec(nn.Module):
 
         self.dec_hidden_1_size = self.hidden_decode_dims
         self.dec_hidden_2_size = self.hidden_decode_dims * 2
-        self.length_dec_bottom = 8  # MUST CHANGE BASED ON ENCODER  $#######
+        self.length_dec_bottom = 4  # MUST CHANGE BASED ON ENCODER  $#######
         # self.num_cnn_chans_start_dec = int(self.dec_hidden_2_size / len(self.transconv_kernel_sizes) / self.length_dec_bottom)
         self.num_cnn_chans_start_dec = int(self.dec_hidden_2_size / self.length_dec_bottom)
 

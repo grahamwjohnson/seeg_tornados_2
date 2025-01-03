@@ -27,16 +27,16 @@ preictal_augmentation_seconds: 1800
 
 # Training settings
 continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/indiancow_Thu_Jan__2_23_40_47_2025' 
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/dutchsmoushond_Fri_Jan__3_08_09_17_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 
 # Model settings
-autoencode_samples: 128
-common_ENC_cnn_channels: 256 # How many channels at the top of core model on ENCODE SIDE
-enc_conv_depth: 4 
-enc_conv_resblock_size: 1
-enc_kernel_sizes: [3,15,31,63] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
+autoencode_samples: 8
+common_ENC_cnn_channels: 512 # How many channels at the top of core model on ENCODE SIDE
+enc_conv_depth: 1 
+enc_conv_resblock_size: 4
+enc_kernel_sizes: [3] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
 hidden_encode_dims: 1024
 
 latent_dim: 512  # 1024
@@ -45,10 +45,10 @@ feedforward_hint_samples_end: 1 # Numnber of samples from END of embedded sequen
 feedforward_hint_samples_start: 1 # Numnber of samples from START of embedded sequence to give to decoder (presumably to give it phase info)
 hint_size_factor: 8 # How much info is allowed to exist for phase when passed forward after latent bottleneck: latent_dim/hint_size_factor --> conc to latent vector for decoder
 hidden_decode_dims: 1024
-common_DEC_cnn_channels: 256 # calculated based on number of kernels and decision to sequentially group after FC layers or not
-transconv_kernel_sizes: [3,15,31,63] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [2,4,8,16,32,64]
-dec_conv_dilator_depth: 4
-dec_conv_dilator_resblock_size: 1
+common_DEC_cnn_channels: 512 # calculated based on number of kernels and decision to sequentially group after FC layers or not
+transconv_kernel_sizes: [3] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [2,4,8,16,32,64]
+dec_conv_dilator_depth: 1
+dec_conv_dilator_resblock_size: 4
 dec_conv_flat_depth: 1
 dec_conv_flat_resblock_size: 1
 
@@ -58,7 +58,7 @@ core_weight_decay: 0
 head_weight_decay: 0
 head_names: ['enc', 'dec', 'hinter']
 
-train_subsample_file_factor: 1024 # randomly decreases training passes per file per epoch
+train_subsample_file_factor: 8192 # randomly decreases training passes per file per epoch
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 8 # this is for when loss is not being calculated
 pacmap_every: 99999 # Must be within a 'quick_recon_val_every' to be reached
@@ -76,7 +76,7 @@ num_recon_samples: 1024 # this will limit how much is shown in recon plots, ERRO
 num_realtime_dims: 5
 
 # Beta VAE controls
-KL_max: kwargs['KL_max'] = 0 #1e-3 # 1e-3 
+KL_max: kwargs['KL_max'] = 1e-3 #1e-6 # 1e-3 
 KL_min: kwargs['KL_min'] = 0
 KL_epochs_AT_max: 5
 KL_epochs_TO_max: 5
@@ -178,7 +178,7 @@ pic_types: kwargs['pic_types'] = ['JPEGs','SVGs']
 
 
 # LBM
-transformer_seq_length: 256
+transformer_seq_length: 512
 
 adamW_wd: 0
 
