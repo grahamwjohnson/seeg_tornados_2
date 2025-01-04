@@ -32,19 +32,19 @@ inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES
 
 
 # Model settings
-autoencode_samples: 16
+autoencode_samples: 8
 common_ENC_cnn_channels: 512 # How many channels at the top of core model on ENCODE SIDE
-enc_conv_depth: 2 
+enc_conv_depth: 1 
 enc_conv_resblock_size: 4
-enc_kernel_sizes: [3] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
+enc_kernel_sizes: [3,7] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
 hidden_encode_dims: 2048
 
 latent_dim: 1024  # 1024
 
 hidden_decode_dims: 2048
 common_DEC_cnn_channels: 512 # calculated based on number of kernels and decision to sequentially group after FC layers or not
-transconv_kernel_sizes: [3] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [2,4,8,16,32,64]
-dec_conv_dilator_depth: 2
+transconv_kernel_sizes: [3,7] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [2,4,8,16,32,64]
+dec_conv_dilator_depth: 1
 dec_conv_dilator_resblock_size: 4
 dec_conv_flat_depth: 1
 dec_conv_flat_resblock_size: 1
@@ -68,12 +68,12 @@ epochs_to_train: 999999
 
 realtime_latent_printing: True
 num_realtime_channels_recon: 2 # columns of random channel plots
-realtime_printing_interval: 100
+realtime_printing_interval: 50
 num_recon_samples: 1024 # this will limit how much is shown in recon plots, ERROR if not enough samples, pulls from END of transformer sequence 
 num_realtime_dims: 5
 
 # Beta VAE controls
-KL_max: kwargs['KL_max'] = 1 #1e-6 # 1e-3 
+KL_max: kwargs['KL_max'] = 0 #1 #1e-6 # 1e-3 
 KL_min: kwargs['KL_min'] = 0
 KL_epochs_AT_max: 5
 KL_epochs_TO_max: 5

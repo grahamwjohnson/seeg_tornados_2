@@ -795,7 +795,7 @@ class Trainer:
                             KL_multiplier=self.KL_multiplier)
 
                         # Intrapatient backprop
-                        loss = recon_loss + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        loss = recon_loss + kld_loss # + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
                         loss.backward()
 
                         # Realtime info as epoch is running
