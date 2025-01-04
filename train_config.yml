@@ -46,7 +46,7 @@ common_DEC_cnn_channels: 512 # calculated based on number of kernels and decisio
 transconv_kernel_sizes: [3,7] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [2,4,8,16,32,64]
 dec_conv_dilator_depth: 1
 dec_conv_dilator_resblock_size: 4
-dec_conv_flat_depth: 1
+dec_conv_flat_depth: 1 
 dec_conv_flat_resblock_size: 1
 
 dropout_enc: 0.0
