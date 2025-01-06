@@ -50,7 +50,7 @@ from tkinter import filedialog
 import re
 from functools import partial
 
-from models.VAE_core import print_models_flow
+from models.VAE import print_models_flow
 
 def fill_hist_by_channel(data_in: np.ndarray, histo_bin_edges: np.ndarray, zero_island_delete_idxs: list):
 
@@ -113,7 +113,7 @@ def epoch_contains_pacmap_hdbscan(model_dir, epoch, return_paths=False):
     found_file_paths = [''] * len(needed_files)
 
 
-    check_dir = model_dir + "/checkpoints_BSE"
+    check_dir = model_dir + "/checkpoints"
 
     for i in range(len(needed_files)):
         curr_file = needed_files[i]
@@ -2213,8 +2213,8 @@ def initialize_directories(
     if kwargs['continue_existing_training']:
 
         kwargs['model_dir'] = cont_train_model_dir
-        kwargs['pic_save_dir'] = kwargs['model_dir'] + '/latent_snapshots_BSE'
-        kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE'
+        kwargs['pic_save_dir'] = kwargs['model_dir'] + '/latent_snapshots'
+        kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs'
 
         # Find the epoch to start training
         check_dir = kwargs['model_dir'] + "/checkpoints"
@@ -2226,13 +2226,11 @@ def initialize_directories(
         print(f"Resuming training after saved epoch: {str(max_epoch)}")
         
         # Construct the proper file names to get CORE state dicts
-        kwargs['enc_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_enc.pt'
-        kwargs['enc_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_enc_opt.pt'
-        kwargs['dec_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_dec.pt'
-        kwargs['dec_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_dec_opt.pt'
+        kwargs['vae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae.pt'
+        kwargs['vae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_opt.pt'
         kwargs['heads_prev_dir'] = check_dir + f'/Epoch_{str(max_epoch)}/heads_checkpoints'
         kwargs['transformer_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/transformer_checkpoints/checkpoint_epoch{str(max_epoch)}_transformer.pt'
-        kwargs['transformer_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/transformer_checkpoints/checkpoint_epoch{str(max_epoch)}_transformer_opt.pt'
+        kwargs['opt_transformer_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/transformer_checkpoints/checkpoint_epoch{str(max_epoch)}_opt_transformer.pt'
 
         # Set the start epoch 1 greater than max trained
         kwargs['start_epoch'] = (max_epoch + 1) 
@@ -2244,9 +2242,9 @@ def initialize_directories(
         # Make run directories
         kwargs['model_dir'] = append_timestamp(kwargs['root_save_dir'] + '/trained_models/' + kwargs['run_params_dir_name'] + '/' + run_notes + '_')
         os.makedirs(kwargs['model_dir'])
-        kwargs['pic_save_dir'] = kwargs['model_dir'] + '/latent_snapshots_BSE'
+        kwargs['pic_save_dir'] = kwargs['model_dir'] + '/latent_snapshots'
         os.makedirs(kwargs['pic_save_dir'])
-        kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE'
+        kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs'
         os.makedirs(kwargs['pic_dataset_dir'])
         [os.makedirs(f"{kwargs['pic_save_dir']}/{pic_sub_dirs[i]}/{ptype}") for i in range(0, len(pic_sub_dirs)) for ptype in pic_types]
 

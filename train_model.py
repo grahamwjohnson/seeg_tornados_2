@@ -35,12 +35,11 @@ from utilities import utils_functions
 from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
 from models.Transformer import ModelArgs, Transformer
-from models.VAE_core import VAE_Enc, VAE_Dec
-from models.VAE_heads import BSE_Enc_Head, BSE_Dec_Head, Head_Optimizers
+from models.VAE import VAE, VAEHead_TiedEncDec, Head_Optimizers
 
 
 ######
-torch.autograd.set_detect_anomaly(True)
+torch.autograd.set_detect_anomaly(False)
 
 
 def ddp_setup(gpu_id, world_size):
@@ -66,18 +65,19 @@ def load_train_objs(
     val_finetune_hour_dataset_range, 
     val_unseen_hour_dataset_range, 
     inference_selection, 
-
-    # BSE
-    core_weight_decay, 
-    head_weight_decay, 
     
-    # transformer
+    # Transformer
     max_seq_len, 
     max_batch_size,
     n_layers,
     n_heads, 
     multiple_of,
-    adamW_wd,
+
+    core_weight_decay, 
+    head_weight_decay, 
+    transformer_weight_decay,
+    adamW_beta1,
+    adamW_beta2,
     **kwargs):
 
     # Split pats into train and test
@@ -93,8 +93,8 @@ def load_train_objs(
 
     # Sequential dataset used to run inference on train data and build PaCMAP projection
     print(f"[GPU{str(gpu_id)}] Generating TRAIN dataset")
-    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE/Train_Grouped'
-    train_set = SEEG_Tornado_Dataset(
+    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs/Train_Grouped'
+    train_dataset = SEEG_Tornado_Dataset(
         gpu_id=gpu_id, 
         pat_list=train_pats_list,
         pat_dirs=train_pats_dirs,
@@ -103,8 +103,8 @@ def load_train_objs(
         **kwargs)
     
     print(f"[GPU{str(gpu_id)}] Generating VALIDATION FINETUNE dataset")
-    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE/Val_Grouped_Finetune'
-    val_finetune_set = SEEG_Tornado_Dataset(
+    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs/Val_Grouped_Finetune'
+    valfinetune_dataset = SEEG_Tornado_Dataset(
         gpu_id=gpu_id, 
         pat_list=val_pats_list,
         pat_dirs=val_pats_dirs,
@@ -113,8 +113,8 @@ def load_train_objs(
         **kwargs)
 
     print(f"[GPU{str(gpu_id)}] Generating VALIDATION UNSEEN dataset")
-    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE/Val_Grouped_Unseen'
-    val_unseen_set = SEEG_Tornado_Dataset(
+    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs/Val_Grouped_Unseen'
+    valunseen_dataset = SEEG_Tornado_Dataset(
         gpu_id=gpu_id, 
         pat_list=val_pats_list,
         pat_dirs=val_pats_dirs,
@@ -124,43 +124,32 @@ def load_train_objs(
      
     # ### VAE HEADS ###
 
-    # Train
-    train_enc_heads = [-1]*len(train_pats_list)
-    train_dec_heads = [-1]*len(train_pats_list)
+    # Train Heads
+    train_heads = [-1]*len(train_pats_list)
     for i in range(0, len(train_pats_list)):
-        train_enc_heads[i] = BSE_Enc_Head(pat_id=train_pats_list[i], num_channels=train_set.pat_num_channels[i], **kwargs).to(gpu_id)
-        train_dec_heads[i] = BSE_Dec_Head(pat_id=train_pats_list[i], num_channels=train_set.pat_num_channels[i], **kwargs).to(gpu_id)
+        train_heads[i] = VAEHead_TiedEncDec(pat_id=train_pats_list[i], in_channels=train_dataset.pat_num_channels[i], **kwargs).to(gpu_id)
     
-    train_heads = (train_enc_heads, train_dec_heads)
-    opts_train = Head_Optimizers(heads=train_heads, wd=head_weight_decay, lr=kwargs['LR_min_heads'])
+    opt_head_train = Head_Optimizers(heads=train_heads, wd=head_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_heads'])
 
-    # Val
-    val_enc_heads = [-1]*len(val_pats_list)
-    val_dec_heads = [-1]*len(val_pats_list)
+    # Val Heads
+    val_heads = [-1]*len(val_pats_list)
     for i in range(0, len(val_pats_list)):
-        val_enc_heads[i] = BSE_Enc_Head(pat_id=val_pats_list[i], num_channels=val_finetune_set.pat_num_channels[i], **kwargs).to(gpu_id)
-        val_dec_heads[i] = BSE_Dec_Head(pat_id=val_pats_list[i], num_channels=val_finetune_set.pat_num_channels[i], **kwargs).to(gpu_id)
+        val_heads[i] = VAEHead_TiedEncDec(pat_id=val_pats_list[i], in_channels=valfinetune_dataset.pat_num_channels[i], **kwargs).to(gpu_id)
     
-    val_heads = (val_enc_heads, val_dec_heads)
-    opts_val = Head_Optimizers(heads=val_heads, wd=head_weight_decay, lr=kwargs['LR_min_heads'])
+    opt_head_val = Head_Optimizers(heads=val_heads, wd=head_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_heads'])
 
-    ### VAE Enc ###
-    vae_enc = VAE_Enc(gpu_id=gpu_id, **kwargs) 
-    vae_enc = vae_enc.to(gpu_id) 
-    opt_enc = torch.optim.AdamW(vae_enc.parameters(), lr=kwargs['LR_min_core'], weight_decay=core_weight_decay)
+    ### VAE ###
+    vae = VAE(gpu_id=gpu_id, **kwargs) 
+    vae = vae.to(gpu_id) 
+    opt_vae = torch.optim.AdamW(vae.parameters(), weight_decay=core_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_core'])
     
-    ### VAE Dec ###
-    vae_dec = VAE_Dec(gpu_id=gpu_id, **kwargs) 
-    vae_dec = vae_dec.to(gpu_id) 
-    opt_dec = torch.optim.AdamW(vae_dec.parameters(), lr=kwargs['LR_min_core'], weight_decay=core_weight_decay)
-
     ### Transformer ###
     transformer = Transformer(ModelArgs(device=gpu_id, **kwargs))
     transformer = transformer.to(gpu_id)
-    transformer_opt = torch.optim.AdamW(transformer.parameters(), lr=kwargs['LR_min_transformer'], weight_decay=adamW_wd)
+    opt_transformer = torch.optim.AdamW(transformer.parameters(), weight_decay=transformer_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_transformer'])
     print(f"[GPU{gpu_id}] transformer loaded")
 
-    return train_set, val_finetune_set, val_unseen_set, transformer, transformer_opt, vae_enc, vae_dec, train_heads, val_heads, opt_enc, opt_dec, opts_train, opts_val  #infer_set
+    return train_dataset, valfinetune_dataset, valunseen_dataset, transformer, vae, train_heads, val_heads, opt_head_train, opt_head_val, opt_vae, opt_transformer 
 
 def main(         
     # Ordered variables
@@ -176,12 +165,10 @@ def main(
     onlylatent_batch_size: int,
     train_subsample_file_factor: int,
     PaCMAP_model_to_infer = [],
-    enc_state_dict_prev_path = [],
-    enc_opt_state_dict_prev_path = [],
-    dec_state_dict_prev_path = [],
-    dec_opt_state_dict_prev_path = [],
+    vae_state_dict_prev_path = [],
+    vae_opt_state_dict_prev_path = [],
     transformer_state_dict_prev_path = [],
-    transformer_opt_state_dict_prev_path = [],
+    opt_transformer_state_dict_prev_path = [],
     heads_prev_dir = [],
     epochs_to_train: int = -1,
     **kwargs):
@@ -204,63 +191,44 @@ def main(
     ddp_setup(gpu_id, world_size)
 
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
-    train_dataset, valfinetune_dataset, valunseen_dataset, transformer, transformer_opt, vae_enc, vae_dec, train_heads, val_heads, opt_enc, opt_dec, opts_train, opts_val = load_train_objs(gpu_id=gpu_id, **kwargs) 
+    train_dataset, valfinetune_dataset, valunseen_dataset, transformer, vae, train_heads, val_heads, opt_head_train, opt_head_val, opt_vae, opt_transformer = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
     # Load the model/opt/sch states if not first epoch & if in training mode
     if (start_epoch > 0):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % gpu_id}
 
         # Load in VAE Core weights and opts
-        enc_state_dict_prev = torch.load(enc_state_dict_prev_path, map_location=map_location)
-        vae_enc.load_state_dict(enc_state_dict_prev)
-        enc_opt_state_dict_prev = torch.load(enc_opt_state_dict_prev_path, map_location=map_location)
-        opt_enc.load_state_dict(enc_opt_state_dict_prev)
-
-        dec_state_dict_prev = torch.load(dec_state_dict_prev_path, map_location=map_location)
-        vae_dec.load_state_dict(dec_state_dict_prev)
-        dec_opt_state_dict_prev = torch.load(dec_opt_state_dict_prev_path, map_location=map_location)
-        opt_dec.load_state_dict(dec_opt_state_dict_prev)
+        vae_state_dict_prev = torch.load(vae_state_dict_prev_path, map_location=map_location)
+        vae.load_state_dict(vae_state_dict_prev)
+        vae_opt_state_dict_prev = torch.load(vae_opt_state_dict_prev_path, map_location=map_location)
+        opt_vae.load_state_dict(vae_opt_state_dict_prev)
 
         # Load in Transformer model weights and opt
         transformer_state_dict_prev = torch.load(transformer_state_dict_prev_path, map_location=map_location)
         transformer.load_state_dict(transformer_state_dict_prev)
-        transformer_opt_state_dict_prev = torch.load(transformer_opt_state_dict_prev_path, map_location=map_location)
-        transformer_opt.load_state_dict(transformer_opt_state_dict_prev)
+        opt_transformer_state_dict_prev = torch.load(opt_transformer_state_dict_prev_path, map_location=map_location)
+        opt_transformer.load_state_dict(opt_transformer_state_dict_prev)
 
         # Load in train heads and opts, val heads are never pretrained by design
-        enc_head_weight_files = glob.glob(heads_prev_dir + "/*enc_head.pt")
-        enc_head_opt_files = glob.glob(heads_prev_dir + "/*enc_head_opt.pt")
-        dec_head_weight_files = glob.glob(heads_prev_dir + "/*dec_head.pt")
-        dec_head_opt_files = glob.glob(heads_prev_dir + "/*dec_head_opt.pt")
+        vae_head_weight_files = glob.glob(heads_prev_dir + "/*head.pt")
+        vae_head_opt_files = glob.glob(heads_prev_dir + "/*head_opt.pt")
 
         # Sort the file names to line up with pat idxs
-        enc_head_weight_files.sort()
-        enc_head_opt_files.sort()
-        dec_head_weight_files.sort()
-        dec_head_opt_files.sort()
+        vae_head_weight_files.sort()
+        vae_head_opt_files.sort()
 
-        for pat_idx in range(len(train_heads[0])):
+        for pat_idx in range(len(train_heads)):
             # Load model weights for heads (enc, dec)
-            filename_enc = enc_head_weight_files[pat_idx]
-            pat_idx_in_filename = int(filename_enc.split("/")[-1].split("_")[2].replace("patidx",""))
+            filename_vae_head = vae_head_weight_files[pat_idx]
+            pat_idx_in_filename = int(filename_vae_head.split("/")[-1].split("_")[2].replace("patidx",""))
             if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
-            train_heads[0][pat_idx].load_state_dict(torch.load(filename_enc, map_location=map_location))
-
-            filename_dec = dec_head_weight_files[pat_idx]
-            pat_idx_in_filename = int(filename_dec.split("/")[-1].split("_")[2].replace("patidx",""))
-            if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
-            train_heads[1][pat_idx].load_state_dict(torch.load(filename_dec, map_location=map_location))
+            train_heads[pat_idx].load_state_dict(torch.load(filename_vae_head, map_location=map_location))
 
             # Load the optimizers
-            filename_enc_OPT = enc_head_opt_files[pat_idx]
-            pat_idx_in_filename = int(filename_enc_OPT.split("/")[-1].split("_")[2].replace("patidx",""))
+            filename_vae_OPT = vae_head_opt_files[pat_idx]
+            pat_idx_in_filename = int(filename_vae_OPT.split("/")[-1].split("_")[2].replace("patidx",""))
             if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
-            opts_train.enc_head_opts[pat_idx].load_state_dict(torch.load(filename_enc_OPT, map_location=map_location))
-
-            filename_dec_OPT = dec_head_opt_files[pat_idx]
-            pat_idx_in_filename = int(filename_dec_OPT.split("/")[-1].split("_")[2].replace("patidx",""))
-            if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
-            opts_train.dec_head_opts[pat_idx].load_state_dict(torch.load(filename_dec_OPT, map_location=map_location))
+            opt_head_train.head_opts[pat_idx].load_state_dict(torch.load(filename_vae_OPT, map_location=map_location))
 
         print("Core and Head Weights and Opts loaded from checkpoints")
 
@@ -268,19 +236,17 @@ def main(
         world_size=world_size,
         gpu_id=gpu_id, 
         transformer=transformer,
-        transformer_opt=transformer_opt,
-        vae_enc=vae_enc, 
-        vae_dec=vae_dec, 
+        opt_transformer=opt_transformer,
+        vae=vae, 
         train_heads=train_heads,
         val_heads=val_heads,
         start_epoch=start_epoch,
         train_dataset=train_dataset, 
         valfinetune_dataset=valfinetune_dataset,
         valunseen_dataset=valunseen_dataset,
-        opt_enc=opt_enc,
-        opt_dec=opt_dec, 
-        opts_train=opts_train,
-        opts_val=opts_val,
+        opt_vae=opt_vae,
+        opt_head_train=opt_head_train,
+        opt_head_val=opt_head_val,
         wdecode_batch_size=wdecode_batch_size,
         onlylatent_batch_size=onlylatent_batch_size,
         PaCMAP_model_to_infer=PaCMAP_model_to_infer,
@@ -299,25 +265,20 @@ def main(
             barrier()
             if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=False, savePaCMAP=True, **kwargs)
         
-
-        # QUICK RECON
-        if (trainer.epoch + 1) % trainer.quick_recon_val_every == 0:
-            trainer._quick_recon(**kwargs)
-
         # TRAIN
         trainer._set_to_train()
         trainer._run_epoch(
-                dataset_curr = trainer.train_dataset, 
-                batchsize=trainer.wdecode_batch_size,
-                heads_curr = trainer.train_heads,
-                head_opts_curr = trainer.opts_train,
-                random_bool = True, # will subsample and randomize
-                subsample_file_factor_curr = train_subsample_file_factor, # only valid if 'random_bool' is True
-                only_latent = False, # Do not run decoder or transformer
-                save_latents = False, # will save the latents to tmp_directory
-                all_files_bool = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
-                val_finetune = False,
-                **kwargs)
+            dataset_curr = trainer.train_dataset, 
+            batchsize=trainer.wdecode_batch_size,
+            heads_curr = trainer.train_heads,
+            head_opts_curr = trainer.opt_head_train,
+            random_bool = True, # will subsample and randomize
+            subsample_file_factor_curr = train_subsample_file_factor, # only valid if 'random_bool' is True
+            only_latent = False, # Do not run decoder or transformer
+            save_latents = False, # will save the latents to tmp_directory
+            all_files_bool = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+            val_finetune = False,
+            **kwargs)
         
         # Checkpoint after every train epoch, optionally delete old checkpoints
         print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
@@ -335,19 +296,17 @@ class Trainer:
         world_size: int,
         gpu_id: int,
         transformer: torch.nn.Module,
-        transformer_opt: torch.optim.Optimizer,
-        vae_enc: torch.nn.Module,
-        vae_dec: torch.nn.Module,
+        opt_transformer: torch.optim.Optimizer,
+        vae: torch.nn.Module,
         train_heads: tuple,
         val_heads: tuple,
         start_epoch: int,
         train_dataset: SEEG_Tornado_Dataset,
         valfinetune_dataset: SEEG_Tornado_Dataset,
         valunseen_dataset: SEEG_Tornado_Dataset,
-        opt_enc: torch.optim.Optimizer,
-        opt_dec: torch.optim.Optimizer,
-        opts_train,
-        opts_val,
+        opt_vae: torch.optim.Optimizer,
+        opt_head_train,
+        opt_head_val,
         wdecode_batch_size: int,
         onlylatent_batch_size: int,
         wandb_run,
@@ -375,19 +334,17 @@ class Trainer:
         self.world_size = world_size
         self.gpu_id = gpu_id
         self.transformer = transformer
-        self.transformer_opt = transformer_opt
-        self.vae_enc = vae_enc
-        self.vae_dec = vae_dec
+        self.opt_transformer = opt_transformer
+        self.vae = vae
         self.train_heads = train_heads
         self.val_heads = val_heads
         self.start_epoch = start_epoch
         self.train_dataset = train_dataset
         self.valfinetune_dataset = valfinetune_dataset
         self.valunseen_dataset = valunseen_dataset
-        self.opt_enc = opt_enc
-        self.opt_dec = opt_dec
-        self.opts_train = opts_train
-        self.opts_val = opts_val
+        self.opt_vae = opt_vae
+        self.opt_head_train = opt_head_train
+        self.opt_head_val = opt_head_val
         self.wdecode_batch_size = wdecode_batch_size
         self.onlylatent_batch_size = onlylatent_batch_size
         self.model_dir = model_dir
@@ -417,64 +374,55 @@ class Trainer:
         self.KL_multiplier = -1 # dummy variable, only needed when debugging and training is skipped
 
         # Set up Core/Heads & transformer with DDP
-        self.vae_enc = DDP(vae_enc, device_ids=[gpu_id])   # find_unused_parameters=True
-        self.vae_dec = DDP(vae_dec, device_ids=[gpu_id])   # find_unused_parameters=True
+        self.vae = DDP(vae, device_ids=[gpu_id])   # find_unused_parameters=True
         self.transformer = DDP(transformer, device_ids=[gpu_id])   # find_unused_parameters=True
         
-        self.train_heads = [[-1]*len(train_heads[i]) for i in range(len(train_heads))]
+        self.train_heads = [-1]*len(train_heads) 
         for i in range(0, len(train_heads)):
-            for j in range(len(train_heads[i])):
-                self.train_heads[i][j] = DDP(train_heads[i][j], device_ids=[gpu_id])
+            self.train_heads[i] = DDP(train_heads[i], device_ids=[gpu_id])
 
-        self.val_heads = [[-1]*len(val_heads[i]) for i in range(len(val_heads))]
+        self.val_heads = [-1]*len(val_heads)
         for i in range(0, len(val_heads)):
-            for j in range(len(val_heads[i])):
-                self.val_heads[i][j] = DDP(val_heads[i][j], device_ids=[gpu_id])
+            self.val_heads[i] = DDP(val_heads[i], device_ids=[gpu_id])
 
-        self.num_train_pats = len(train_heads[0]) 
-        self.train_pat_ids = [self.train_heads[0][i].module.pat_id for i in range(len(self.train_heads[0]))]
+        self.num_train_pats = len(train_heads) 
+        self.train_pat_ids = [self.train_heads[i].module.pat_id for i in range(len(self.train_heads))]
 
-        self.num_val_pats = len(val_heads[0])
-        self.val_pat_ids = [self.val_heads[0][i].module.pat_id for i in range(len(self.val_heads[0]))]
+        self.num_val_pats = len(val_heads)
+        self.val_pat_ids = [self.val_heads[i].module.pat_id for i in range(len(self.val_heads))]
                 
         # Watch with WandB
         # TODO: watch heads as well?
-        wandb.watch(self.vae_enc)
-        wandb.watch(self.vae_dec)
+        wandb.watch(self.vae)
         wandb.watch(self.transformer)
         
     def _set_to_train(self):
-        self.vae_enc.train()
-        self.vae_dec.train()
+        self.vae.train()
         self.transformer.train()
         self._set_heads_to_train(self.train_heads)
         self._set_heads_to_train(self.val_heads)
 
     def _set_to_eval(self):
-        self.vae_enc.eval()
-        self.vae_dec.eval()
+        self.vae.eval()
         self.transformer.eval()
         self._set_heads_to_eval(self.train_heads)
         self._set_heads_to_eval(self.val_heads)
 
-    def _set_heads_to_train(self, head_tuple):
-        for i in range(0, len(head_tuple)):
-            for j in range(0, len(head_tuple[i])):
-                head_tuple[i][j].train()
+    def _set_heads_to_train(self, heads):
+        for i in range(0, len(heads)):
+            heads[i].train()
                            
-    def _set_heads_to_eval(self, head_tuple):
-        for i in range(0, len(head_tuple)):
-            for j in range(0, len(head_tuple[i])):
-                head_tuple[i][j].eval()
+    def _set_heads_to_eval(self, heads):
+        for i in range(0, len(heads)):
+            heads[i].eval()
 
     def _zero_all_grads(self):
-        self.opt_enc.zero_grad()
-        self.opt_dec.zero_grad()
-        self.transformer_opt.zero_grad()
-        self.opts_train.zero_grad()
-        self.opts_val.zero_grad()
+        self.opt_vae.zero_grad()
+        self.opt_transformer.zero_grad()
+        self.opt_head_train.zero_grad()
+        self.opt_head_val.zero_grad()
 
-    def _save_checkpoint(self, epoch, saveModels, savePaCMAP, delete_old_checkpoints, head_names, **kwargs):
+    def _save_checkpoint(self, epoch, saveModels, savePaCMAP, delete_old_checkpoints, **kwargs):
             
             print("CHECKPOINT SAVE")
 
@@ -492,21 +440,13 @@ class Trainer:
                 if not os.path.exists(check_core_dir): os.makedirs(check_core_dir)
 
                 # Save core model
-                ckp = self.vae_enc.module.state_dict()
-                check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_enc.pt"
-                torch.save(ckp, check_path)
-                
-                ckp = self.vae_dec.module.state_dict()
-                check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_dec.pt"
+                ckp = self.vae.module.state_dict()
+                check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae.pt"
                 torch.save(ckp, check_path)
 
                 # Save opt core
-                opt_ckp = self.opt_enc.state_dict()
-                opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_enc_opt.pt"
-                torch.save(opt_ckp, opt_path)
-
-                opt_ckp = self.opt_dec.state_dict()
-                opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_dec_opt.pt"
+                opt_ckp = self.opt_vae.state_dict()
+                opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_opt.pt"
                 torch.save(opt_ckp, opt_path)
 
                 ### HEADS CHECKPOINT
@@ -514,21 +454,15 @@ class Trainer:
                 if not os.path.exists(check_heads_dir): os.makedirs(check_heads_dir)
 
                 # Save train heads model
-                if len(head_names) != len(self.train_heads): raise Exception(f"Got {len(self.train_heads)} from self.train_heads, but expected {len(head_names)} based on provided head names in config.yml file")
-                for head_style in range(0, len(self.train_heads)):
-                    for pat_idx in range(0, len(self.train_heads[head_style])):
-                        ckp = self.train_heads[head_style][pat_idx].module.state_dict()
-                        check_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_{head_names[head_style]}_head.pt"
-                        torch.save(ckp, check_path)
+                for pat_idx in range(0, len(self.train_heads)):
+                    ckp = self.train_heads[pat_idx].module.state_dict()
+                    check_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_head.pt"
+                    torch.save(ckp, check_path)
 
                 # Opts are indexed by head name, thus must iterate #TODO not hardcoded
-                for pat_idx in range(0, len(self.train_heads[0])):
-                    opt_ckp = self.opts_train.enc_head_opts[pat_idx].state_dict()
-                    opt_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_enc_head_opt.pt"
-                    torch.save(opt_ckp, opt_path)
-
-                    opt_ckp = self.opts_train.dec_head_opts[pat_idx].state_dict()
-                    opt_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_dec_head_opt.pt"
+                for pat_idx in range(0, len(self.train_heads)):
+                    opt_ckp = self.opt_head_train.head_opts[pat_idx].state_dict()
+                    opt_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_head_opt.pt"
                     torch.save(opt_ckp, opt_path)
 
                 ### Transformer ###
@@ -543,8 +477,8 @@ class Trainer:
                 torch.save(ckp, check_path)
                 
                 # Save transformer optimizer
-                opt_ckp = self.transformer_opt.state_dict()
-                opt_path = check_transformer_dir + "/checkpoint_epoch" +str(epoch) + "_transformer_opt.pt"
+                opt_ckp = self.opt_transformer.state_dict()
+                opt_path = check_transformer_dir + "/checkpoint_epoch" +str(epoch) + "_opt_transformer.pt"
                 torch.save(opt_ckp, opt_path)
 
                 print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
@@ -623,21 +557,6 @@ class Trainer:
                 utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch)
                 print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
 
-    def _quick_recon(self, **kwargs):
-
-        # Train Pats pre-valfinetune
-
-        if self.finetune_quickrecon:
-             raise Exception("TODO")
-
-            # Val Finetune
-
-            # Val Unseen
-
-            # Train Pats post-valfinetune
-
-        raise Exception("TODO")
-
     def _pacmap(self, **kwargs):
 
         if self.finetune_pacmap:
@@ -714,10 +633,9 @@ class Trainer:
                         epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
                     
                     # Update Core and Heads LR
-                    self.opt_enc.param_groups[0]['lr'] = self.curr_LR_core
-                    self.opt_dec.param_groups[0]['lr'] = self.curr_LR_core
+                    self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
                     head_opts_curr.set_all_lr(self.curr_LR_heads)
-                    self.transformer_opt.param_groups[0]['lr'] = self.transformer_LR
+                    self.opt_transformer.param_groups[0]['lr'] = self.transformer_LR
 
                     # Reset the cumulative losses & zero gradients
                     kld_loss = 0
@@ -734,8 +652,7 @@ class Trainer:
                     for pat_idx in np.arange(0,num_pats_curr): 
 
                         # Pull out the patient's heads
-                        enc_head=heads_curr[0][pat_idx] # Heads are [enc, dec]
-                        dec_head=heads_curr[1][pat_idx]
+                        head=heads_curr[pat_idx] # Heads are [enc, dec]
 
                         # Pull patient's data
                         data_tensor = data_tensor_by_pat[pat_idx]
@@ -759,8 +676,8 @@ class Trainer:
 
                         ### VAE ENCODER
                         # Forward pass in stacked batch through head then VAE encoder
-                        x_posthead = enc_head(x_batched)
-                        mean_batched, logvar_batched, latent_batched, = self.vae_enc(x_posthead)
+                        x_posthead = head(x_batched, reverse=False)
+                        mean_batched, logvar_batched, latent_batched, = self.vae(x_posthead, reverse=False)
 
                         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
                         latent_seq = torch.split(latent_batched, self.transformer_seq_length, dim=0)
@@ -773,8 +690,8 @@ class Trainer:
                         ### VAE DECODER
                         # Run the predicted embeddings through decoder
                         predicted_embeddings_batched = predicted_embeddings.reshape(predicted_embeddings.shape[0]*predicted_embeddings.shape[1], predicted_embeddings.shape[2])                        
-                        core_out = self.vae_dec(predicted_embeddings_batched)  
-                        x_hat_batched = dec_head(core_out)
+                        core_out = self.vae(predicted_embeddings_batched, reverse=True)  
+                        x_hat_batched = head(core_out, reverse=True)
                         x_hat = torch.split(x_hat_batched, self.transformer_seq_length-1, dim=0)
                         x_hat = torch.stack(x_hat, dim=0)
  
@@ -795,7 +712,7 @@ class Trainer:
                             KL_multiplier=self.KL_multiplier)
 
                         # Intrapatient backprop
-                        loss = recon_loss + kld_loss # + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        loss = recon_loss  # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
                         loss.backward()
 
                         # Realtime info as epoch is running
@@ -804,16 +721,17 @@ class Trainer:
                             else: state_str = "TRAIN"
                             now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
                             if (self.gpu_id == 1):
-                                sys.stdout.write(f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, Iter [BatchSize:{batchsize}]: " + 
-                                                str(iter_curr) + "/" + str(total_train_iters) + 
-                                                ", MeanLoss: " + str(round(loss.detach().item(), 2)) + ", [" + 
-                                                    "Rec: " + str(round(recon_loss.detach().item(), 2)) + " + " + 
-                                                    "KLD: {:0.3e}".format(kld_loss.detach().item(), 2) + " + " +
-                                                    "Trnsfr {:0.3e}".format(transformer_loss.detach().item(), 2) + "], " + 
-                                                    "Core LR: {:0.3e}".format(self.opt_enc.param_groups[0]['lr']) + 
-                                                    ", Head LR: {:0.3e}".format(head_opts_curr.get_lr()) + 
-                                                    ", Transformer LR: {:0.3e}".format(self.transformer_opt.param_groups[0]['lr']) +
-                                                ", Beta: {:0.3e}".format(self.KL_multiplier) + "         ")
+                                sys.stdout.write(
+                                    f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, Iter [BatchSize:{batchsize}]: " + 
+                                    str(iter_curr) + "/" + str(total_train_iters) + 
+                                    ", MeanLoss: " + str(round(loss.detach().item(), 2)) + ", [" + 
+                                        "Rec: " + str(round(recon_loss.detach().item(), 2)) + " + " + 
+                                        "KLD: {:0.3e}".format(kld_loss.detach().item(), 2) + " + " +
+                                        "Trnsfr {:0.3e}".format(transformer_loss.detach().item(), 2) + "], " + 
+                                        "Core LR: {:0.3e}".format(self.opt_vae.param_groups[0]['lr']) + 
+                                        ", Head LR: {:0.3e}".format(head_opts_curr.get_lr()) + 
+                                        ", Transformer LR: {:0.3e}".format(self.opt_transformer.param_groups[0]['lr']) +
+                                    ", Beta: {:0.3e}".format(self.KL_multiplier) + "         ")
                                 sys.stdout.flush() 
 
                             # Log to WandB
@@ -826,9 +744,8 @@ class Trainer:
                                     train_transformer_loss=transformer_loss,
                                     train_recon_loss=recon_loss, 
                                     train_kld_loss=kld_loss, 
-                                    train_LR_encoder=self.opt_enc.param_groups[0]['lr'], 
-                                    train_LR_decoder=self.opt_dec.param_groups[0]['lr'], 
-                                    train_LR_transformer=self.transformer_opt.param_groups[0]['lr'],
+                                    train_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
+                                    train_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
                                     train_LR_heads=head_opts_curr.get_lr(),
                                     train_KL_Beta=self.KL_multiplier, 
                                     train_ReconWeight=self.recon_weight,
@@ -841,9 +758,8 @@ class Trainer:
                                     val_finetune_recon_loss=recon_loss, 
                                     val_finetune_kld_loss=kld_loss, 
                                     val_finetune_LR_heads=head_opts_curr.get_lr(),
-                                    val_finetune_LR_encoder=self.opt_enc.param_groups[0]['lr'], 
-                                    val_finetune_LR_decoder=self.opt_dec.param_groups[0]['lr'], 
-                                    val_finetune_LR_transformer=self.transformer_opt.param_groups[0]['lr'],
+                                    val_finetune_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
+                                    val_finetune_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
                                     val_finetune_KL_Beta=self.KL_multiplier, 
                                     val_finetune_ReconWeight=self.recon_weight,
                                     val_finetune_Transformer_weight=self.transformer_weight,
@@ -880,11 +796,9 @@ class Trainer:
             
                     ### AFTER PATIENT LOOP ###
                     # Step optimizers after all patients have been backpropgated
-                    self.transformer_opt.step()
-                    self.opt_enc.step()
-                    self.opt_dec.step()
-                    for pat_idx in np.arange(0,num_pats_curr): 
-                        head_opts_curr.step(pat_idx)
+                    self.opt_transformer.step()
+                    self.opt_vae.step()
+                    head_opts_curr.step()
                         
         return self
         
