@@ -32,13 +32,9 @@ inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES
 
 
 ### VAE 
-autoencode_samples: 512
-common_cnn_channels: 256 # How many channels at the top of core model on ENCODE SIDE
-time_change: True
-cnn_depth: 6 
-cnn_resblock_layers: 1
-kernel_sizes: [3,7] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
-hidden_dims: 4096
+autoencode_samples: 4
+top_dims: 4096 
+hidden_dims: 2048
 latent_dim: 1024  # 1024
 
 core_weight_decay: 0.1
@@ -47,7 +43,7 @@ transformer_weight_decay: 0.1
 adamW_beta1: 0.9
 adamW_beta2: 0.95
 
-train_subsample_file_factor: 64 # randomly decreases training passes per file per epoch
+train_subsample_file_factor: 8192 # randomly decreases training passes per file per epoch
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 8 # this is for when loss is not being calculated
 pacmap_every: 99999 # Must be within a 'quick_recon_val_every' to be reached
@@ -66,10 +62,10 @@ num_realtime_dims: 5
 recent_display_iters: 5 # How often to print to console when training & how often to log to WandB
 
 ### Transformer
-transformer_seq_length: 64
+transformer_seq_length: 512
 # Model hardware limits
-max_seq_len: 64
-max_batch_size: 4
+max_seq_len: 512
+max_batch_size: 8
 # Model size
 n_layers: 32
 n_heads: 32

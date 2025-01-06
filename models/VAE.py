@@ -39,163 +39,39 @@ class Head_Optimizers():
         for i in range(0, len(self.head_opts)):
             self.head_opts[i].step()
 
-class Tied_ConvTransConv1D_Block(nn.Module):
-    # A single Conv and TransConv tied layer
-    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, output_padding):
-        super(Tied_ConvTransConv1D_Block, self).__init__()
-        
-        # Define the Conv1D layer
-        self.conv1d = nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=False)
-        
-        # Define the TransConv1D (ConvTranspose1D) layer
-        self.trans_conv1d = nn.ConvTranspose1d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=stride, padding=padding, output_padding=output_padding, bias=False)
-        
-        # Assign the shared weight to both Conv1D and TransConv1D layers
-        self.trans_conv1d.weight = nn.Parameter(self.conv1d.weight.detach())
-        # self.trans_conv1d.bias = nn.Parameter(self.conv1d.bias.detach())   # Shapes do not match to share biases (could duplicate it??? naaa)
-
-        # self.leakyrelu = nn.LeakyReLU(0.2)
-        self.hardtanh = nn.Hardtanh()
-
-    def forward(self, x, reverse=False):
-        if reverse == False:
-            y = self.conv1d(x)
-
-        elif reverse == True:
-            y = self.trans_conv1d(x)
-            
-        # x = self.leakyrelu(x)
-        y = self.hardtanh(y)
-
-        return y
-
 class VAEHead_TiedEncDec(nn.Module):
     '''
     Interface from a single patient's raw data channels to core VAE
     Reversible with tied weights
     '''
-    def __init__(self, pat_id, in_channels, common_cnn_channels, kernel_sizes, stride=1, output_padding=0, **kwargs):
+    def __init__(self, pat_id, in_channels, autoencode_samples, top_dims, **kwargs):
         super(VAEHead_TiedEncDec, self).__init__()
 
         self.pat_id = pat_id
         self.in_channels = in_channels
-        self.common_cnn_channels = common_cnn_channels
-        self.stride = stride
-        self.output_padding = output_padding
+        self.autoencode_samples = autoencode_samples
+        self.in_features = in_channels * autoencode_samples
+        self.top_dims = top_dims
 
-        self.kernel_columns = nn.ModuleList()
-        for k in kernel_sizes:
-            unit = Tied_ConvTransConv1D_Block(in_channels=self.in_channels, out_channels=self.common_cnn_channels, kernel_size=k, stride=self.stride, padding=int((k-1)/2),output_padding=output_padding)
-            self.kernel_columns.append(unit)
-        
+        # Shared between enc/dec head
+        self.subject_to_top = nn.Linear(self.in_features, self.top_dims, bias=False)
+        self.top_to_subject = nn.Linear(self.top_dims, self.in_features, bias=False)
+        self.top_to_subject.weight = nn.Parameter(self.subject_to_top.weight.T.detach())
+
         # self.leaky_relu = nn.LeakyReLU(0.2)
         self.tanh = nn.Tanh()
 
     def forward(self, x, reverse=False):
         
         if reverse == False:
-            # Send *** DOWN *** the layers seperately, so iterate kernel in top for loop
-            kernel_outs = []
-            for k in range(len(self.kernel_columns)):
-                unit = self.kernel_columns[k]
-                x_k = unit(x, reverse=reverse)
-                # x_k = self.leaky_relu(x_k)
-                x_k = self.tanh(x_k)
-                kernel_outs.append(x_k)
-            y = torch.stack(kernel_outs, dim=3)
+            y = x.flatten(start_dim=1)
+            y = self.subject_to_top(y)
 
         elif reverse == True:
-            kernel_outs = []
-            # Send *** UP *** the layers seperately, so iterate kernel in top for loop
-            for k in reversed(range(len(self.kernel_columns))):
-                unit = self.kernel_columns[k]
-                x_k = x[:, :, :, k]
-                # x_k = self.leaky_relu(x_k)
-                x_k = self.tanh(x_k)
-                x_k = unit(x_k, reverse=reverse)
-                kernel_outs.append(x_k)
+            y = self.top_to_subject(x)
+            y = y.reshape(y.shape[0], self.in_channels, self.autoencode_samples)
             
-            y = torch.mean(torch.stack(kernel_outs, dim=3), dim=3) # Mean for output to encourage large values (smooshed by tanh anyway)
-            # y = self.tanh(y)
-            
-        return y
-
-class VAECore_TiedEncDec(nn.Module):
-    # Tied VAE Core Enc/Dec 
-    # A single encoder decoder that share weights on either side of transformer
-
-    def __init__(self, in_channels, kernel_sizes, stride, depth, resblock_size, time_change):
-        super(VAECore_TiedEncDec, self).__init__()
-        self.in_channels = in_channels
-        self.stride = stride
-        self.depth = depth
-        self.resblock_size = resblock_size
-        self.time_change = time_change
-
-        # Shared Encoder/Decoder
-        self.kernel_columns = nn.ModuleList()
-        for k in kernel_sizes:
-            column = nn.ModuleList()
-            for l in range(0, self.depth):
-                resblock = nn.ModuleList()
-                for res_layer in range(0, self.resblock_size):
-
-                    if (res_layer == 0) & (self.time_change == True):
-                        # Time reduction with stride
-                        unit = Tied_ConvTransConv1D_Block(in_channels=self.in_channels, out_channels=self.in_channels, kernel_size=k, stride=self.stride, padding=int((k-1)/2),output_padding=1)
-
-                    else:
-                        # No time reduction in subsequent resblock layers
-                        unit = Tied_ConvTransConv1D_Block(in_channels=self.in_channels, out_channels=self.in_channels, kernel_size=k, stride = 1, padding=int((k-1)/2),output_padding=0)
-
-                    resblock.append(unit)
-                column.append(resblock)
-            self.kernel_columns.append(column)
-
-
-    def forward(self, x_stack, reverse=False):
-        
-        # Encoder Mode
-        if reverse == False:
-            # Send *** DOWN *** the layers seperately by kernel size, so iterate kernel in top 'for' loop
-            # TODO: blend kernels at each layer
-            kernel_outs = []
-            for k in range(len(self.kernel_columns)):
-                x_k = x_stack[:, :, :, k]
-                for l in range(0, self.depth):
-                    x0 = [] # rest the residual start data
-                    for r in range(0, self.resblock_size):
-                        unit = self.kernel_columns[k][l][r]
-                        x_k = unit(x_k, reverse=reverse)
-                        if r == 0: x0 = x_k #save first layer outputs to be added on (skip connection)
-                    
-                    # Add the skip connection
-                    x_k += x0
-                
-                # Save the full depth of network for this kernel
-                kernel_outs.append(x_k)
-            y = torch.stack(kernel_outs, dim=3)
-
-        # Decoder Mode
-        elif reverse == True:
-            # Send *** UP *** the layers seperately by kernel size, so iterate kernel in top 'for' loop
-            # TODO: blend kernels at each layer
-            kernel_outs = []
-            for k in reversed(range(len(self.kernel_columns))):
-                x_k = x_stack[:, :, :, k]
-                for l in reversed(range(0, self.depth)):
-                    xR = [] # rest the residual start data
-                    for r in reversed(range(0, self.resblock_size)):
-                        unit = self.kernel_columns[k][l][r]
-                        if r == self.resblock_size-1: xR = x_k #save first layer outputs to be added on (skip connection)
-                        x_k = unit(x_k, reverse=reverse)
-                        
-                    # Add the skip connection from first layer in resblock
-                    x_k += self.kernel_columns[k][l][0](xR, reverse=reverse)
-                
-                # Save the full depth of network for this kernel
-                kernel_outs.append(x_k)
-            y = torch.stack(kernel_outs, dim=3)
+        y = self.tanh(y)
 
         return y
 
@@ -207,11 +83,7 @@ class VAE(nn.Module):
     def __init__(
         self, 
         autoencode_samples,
-        common_cnn_channels,
-        kernel_sizes, 
-        time_change,
-        cnn_depth,
-        cnn_resblock_layers,
+        top_dims,
         hidden_dims,
         latent_dim, 
         gpu_id=None, 
@@ -221,36 +93,13 @@ class VAE(nn.Module):
 
         self.gpu_id = gpu_id
         self.autoencode_samples = autoencode_samples
-        self.in_channels = common_cnn_channels
-        self.kernel_sizes = kernel_sizes
-        self.time_change = time_change
-        self.cnn_depth = cnn_depth
-        self.cnn_resblock_layers = cnn_resblock_layers
+        self.top_dims = top_dims
         self.hidden_dims = hidden_dims
         self.latent_dim = latent_dim
 
-        self.stride = 2
-
-        self.vae_tied_core = VAECore_TiedEncDec(
-            in_channels=self.in_channels,
-            kernel_sizes=self.kernel_sizes, 
-            stride=self.stride, 
-            depth=self.cnn_depth, 
-            resblock_size=self.cnn_resblock_layers,
-            time_change=self.time_change
-        )
-
-        # Calculate the size of the bottom "time" dimension
-        if time_change: 
-            self.bottom_time_samples = int((self.autoencode_samples) / (2 ** self.cnn_depth))
-        else: self.bottom_time_samples = int((self.autoencode_samples))
-        
-        # For the top of the FC layer
-        self.top_enc_dims = (self.in_channels) * (self.bottom_time_samples) * len(self.kernel_sizes)
-
         # Shared between enc/dec
-        self.top_to_hidden = nn.Linear(self.top_enc_dims, self.hidden_dims, bias=False)
-        self.hidden_to_top = nn.Linear(self.hidden_dims, self.top_enc_dims, bias=False)
+        self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=False)
+        self.hidden_to_top = nn.Linear(self.hidden_dims, self.top_dims, bias=False)
         self.hidden_to_top.weight = nn.Parameter(self.top_to_hidden.weight.T.detach())
         # self.hidden_to_top.bias = nn.Parameter(self.top_to_hidden.bias.T.detach()) # Shapes do not match to share biases (could duplicate it??? naaa)
 
@@ -274,14 +123,9 @@ class VAE(nn.Module):
     def forward(self, x, reverse=False):
 
         if reverse == False:
-            y = self.vae_tied_core(x, reverse) # Encoder mode
-            # y = torch.sum(y, dim = 3) # Sum across results of all kernels
+            y = self.top_to_hidden(x)
             # y = self.leaky_relu(y)
             y = self.tanh(y)
-            y = y.flatten(start_dim=1)
-            y = self.top_to_hidden(y)
-            # y = self.leaky_relu(y)
-            # y = self.tanh(y)
             mean, logvar = self.mean_fc_layer(y), self.logvar_fc_layer(y)
             z = self.reparameterization(mean, logvar)
             return mean, logvar, z
@@ -289,12 +133,10 @@ class VAE(nn.Module):
         elif reverse == True:
             y = self.latent_to_hidden(x)
             # y = self.leaky_relu(y)
-            # y = self.tanh(y)
+            y = self.tanh(y)
             y = self.hidden_to_top(y)
             # y = self.leaky_relu(y)
             y = self.tanh(y)
-            y = y.reshape(y.shape[0], self.in_channels, self.bottom_time_samples, len(self.kernel_sizes))
-            y = self.vae_tied_core(y, reverse=reverse) # Decoder mode
             return y
 
 def print_models_flow(x, transformer_seq_length, **kwargs):
