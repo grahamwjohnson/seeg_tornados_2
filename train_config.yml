@@ -76,7 +76,7 @@ n_heads: 32
 multiple_of: 256 # Feedforward scaling?
 
 # Beta VAE controls
-KL_max: kwargs['KL_max'] = 1e-3 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3 
+KL_max: kwargs['KL_max'] = 1e-3 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# CHeck if loss is actually used!!! May be commented out ###############
 KL_min: kwargs['KL_min'] = 0
 KL_epochs_AT_max: 5
 KL_epochs_TO_max: 5
@@ -85,7 +85,7 @@ KL_epochs_TO_max: 5
 recon_weight: 3
 
 # Transformer weight
-transformer_weight: 1 # 0.01
+transformer_weight: 1 # 0.01  ############# CHeck if loss is actually used!!! May be commented out ###############
 
 # Train heads learning rate controls
 LR_max_heads: kwargs['LR_max_heads'] = 1e-5

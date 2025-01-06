@@ -116,6 +116,7 @@ class VAEHead_TiedEncDec(nn.Module):
                 kernel_outs.append(x_k)
             
             y = torch.mean(torch.stack(kernel_outs, dim=3), dim=3) # Mean for output to encourage large values (smooshed by tanh anyway)
+            # y = self.tanh(y)
             
         return y
 
