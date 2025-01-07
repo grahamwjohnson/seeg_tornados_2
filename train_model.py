@@ -257,6 +257,15 @@ def main(
     for epoch in range(start_epoch, epochs_to_train):
         trainer.epoch = epoch
         
+        # AUTOREGRESSIVE INFERENCE
+        if (trainer.epoch + 1) % trainer.autoreg_every == 0:
+            trainer._set_to_eval()
+            with torch.no_grad():
+                trainer._random_autoreg_plots(
+                    dataset_curr = trainer.train_dataset, 
+                    heads_curr = trainer.train_heads,
+                    **kwargs)
+
         # PACMAP
         if (trainer.epoch + 1) % trainer.pacmap_every == 0:
             trainer._pacmap(**kwargs)
@@ -311,8 +320,7 @@ class Trainer:
         onlylatent_batch_size: int,
         wandb_run,
         model_dir: str,
-        quick_recon_val_every: int,
-        finetune_quickrecon: bool,
+        autoreg_every: int,
         pacmap_every: int,
         finetune_pacmap: bool,
         pic_save_dir: str,
@@ -348,8 +356,7 @@ class Trainer:
         self.wdecode_batch_size = wdecode_batch_size
         self.onlylatent_batch_size = onlylatent_batch_size
         self.model_dir = model_dir
-        self.quick_recon_val_every = quick_recon_val_every
-        self.finetune_quickrecon = finetune_quickrecon
+        self.autoreg_every = autoreg_every
         self.pacmap_every = pacmap_every
         self.finetune_pacmap = finetune_pacmap
         self.pic_save_dir = pic_save_dir
@@ -372,6 +379,9 @@ class Trainer:
         self.kwargs = kwargs
 
         self.KL_multiplier = -1 # dummy variable, only needed when debugging and training is skipped
+
+        # Number of iterations per file
+        self.num_windows = int((self.num_samples - self.transformer_seq_length * self.autoencode_samples - self.autoencode_samples)/self.autoencode_samples) - 2
 
         # Set up Core/Heads & transformer with DDP
         self.vae = DDP(vae, device_ids=[gpu_id])   # find_unused_parameters=True
@@ -579,6 +589,92 @@ class Trainer:
         
         return start_idxs
 
+    def _autoreg(self, context, autoreg_tokens_to_gen):
+        print("here")
+
+        real_batchsize = context.shape[0]
+
+        # Pseudo-batch the context
+        context_batched = utils_functions.pseudobatch_raw_data(context, self.autoencode_samples)
+
+        # context_batched = torch.stack(torch.split(context.transpose(1,2), self.autoencode_samples, dim=1), dim=1).transpose(2,3)
+        # context_batched = context_batched.reshape(context_batched.shape[0]*context_batched.shape[1], context_batched.shape[2], context_batched.shape[3])
+
+
+
+        # a = torch.stack(torch.split(context_batched, autoreg_tokens_to_gen, dim=0), dim=1).transpose(2,3).transpose(1,2)
+        # a = a.reshape(a.shape[0]* a.shape[1], a.shape[2], a.shape[3]).transpose(0,1).transpose(1,2)
+
+        ### VAE ENCODER
+        # Forward pass in stacked batch through head then VAE encoder
+        context_posthead = head(context_batched, reverse=False)
+        # mean_batched, logvar_batched, latent_batched, = self.vae(x_posthead, reverse=False)
+        latent_batched = self.vae(context_posthead, reverse=False)
+
+        # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
+        latent_seq = torch.split(latent_batched, autoreg_tokens_to_gen, dim=0)
+        latent_seq = torch.stack(latent_seq, dim=0)
+
+        ### TRANSFORMER
+        # Run sequence through transformer and get transformer loss
+        predicted_embeddings = self.transformer(latent_seq[:, :-1, :])
+        
+        ### VAE DECODER
+        # Run the predicted embeddings through decoder
+        predicted_embeddings_batched = predicted_embeddings.reshape(predicted_embeddings.shape[0]*predicted_embeddings.shape[1], predicted_embeddings.shape[2])                        
+        core_out = self.vae(predicted_embeddings_batched, reverse=True)  
+        x_hat_batched = head(core_out, reverse=True)
+        x_hat = torch.split(x_hat_batched, self.transformer_seq_length-1, dim=0)
+        x_hat = torch.stack(x_hat, dim=0)
+
+
+        return autoreg_pred
+
+    def _random_autoreg_plots(self, dataset_curr, heads_curr, autoreg_num_rand_pats, autoreg_context_tokens, autoreg_tokens_to_gen, autoreg_channels, autoreg_batchsize, autoreg_num_rand_files, num_dataloader_workers_SEQUENTIAL, **kwargs):
+
+        # Set up which pats will be selected for random autoreg
+        np.random.seed(seed=None) # should replace with Generator for newer code        
+        rand_pats_idxs = np.arange(0,len(dataset_curr.pat_ids))
+        np.random.shuffle(rand_pats_idxs)
+        rand_pats_idxs = rand_pats_idxs[0:autoreg_num_rand_pats]
+        for pat_idx in rand_pats_idxs:
+            dataset_curr.set_pat_curr(pat_idx)
+            _, pat_id, _, _ = dataset_curr.get_pat_curr()
+            dataloader_curr = utils_functions.prepare_dataloader(dataset_curr, batch_size=autoreg_batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
+            dataloader_curr.sampler.set_epoch(self.epoch)
+
+            # Pull out the patient's heads
+            head=heads_curr[pat_idx] 
+
+            # Iterate through 
+            rand_file_count = 0
+            for data_tensor, file_name in dataloader_curr:
+
+                # Get the random start idx in file
+                random_start_idx = np.arange(0, self.num_samples - (autoreg_context_tokens + autoreg_tokens_to_gen)*self.autoencode_samples - 1)
+                np.random.shuffle(random_start_idx)
+                random_start_idx = random_start_idx[0]
+
+                context_raw = data_tensor[:, :, random_start_idx: random_start_idx + autoreg_context_tokens * self.autoencode_samples]
+                context_raw = context_raw.to(self.gpu_id)
+
+                autoreg_pred = self._autoreg(
+                    head=head,
+                    context=context_raw, 
+                    autoreg_tokens_to_gen=autoreg_tokens_to_gen)
+
+
+
+                # Kill after number of random files is complete
+                rand_file_count = rand_file_count + 1
+                if rand_file_count >= autoreg_num_rand_files: break
+
+
+
+
+
+
+
     def _run_epoch(
         self, 
         dataset_curr, 
@@ -599,7 +695,7 @@ class Trainer:
         print(f"autoencode_samples: {self.autoencode_samples}")
 
         ### ALL FILES ### 
-        # If wanting all files from every patiet, need to run patients serially
+        # If wanting all files from every patient, need to run patients serially
         if all_files_bool: 
             # Go through every subject 
             for pat_idx in range(0,len(dataset_curr.pat_ids)):
@@ -615,11 +711,9 @@ class Trainer:
 
             # Build dataloader from dataset
             dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
+            dataloader_curr.sampler.set_epoch(self.epoch) 
             num_pats_curr = dataloader_curr.dataset.get_pat_count()
             
-            # Number of iterations per file
-            self.num_windows = int((self.num_samples - self.transformer_seq_length * self.autoencode_samples - self.autoencode_samples)/self.autoencode_samples) - 2
-
             # Get miniepoch start indexes. Same random indexes will be used for all patients' files.
             start_idxs = self._train_start_idxs(random_bool=random_bool, subsample_file_factor=subsample_file_factor_curr)
             total_train_iters = int(len(dataloader_curr) * len(start_idxs) * num_pats_curr) # 
@@ -652,7 +746,7 @@ class Trainer:
                     for pat_idx in np.arange(0,num_pats_curr): 
 
                         # Pull out the patient's heads
-                        head=heads_curr[pat_idx] # Heads are [enc, dec]
+                        head=heads_curr[pat_idx] 
 
                         # Pull patient's data
                         data_tensor = data_tensor_by_pat[pat_idx]
@@ -801,7 +895,7 @@ class Trainer:
                     self.opt_vae.step()
                     head_opts_curr.step()
                         
-        return self
+        
         
 
 if __name__ == "__main__":

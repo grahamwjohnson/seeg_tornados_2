@@ -489,10 +489,31 @@ def count_motif_1D(i, num_labels, a, motif, verbose):
 
     return count
 
+
+# DATA MANIPULATIONS
+
 def flatten(list_of_lists):
   return [item for sublist in list_of_lists for item in sublist]
 
+def pseudobatch_raw_data(x, token_samples):
+    '''
+    x [batch, channels, datapoints]
+    returns: x_batched [batch * token_lengths, channels, datapoints]
+    '''
+    x_batched = torch.stack(torch.split(x.transpose(1,2), token_samples, dim=1), dim=1).transpose(2,3)
+    x_batched = x_batched.reshape(x_batched.shape[0]*x_batched.shape[1], x_batched.shape[2], x_batched.shape[3])
+    
+    return x_batched
 
+def un_pseudobatch_raw_data(x_batched, token_samples):
+    ''' 
+    x_batched [batch * token_lengths, channels, datapoints]
+    returns: x [batch, channels, datapoints]
+    '''
+    x = torch.stack(torch.split(x_batched, token_samples, dim=0), dim=1).transpose(2,3).transpose(1,2)
+    x = x.reshape(x.shape[0]* x.shape[1], x.shape[2], x.shape[3]).transpose(0,1).transpose(1,2)
+
+    return x
 
 
 # PLOTTING
@@ -532,7 +553,6 @@ def print_latent_realtime(target_emb, predicted_emb, savedir, epoch, iter_curr, 
 
         pl.close('all') 
     
-
 def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat_id, num_realtime_channels_recon, num_recon_samples, **kwargs):
 
     x_hat = x_hat.detach().cpu().numpy()
@@ -562,10 +582,10 @@ def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat
         for c in range(0,len(random_ch_idxs)):
             for seq in range(0,2):
                 if seq == 0:
-                    x_decode_plot = x_decode_shifted_fused[b, random_ch_idxs[c], num_recon_samples:]
-                    x_hat_plot = x_hat_fused[b, random_ch_idxs[c], num_recon_samples:]
+                    x_decode_plot = x_decode_shifted_fused[b, random_ch_idxs[c], :num_recon_samples]
+                    x_hat_plot = x_hat_fused[b, random_ch_idxs[c], :num_recon_samples]
                     title_str = 'StartOfTransSeq'
-                else
+                else:
                     x_decode_plot = x_decode_shifted_fused[b, random_ch_idxs[c], -num_recon_samples:]
                     x_hat_plot = x_hat_fused[b, random_ch_idxs[c], -num_recon_samples:]   
                     title_str = 'EndOfTransSeq'             
@@ -575,7 +595,7 @@ def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat
                     "Prediction": x_hat_plot
                 })
 
-                ax = fig.add_subplot(gs[b, c*seq + c]) 
+                ax = fig.add_subplot(gs[b, c*2 + seq]) 
                 sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
                 ax.set_title(f"B:{b}, Ch:{random_ch_idxs[c]}, {title_str}")
             
