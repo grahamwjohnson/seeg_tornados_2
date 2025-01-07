@@ -103,22 +103,26 @@ class VAE(nn.Module):
         self.hidden_to_top.weight = nn.Parameter(self.top_to_hidden.weight.T.detach())
         # self.hidden_to_top.bias = nn.Parameter(self.top_to_hidden.bias.T.detach()) # Shapes do not match to share biases (could duplicate it??? naaa)
 
-        # Variational layers (not shared between enc/dec)
-        self.mean_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=False)  # bias=False
-        self.logvar_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=False) # bias=False
+        # # Variational layers (not shared between enc/dec)
+        # self.mean_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=False)  # bias=False
+        # self.logvar_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=False) # bias=False
+
+        # Hidden to latent
+        self.hidden_to_latent = nn.Linear(self.hidden_dims, self.latent_dim, bias=False)  # bias=False
 
         # Latent to hidden (not shared between enc/dec)
         self.latent_to_hidden = nn.Linear(self.latent_dim, self.hidden_dims, bias=False) # bias=False
-        self.latent_to_hidden.weight = nn.Parameter(self.mean_fc_layer.weight.T.detach()) # Tie the "mean" layer weights
+        # self.latent_to_hidden.weight = nn.Parameter(self.mean_fc_layer.weight.T.detach()) # Tie the "mean" layer weights
+        self.latent_to_hidden.weight = nn.Parameter(self.hidden_to_latent.weight.T.detach()) # Tie weights
 
         # self.leaky_relu = nn.LeakyReLU(0.2)
         self.tanh = nn.Tanh()
 
-    def reparameterization(self, mean, logvar):
-        std = torch.exp(0.5 * logvar)  
-        epsilon = torch.randn_like(std).to(self.gpu_id) 
-        z = mean + std * epsilon
-        return z
+    # def reparameterization(self, mean, logvar):
+    #     std = torch.exp(0.5 * logvar)  
+    #     epsilon = torch.randn_like(std).to(self.gpu_id) 
+    #     z = mean + std * epsilon
+    #     return z
 
     def forward(self, x, reverse=False):
 
@@ -126,9 +130,11 @@ class VAE(nn.Module):
             y = self.top_to_hidden(x)
             # y = self.leaky_relu(y)
             y = self.tanh(y)
-            mean, logvar = self.mean_fc_layer(y), self.logvar_fc_layer(y)
-            z = self.reparameterization(mean, logvar)
-            return mean, logvar, z
+            # mean, logvar = self.mean_fc_layer(y), self.logvar_fc_layer(y)
+            # z = self.reparameterization(mean, logvar)
+            # return mean, logvar, z
+            y = self.hidden_to_latent(y)
+            return y
 
         elif reverse == True:
             y = self.latent_to_hidden(x)
@@ -167,11 +173,12 @@ def print_models_flow(x, transformer_seq_length, **kwargs):
     # Run through VAE Enc
     print(f"\n\n\nINPUT TO <VAE TIED ENC/DEC - Encoder Mode>\n"
     f"x_posthead:{x_posthead.shape}\n")
-    mean, logvar, latent = vae(x_posthead, reverse=False)  
+    # mean, logvar, latent = vae(x_posthead, reverse=False)  
+    latent = vae(x_posthead, reverse=False)  
     summary(vae, input_size=(x_posthead.shape), depth=999, device="cpu")
     print(
-    f"mean:{mean.shape}\n"
-    f"logvar:{logvar.shape}\n"
+    # f"mean:{mean.shape}\n"
+    # f"logvar:{logvar.shape}\n"
     f"latent:{latent.shape}\n")
 
     # Run through Transformer
@@ -225,11 +232,11 @@ if __name__ == "__main__":
         **kwargs
     )
 
-    mean,logvar,z = vae(x, reverse=False)
-    x_hat = vae(z, reverse=True)
-    loss_fn = nn.MSELoss(reduction='mean')
-    recon_loss = loss_fn(x, x_hat) 
-    recon_loss.backward()
+    # mean,logvar,z = vae(x, reverse=False)
+    # x_hat = vae(z, reverse=True)
+    # loss_fn = nn.MSELoss(reduction='mean')
+    # recon_loss = loss_fn(x, x_hat) 
+    # recon_loss.backward()
 
     print(f"Are the weights of encoder and decoder tied? {torch.allclose(vae.top_to_hidden.weight.T, vae.hidden_to_top.weight)}")
 

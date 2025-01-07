@@ -549,28 +549,35 @@ def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat
 
     batchsize = x_hat.shape[0]
 
-    np.random.seed(seed=None) # should replace with Generator for newer code
+    np.random.seed(seed=None) 
     r = np.arange(0,x_hat_fused.shape[1])
     np.random.shuffle(r)
     random_ch_idxs = r[0:num_realtime_channels_recon]
 
     # Make new grid/fig
-    gs = gridspec.GridSpec(batchsize, num_realtime_channels_recon)
+    gs = gridspec.GridSpec(batchsize, num_realtime_channels_recon * 2) # *2 because beginning and end of transformer sequence
     fig = pl.figure(figsize=(20, 14))
     palette = sns.cubehelix_palette(n_colors=2, start=3, rot=1) 
     for b in range(0, batchsize):
         for c in range(0,len(random_ch_idxs)):
-            x_decode_plot = x_decode_shifted_fused[b, random_ch_idxs[c], -num_recon_samples:]
-            x_hat_plot = x_hat_fused[b, random_ch_idxs[c], -num_recon_samples:]
+            for seq in range(0,2):
+                if seq == 0:
+                    x_decode_plot = x_decode_shifted_fused[b, random_ch_idxs[c], num_recon_samples:]
+                    x_hat_plot = x_hat_fused[b, random_ch_idxs[c], num_recon_samples:]
+                    title_str = 'StartOfTransSeq'
+                else
+                    x_decode_plot = x_decode_shifted_fused[b, random_ch_idxs[c], -num_recon_samples:]
+                    x_hat_plot = x_hat_fused[b, random_ch_idxs[c], -num_recon_samples:]   
+                    title_str = 'EndOfTransSeq'             
 
-            df = pd.DataFrame({
-                "Target": x_decode_plot,
-                "Prediction": x_hat_plot
-            })
+                df = pd.DataFrame({
+                    "Target": x_decode_plot,
+                    "Prediction": x_hat_plot
+                })
 
-            ax = fig.add_subplot(gs[b, c]) 
-            sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
-            ax.set_title(f"B:{b}, Ch:{random_ch_idxs[c]}")
+                ax = fig.add_subplot(gs[b, c*seq + c]) 
+                sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
+                ax.set_title(f"B:{b}, Ch:{random_ch_idxs[c]}, {title_str}")
             
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')

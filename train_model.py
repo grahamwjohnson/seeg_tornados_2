@@ -677,7 +677,8 @@ class Trainer:
                         ### VAE ENCODER
                         # Forward pass in stacked batch through head then VAE encoder
                         x_posthead = head(x_batched, reverse=False)
-                        mean_batched, logvar_batched, latent_batched, = self.vae(x_posthead, reverse=False)
+                        # mean_batched, logvar_batched, latent_batched, = self.vae(x_posthead, reverse=False)
+                        latent_batched = self.vae(x_posthead, reverse=False)
 
                         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
                         latent_seq = torch.split(latent_batched, self.transformer_seq_length, dim=0)
@@ -706,10 +707,10 @@ class Trainer:
                             x_hat=x_hat,
                             recon_weight=self.recon_weight)
 
-                        kld_loss = loss_functions.kld_loss_function(
-                            mean=mean_batched, 
-                            logvar=logvar_batched, 
-                            KL_multiplier=self.KL_multiplier)
+                        # kld_loss = loss_functions.kld_loss_function(
+                        #     mean=mean_batched, 
+                        #     logvar=logvar_batched, 
+                        #     KL_multiplier=self.KL_multiplier)
 
                         # Intrapatient backprop
                         loss = recon_loss + transformer_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
@@ -726,7 +727,7 @@ class Trainer:
                                     str(iter_curr) + "/" + str(total_train_iters) + 
                                     ", MeanLoss: " + str(round(loss.detach().item(), 2)) + ", [" + 
                                         "Rec: " + str(round(recon_loss.detach().item(), 2)) + " + " + 
-                                        "KLD: {:0.3e}".format(kld_loss.detach().item(), 2) + " + " +
+                                        # "KLD: {:0.3e}".format(kld_loss.detach().item(), 2) + " + " +
                                         "Trnsfr {:0.3e}".format(transformer_loss.detach().item(), 2) + "], " + 
                                         "Core LR: {:0.3e}".format(self.opt_vae.param_groups[0]['lr']) + 
                                         ", Head LR: {:0.3e}".format(head_opts_curr.get_lr()) + 
@@ -743,7 +744,7 @@ class Trainer:
                                     train_loss=loss,
                                     train_transformer_loss=transformer_loss,
                                     train_recon_loss=recon_loss, 
-                                    train_kld_loss=kld_loss, 
+                                    # train_kld_loss=kld_loss, 
                                     train_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     train_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
                                     train_LR_heads=head_opts_curr.get_lr(),
@@ -756,7 +757,7 @@ class Trainer:
                                     val_finetune_loss=loss, 
                                     val_finetune_transformer_loss=transformer_loss,
                                     val_finetune_recon_loss=recon_loss, 
-                                    val_finetune_kld_loss=kld_loss, 
+                                    # val_finetune_kld_loss=kld_loss, 
                                     val_finetune_LR_heads=head_opts_curr.get_lr(),
                                     val_finetune_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     val_finetune_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
