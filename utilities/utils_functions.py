@@ -505,15 +505,15 @@ def pseudobatch_raw_data(x, token_samples):
     
     return x_batched
 
-def un_pseudobatch_raw_data(x_batched, token_samples):
-    ''' 
-    x_batched [batch * token_lengths, channels, datapoints]
-    returns: x [batch, channels, datapoints]
-    '''
-    x = torch.stack(torch.split(x_batched, token_samples, dim=0), dim=1).transpose(2,3).transpose(1,2)
-    x = x.reshape(x.shape[0]* x.shape[1], x.shape[2], x.shape[3]).transpose(0,1).transpose(1,2)
+# def un_pseudobatch_raw_data(x_batched, token_samples):
+#     ''' 
+#     x_batched [batch * token_lengths, channels, datapoints]
+#     returns: x [batch, channels, datapoints]
+#     '''
+#     x = torch.stack(torch.split(x_batched, token_samples, dim=0), dim=1).transpose(2,3).transpose(1,2)
+#     x = x.reshape(x.shape[0]* x.shape[1], x.shape[2], x.shape[3]).transpose(0,1).transpose(1,2)
 
-    return x
+#     return x
 
 
 # PLOTTING
@@ -609,6 +609,12 @@ def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat
     pl.close(fig)   
 
     pl.close('all') 
+
+def print_autoreg_latent_predictions(latent_context, latent_predictions, latent_target):
+    print("Here")
+
+def print_autoreg_raw_predictions():
+    print("Here")
 
 def plot_MeanStd(plot_mean, plot_std, plot_dict, file_name, epoch, savedir, gpu_id, pat_id, iter): # plot_weights
 

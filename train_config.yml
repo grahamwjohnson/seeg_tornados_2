@@ -71,7 +71,7 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 
 # Autoregressive Inference
 autoreg_every: 1
-autoreg_context_tokens: kwargs['autoreg_context_tokens'] = kwargs['transformer_seq_length']
+autoreg_context_tokens: kwargs['autoreg_context_tokens'] = kwargs['transformer_seq_length'] - 1
 autoreg_tokens_to_gen: kwargs['autoreg_tokens_to_gen'] = kwargs['transformer_seq_length']
 autoreg_channels: 3
 autoreg_batchsize: 8

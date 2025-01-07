@@ -589,46 +589,55 @@ class Trainer:
         
         return start_idxs
 
-    def _autoreg(self, context, autoreg_tokens_to_gen):
+    def _autoreg(self, head, context, target, autoreg_tokens_to_gen):
         print("here")
 
         real_batchsize = context.shape[0]
+        context_token_len = int(context.shape[2]/self.autoencode_samples)
 
         # Pseudo-batch the context
         context_batched = utils_functions.pseudobatch_raw_data(context, self.autoencode_samples)
-
-        # context_batched = torch.stack(torch.split(context.transpose(1,2), self.autoencode_samples, dim=1), dim=1).transpose(2,3)
-        # context_batched = context_batched.reshape(context_batched.shape[0]*context_batched.shape[1], context_batched.shape[2], context_batched.shape[3])
-
-
-
-        # a = torch.stack(torch.split(context_batched, autoreg_tokens_to_gen, dim=0), dim=1).transpose(2,3).transpose(1,2)
-        # a = a.reshape(a.shape[0]* a.shape[1], a.shape[2], a.shape[3]).transpose(0,1).transpose(1,2)
+        target_batched = utils_functions.pseudobatch_raw_data(target, self.autoencode_samples)
 
         ### VAE ENCODER
         # Forward pass in stacked batch through head then VAE encoder
-        context_posthead = head(context_batched, reverse=False)
+        context_batched = head(context_batched, reverse=False)
+        target_batched = head(target_batched, reverse=False)
         # mean_batched, logvar_batched, latent_batched, = self.vae(x_posthead, reverse=False)
-        latent_batched = self.vae(context_posthead, reverse=False)
+        autoreg_latent_context = self.vae(context_batched, reverse=False)
+        autoreg_latent_target = self.vae(target_batched, reverse=False)
 
         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
-        latent_seq = torch.split(latent_batched, autoreg_tokens_to_gen, dim=0)
-        latent_seq = torch.stack(latent_seq, dim=0)
+        autoreg_latent_context = torch.split(autoreg_latent_context, context_token_len, dim=0)
+        autoreg_latent_context = torch.stack(autoreg_latent_context, dim=0)
+        
+        autoreg_latent_target = torch.split(autoreg_latent_target, context_token_len, dim=0)
+        autoreg_latent_target = torch.stack(autoreg_latent_target, dim=0)
 
         ### TRANSFORMER
-        # Run sequence through transformer and get transformer loss
-        predicted_embeddings = self.transformer(latent_seq[:, :-1, :])
-        
+        # Greedy decoder
+        autoreg_latent_pred = torch.zeros(context.shape[0], context_token_len + autoreg_tokens_to_gen, self.latent_dim).to(self.gpu_id)
+        autoreg_latent_pred[:,:context_token_len, :] = autoreg_latent_context
+        for i in range(0, autoreg_tokens_to_gen):
+            # Run sequence through transformer and get transformer loss
+            predicted_embeddings = self.transformer(autoreg_latent_pred[:, i:i + context_token_len, :])
+            autoreg_latent_pred[:, context_token_len + i, :] = predicted_embeddings[:, -1, :]
+
+        # Prune the latent predictions to just the generated sequence
+        autoreg_latent_pred = autoreg_latent_pred[:, -autoreg_tokens_to_gen:, :]
+            
         ### VAE DECODER
         # Run the predicted embeddings through decoder
-        predicted_embeddings_batched = predicted_embeddings.reshape(predicted_embeddings.shape[0]*predicted_embeddings.shape[1], predicted_embeddings.shape[2])                        
-        core_out = self.vae(predicted_embeddings_batched, reverse=True)  
+        autoreg_latent_pred_batched = autoreg_latent_pred.reshape(autoreg_latent_pred.shape[0]*autoreg_latent_pred.shape[1], autoreg_latent_pred.shape[2])                        
+        core_out = self.vae(autoreg_latent_pred_batched, reverse=True)  
         x_hat_batched = head(core_out, reverse=True)
-        x_hat = torch.split(x_hat_batched, self.transformer_seq_length-1, dim=0)
+        x_hat = torch.split(x_hat_batched, autoreg_tokens_to_gen, dim=0)
         x_hat = torch.stack(x_hat, dim=0)
+        x_hat = x_hat.transpose(3, 2)
+        x_hat = x_hat.reshape(x_hat.shape[0], x_hat.shape[1] * x_hat.shape[2], x_hat.shape[3])
+        x_hat = x_hat.transpose(1, 2)
 
-
-        return autoreg_pred
+        return autoreg_latent_context, autoreg_latent_pred, autoreg_latent_target, x_hat
 
     def _random_autoreg_plots(self, dataset_curr, heads_curr, autoreg_num_rand_pats, autoreg_context_tokens, autoreg_tokens_to_gen, autoreg_channels, autoreg_batchsize, autoreg_num_rand_files, num_dataloader_workers_SEQUENTIAL, **kwargs):
 
@@ -656,13 +665,27 @@ class Trainer:
                 random_start_idx = random_start_idx[0]
 
                 context_raw = data_tensor[:, :, random_start_idx: random_start_idx + autoreg_context_tokens * self.autoencode_samples]
+                target_raw = data_tensor[:, :, random_start_idx + autoreg_context_tokens * self.autoencode_samples : autoreg_tokens_to_gen * self.autoencode_samples]
                 context_raw = context_raw.to(self.gpu_id)
+                target_raw = target_raw.to(self.gpu_id)
 
-                autoreg_pred = self._autoreg(
+                autoreg_latent_context, autoreg_latent_pred, autoreg_latent_target, autoreg_raw_pred = self._autoreg(
                     head=head,
                     context=context_raw, 
+                    target=target_raw,
                     autoreg_tokens_to_gen=autoreg_tokens_to_gen)
 
+                # Plot the latent predictions
+                utils_functions.print_autoreg_latent_predictions(
+                    latent_context=autoreg_latent_context,
+                    latent_predictions=autoreg_latent_pred, 
+                    latent_target=autoreg_latent_target)
+
+                # Plot the raw predictions
+                utils_functionsprint_autoreg_raw_predictions(
+                    context_raw=context_raw,
+                    pred_raw=autoreg_raw_pred,
+                    target_raw=target_raw)
 
 
                 # Kill after number of random files is complete
