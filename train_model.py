@@ -590,10 +590,10 @@ class Trainer:
         return start_idxs
 
     def _autoreg(self, head, context, target, autoreg_tokens_to_gen):
-        print("here")
 
         real_batchsize = context.shape[0]
         context_token_len = int(context.shape[2]/self.autoencode_samples)
+        target_token_len = int(target.shape[2]/self.autoencode_samples)
 
         # Pseudo-batch the context
         context_batched = utils_functions.pseudobatch_raw_data(context, self.autoencode_samples)
@@ -611,7 +611,7 @@ class Trainer:
         autoreg_latent_context = torch.split(autoreg_latent_context, context_token_len, dim=0)
         autoreg_latent_context = torch.stack(autoreg_latent_context, dim=0)
         
-        autoreg_latent_target = torch.split(autoreg_latent_target, context_token_len, dim=0)
+        autoreg_latent_target = torch.split(autoreg_latent_target, target_token_len, dim=0)
         autoreg_latent_target = torch.stack(autoreg_latent_target, dim=0)
 
         ### TRANSFORMER
@@ -639,7 +639,7 @@ class Trainer:
 
         return autoreg_latent_context, autoreg_latent_pred, autoreg_latent_target, x_hat
 
-    def _random_autoreg_plots(self, dataset_curr, heads_curr, autoreg_num_rand_pats, autoreg_context_tokens, autoreg_tokens_to_gen, autoreg_channels, autoreg_batchsize, autoreg_num_rand_files, num_dataloader_workers_SEQUENTIAL, **kwargs):
+    def _random_autoreg_plots(self, dataset_curr, heads_curr, autoreg_num_rand_pats, autoreg_context_tokens, autoreg_tokens_to_gen, autoreg_batchsize, autoreg_num_rand_files, num_dataloader_workers_SEQUENTIAL, **kwargs):
 
         # Set up which pats will be selected for random autoreg
         np.random.seed(seed=None) # should replace with Generator for newer code        
@@ -664,11 +664,13 @@ class Trainer:
                 np.random.shuffle(random_start_idx)
                 random_start_idx = random_start_idx[0]
 
+                # Pull out context and target raw data and move to GPU
                 context_raw = data_tensor[:, :, random_start_idx: random_start_idx + autoreg_context_tokens * self.autoencode_samples]
-                target_raw = data_tensor[:, :, random_start_idx + autoreg_context_tokens * self.autoencode_samples : autoreg_tokens_to_gen * self.autoencode_samples]
+                target_raw = data_tensor[:, :, random_start_idx + autoreg_context_tokens * self.autoencode_samples : random_start_idx + autoreg_context_tokens * self.autoencode_samples + autoreg_tokens_to_gen * self.autoencode_samples]
                 context_raw = context_raw.to(self.gpu_id)
                 target_raw = target_raw.to(self.gpu_id)
 
+                # Conduct the autoregressive decoding
                 autoreg_latent_context, autoreg_latent_pred, autoreg_latent_target, autoreg_raw_pred = self._autoreg(
                     head=head,
                     context=context_raw, 
@@ -677,26 +679,29 @@ class Trainer:
 
                 # Plot the latent predictions
                 utils_functions.print_autoreg_latent_predictions(
+                    epoch=self.epoch,
+                    pat_id=pat_id,
+                    rand_file_count=rand_file_count,
                     latent_context=autoreg_latent_context,
                     latent_predictions=autoreg_latent_pred, 
-                    latent_target=autoreg_latent_target)
+                    latent_target=autoreg_latent_target,
+                    savedir = self.model_dir + "/autoreg_latents",
+                    **kwargs)
 
                 # Plot the raw predictions
-                utils_functionsprint_autoreg_raw_predictions(
-                    context_raw=context_raw,
-                    pred_raw=autoreg_raw_pred,
-                    target_raw=target_raw)
-
+                utils_functions.print_autoreg_raw_predictions(
+                    epoch=self.epoch,
+                    pat_id=pat_id,
+                    rand_file_count=rand_file_count,
+                    raw_context=context_raw,
+                    raw_pred=autoreg_raw_pred,
+                    raw_target=target_raw,
+                    savedir = self.model_dir + "/autoreg_raw",
+                    **kwargs)
 
                 # Kill after number of random files is complete
                 rand_file_count = rand_file_count + 1
                 if rand_file_count >= autoreg_num_rand_files: break
-
-
-
-
-
-
 
     def _run_epoch(
         self, 

@@ -610,11 +610,91 @@ def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat
 
     pl.close('all') 
 
-def print_autoreg_latent_predictions(latent_context, latent_predictions, latent_target):
+def print_autoreg_latent_predictions(epoch, pat_id, rand_file_count, latent_context, latent_predictions, latent_target, savedir, num_realtime_dims, **kwargs):
+    
+    latent_target=latent_target.detach().cpu().numpy()
+    latent_context=latent_context.detach().cpu().numpy() # NOT CURRENTLY USING
+    latent_predictions=latent_predictions.detach().cpu().numpy()
+
+    dims_to_plot = np.arange(0,num_realtime_dims)
+    batchsize = latent_context.shape[0]
+
+    for b in range(0, batchsize):
+        
+        # Make new grid/fig
+        gs = gridspec.GridSpec(1, 2)
+        fig = pl.figure(figsize=(20, 14))
+
+        # Only print for one batch index at a time
+        target_emb_plot = latent_target[b, :, 0:len(dims_to_plot)]
+        predicted_emb_plot = latent_predictions[b, :, 0:len(dims_to_plot)]
+
+        df = pd.DataFrame({
+            'dimension': np.tile(dims_to_plot, target_emb_plot.shape[0]),
+            'target_emb': target_emb_plot.flatten(),
+            'predicted_emb': predicted_emb_plot.flatten() 
+        })
+
+        sns.jointplot(data=df, x="target_emb", y="predicted_emb", hue="dimension")
+        fig.suptitle(f"{pat_id}, epoch: {epoch}, file: {rand_file_count}")
+
+        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+        if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+        savename_jpg = f"{savedir}/JPEGs/AutoregressiveLatent_epoch{epoch}_{pat_id}_batch{b}_randfile{rand_file_count}.jpg"
+        savename_svg = f"{savedir}/SVGs/AutoregressiveLatent_epoch{epoch}_{pat_id}_batch_{b}_randfile{rand_file_count}.svg"
+        pl.savefig(savename_jpg)
+        pl.savefig(savename_svg)
+        pl.close(fig)    
+
+        pl.close('all') 
+
+def print_autoreg_raw_predictions(epoch, pat_id, rand_file_count, raw_context, raw_pred, raw_target, autoreg_channels, savedir, num_realtime_dims, **kwargs):
     print("Here")
 
-def print_autoreg_raw_predictions():
-    print("Here")
+    raw_context = raw_context.detach().cpu().numpy()
+    raw_pred = raw_pred.detach().cpu().numpy()
+    raw_target = raw_target.detach().cpu().numpy()
+
+    batchsize = raw_context.shape[0]
+
+    np.random.seed(seed=None) 
+    r = np.arange(0,raw_context.shape[1])
+    np.random.shuffle(r)
+    random_ch_idxs = r[0:autoreg_channels]
+
+    # Make new grid/fig for every batch
+    for b in range(0, batchsize):
+        gs = gridspec.GridSpec(autoreg_channels, 1) 
+        fig = pl.figure(figsize=(20, 14))
+        palette = sns.cubehelix_palette(n_colors=2, start=3, rot=1) 
+        for c in range(0,len(random_ch_idxs)):
+            context_plot = raw_context[b, random_ch_idxs[c], :]
+            prediction_plot = raw_pred[b, random_ch_idxs[c], :]
+            target_plot = raw_target[b, random_ch_idxs[c], :]
+
+            contextTarget_plot = np.concatenate((context_plot, target_plot), axis=0)
+            prediction_buffered_plot = np.zeros_like(contextTarget_plot)
+            prediction_buffered_plot[-len(prediction_plot):] = prediction_plot
+                
+            df = pd.DataFrame({
+                "Target": contextTarget_plot,
+                "Prediction": prediction_buffered_plot
+            })
+
+            ax = fig.add_subplot(gs[c, 0]) 
+            sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
+            ax.set_title(f"Ch:{random_ch_idxs[c]}")
+            
+        fig.suptitle(f"Ch:{random_ch_idxs}")
+        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+        if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+        savename_jpg = f"{savedir}/JPEGs/AutoregressiveRecon_epoch{epoch}_{pat_id}_batch{b}.jpg"
+        savename_svg = f"{savedir}/SVGs/AutoregressiveRecon_epoch{epoch}_{pat_id}_batch{b}.svg"
+        pl.savefig(savename_jpg)
+        pl.savefig(savename_svg)
+        pl.close(fig)   
+
+    pl.close('all') 
 
 def plot_MeanStd(plot_mean, plot_std, plot_dict, file_name, epoch, savedir, gpu_id, pat_id, iter): # plot_weights
 
