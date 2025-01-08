@@ -44,19 +44,35 @@ class VAEHead_TiedEncDec(nn.Module):
     Interface from a single patient's raw data channels to core VAE
     Reversible with tied weights
     '''
-    def __init__(self, pat_id, in_channels, autoencode_samples, top_dims, **kwargs):
+    def __init__(self, pat_id, in_channels, autoencode_samples, head_interface_dims, **kwargs):
         super(VAEHead_TiedEncDec, self).__init__()
 
         self.pat_id = pat_id
         self.in_channels = in_channels
         self.autoencode_samples = autoencode_samples
         self.in_features = in_channels * autoencode_samples
-        self.top_dims = top_dims
+        self.head_interface_dims = head_interface_dims
 
         # Shared between enc/dec head
-        self.subject_to_top = nn.Linear(self.in_features, self.top_dims, bias=False)
-        self.top_to_subject = nn.Linear(self.top_dims, self.in_features, bias=False)
-        self.top_to_subject.weight = nn.Parameter(self.subject_to_top.weight.T.detach())
+        self.subject_to_head = nn.Linear(self.in_features, self.head_interface_dims, bias=False)
+        self.head_to_subject = nn.Linear(self.head_interface_dims, self.in_features, bias=False)
+        self.head_to_subject.weight = nn.Parameter(self.subject_to_head.weight.T.detach())
+
+        self.head0_to_head1 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        self.head1_to_head0 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        self.head1_to_head0.weight = nn.Parameter(self.head0_to_head1.weight.T.detach())
+
+        self.head1_to_head2 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        self.head2_to_head1 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        self.head2_to_head1.weight = nn.Parameter(self.head1_to_head2.weight.T.detach())
+
+        self.head2_to_head3 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        self.head3_to_head2 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        self.head3_to_head2.weight = nn.Parameter(self.head2_to_head3.weight.T.detach())
+
+        self.head3_to_head4 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        self.head4_to_head3 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        self.head4_to_head3.weight = nn.Parameter(self.head3_to_head4.weight.T.detach())
 
         # self.leaky_relu = nn.LeakyReLU(0.2)
         self.tanh = nn.Tanh()
@@ -65,10 +81,27 @@ class VAEHead_TiedEncDec(nn.Module):
         
         if reverse == False:
             y = x.flatten(start_dim=1)
-            y = self.subject_to_top(y)
+            y = self.subject_to_head(y)
+            y = self.tanh(y)
+            y = self.head0_to_head1(y)
+            y = self.tanh(y)
+            y = self.head1_to_head2(y)
+            y = self.tanh(y)
+            y = self.head2_to_head3(y)
+            y = self.tanh(y)
+            y = self.head3_to_head4(y)
+            y = self.tanh(y)
 
         elif reverse == True:
-            y = self.top_to_subject(x)
+            y = self.head4_to_head3(x)
+            y = self.tanh(y)
+            y = self.head3_to_head2(y)
+            y = self.tanh(y)
+            y = self.head2_to_head1(y)
+            y = self.tanh(y)
+            y = self.head1_to_head0(y)
+            y = self.tanh(y)
+            y = self.head_to_subject(y)
             y = y.reshape(y.shape[0], self.in_channels, self.autoencode_samples)
             
         y = self.tanh(y)
@@ -83,6 +116,7 @@ class VAE(nn.Module):
     def __init__(
         self, 
         autoencode_samples,
+        head_interface_dims,
         top_dims,
         hidden_dims,
         latent_dim, 
@@ -93,11 +127,16 @@ class VAE(nn.Module):
 
         self.gpu_id = gpu_id
         self.autoencode_samples = autoencode_samples
+        self.head_interface_dims = head_interface_dims
         self.top_dims = top_dims
         self.hidden_dims = hidden_dims
         self.latent_dim = latent_dim
 
-        # Shared between enc/dec
+        self.head_to_top = nn.Linear(self.head_interface_dims, self.top_dims, bias=False)
+        self.top_to_head = nn.Linear(self.top_dims, self.head_interface_dims, bias=False)
+        self.top_to_head.weight = nn.Parameter(self.head_to_top.weight.T.detach())
+        # self.hidden_to_top.bias = nn.Parameter(self.top_to_hidden.bias.T.detach()) # Shapes do not match to share biases (could duplicate it??? naaa)
+
         self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=False)
         self.hidden_to_top = nn.Linear(self.hidden_dims, self.top_dims, bias=False)
         self.hidden_to_top.weight = nn.Parameter(self.top_to_hidden.weight.T.detach())
@@ -127,7 +166,9 @@ class VAE(nn.Module):
     def forward(self, x, reverse=False):
 
         if reverse == False:
-            y = self.top_to_hidden(x)
+            y = self.head_to_top(x)
+            y = self.tanh(y)
+            y = self.top_to_hidden(y)
             # y = self.leaky_relu(y)
             y = self.tanh(y)
             # mean, logvar = self.mean_fc_layer(y), self.logvar_fc_layer(y)
@@ -142,6 +183,8 @@ class VAE(nn.Module):
             y = self.tanh(y)
             y = self.hidden_to_top(y)
             # y = self.leaky_relu(y)
+            y = self.tanh(y)
+            y = self.top_to_head(y)
             y = self.tanh(y)
             return y
 

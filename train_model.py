@@ -260,6 +260,7 @@ def main(
         # AUTOREGRESSIVE INFERENCE
         if (trainer.epoch + 1) % trainer.autoreg_every == 0:
             trainer._set_to_eval()
+            print("RUNNING AUTOREGRESSION on random pats/files")
             with torch.no_grad():
                 trainer._random_autoreg_plots(
                     dataset_curr = trainer.train_dataset, 

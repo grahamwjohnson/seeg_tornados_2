@@ -26,12 +26,13 @@ periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if
 preictal_augmentation_seconds: 1800
 
 # Training settings
-continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/betafish_Mon_Jan__6_18_03_29_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### VAE 
 autoencode_samples: 4
+head_interface_dims: 128
 top_dims: 4096 
 hidden_dims: 2048
 latent_dim: 1024  # 1024
@@ -74,7 +75,7 @@ autoreg_every: 1
 autoreg_context_tokens: kwargs['autoreg_context_tokens'] = kwargs['transformer_seq_length'] - 1
 autoreg_tokens_to_gen: kwargs['autoreg_tokens_to_gen'] = kwargs['transformer_seq_length']
 autoreg_channels: 3
-autoreg_batchsize: 8
+autoreg_batchsize: 2
 autoreg_num_rand_pats: 2
 autoreg_num_rand_files: 2
 

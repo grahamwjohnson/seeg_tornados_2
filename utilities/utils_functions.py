@@ -649,7 +649,6 @@ def print_autoreg_latent_predictions(epoch, pat_id, rand_file_count, latent_cont
         pl.close('all') 
 
 def print_autoreg_raw_predictions(epoch, pat_id, rand_file_count, raw_context, raw_pred, raw_target, autoreg_channels, savedir, num_realtime_dims, **kwargs):
-    print("Here")
 
     raw_context = raw_context.detach().cpu().numpy()
     raw_pred = raw_pred.detach().cpu().numpy()
