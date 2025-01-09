@@ -5,7 +5,7 @@ from torch import Tensor
 from torchinfo import summary
 
 # Local imports
-from .Transformer import ModelArgs, Transformer
+from .Transformer import ModelArgs, Transformer, RMSNorm
 
 class Head_Optimizers():
     def __init__(self, heads, wd, betas, lr):
@@ -56,55 +56,88 @@ class VAEHead_TiedEncDec(nn.Module):
         # Shared between enc/dec head
         self.subject_to_head = nn.Linear(self.in_features, self.head_interface_dims, bias=False)
         self.head_to_subject = nn.Linear(self.head_interface_dims, self.in_features, bias=False)
-        self.head_to_subject.weight = nn.Parameter(self.subject_to_head.weight.T.detach())
+        self.head_to_subject.weight = nn.Parameter(self.subject_to_head.weight.T)
 
-        self.head0_to_head1 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        self.head1_to_head0 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        self.head1_to_head0.weight = nn.Parameter(self.head0_to_head1.weight.T.detach())
+        # self.head0_to_head1 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        # self.head1_to_head0 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        # self.head1_to_head0.weight = nn.Parameter(self.head0_to_head1.weight.T.detach())
 
-        self.head1_to_head2 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        self.head2_to_head1 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        self.head2_to_head1.weight = nn.Parameter(self.head1_to_head2.weight.T.detach())
+        # self.head1_to_head2 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        # self.head2_to_head1 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        # self.head2_to_head1.weight = nn.Parameter(self.head1_to_head2.weight.T.detach())
 
-        self.head2_to_head3 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        self.head3_to_head2 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        self.head3_to_head2.weight = nn.Parameter(self.head2_to_head3.weight.T.detach())
+        # self.head2_to_head3 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        # self.head3_to_head2 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        # self.head3_to_head2.weight = nn.Parameter(self.head2_to_head3.weight.T.detach())
 
-        self.head3_to_head4 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        self.head4_to_head3 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        self.head4_to_head3.weight = nn.Parameter(self.head3_to_head4.weight.T.detach())
+        # self.head3_to_head4 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        # self.head4_to_head3 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
+        # self.head4_to_head3.weight = nn.Parameter(self.head3_to_head4.weight.T.detach())
 
         # self.leaky_relu = nn.LeakyReLU(0.2)
         self.tanh = nn.Tanh()
+        self.silu = nn.SiLU()
+
+        self.norm0 = RMSNorm(dim=self.head_interface_dims)
+        # self.norm1 = RMSNorm(dim=self.head_interface_dims)
+        # self.norm2 = RMSNorm(dim=self.head_interface_dims)
+        # self.norm3 = RMSNorm(dim=self.head_interface_dims)
+        # self.norm4 = RMSNorm(dim=self.head_interface_dims)
+
+        self.norm0rev = RMSNorm(dim=self.head_interface_dims)
+        # self.norm1rev = RMSNorm(dim=self.head_interface_dims)
+        # self.norm2rev = RMSNorm(dim=self.head_interface_dims)
+        # self.norm3rev = RMSNorm(dim=self.head_interface_dims)
+        # self.norm4rev = RMSNorm(dim=self.head_interface_dims)
 
     def forward(self, x, reverse=False):
         
         if reverse == False:
             y = x.flatten(start_dim=1)
             y = self.subject_to_head(y)
-            y = self.tanh(y)
-            y = self.head0_to_head1(y)
-            y = self.tanh(y)
-            y = self.head1_to_head2(y)
-            y = self.tanh(y)
-            y = self.head2_to_head3(y)
-            y = self.tanh(y)
-            y = self.head3_to_head4(y)
-            y = self.tanh(y)
+            # y = self.tanh(y)
+            y = self.silu(y)
+            y = self.norm0(y)
+            # y = self.head0_to_head1(y)
+            # # y = self.tanh(y)
+            # y = self.silu(y)
+            # y = self.norm1(y)
+            # y = self.head1_to_head2(y)
+            # # y = self.tanh(y)
+            # y = self.silu(y)
+            # y = self.norm2(y)
+            # y = self.head2_to_head3(y)
+            # # y = self.tanh(y)
+            # y = self.silu(y)
+            # y = self.norm3(y)
+            # y = self.head3_to_head4(y)
+            # # y = self.tanh(y)
+            # y = self.silu(y)
+            # y = self.norm4(y)
 
         elif reverse == True:
-            y = self.head4_to_head3(x)
-            y = self.tanh(y)
-            y = self.head3_to_head2(y)
-            y = self.tanh(y)
-            y = self.head2_to_head1(y)
-            y = self.tanh(y)
-            y = self.head1_to_head0(y)
-            y = self.tanh(y)
+            # y = self.tanh(y)
+            # y = self.silu(x)
+            # y = self.norm4rev(y)
+            # y = self.head4_to_head3(y)
+            # # y = self.tanh(y)
+            # y = self.silu(y)
+            # y = self.norm3rev(y)
+            # y = self.head3_to_head2(y)
+            # # y = self.tanh(y)
+            # y = self.silu(y)
+            # y = self.norm2rev(y)
+            # y = self.head2_to_head1(y)
+            # # y = self.tanh(y)
+            # y = self.silu(y)
+            # y = self.norm1rev(y)
+            # y = self.head1_to_head0(y)
+            # y = self.tanh(x)
+            y = self.silu(x)
+            y = self.norm0rev(y)
             y = self.head_to_subject(y)
             y = y.reshape(y.shape[0], self.in_channels, self.autoencode_samples)
-            
-        y = self.tanh(y)
+            y = self.tanh(y)
 
         return y
 
@@ -134,12 +167,12 @@ class VAE(nn.Module):
 
         self.head_to_top = nn.Linear(self.head_interface_dims, self.top_dims, bias=False)
         self.top_to_head = nn.Linear(self.top_dims, self.head_interface_dims, bias=False)
-        self.top_to_head.weight = nn.Parameter(self.head_to_top.weight.T.detach())
+        self.top_to_head.weight = nn.Parameter(self.head_to_top.weight.T)
         # self.hidden_to_top.bias = nn.Parameter(self.top_to_hidden.bias.T.detach()) # Shapes do not match to share biases (could duplicate it??? naaa)
 
         self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=False)
         self.hidden_to_top = nn.Linear(self.hidden_dims, self.top_dims, bias=False)
-        self.hidden_to_top.weight = nn.Parameter(self.top_to_hidden.weight.T.detach())
+        self.hidden_to_top.weight = nn.Parameter(self.top_to_hidden.weight.T)
         # self.hidden_to_top.bias = nn.Parameter(self.top_to_hidden.bias.T.detach()) # Shapes do not match to share biases (could duplicate it??? naaa)
 
         # # Variational layers (not shared between enc/dec)
@@ -152,10 +185,17 @@ class VAE(nn.Module):
         # Latent to hidden (not shared between enc/dec)
         self.latent_to_hidden = nn.Linear(self.latent_dim, self.hidden_dims, bias=False) # bias=False
         # self.latent_to_hidden.weight = nn.Parameter(self.mean_fc_layer.weight.T.detach()) # Tie the "mean" layer weights
-        self.latent_to_hidden.weight = nn.Parameter(self.hidden_to_latent.weight.T.detach()) # Tie weights
+        self.latent_to_hidden.weight = nn.Parameter(self.hidden_to_latent.weight.T) # Tie weights
 
         # self.leaky_relu = nn.LeakyReLU(0.2)
         self.tanh = nn.Tanh()
+        self.silu = nn.SiLU()
+
+        self.norm_top = RMSNorm(dim=self.top_dims)
+        self.norm_top_rev = RMSNorm(dim=self.top_dims)
+
+        self.norm_hidden = RMSNorm(dim=self.hidden_dims)
+        self.norm_hidden_rev = RMSNorm(dim=self.hidden_dims)
 
     # def reparameterization(self, mean, logvar):
     #     std = torch.exp(0.5 * logvar)  
@@ -167,25 +207,34 @@ class VAE(nn.Module):
 
         if reverse == False:
             y = self.head_to_top(x)
-            y = self.tanh(y)
+            # y = self.tanh(y)
+            y = self.silu(y)
+            y = self.norm_top(y)
             y = self.top_to_hidden(y)
             # y = self.leaky_relu(y)
-            y = self.tanh(y)
+            # y = self.tanh(y)
+            y = self.silu(y)
+            y = self.norm_hidden(y)
             # mean, logvar = self.mean_fc_layer(y), self.logvar_fc_layer(y)
             # z = self.reparameterization(mean, logvar)
             # return mean, logvar, z
             y = self.hidden_to_latent(y)
+            # y = self.tanh(y)
             return y
 
         elif reverse == True:
             y = self.latent_to_hidden(x)
             # y = self.leaky_relu(y)
-            y = self.tanh(y)
+            # y = self.tanh(y)
+            y = self.silu(y)
+            y = self.norm_hidden_rev(y)
             y = self.hidden_to_top(y)
             # y = self.leaky_relu(y)
-            y = self.tanh(y)
+            # y = self.tanh(y)
+            y = self.silu(y)
+            y = self.norm_top_rev(y)
             y = self.top_to_head(y)
-            y = self.tanh(y)
+            # y = self.tanh(y)
             return y
 
 def print_models_flow(x, transformer_seq_length, **kwargs):

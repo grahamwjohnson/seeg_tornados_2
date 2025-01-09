@@ -256,6 +256,7 @@ class FeedForward(nn.Module):
 
     def forward(self, x):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        # return self.w2(F.tanh(self.w1(x)) * self.w3(x))           ############################ SWITCHED TO TANH ######################
 
 
 class TransformerBlock(nn.Module):
@@ -329,6 +330,8 @@ class Transformer(nn.Module):
             params.rope_theta,
         )
 
+        self.tanh = nn.Tanh()
+
     # @torch.inference_mode()
     def forward(self, h_in_vae: torch.Tensor, start_pos: int=0):
         # _bsz, seqlen = tokens.shape
@@ -362,5 +365,7 @@ class Transformer(nn.Module):
 
         # output = self.output_mlp(h)
         output = h
+        # output = self.tanh(h)          ##################################### Added tanh #########################################
+
 
         return output
