@@ -49,11 +49,15 @@ class VAEHead_TiedEncDec(nn.Module):
 
         self.pat_id = pat_id
         self.in_channels = in_channels
+        self.cnn_channels = 256
         self.autoencode_samples = autoencode_samples
-        self.in_features = in_channels * autoencode_samples
+        self.in_features = int((self.cnn_channels *  autoencode_samples )/ 2 ) #in_channels * autoencode_samples
         self.head_interface_dims = head_interface_dims
 
-        # Shared between enc/dec head
+        self.conv0 = nn.Conv1d(in_channels=self.in_channels, out_channels=self.cnn_channels, kernel_size=3, stride=2, padding=1)
+        self.convtrans0 = nn.ConvTranspose1d(in_channels=self.cnn_channels, out_channels=self.in_channels, kernel_size=3, stride=2, padding=1, output_padding=1)
+
+        # FC
         self.subject_to_head = nn.Linear(self.in_features, self.head_interface_dims, bias=False)
         self.head_to_subject = nn.Linear(self.head_interface_dims, self.in_features, bias=False)
         self.head_to_subject.weight = nn.Parameter(self.subject_to_head.weight.T)
@@ -93,7 +97,8 @@ class VAEHead_TiedEncDec(nn.Module):
     def forward(self, x, reverse=False):
         
         if reverse == False:
-            y = x.flatten(start_dim=1)
+            y = self.conv0(x)
+            y = y.flatten(start_dim=1)
             y = self.subject_to_head(y)
             # y = self.tanh(y)
             y = self.silu(y)
@@ -136,7 +141,9 @@ class VAEHead_TiedEncDec(nn.Module):
             y = self.silu(x)
             y = self.norm0rev(y)
             y = self.head_to_subject(y)
-            y = y.reshape(y.shape[0], self.in_channels, self.autoencode_samples)
+            # y = y.reshape(y.shape[0], self.in_channels, self.autoencode_samples)
+            y = y.reshape(y.shape[0], self.cnn_channels, -1)
+            y = self.convtrans0(y)
             y = self.tanh(y)
 
         return y

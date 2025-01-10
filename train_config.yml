@@ -31,7 +31,7 @@ cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/re
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### VAE 
-autoencode_samples: 32
+autoencode_samples: 16
 head_interface_dims: 2048
 top_dims: 2048 
 hidden_dims: 2048
