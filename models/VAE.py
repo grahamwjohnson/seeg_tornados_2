@@ -51,11 +51,20 @@ class VAEHead_TiedEncDec(nn.Module):
         self.in_channels = in_channels
         self.cnn_channels = 256
         self.autoencode_samples = autoencode_samples
-        self.in_features = int((self.cnn_channels *  autoencode_samples )/ 2 ) #in_channels * autoencode_samples
+        self.in_features = int((self.cnn_channels *  autoencode_samples )/ 1 ) #in_channels * autoencode_samples
         self.head_interface_dims = head_interface_dims
 
-        self.conv0 = nn.Conv1d(in_channels=self.in_channels, out_channels=self.cnn_channels, kernel_size=3, stride=2, padding=1)
-        self.convtrans0 = nn.ConvTranspose1d(in_channels=self.cnn_channels, out_channels=self.in_channels, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.conv0 = nn.Conv1d(in_channels=self.in_channels, out_channels=self.cnn_channels, kernel_size=3, stride=1, padding=1)
+        self.convtrans0 = nn.ConvTranspose1d(in_channels=self.cnn_channels, out_channels=self.in_channels, kernel_size=3, stride=1, padding=1, output_padding=0)
+        self.convtrans0.weight = nn.Parameter(self.conv0.weight)
+
+        self.conv1 = nn.Conv1d(in_channels=self.cnn_channels, out_channels=self.cnn_channels, kernel_size=3, stride=1, padding=1)
+        self.convtrans1 = nn.ConvTranspose1d(in_channels=self.cnn_channels, out_channels=self.cnn_channels, kernel_size=3, stride=1, padding=1, output_padding=0)
+        self.convtrans1.weight = nn.Parameter(self.conv1.weight)
+
+        self.conv2 = nn.Conv1d(in_channels=self.cnn_channels, out_channels=self.cnn_channels, kernel_size=3, stride=1, padding=1)
+        self.convtrans2 = nn.ConvTranspose1d(in_channels=self.cnn_channels, out_channels=self.cnn_channels, kernel_size=3, stride=1, padding=1, output_padding=0)
+        self.convtrans2.weight = nn.Parameter(self.conv2.weight)
 
         # FC
         self.subject_to_head = nn.Linear(self.in_features, self.head_interface_dims, bias=False)
@@ -98,6 +107,14 @@ class VAEHead_TiedEncDec(nn.Module):
         
         if reverse == False:
             y = self.conv0(x)
+            y = self.silu(y)
+            # y = self.norm0(y)
+            y = self.conv1(y)
+            y = self.silu(y)
+            # y = self.norm1(y)
+            y = self.conv2(y)
+            y = self.silu(y)
+            # y = self.norm2(y)
             y = y.flatten(start_dim=1)
             y = self.subject_to_head(y)
             # y = self.tanh(y)
@@ -143,7 +160,15 @@ class VAEHead_TiedEncDec(nn.Module):
             y = self.head_to_subject(y)
             # y = y.reshape(y.shape[0], self.in_channels, self.autoencode_samples)
             y = y.reshape(y.shape[0], self.cnn_channels, -1)
+            # y = self.norm2rev(y)
+            y = self.convtrans2(y)
+            y = self.silu(y)
+            # y = self.norm1rev(y)
+            y = self.convtrans1(y)
+            y = self.silu(y)
+            # y = self.norm0rev(y)
             y = self.convtrans0(y)
+
             y = self.tanh(y)
 
         return y

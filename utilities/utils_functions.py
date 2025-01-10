@@ -610,7 +610,7 @@ def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat
 
     pl.close('all') 
 
-def print_autoreg_latent_predictions(epoch, pat_id, rand_file_count, latent_context, latent_predictions, latent_target, savedir, num_realtime_dims, **kwargs):
+def print_autoreg_latent_predictions(gpu_id, epoch, pat_id, rand_file_count, latent_context, latent_predictions, latent_target, savedir, num_realtime_dims, **kwargs):
     
     latent_target=latent_target.detach().cpu().numpy()
     latent_context=latent_context.detach().cpu().numpy() # NOT CURRENTLY USING
@@ -640,15 +640,15 @@ def print_autoreg_latent_predictions(epoch, pat_id, rand_file_count, latent_cont
 
         if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
         if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-        savename_jpg = f"{savedir}/JPEGs/AutoregressiveLatent_epoch{epoch}_{pat_id}_batch{b}_randfile{rand_file_count}.jpg"
-        savename_svg = f"{savedir}/SVGs/AutoregressiveLatent_epoch{epoch}_{pat_id}_batch_{b}_randfile{rand_file_count}.svg"
+        savename_jpg = f"{savedir}/JPEGs/AutoregressiveLatent_epoch{epoch}_{pat_id}_batch{b}_randfile{rand_file_count}_gpu{gpu_id}.jpg"
+        savename_svg = f"{savedir}/SVGs/AutoregressiveLatent_epoch{epoch}_{pat_id}_batch_{b}_randfile{rand_file_count}_gpu{gpu_id}.svg"
         pl.savefig(savename_jpg)
         pl.savefig(savename_svg)
         pl.close(fig)    
 
         pl.close('all') 
 
-def print_autoreg_raw_predictions(epoch, pat_id, rand_file_count, raw_context, raw_pred, raw_target, autoreg_channels, savedir, num_realtime_dims, **kwargs):
+def print_autoreg_raw_predictions(gpu_id, epoch, pat_id, rand_file_count, raw_context, raw_pred, raw_target, autoreg_channels, savedir, num_realtime_dims, **kwargs):
 
     raw_context = raw_context.detach().cpu().numpy()
     raw_pred = raw_pred.detach().cpu().numpy()
@@ -687,8 +687,8 @@ def print_autoreg_raw_predictions(epoch, pat_id, rand_file_count, raw_context, r
         fig.suptitle(f"Ch:{random_ch_idxs}")
         if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
         if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-        savename_jpg = f"{savedir}/JPEGs/AutoregressiveRecon_epoch{epoch}_{pat_id}_batch{b}.jpg"
-        savename_svg = f"{savedir}/SVGs/AutoregressiveRecon_epoch{epoch}_{pat_id}_batch{b}.svg"
+        savename_jpg = f"{savedir}/JPEGs/AutoregressiveRecon_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.jpg"
+        savename_svg = f"{savedir}/SVGs/AutoregressiveRecon_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.svg"
         pl.savefig(savename_jpg)
         pl.savefig(savename_svg)
         pl.close(fig)   

@@ -680,6 +680,7 @@ class Trainer:
 
                 # Plot the latent predictions
                 utils_functions.print_autoreg_latent_predictions(
+                    gpu_id=self.gpu_id,
                     epoch=self.epoch,
                     pat_id=pat_id,
                     rand_file_count=rand_file_count,
@@ -691,6 +692,7 @@ class Trainer:
 
                 # Plot the raw predictions
                 utils_functions.print_autoreg_raw_predictions(
+                    gpu_id=self.gpu_id,
                     epoch=self.epoch,
                     pat_id=pat_id,
                     rand_file_count=rand_file_count,
@@ -836,7 +838,7 @@ class Trainer:
                         #     KL_multiplier=self.KL_multiplier)
 
                         # Intrapatient backprop
-                        loss = recon_loss # + transformer_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        loss = transformer_loss # + recon_loss # + transformer_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
                         loss.backward()
 
                         # Realtime info as epoch is running

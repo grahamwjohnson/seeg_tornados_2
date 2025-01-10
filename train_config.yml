@@ -31,9 +31,9 @@ cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/re
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### VAE 
-autoencode_samples: 16
-head_interface_dims: 2048
-top_dims: 2048 
+autoencode_samples: 8
+head_interface_dims: 4096
+top_dims: 4096 
 hidden_dims: 2048
 latent_dim: 1024  # 1024
 
@@ -53,7 +53,7 @@ transformer_weight_decay: 0.1
 adamW_beta1: 0.9
 adamW_beta2: 0.95
 
-train_subsample_file_factor: 2048 # randomly decreases training passes per file per epoch
+train_subsample_file_factor: 16000 # randomly decreases training passes per file per epoch
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 8 # this is for when loss is not being calculated
 pacmap_every: 99999 # Must be within a 'quick_recon_val_every' to be reached
