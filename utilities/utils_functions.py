@@ -695,6 +695,42 @@ def print_autoreg_raw_predictions(gpu_id, epoch, pat_id, rand_file_count, raw_co
 
     pl.close('all') 
 
+def print_autoreg_AttentionScores_AlongSeq(gpu_id, epoch, pat_id, rand_file_count, scores_allSeq_firstLayer_meanHeads_lastRow, savedir, **kwargs):
+
+    scores_allSeq_firstLayer_meanHeads_lastRow = scores_allSeq_firstLayer_meanHeads_lastRow.detach().cpu().numpy()
+
+    batchsize = scores_allSeq_firstLayer_meanHeads_lastRow.shape[0]
+
+    # Make new grid/fig for every batch
+    for b in range(0, batchsize):
+        gs = gridspec.GridSpec(1, 1) 
+        fig = pl.figure(figsize=(20, 14))
+
+        scores_row_plot = scores_allSeq_firstLayer_meanHeads_lastRow[b, :, :].swapaxes(0,1)
+            
+        # df = pd.DataFrame({
+        #     "scores_row": scores_row_plot,
+        #     "scores_col": scores_col_plot
+        # }, columns=np.arange(0, scores_row_plot.shape[0]))
+
+        ax1 = fig.add_subplot(gs[0]) 
+        sns.heatmap(scores_row_plot, cmap=sns.cubehelix_palette(as_cmap=True))
+        ax1.set_title(f"Score Rows, First Transformer Layer - Average of Heads, Batch:{b}")
+        ax1.set_xlabel("Autoregression Step")
+        ax1.set_ylabel("Attention Weight by Current Past Index")
+            
+        fig.suptitle(f"Attention Weights")
+        if gpu_id == 0: time.sleep(1)
+        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+        if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+        savename_jpg = f"{savedir}/JPEGs/AutoregressiveAttention_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.jpg"
+        savename_svg = f"{savedir}/SVGs/AutoregressiveAttention_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.svg"
+        pl.savefig(savename_jpg)
+        pl.savefig(savename_svg)
+        pl.close(fig)   
+
+    pl.close('all') 
+
 def plot_MeanStd(plot_mean, plot_std, plot_dict, file_name, epoch, savedir, gpu_id, pat_id, iter): # plot_weights
 
     mean_mean = np.mean(plot_mean, axis=2)

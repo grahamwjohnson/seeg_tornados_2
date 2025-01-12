@@ -106,6 +106,14 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
         .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
     )
 
+def attention_mask_dropout(mask, inf_percentage):
+
+    for row in range(1, mask.shape[0]):
+        random_indices = torch.randperm(row+1).tolist()
+        rand_inf_indices = random_indices[:int((row+1) * inf_percentage)]
+        mask[row, rand_inf_indices] = float('-inf')
+
+    return mask
 
 class Attention(nn.Module):
     def __init__(self, args: ModelArgs):
@@ -181,6 +189,7 @@ class Attention(nn.Module):
         start_pos: int,
         freqs_cis: torch.Tensor,
         mask: Optional[torch.Tensor],
+        return_attW: bool=False
     ):
         bsz, seqlen, _ = x.shape
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
@@ -201,25 +210,24 @@ class Attention(nn.Module):
         values = self.cache_v[:bsz, : start_pos + seqlen]
 
         # repeat k/v heads if n_kv_heads < n_heads
-        keys = repeat_kv(
-            keys, self.n_rep
-        )  # (bs, cache_len + seqlen, n_local_heads, head_dim)
-        values = repeat_kv(
-            values, self.n_rep
-        )  # (bs, cache_len + seqlen, n_local_heads, head_dim)
+        keys = repeat_kv(keys, self.n_rep)  # (bs, cache_len + seqlen, n_local_heads, head_dim)
+        values = repeat_kv(values, self.n_rep)  # (bs, cache_len + seqlen, n_local_heads, head_dim)
 
         xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
         keys = keys.transpose(1, 2)  # (bs, n_local_heads, cache_len + seqlen, head_dim)
-        values = values.transpose(
-            1, 2
-        )  # (bs, n_local_heads, cache_len + seqlen, head_dim)
+        values = values.transpose(1, 2)  # (bs, n_local_heads, cache_len + seqlen, head_dim)
         scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
         if mask is not None:
             scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
         scores = F.softmax(scores.float(), dim=-1).type_as(xq)
         output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
-        return self.wo(output)
+        
+        if return_attW:
+            scores_meanHeads_lastRow = torch.mean(scores[:, :, -1, :], dim=1) # How much does i attend to j, so last row is how much does last token attend to all previous tokens... right?
+            return self.wo(output), scores_meanHeads_lastRow
+        else:
+            return self.wo(output)
 
 
 class FeedForward(nn.Module):
@@ -283,10 +291,19 @@ class TransformerBlock(nn.Module):
         start_pos: int,
         freqs_cis: torch.Tensor,
         mask: Optional[torch.Tensor],
+        return_attW: bool=False
     ):
-        h = x + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask)
-        out = h + self.feed_forward(self.ffn_norm(h))
-        return out
+
+        if return_attW:
+            h, scores_meanHeads_lastRow = self.attention(self.attention_norm(x), start_pos, freqs_cis, mask, return_attW=True)
+            h = x + h
+            out = h + self.feed_forward(self.ffn_norm(h))
+            return out, scores_meanHeads_lastRow
+
+        else:
+            h = x + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask, return_attW=False)
+            out = h + self.feed_forward(self.ffn_norm(h))
+            return out            
 
 
 class Transformer(nn.Module):
@@ -333,7 +350,13 @@ class Transformer(nn.Module):
         self.tanh = nn.Tanh()
 
     # @torch.inference_mode()
-    def forward(self, h_in_vae: torch.Tensor, start_pos: int=0):
+    def forward(
+        self, 
+        h_in_vae: torch.Tensor, 
+        start_pos: int=0, 
+        return_attW: bool=False,
+        attention_dropout: float=0.0
+        ):
         # _bsz, seqlen = tokens.shape
         # h = self.tok_embeddings(tokens)
 
@@ -359,13 +382,36 @@ class Transformer(nn.Module):
                 [torch.zeros((seqlen, start_pos), device=self.device), mask]
             ).type_as(h)
 
-        for layer in self.layers:
-            h = layer(h, start_pos, freqs_cis, mask)
-        h = self.norm(h)
+            # Apply attention dropout
+            if attention_dropout > 0:
+                mask = attention_mask_dropout(mask, attention_dropout)
+            
 
-        # output = self.output_mlp(h)
-        output = h
-        # output = self.tanh(h)          ##################################### Added tanh #########################################
+        if return_attW:
+            layer_count = 0
+            for layer in self.layers:
+                if layer_count == 0:
+                    h, scores_firstLayer_meanHeads_lastRow = layer(h, start_pos, freqs_cis, mask, return_attW=True)
+                else:
+                    h = layer(h, start_pos, freqs_cis, mask, return_attW=False)
+                layer_count = layer_count + 1
+            h = self.norm(h)
 
+            # output = self.output_mlp(h)
+            output = h
+            # output = self.tanh(h)          ##################################### Added tanh #########################################
 
-        return output
+            return output, scores_firstLayer_meanHeads_lastRow
+
+        else:
+            for layer in self.layers:
+                h = layer(h, start_pos, freqs_cis, mask, return_attW=False)
+            h = self.norm(h)
+
+            # output = self.output_mlp(h)
+            output = h
+            # output = self.tanh(h)          ##################################### Added tanh #########################################
+
+            return output
+
+            

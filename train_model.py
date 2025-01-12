@@ -66,13 +66,7 @@ def load_train_objs(
     val_unseen_hour_dataset_range, 
     inference_selection, 
     
-    # Transformer
-    max_seq_len, 
-    max_batch_size,
-    n_layers,
-    n_heads, 
-    multiple_of,
-
+    # Optimizers
     core_weight_decay, 
     head_weight_decay, 
     transformer_weight_decay,
@@ -256,6 +250,14 @@ def main(
     # Run through all epochs
     for epoch in range(start_epoch, epochs_to_train):
         trainer.epoch = epoch
+
+        # PACMAP
+        if (epoch > 0) & ((trainer.epoch + 1) % trainer.pacmap_every == 0):
+            trainer._pacmap(**kwargs)
+            # Checkpoint after PACMAP, do not save finetuned model weights
+            print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
+            barrier()
+            if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=False, savePaCMAP=True, **kwargs)
         
         # AUTOREGRESSIVE INFERENCE
         if (trainer.epoch + 1) % trainer.autoreg_every == 0:
@@ -267,14 +269,6 @@ def main(
                     heads_curr = trainer.train_heads,
                     **kwargs)
 
-        # PACMAP
-        if (trainer.epoch + 1) % trainer.pacmap_every == 0:
-            trainer._pacmap(**kwargs)
-            # Checkpoint after PACMAP, do not save finetuned model weights
-            print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
-            barrier()
-            if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=False, savePaCMAP=True, **kwargs)
-        
         # TRAIN
         trainer._set_to_train()
         trainer._run_epoch(
@@ -590,7 +584,7 @@ class Trainer:
         
         return start_idxs
 
-    def _autoreg(self, head, context, target, autoreg_tokens_to_gen):
+    def _autoreg(self, head, context, target, autoreg_tokens_to_gen, n_layers, **kwargs):
 
         real_batchsize = context.shape[0]
         context_token_len = int(context.shape[2]/self.autoencode_samples)
@@ -619,9 +613,10 @@ class Trainer:
         # Greedy decoder
         autoreg_latent_pred = torch.zeros(context.shape[0], context_token_len + autoreg_tokens_to_gen, self.latent_dim).to(self.gpu_id)
         autoreg_latent_pred[:,:context_token_len, :] = autoreg_latent_context
+        scores_allSeq_firstLayer_meanHeads_lastRow = torch.zeros(context.shape[0], autoreg_tokens_to_gen, context_token_len)
         for i in range(0, autoreg_tokens_to_gen):
             # Run sequence through transformer and get transformer loss
-            predicted_embeddings = self.transformer(autoreg_latent_pred[:, i:i + context_token_len, :])
+            predicted_embeddings, scores_allSeq_firstLayer_meanHeads_lastRow[:, i, :] = self.transformer(autoreg_latent_pred[:, i:i + context_token_len, :], attention_dropout= 0.0, return_attW=True)
             autoreg_latent_pred[:, context_token_len + i, :] = predicted_embeddings[:, -1, :]
 
         # Prune the latent predictions to just the generated sequence
@@ -638,7 +633,7 @@ class Trainer:
         x_hat = x_hat.reshape(x_hat.shape[0], x_hat.shape[1] * x_hat.shape[2], x_hat.shape[3])
         x_hat = x_hat.transpose(1, 2)
 
-        return autoreg_latent_context, autoreg_latent_pred, autoreg_latent_target, x_hat
+        return autoreg_latent_context, autoreg_latent_pred, autoreg_latent_target, x_hat, scores_allSeq_firstLayer_meanHeads_lastRow
 
     def _random_autoreg_plots(self, dataset_curr, heads_curr, autoreg_num_rand_pats, autoreg_context_tokens, autoreg_tokens_to_gen, autoreg_batchsize, autoreg_num_rand_files, num_dataloader_workers_SEQUENTIAL, **kwargs):
 
@@ -672,11 +667,12 @@ class Trainer:
                 target_raw = target_raw.to(self.gpu_id)
 
                 # Conduct the autoregressive decoding
-                autoreg_latent_context, autoreg_latent_pred, autoreg_latent_target, autoreg_raw_pred = self._autoreg(
+                autoreg_latent_context, autoreg_latent_pred, autoreg_latent_target, autoreg_raw_pred, scores_allSeq_firstLayer_meanHeads_lastRow = self._autoreg(
                     head=head,
                     context=context_raw, 
                     target=target_raw,
-                    autoreg_tokens_to_gen=autoreg_tokens_to_gen)
+                    autoreg_tokens_to_gen=autoreg_tokens_to_gen,
+                    **kwargs)
 
                 # Plot the latent predictions
                 utils_functions.print_autoreg_latent_predictions(
@@ -702,6 +698,16 @@ class Trainer:
                     savedir = self.model_dir + "/autoreg_raw",
                     **kwargs)
 
+                # Plot the Attention Scores along the generated sequence in First Transformer Layer (mean of heads)
+                utils_functions.print_autoreg_AttentionScores_AlongSeq(
+                    gpu_id=self.gpu_id,
+                    epoch=self.epoch,
+                    pat_id=pat_id,
+                    rand_file_count=rand_file_count,
+                    scores_allSeq_firstLayer_meanHeads_lastRow=scores_allSeq_firstLayer_meanHeads_lastRow, 
+                    savedir = self.model_dir + "/autoreg_attention",
+                )
+
                 # Kill after number of random files is complete
                 rand_file_count = rand_file_count + 1
                 if rand_file_count >= autoreg_num_rand_files: break
@@ -712,6 +718,7 @@ class Trainer:
         batchsize,
         heads_curr,
         head_opts_curr,
+        attention_dropout,
         random_bool, # will subsample and randomize
         subsample_file_factor_curr, # only valid if 'random' is True
         only_latent,
@@ -811,7 +818,7 @@ class Trainer:
   
                         ### TRANSFORMER
                         # Run sequence through transformer and get transformer loss
-                        predicted_embeddings = self.transformer(latent_seq[:, :-1, :])
+                        predicted_embeddings = self.transformer(latent_seq[:, :-1, :], attention_dropout=attention_dropout)
                         
                         ### VAE DECODER
                         # Run the predicted embeddings through decoder
@@ -837,8 +844,10 @@ class Trainer:
                         #     logvar=logvar_batched, 
                         #     KL_multiplier=self.KL_multiplier)
 
+                        mean_loss = loss_functions.simple_mean_latent_loss(latent_seq, **kwargs)
+
                         # Intrapatient backprop
-                        loss = transformer_loss # + recon_loss # + transformer_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        loss = recon_loss + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
                         loss.backward()
 
                         # Realtime info as epoch is running
@@ -869,6 +878,7 @@ class Trainer:
                                     train_loss=loss,
                                     train_transformer_loss=transformer_loss,
                                     train_recon_loss=recon_loss, 
+                                    train_mean_loss=mean_loss,
                                     # train_kld_loss=kld_loss, 
                                     train_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     train_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
@@ -882,6 +892,7 @@ class Trainer:
                                     val_finetune_loss=loss, 
                                     val_finetune_transformer_loss=transformer_loss,
                                     val_finetune_recon_loss=recon_loss, 
+                                    val_finetune_mean_loss=mean_loss,
                                     # val_finetune_kld_loss=kld_loss, 
                                     val_finetune_LR_heads=head_opts_curr.get_lr(),
                                     val_finetune_LR_encoder=self.opt_vae.param_groups[0]['lr'], 

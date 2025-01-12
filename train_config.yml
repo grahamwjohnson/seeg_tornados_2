@@ -1,8 +1,8 @@
 # Patient selection
 # pat_id: 'Epat31'
 
-pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats' 
-train_val_pat_perc: kwargs['train_val_pat_perc'] = [0.8, 0.2]
+pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/2pats'     # 10pats' 
+train_val_pat_perc: kwargs['train_val_pat_perc'] = [0.5, 0.5] # [0.8, 0.2]
 num_freq_bands: 1
 pat_num_channels_LUT: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/pats_num_channels_LUT.csv'
 num_samples: kwargs['num_samples'] = 1024*512 # MATCH TO FILE SELECTION 'duration_stride_str' BELOW 512*512, 10*512 , 60*512    
@@ -17,21 +17,21 @@ channel_scale_style: 'By_Channel_Scale' # 'Same_Scale_For_All_Channels' # By_Cha
 bipole_or_monopole: 'Bipole_datasets'
 scale_epoch_str: 'data_normalized_to_first_24_hours' # 'data_normalized_to_first_24_hours' # 'data_normalized_to_first_seizure_centered_24_hours' # , 'Dictated by preprocessing: Should probably decide to have duration match 'train_hours_desired', but do not HAVE to
 # duration_stride_str: 'DurStr_1024s896s_epoched_datasets' # 'DurStr_1024s896s_epoched_datasets', 'DurStr_512s480s_epoched_datasets', 'DurStr_10s2s_epoched_datasets', 'DurStr_60s10s_epoched_datasets'
-duration_stride_str: '10pats'
+duration_stride_str: '2pats'
 freq_bands_str: 'wholeband' # 1to12Hz_12to59Hz_61to179Hz, wholeband
 intrapatient_dataset_style: 2 # 1 all data (no SPES), 2 all data (with SPES), 3 ONLY SPES
 train_hour_dataset_range: kwargs['train_hour_dataset_range'] = [-1, -1]  # [-1, -1] means all, [X, -1] means from X to end
 rand_name_json: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/utilities/animals.json'
 periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if enabled
-preictal_augmentation_seconds: 1800
+preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
 # Training settings
 continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/betafish_Mon_Jan__6_18_03_29_2025' 
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/2pats/trained_models/dataset_train50.0_val50.0/americanwigeon_Sat_Jan_11_07_02_24_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### VAE 
-autoencode_samples: 8
+autoencode_samples: 1
 head_interface_dims: 4096
 top_dims: 4096 
 hidden_dims: 2048
@@ -46,6 +46,7 @@ max_batch_size: 8
 n_layers: 32
 n_heads: 32
 multiple_of: 256 # Feedforward scaling?
+attention_dropout: 0.5
 
 core_weight_decay: 0.1
 head_weight_decay: 0.1
@@ -73,10 +74,10 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 # Autoregressive Inference
 autoreg_every: 1
 autoreg_context_tokens: kwargs['autoreg_context_tokens'] = kwargs['transformer_seq_length'] - 1
-autoreg_tokens_to_gen: kwargs['autoreg_tokens_to_gen'] = kwargs['transformer_seq_length']
+autoreg_tokens_to_gen: 32 # kwargs['autoreg_tokens_to_gen'] = kwargs['transformer_seq_length']
 autoreg_channels: 3
 autoreg_batchsize: 2
-autoreg_num_rand_pats: 2
+autoreg_num_rand_pats: 1
 autoreg_num_rand_files: 2
 
 # Beta VAE controls
@@ -85,11 +86,10 @@ KL_min: kwargs['KL_min'] = 0
 KL_epochs_AT_max: 5
 KL_epochs_TO_max: 5
 
-# Recon Weight
+# Weights
 recon_weight: 3
-
-# Transformer weight
 transformer_weight: 1 # 0.01  ############# CHeck if loss is actually used!!! May be commented out ###############
+mean_loss_weight: 1000
 
 # Train heads learning rate controls
 LR_max_heads: kwargs['LR_max_heads'] = 1e-5
