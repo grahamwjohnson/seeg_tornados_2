@@ -53,176 +53,226 @@ class RMSNorm_Conv(torch.nn.Module):
         output = self._norm(x.float()).type_as(x)
         return output * self.weight.unsqueeze(1).repeat(1, x.shape[2])
 
+class TimeSeriesCrossAttentionLayer(nn.Module):
+    def __init__(self, embed_dim, num_heads, dropout=0.1):
+        super(TimeSeriesCrossAttentionLayer, self).__init__()
+        self.attn = nn.MultiheadAttention(embed_dim, num_heads, dropout=dropout)
+        self.norm1 = RMSNorm(embed_dim)
+        self.dropout1 = nn.Dropout(dropout)
+        self.ffn = nn.Sequential(
+            nn.Linear(embed_dim, embed_dim * 4),
+            nn.SiLU(),
+            nn.Linear(embed_dim * 4, embed_dim)
+        )
+        self.norm2 = RMSNorm(embed_dim)
+        self.dropout2 = nn.Dropout(dropout)
 
-# class CausalConv1D(nn.Module):
-#     """Causal 1D convolution with dilation."""
-#     def __init__(self, in_channels, out_channels, kernel_size, stride, dilation):
-#         super(CausalConv1D, self).__init__()
-#         self.pad = (kernel_size - 1) * dilation  # Padding to ensure causality
-#         self.conv = nn.Conv1d(
-#             in_channels,
-#             out_channels,
-#             kernel_size,
-#             stride=stride,
-#             dilation=dilation,
-#             padding=self.pad
-#         )
-    
-#     def forward(self, x):
-#         x = self.conv(x)
-#         return x[:, :, :-self.pad]  # Remove the extra padding
+    def forward(self, query, key, value):
+        # Cross-attention: query comes from the target, key and value come from the source
+        # query: (seq_len, batch_size, embed_dim)
+        # key, value: (seq_len, batch_size, embed_dim)
 
-# Residual block with dilated convolutions
-class WaveNetBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, dilation, kernel_size):
-        super(WaveNetBlock, self).__init__()
+        # Cross-attention layer
+        attn_output, _ = self.attn(query, key, value)  # q=query, k=key, v=value
+        query = self.norm1(query + self.dropout1(attn_output))  # Residual connection
 
+        # Feed-forward network
+        ffn_output = self.ffn(query)
+        query = self.norm2(query + self.dropout2(ffn_output))  # Residual connection
+        
+        return query
+
+class TimeSeriesCrossAttentionLayer_ShapeDilationNoResidual(nn.Module):
+    def __init__(self, in_dim, out_dim, dropout=0.1):
+        super(TimeSeriesCrossAttentionLayer_ShapeDilationNoResidual, self).__init__()
+        self.attn = nn.MultiheadAttention(in_dim, num_heads=1, dropout=dropout)
+        self.norm1 = RMSNorm(in_dim)
+        self.dropout1 = nn.Dropout(dropout)
+        self.ffn = nn.Sequential(
+            nn.Linear(in_dim, in_dim * 4),
+            nn.SiLU(),
+            nn.Linear(in_dim * 4, out_dim)
+        )
+        # self.norm2 = RMSNorm(out_dim)
+        # self.dropout2 = nn.Dropout(dropout)
+
+    def forward(self, query, key, value):
+        # Cross-attention: query comes from the target, key and value come from the source
+        # query: (seq_len, batch_size, embed_dim)
+        # key, value: (seq_len, batch_size, embed_dim)
+
+        # Cross-attention layer
+        attn_output, _ = self.attn(query, key, value)  # q=query, k=key, v=value
+        query = self.norm1(query + self.dropout1(attn_output))  # Residual connection
+
+        # Feed-forward network, no residual
+        ffn_output = self.ffn(query)
+        # query = self.norm2(query + self.dropout2(ffn_output))  # Residual connection
+        
+        return ffn_output
+
+class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
+    def __init__(self, 
+        in_channels, 
+        crattn_embed_dim,
+        crattn_num_heads,
+        crattn_num_layers,
+        crattn_max_seq_len,
+        crattn_cnn_kernel_size, 
+        crattn_dropout, 
+        **kwargs):
+
+        super(Encoder_TimeSeriesCNNWithCrossAttention, self).__init__()
+        
         self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.dilation = dilation
-        self.kernel_size = kernel_size
-        
-        # Causal convolution to ensure that the model doesn't violate causality
-        self.conv = nn.Conv1d(self.in_channels, self.out_channels, self.kernel_size, stride=1, 
-                              padding=int(dilation * (kernel_size - 1) /2), dilation=dilation)
-        
-        # Skip connection
-        # self.skip_conv = nn.Conv1d(out_channels, out_channels, kernel_size=1)
-        
-        # Residual connection
-        # self.residual_conv = nn.Conv1d(self.out_channels, self.out_channels, kernel_size=1)
+        self.embed_dim = crattn_embed_dim
+        self.num_heads = crattn_num_heads
+        self.num_layers = crattn_num_layers
+        self.max_seq_len = crattn_max_seq_len
+        self.cnn_kernel_size = crattn_cnn_kernel_size
+        self.dropout = crattn_dropout
 
-        self.silu = nn.SiLU()
-
-        # RMS norm
-        self.norm = RMSNorm_Conv(dim=self.out_channels)
+        # Depthwise 1D CNN (groups=in_channels)
+        # self.cnn = nn.Conv1d(in_channels=self.in_channels, out_channels=self.in_channels, kernel_size=self.cnn_kernel_size, 
+                            #  padding=(self.cnn_kernel_size // 2), groups=self.in_channels)  # Depthwise convolution
         
+        # Input Cross-attention Layer (also converts from in_channels to embed_dim in feedforward layer)
+        self.input_cross_attention = TimeSeriesCrossAttentionLayer_ShapeDilationNoResidual(self.in_channels, self.embed_dim, dropout=self.dropout) # Num_heads will be ONLY 1 due to divisible problem
+
+        # Embed-Dim Cross-attention layers
+        self.attention_layers = nn.ModuleList([
+            TimeSeriesCrossAttentionLayer(self.embed_dim, self.num_heads, self.dropout)
+            for _ in range(self.num_layers)
+        ])
+        
+        # Positional encoding
+        self.positional_encoding_raw = self._get_positional_encoding(self.max_seq_len, self.in_channels)
+        # self.positional_encoding_embed_dim = self._get_positional_encoding(self.max_seq_len, self.embed_dim)
+        
+    def _get_positional_encoding(self, max_seq_len, dim):
+        # Dummey even value to make code below work
+        dim_even = math.ceil(dim / 2) * 2
+
+        # Get positional encodings for input tokens
+        pe = torch.zeros(max_seq_len, dim_even)
+        position = torch.arange(0, max_seq_len).unsqueeze(1).float()
+        div_term = torch.exp(torch.arange(0, dim_even, 2).float() * -(torch.log(torch.tensor(10000.0)) / dim_even))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        return pe[:, :, :dim]
+
     def forward(self, x):
-        # Apply the dilated convolution
-        # out = F.tanh(self.conv(x))
-        out = self.silu(self.conv(x))
-        out = self.norm(out)
+        # inputs: a single time series of shape (batch_size, num_channels, seq_len)
         
-        # Skip connection (output directly)
-        # skip = self.skip_conv(out)
+        # Step 1: Apply Depthwise CNN (all channels processed in parallel)
+        # Directly pass input to the CNN (input shape: batch_size, num_channels, seq_len)
+        # x = self.cnn(x)  # Shape: (batch_size, cnn_out_channels, seq_len)
         
-        # Residual connection (added back to input)
-        # residual = self.residual_conv(out)
+        # Step 2: Permute CNN output to (batch_size, seq_len, cnn_out_channels)
+        x = x.permute(0, 2, 1)  # Shape: (batch_size, seq_len, cnn_out_channels)
+        
+        # Step 3: Add positional encoding
+        x = x + self.positional_encoding_raw[:, :x.size(1), :].to(x.device)
+        
+        # Step 4: Reshape for multi-head attention (seq_len, batch_size, embed_dim)
+        x = x.permute(1, 0, 2)  # Shape: (seq_len, batch_size, cnn_out_channels)
 
+        # Step 5: Apply Input Cross-Attention Layers
+        x = self.input_cross_attention(x, x, x)
+
+        # Step 6: Apply Embed-Dim Cross-Attention Layers
+        for layer in self.attention_layers:
+            x = layer(x, x, x)  # Cross-attention (q=k=v)
+
+        x = x.permute(1, 0, 2)  # Return to shape (batch_size, seq_len, embed_dim)
+
+        return torch.mean(x, dim=1) # Mean along the sequence direction
+        # return x[:,-1,:] # Return last in sequence (should be embedded with meaning)
+
+class TimeSeriesDecoder(nn.Module):
+    def __init__(self, embed_dim, num_channels, seq_len, num_layers, kernel_size, dropout=0.0):
+        super(TimeSeriesDecoder, self).__init__()
+
+        self.embed_dim = embed_dim
+        self.num_channels = num_channels
+        self.seq_len = seq_len
+        self.num_layers = num_layers
+        self.kernel_size = kernel_size
+        self.dropout = dropout
+
+        # First, we need to expand the input (batch_size, embed_dim) to (batch_size, embed_dim, 1)
+        # The output will be passed through N dilated 1D convolutional layers.
+
+        layers = []
+        in_channels = embed_dim
+        # dilation_rate = 1  # We will increase the dilation rate with each layer
+        output_length = seq_len  # Initial sequence length
+
+        for i in range(num_layers):
+            # Dilated convolution
+            # layers.append(nn.Conv1d(in_channels=in_channels, out_channels=in_channels, 
+            #                         kernel_size=kernel_size, 
+            #                         dilation=dilation_rate, 
+            #                         padding=(kernel_size // 2) * dilation_rate))
+            layers.append(nn.ConvTranspose1d(in_channels=in_channels, out_channels=in_channels, 
+                                    kernel_size=kernel_size, stride=2, padding=(kernel_size // 2), output_padding=1))
+            layers.append(nn.Tanh())
+            layers.append(RMSNorm_Conv(in_channels))
+            layers.append(nn.Dropout(self.dropout))
+            
+            # Increase the sequence length progressively
+            # layers.append(nn.Upsample(scale_factor=2, mode='linear'))  # This doubles the sequence length after each layer
+            
+            # dilation_rate *= 2  # Increase the dilation rate for each layer (progressively dilates the sequence)
+
+        # After the last convolution, we will apply a final convolution to map to num_channels
+        layers.append(nn.Conv1d(in_channels=in_channels, out_channels=num_channels, kernel_size=kernel_size, padding=(kernel_size // 2)))
+
+        # Combine the layers into a Sequential container
+        self.cnn = nn.Sequential(*layers)
+
+    def forward(self, x):
+        # x: (batch_size, embed_dim)
         
-        # return skip, residual
-        return out
+        # Unsqueeze to add the sequence dimension
+        x = x.unsqueeze(2)  # Shape: (batch_size, embed_dim, 1)
+        
+        # Pass through the convolutional layers
+        x = self.cnn(x)  # Shape: (batch_size, num_channels, seq_len)
+        
+        return x
 
 class VAEHead_TiedEncDec(nn.Module):
     '''
     Interface from a single patient's raw data channels to core VAE
     Reversible with tied weights
     '''
-    def __init__(self, pat_id, in_channels, autoencode_samples, head_interface_dims,
-                cnn_channels, num_cnn_blocks, num_cnn_layers_per_block, kernel_size, dilation_base, **kwargs):
+    def __init__(self, pat_id, in_channels, autoencode_samples, crattn_embed_dim, num_decode_layers, decode_kernel_size, **kwargs):
         super(VAEHead_TiedEncDec, self).__init__()
 
         self.pat_id = pat_id
         self.in_channels = in_channels
-        self.cnn_channels = cnn_channels
         self.autoencode_samples = autoencode_samples
-        # self.in_features = in_channels * autoencode_samples # int((self.cnn_channels *  autoencode_samples )/ 1 ) #
-        self.head_interface_dims = head_interface_dims
+        self.crattn_embed_dim = crattn_embed_dim
+        self.num_decode_layers = num_decode_layers
+        self.decode_kernel_size = decode_kernel_size
         
-        # self.skip_connection_channels = 256
-        self.num_cnn_blocks = num_cnn_blocks
-        self.num_cnn_layers_per_block = num_cnn_layers_per_block
-        self.kernel_size = kernel_size
-        self.dilation_base = dilation_base
-        
-
         ### ENCODER
-
-        # Encoder: Initial convolution
-        self.input_conv = nn.Conv1d(self.in_channels, self.cnn_channels, kernel_size=1)
-        
-        # Create the residual blocks for the encoder
-        self.encoder_blocks = nn.ModuleList()
-        for b in range(num_cnn_blocks):
-            for i in range(num_cnn_layers_per_block):
-                dilation = dilation_base ** (b * num_cnn_layers_per_block + i)
-                self.encoder_blocks.append(WaveNetBlock(self.cnn_channels, self.cnn_channels, dilation, kernel_size=kernel_size))
-        
-        # Hidden space representation
-        self.hidden_space = nn.Linear(self.cnn_channels, self.head_interface_dims)
-        
+        self.encoder = Encoder_TimeSeriesCNNWithCrossAttention(in_channels = self.in_channels, crattn_embed_dim=crattn_embed_dim, **kwargs)
 
         ### DECODER
+        self.decoder = TimeSeriesDecoder(embed_dim=crattn_embed_dim, num_channels = self.in_channels, seq_len=autoencode_samples, num_layers=num_decode_layers, kernel_size=decode_kernel_size)
 
-        # Decoder: Initial linear layer
-        self.decoder_input = nn.Linear(self.head_interface_dims, self.cnn_channels)
-        
-        # Create the residual blocks for the decoder (mirrored architecture)
-        self.decoder_blocks = nn.ModuleList()
-        for b in range(num_cnn_blocks):
-            for i in range(num_cnn_layers_per_block):
-                dilation = dilation_base ** (b * num_cnn_layers_per_block + i)
-                self.decoder_blocks.append(WaveNetBlock(self.cnn_channels, self.cnn_channels, dilation, kernel_size=kernel_size))
-        
-        # Final output layer
-        self.output_conv = nn.Conv1d(self.cnn_channels,  self.in_channels, kernel_size=1)
-        
-        # Skip connections
-        # self.skip_conv = nn.Conv1d(self.cnn_channels, self.skip_connection_channels, kernel_size=1)
-        # self.final_skip_conv = nn.Conv1d(self.skip_connection_channels,  self.in_channels, kernel_size=1)
-
-        self.tanh = nn.Tanh()
-        # self.silu = nn.SiLU()
-        
     def forward(self, x, reverse=False):
 
-
         # Encoder part
-        if reverse == False:
-            x = self.input_conv(x) 
-            
-            # skip_connections = []
-            
-            # Apply encoder residual blocks
-            for block in self.encoder_blocks:
-                # skip, residual = block(x)
-                residual = block(x)
-                # skip_connections.append(skip)
-                x = x + residual  # Residual connection
-            
-            # Global pooling for hidden space
-            x = x.mean(dim=-1)  # Global average pooling along the time dimension
-            # x = x.view(x.size(0), -1)
-            x = self.hidden_space(x)
-
-            return x
+        if reverse == False: 
+            return self.encoder(x)
         
         # Decoder part
         if reverse == True:
-            x = self.decoder_input(x)
-            x = x.view(x.size(0), self.cnn_channels, -1)
-            x = x.repeat(1,1,self.autoencode_samples)
-            
-            # Apply decoder residual blocks
-            for block in self.decoder_blocks:
-                # skip, residual = block(x)
-                # residual = block(x)
-                # skip_connections.append(skip)
-                x = x + block(x)  # Residual connection
-            
-            # # Combine skip connections
-            # skip_out = sum(skip_connections)
-            # skip_out = F.relu(skip_out)
-            # skip_out = self.skip_conv(skip_out)
-            # skip_out = F.relu(skip_out)
-            
-            # Final output layer
-            # output = self.final_skip_conv(skip_out)
-            x = self.output_conv(x)
-
-            x = self.tanh(x)
-            
-            return x
+            return self.decoder(x)
 
 
 class VAE(nn.Module):
@@ -233,7 +283,7 @@ class VAE(nn.Module):
     def __init__(
         self, 
         autoencode_samples,
-        head_interface_dims,
+        crattn_embed_dim,
         top_dims,
         hidden_dims,
         latent_dim, 
@@ -244,19 +294,19 @@ class VAE(nn.Module):
 
         self.gpu_id = gpu_id
         self.autoencode_samples = autoencode_samples
-        self.head_interface_dims = head_interface_dims
+        self.crattn_embed_dim = crattn_embed_dim
         self.top_dims = top_dims
         self.hidden_dims = hidden_dims
         self.latent_dim = latent_dim
 
-        self.head_to_top = nn.Linear(self.head_interface_dims, self.top_dims, bias=False)
-        self.top_to_head = nn.Linear(self.top_dims, self.head_interface_dims, bias=False)
-        self.top_to_head.weight = nn.Parameter(self.head_to_top.weight.T)
+        self.head_to_top = nn.Linear(self.crattn_embed_dim, self.top_dims, bias=False)
+        self.top_to_head = nn.Linear(self.top_dims, self.crattn_embed_dim, bias=False)
+        # self.top_to_head.weight = nn.Parameter(self.head_to_top.weight.T)
         # self.hidden_to_top.bias = nn.Parameter(self.top_to_hidden.bias.T.detach()) # Shapes do not match to share biases (could duplicate it??? naaa)
 
         self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=False)
         self.hidden_to_top = nn.Linear(self.hidden_dims, self.top_dims, bias=False)
-        self.hidden_to_top.weight = nn.Parameter(self.top_to_hidden.weight.T)
+        # self.hidden_to_top.weight = nn.Parameter(self.top_to_hidden.weight.T)
         # self.hidden_to_top.bias = nn.Parameter(self.top_to_hidden.bias.T.detach()) # Shapes do not match to share biases (could duplicate it??? naaa)
 
         # # Variational layers (not shared between enc/dec)
@@ -269,7 +319,7 @@ class VAE(nn.Module):
         # Latent to hidden (not shared between enc/dec)
         self.latent_to_hidden = nn.Linear(self.latent_dim, self.hidden_dims, bias=False) # bias=False
         # self.latent_to_hidden.weight = nn.Parameter(self.mean_fc_layer.weight.T.detach()) # Tie the "mean" layer weights
-        self.latent_to_hidden.weight = nn.Parameter(self.hidden_to_latent.weight.T) # Tie weights
+        # self.latent_to_hidden.weight = nn.Parameter(self.hidden_to_latent.weight.T) # Tie weights
 
         # self.leaky_relu = nn.LeakyReLU(0.2)
         # self.tanh = nn.Tanh()
@@ -373,7 +423,7 @@ def print_models_flow(x, transformer_seq_length, **kwargs):
     print(f"core_out:{core_out.shape}\n")
 
     # Run through Dec Head
-    print(f"\nINPUT TO <TIED HEAD - Decoder Mode> mostly same weights as head encoder\n"
+    print(f"\nINPUT TO <TIED HEAD - Decoder Mode> not the same as head encoder\n"
     f"core_out:{core_out.shape}")
     x_hat = train_head(core_out, reverse=True)
     print(f"\n<FINAL OUTPUT>\n"

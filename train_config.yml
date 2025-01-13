@@ -37,7 +37,16 @@ num_cnn_blocks: 8
 num_cnn_layers_per_block: 1 
 kernel_size: 3 
 dilation_base: 2 # dilation = dilation_base ** (b * num_cnn_layers_per_block + i)
-head_interface_dims: 1024
+
+crattn_embed_dim: 64
+crattn_num_heads: 4
+crattn_num_layers: 2 
+crattn_max_seq_len: 512
+crattn_cnn_kernel_size: 3
+crattn_dropout: 0.1
+
+num_decode_layers: kwargs['num_decode_layers'] = int(math.log(kwargs['autoencode_samples'],2))
+decode_kernel_size: 3
 
 ### VAE Core
 top_dims: 4096 

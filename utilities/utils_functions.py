@@ -637,7 +637,7 @@ def print_autoreg_latent_predictions(gpu_id, epoch, pat_id, rand_file_count, lat
 
         sns.jointplot(data=df, x="target_emb", y="predicted_emb", hue="dimension")
         fig.suptitle(f"{pat_id}, epoch: {epoch}, file: {rand_file_count}")
-
+        if gpu_id == 0: time.sleep(1)
         if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
         if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
         savename_jpg = f"{savedir}/JPEGs/AutoregressiveLatent_epoch{epoch}_{pat_id}_batch{b}_randfile{rand_file_count}_gpu{gpu_id}.jpg"
@@ -685,6 +685,7 @@ def print_autoreg_raw_predictions(gpu_id, epoch, pat_id, rand_file_count, raw_co
             ax.set_title(f"Ch:{random_ch_idxs[c]}")
             
         fig.suptitle(f"Ch:{random_ch_idxs}")
+        if gpu_id == 0: time.sleep(1)
         if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
         if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
         savename_jpg = f"{savedir}/JPEGs/AutoregressiveRecon_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.jpg"

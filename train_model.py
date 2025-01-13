@@ -53,6 +53,7 @@ def ddp_setup(gpu_id, world_size):
     # os.environ["NCCL_ASYNC_ERROR_HANDLING"] = 1  # Can only do this OR "NCCL_BLOCKING_WAIT" = 1
     # os.environ["NCCL_BLOCKING_WAIT"] = "1"
     # os.environ["NCCL_DEBUG"] = "INFO"
+    # os.environ['TORCH_DISTRIBUTED_DEBUG'] = 'DETAIL'
 
     init_process_group(backend="nccl", rank=gpu_id, world_size=world_size, timeout=datetime.timedelta(minutes=999999))
 
@@ -847,7 +848,7 @@ class Trainer:
                         mean_loss = loss_functions.simple_mean_latent_loss(latent_seq, **kwargs)
 
                         # Intrapatient backprop
-                        loss = recon_loss + mean_loss # + transformer_loss + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        loss = recon_loss # + mean_loss # + transformer_loss + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
                         loss.backward()
 
                         # Realtime info as epoch is running
