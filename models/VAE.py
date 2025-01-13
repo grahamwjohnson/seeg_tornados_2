@@ -179,7 +179,7 @@ class VAEHead_TiedEncDec(nn.Module):
 
         # Encoder part
         if reverse == False:
-            x = self.input_conv(x)
+            x = self.input_conv(x) 
             
             # skip_connections = []
             
