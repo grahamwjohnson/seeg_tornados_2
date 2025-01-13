@@ -97,7 +97,7 @@ KL_epochs_TO_max: 5
 # Weights
 recon_weight: 3
 transformer_weight: 1 # 0.01  ############# CHeck if loss is actually used!!! May be commented out ###############
-mean_loss_weight: 1000
+mean_loss_weight: 1
 
 # Train heads learning rate controls
 LR_max_heads: kwargs['LR_max_heads'] = 1e-5

@@ -92,14 +92,16 @@ class WaveNetBlock(nn.Module):
         # Residual connection
         # self.residual_conv = nn.Conv1d(self.out_channels, self.out_channels, kernel_size=1)
 
+        self.silu = nn.SiLU()
+
         # RMS norm
         self.norm = RMSNorm_Conv(dim=self.out_channels)
         
     def forward(self, x):
         # Apply the dilated convolution
-        out = F.tanh(self.conv(x))
+        # out = F.tanh(self.conv(x))
+        out = self.silu(self.conv(x))
         out = self.norm(out)
-        
         
         # Skip connection (output directly)
         # skip = self.skip_conv(out)
@@ -170,6 +172,7 @@ class VAEHead_TiedEncDec(nn.Module):
         # self.final_skip_conv = nn.Conv1d(self.skip_connection_channels,  self.in_channels, kernel_size=1)
 
         self.tanh = nn.Tanh()
+        # self.silu = nn.SiLU()
         
     def forward(self, x, reverse=False):
 
@@ -222,173 +225,6 @@ class VAEHead_TiedEncDec(nn.Module):
             return x
 
 
-# # Example usage:
-# batch_size = 8
-# sequence_length = 256
-# in_channels = 1  # 1D signal with one channel (e.g., a single time series)
-# out_channels = 1
-# latent_dim = 128  # Size of the latent representation
-
-# # Create a dummy input tensor
-# input_tensor = torch.randn(batch_size, in_channels, sequence_length)
-
-# # Initialize the model
-# model = WaveNetAutoencoder(in_channels=in_channels, out_channels=out_channels, latent_dim=latent_dim)
-
-# # Forward pass through the model
-# output = model(input_tensor)
-
-# print(f"Input shape: {input_tensor.shape}")
-# print(f"Output shape: {output.shape}")
-
-
-
-
-
-
-    #     self.encoder = nn.ModuleList()
-    #     self.decoder = nn.ModuleList()
-
-    #     # Build the encoder
-    #     curr_channels = self.in_channels
-    #     for b in range(num_cnn_blocks):
-    #         for l in range(num_cnn_layers):
-    #             dilation = 2 ** l  # Exponential dilation
-    #             self.encoder.append(
-    #                 CausalConv1D(curr_channels,  self.cnn_channels, kernel_size=kernel_size, stride=stride, dilation=dilation)
-    #             )
-    #             curr_channels =  self.cnn_channels
-        
-    #     # Hidden representation
-    #     self.to_hidden = nn.Linear(self.cnn_channels, self.head_interface_dims)
-
-    #     # Build the decoder
-    #     self.from_hidden = nn.Linear(self.head_interface_dims, self.cnn_channels)
-    #     for b in range(num_cnn_blocks):
-    #         for l in range(num_cnn_layers):
-    #             dilation = 2 ** (num_cnn_layers - l - 1)  # Reverse the dilation pattern
-    #             self.decoder.append(
-    #                 nn.ConvTranspose1d(self.cnn_channels,  self.cnn_channels, kernel_size, dilation=dilation)
-    #             )
-    #     self.final_layer = nn.Conv1d(self.cnn_channels, self.in_channels, kernel_size=1)
-
-
-    #     # # FC
-    #     # self.subject_to_head = nn.Linear(self.in_features, self.head_interface_dims, bias=False)
-    #     # self.head_to_subject = nn.Linear(self.head_interface_dims, self.in_features, bias=False)
-    #     # self.head_to_subject.weight = nn.Parameter(self.subject_to_head.weight.T)
-
-
-    #     # # self.leaky_relu = nn.LeakyReLU(0.2)
-    #     # self.tanh = nn.Tanh()
-    #     # self.silu = nn.SiLU()
-
-    #     # self.norm0 = RMSNorm(dim=self.head_interface_dims)
-    #     # # self.norm1 = RMSNorm(dim=self.head_interface_dims)
-    #     # # self.norm2 = RMSNorm(dim=self.head_interface_dims)
-    #     # # self.norm3 = RMSNorm(dim=self.head_interface_dims)
-    #     # # self.norm4 = RMSNorm(dim=self.head_interface_dims)
-
-    #     # self.norm0rev = RMSNorm(dim=self.head_interface_dims)
-    #     # # self.norm1rev = RMSNorm(dim=self.head_interface_dims)
-    #     # # self.norm2rev = RMSNorm(dim=self.head_interface_dims)
-    #     # # self.norm3rev = RMSNorm(dim=self.head_interface_dims)
-    #     # # self.norm4rev = RMSNorm(dim=self.head_interface_dims)
-
-    # def forward(self, x, reverse=False):
-        
-    #     if reverse == False:
-    #     # Encoder
-    #         for layer in self.encoder:
-    #             x = F.relu(layer(x))
-
-    #         # Global pooling for hidden space
-    #         x = x.mean(dim=-1)  # Global average pooling along the time dimension
-    #         x = self.to_hidden(x)
-    #         return x
-
-    #     elif reverse == True:
-    #         # Decoder
-    #         x = self.from_hidden(x).unsqueeze(-1)  # Expand for 1D convolution
-    #         for layer in self.decoder:
-    #             x = F.relu(layer(x))
-            
-    #         # Final output layer
-    #         x = self.final_layer(x)
-    #         return x
-
-
-    # def forward(self, x, reverse=False):
-        
-    #     if reverse == False:
-    #         # y = self.conv0(x)
-    #         # y = self.silu(y)
-    #         # # y = self.norm0(y)
-    #         # y = self.conv1(y)
-    #         # y = self.silu(y)
-    #         # # y = self.norm1(y)
-    #         # y = self.conv2(y)
-    #         # y = self.silu(y)
-    #         # # y = self.norm2(y)
-    #         y = x.flatten(start_dim=1)
-    #         y = self.subject_to_head(y)
-    #         # y = self.tanh(y)
-    #         y = self.silu(y)
-    #         y = self.norm0(y)
-    #         # y = self.head0_to_head1(y)
-    #         # # y = self.tanh(y)
-    #         # y = self.silu(y)
-    #         # y = self.norm1(y)
-    #         # y = self.head1_to_head2(y)
-    #         # # y = self.tanh(y)
-    #         # y = self.silu(y)
-    #         # y = self.norm2(y)
-    #         # y = self.head2_to_head3(y)
-    #         # # y = self.tanh(y)
-    #         # y = self.silu(y)
-    #         # y = self.norm3(y)
-    #         # y = self.head3_to_head4(y)
-    #         # # y = self.tanh(y)
-    #         # y = self.silu(y)
-    #         # y = self.norm4(y)
-
-    #     elif reverse == True:
-    #         # y = self.tanh(y)
-    #         # y = self.silu(x)
-    #         # y = self.norm4rev(y)
-    #         # y = self.head4_to_head3(y)
-    #         # # y = self.tanh(y)
-    #         # y = self.silu(y)
-    #         # y = self.norm3rev(y)
-    #         # y = self.head3_to_head2(y)
-    #         # # y = self.tanh(y)
-    #         # y = self.silu(y)
-    #         # y = self.norm2rev(y)
-    #         # y = self.head2_to_head1(y)
-    #         # # y = self.tanh(y)
-    #         # y = self.silu(y)
-    #         # y = self.norm1rev(y)
-    #         # y = self.head1_to_head0(y)
-    #         # y = self.tanh(x)
-            
-    #         y = self.norm0rev(x)
-    #         y = self.silu(y)
-    #         y = self.head_to_subject(y)
-    #         y = y.reshape(y.shape[0], self.in_channels, self.autoencode_samples)
-    #         # y = y.reshape(y.shape[0], self.cnn_channels, -1)
-    #         # y = self.norm2rev(y)
-    #         # y = self.convtrans2(y)
-    #         # y = self.silu(y)
-    #         # # y = self.norm1rev(y)
-    #         # y = self.convtrans1(y)
-    #         # y = self.silu(y)
-    #         # # y = self.norm0rev(y)
-    #         # y = self.convtrans0(y)
-
-    #         # y = self.tanh(y)
-
-    #     return y
-
 class VAE(nn.Module):
     '''
     The Reverseable Encoder/Decoder 
@@ -436,8 +272,8 @@ class VAE(nn.Module):
         self.latent_to_hidden.weight = nn.Parameter(self.hidden_to_latent.weight.T) # Tie weights
 
         # self.leaky_relu = nn.LeakyReLU(0.2)
-        self.tanh = nn.Tanh()
-        # self.silu = nn.SiLU()
+        # self.tanh = nn.Tanh()
+        self.silu = nn.SiLU()
 
         self.norm_top = RMSNorm(dim=self.top_dims)
         self.norm_top_rev = RMSNorm(dim=self.top_dims)
@@ -455,13 +291,13 @@ class VAE(nn.Module):
 
         if reverse == False:
             y = self.head_to_top(x)
-            y = self.tanh(y)
-            # y = self.silu(y)
+            # y = self.tanh(y)
+            y = self.silu(y)
             y = self.norm_top(y)
             y = self.top_to_hidden(y)
             # y = self.leaky_relu(y)
-            y = self.tanh(y)
-            # y = self.silu(y)
+            # y = self.tanh(y)
+            y = self.silu(y)
             y = self.norm_hidden(y)
             # mean, logvar = self.mean_fc_layer(y), self.logvar_fc_layer(y)
             # z = self.reparameterization(mean, logvar)
@@ -473,13 +309,13 @@ class VAE(nn.Module):
         elif reverse == True:
             y = self.latent_to_hidden(x)
             # y = self.leaky_relu(y)
-            y = self.tanh(y)
-            # y = self.silu(y)
+            # y = self.tanh(y)
+            y = self.silu(y)
             y = self.norm_hidden_rev(y)
             y = self.hidden_to_top(y)
             # y = self.leaky_relu(y)
-            y = self.tanh(y)
-            # y = self.silu(y)
+            # y = self.tanh(y)
+            y = self.silu(y)
             y = self.norm_top_rev(y)
             y = self.top_to_head(y)
             # y = self.tanh(y)
