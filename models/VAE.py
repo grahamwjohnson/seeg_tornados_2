@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import math
 from torch import Tensor
 from torchinfo import summary
@@ -39,140 +40,354 @@ class Head_Optimizers():
         for i in range(0, len(self.head_opts)):
             self.head_opts[i].step()
 
+class RMSNorm_Conv(torch.nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def _norm(self, x):
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+
+    def forward(self, x):
+        output = self._norm(x.float()).type_as(x)
+        return output * self.weight.unsqueeze(1).repeat(1, x.shape[2])
+
+
+# class CausalConv1D(nn.Module):
+#     """Causal 1D convolution with dilation."""
+#     def __init__(self, in_channels, out_channels, kernel_size, stride, dilation):
+#         super(CausalConv1D, self).__init__()
+#         self.pad = (kernel_size - 1) * dilation  # Padding to ensure causality
+#         self.conv = nn.Conv1d(
+#             in_channels,
+#             out_channels,
+#             kernel_size,
+#             stride=stride,
+#             dilation=dilation,
+#             padding=self.pad
+#         )
+    
+#     def forward(self, x):
+#         x = self.conv(x)
+#         return x[:, :, :-self.pad]  # Remove the extra padding
+
+# Residual block with dilated convolutions
+class WaveNetBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, dilation, kernel_size):
+        super(WaveNetBlock, self).__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.dilation = dilation
+        self.kernel_size = kernel_size
+        
+        # Causal convolution to ensure that the model doesn't violate causality
+        self.conv = nn.Conv1d(self.in_channels, self.out_channels, self.kernel_size, stride=1, 
+                              padding=int(dilation * (kernel_size - 1) /2), dilation=dilation)
+        
+        # Skip connection
+        # self.skip_conv = nn.Conv1d(out_channels, out_channels, kernel_size=1)
+        
+        # Residual connection
+        # self.residual_conv = nn.Conv1d(self.out_channels, self.out_channels, kernel_size=1)
+
+        # RMS norm
+        self.norm = RMSNorm_Conv(dim=self.out_channels)
+        
+    def forward(self, x):
+        # Apply the dilated convolution
+        out = F.tanh(self.conv(x))
+        out = self.norm(out)
+        
+        
+        # Skip connection (output directly)
+        # skip = self.skip_conv(out)
+        
+        # Residual connection (added back to input)
+        # residual = self.residual_conv(out)
+
+        
+        # return skip, residual
+        return out
+
 class VAEHead_TiedEncDec(nn.Module):
     '''
     Interface from a single patient's raw data channels to core VAE
     Reversible with tied weights
     '''
-    def __init__(self, pat_id, in_channels, autoencode_samples, head_interface_dims, **kwargs):
+    def __init__(self, pat_id, in_channels, autoencode_samples, head_interface_dims,
+                cnn_channels, num_cnn_blocks, num_cnn_layers_per_block, kernel_size, dilation_base, **kwargs):
         super(VAEHead_TiedEncDec, self).__init__()
 
         self.pat_id = pat_id
         self.in_channels = in_channels
-        # self.cnn_channels = 256
+        self.cnn_channels = cnn_channels
         self.autoencode_samples = autoencode_samples
-        self.in_features = in_channels * autoencode_samples # int((self.cnn_channels *  autoencode_samples )/ 1 ) #
+        # self.in_features = in_channels * autoencode_samples # int((self.cnn_channels *  autoencode_samples )/ 1 ) #
         self.head_interface_dims = head_interface_dims
-
-        # self.conv0 = nn.Conv1d(in_channels=self.in_channels, out_channels=self.cnn_channels, kernel_size=3, stride=1, padding=1)
-        # self.convtrans0 = nn.ConvTranspose1d(in_channels=self.cnn_channels, out_channels=self.in_channels, kernel_size=3, stride=1, padding=1, output_padding=0)
-        # self.convtrans0.weight = nn.Parameter(self.conv0.weight)
-
-        # self.conv1 = nn.Conv1d(in_channels=self.cnn_channels, out_channels=self.cnn_channels, kernel_size=3, stride=1, padding=1)
-        # self.convtrans1 = nn.ConvTranspose1d(in_channels=self.cnn_channels, out_channels=self.cnn_channels, kernel_size=3, stride=1, padding=1, output_padding=0)
-        # self.convtrans1.weight = nn.Parameter(self.conv1.weight)
-
-        # self.conv2 = nn.Conv1d(in_channels=self.cnn_channels, out_channels=self.cnn_channels, kernel_size=3, stride=1, padding=1)
-        # self.convtrans2 = nn.ConvTranspose1d(in_channels=self.cnn_channels, out_channels=self.cnn_channels, kernel_size=3, stride=1, padding=1, output_padding=0)
-        # self.convtrans2.weight = nn.Parameter(self.conv2.weight)
-
-        # FC
-        self.subject_to_head = nn.Linear(self.in_features, self.head_interface_dims, bias=False)
-        self.head_to_subject = nn.Linear(self.head_interface_dims, self.in_features, bias=False)
-        self.head_to_subject.weight = nn.Parameter(self.subject_to_head.weight.T)
-
-        # self.head0_to_head1 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        # self.head1_to_head0 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        # self.head1_to_head0.weight = nn.Parameter(self.head0_to_head1.weight.T.detach())
-
-        # self.head1_to_head2 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        # self.head2_to_head1 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        # self.head2_to_head1.weight = nn.Parameter(self.head1_to_head2.weight.T.detach())
-
-        # self.head2_to_head3 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        # self.head3_to_head2 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        # self.head3_to_head2.weight = nn.Parameter(self.head2_to_head3.weight.T.detach())
-
-        # self.head3_to_head4 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        # self.head4_to_head3 = nn.Linear(self.head_interface_dims, self.head_interface_dims, bias=False)
-        # self.head4_to_head3.weight = nn.Parameter(self.head3_to_head4.weight.T.detach())
-
-        # self.leaky_relu = nn.LeakyReLU(0.2)
-        self.tanh = nn.Tanh()
-        self.silu = nn.SiLU()
-
-        self.norm0 = RMSNorm(dim=self.head_interface_dims)
-        # self.norm1 = RMSNorm(dim=self.head_interface_dims)
-        # self.norm2 = RMSNorm(dim=self.head_interface_dims)
-        # self.norm3 = RMSNorm(dim=self.head_interface_dims)
-        # self.norm4 = RMSNorm(dim=self.head_interface_dims)
-
-        self.norm0rev = RMSNorm(dim=self.head_interface_dims)
-        # self.norm1rev = RMSNorm(dim=self.head_interface_dims)
-        # self.norm2rev = RMSNorm(dim=self.head_interface_dims)
-        # self.norm3rev = RMSNorm(dim=self.head_interface_dims)
-        # self.norm4rev = RMSNorm(dim=self.head_interface_dims)
-
-    def forward(self, x, reverse=False):
         
+        # self.skip_connection_channels = 256
+        self.num_cnn_blocks = num_cnn_blocks
+        self.num_cnn_layers_per_block = num_cnn_layers_per_block
+        self.kernel_size = kernel_size
+        self.dilation_base = dilation_base
+        
+
+        ### ENCODER
+
+        # Encoder: Initial convolution
+        self.input_conv = nn.Conv1d(self.in_channels, self.cnn_channels, kernel_size=1)
+        
+        # Create the residual blocks for the encoder
+        self.encoder_blocks = nn.ModuleList()
+        for b in range(num_cnn_blocks):
+            for i in range(num_cnn_layers_per_block):
+                dilation = dilation_base ** (b * num_cnn_layers_per_block + i)
+                self.encoder_blocks.append(WaveNetBlock(self.cnn_channels, self.cnn_channels, dilation, kernel_size=kernel_size))
+        
+        # Hidden space representation
+        self.hidden_space = nn.Linear(self.cnn_channels, self.head_interface_dims)
+        
+
+        ### DECODER
+
+        # Decoder: Initial linear layer
+        self.decoder_input = nn.Linear(self.head_interface_dims, self.cnn_channels)
+        
+        # Create the residual blocks for the decoder (mirrored architecture)
+        self.decoder_blocks = nn.ModuleList()
+        for b in range(num_cnn_blocks):
+            for i in range(num_cnn_layers_per_block):
+                dilation = dilation_base ** (b * num_cnn_layers_per_block + i)
+                self.decoder_blocks.append(WaveNetBlock(self.cnn_channels, self.cnn_channels, dilation, kernel_size=kernel_size))
+        
+        # Final output layer
+        self.output_conv = nn.Conv1d(self.cnn_channels,  self.in_channels, kernel_size=1)
+        
+        # Skip connections
+        # self.skip_conv = nn.Conv1d(self.cnn_channels, self.skip_connection_channels, kernel_size=1)
+        # self.final_skip_conv = nn.Conv1d(self.skip_connection_channels,  self.in_channels, kernel_size=1)
+
+        self.tanh = nn.Tanh()
+        
+    def forward(self, x, reverse=False):
+
+
+        # Encoder part
         if reverse == False:
-            # y = self.conv0(x)
-            # y = self.silu(y)
-            # # y = self.norm0(y)
-            # y = self.conv1(y)
-            # y = self.silu(y)
-            # # y = self.norm1(y)
-            # y = self.conv2(y)
-            # y = self.silu(y)
-            # # y = self.norm2(y)
-            y = x.flatten(start_dim=1)
-            y = self.subject_to_head(y)
-            # y = self.tanh(y)
-            y = self.silu(y)
-            y = self.norm0(y)
-            # y = self.head0_to_head1(y)
-            # # y = self.tanh(y)
-            # y = self.silu(y)
-            # y = self.norm1(y)
-            # y = self.head1_to_head2(y)
-            # # y = self.tanh(y)
-            # y = self.silu(y)
-            # y = self.norm2(y)
-            # y = self.head2_to_head3(y)
-            # # y = self.tanh(y)
-            # y = self.silu(y)
-            # y = self.norm3(y)
-            # y = self.head3_to_head4(y)
-            # # y = self.tanh(y)
-            # y = self.silu(y)
-            # y = self.norm4(y)
-
-        elif reverse == True:
-            # y = self.tanh(y)
-            # y = self.silu(x)
-            # y = self.norm4rev(y)
-            # y = self.head4_to_head3(y)
-            # # y = self.tanh(y)
-            # y = self.silu(y)
-            # y = self.norm3rev(y)
-            # y = self.head3_to_head2(y)
-            # # y = self.tanh(y)
-            # y = self.silu(y)
-            # y = self.norm2rev(y)
-            # y = self.head2_to_head1(y)
-            # # y = self.tanh(y)
-            # y = self.silu(y)
-            # y = self.norm1rev(y)
-            # y = self.head1_to_head0(y)
-            # y = self.tanh(x)
+            x = self.input_conv(x)
             
-            y = self.norm0rev(x)
-            y = self.silu(y)
-            y = self.head_to_subject(y)
-            y = y.reshape(y.shape[0], self.in_channels, self.autoencode_samples)
-            # y = y.reshape(y.shape[0], self.cnn_channels, -1)
-            # y = self.norm2rev(y)
-            # y = self.convtrans2(y)
-            # y = self.silu(y)
-            # # y = self.norm1rev(y)
-            # y = self.convtrans1(y)
-            # y = self.silu(y)
-            # # y = self.norm0rev(y)
-            # y = self.convtrans0(y)
+            # skip_connections = []
+            
+            # Apply encoder residual blocks
+            for block in self.encoder_blocks:
+                # skip, residual = block(x)
+                residual = block(x)
+                # skip_connections.append(skip)
+                x = x + residual  # Residual connection
+            
+            # Global pooling for hidden space
+            x = x.mean(dim=-1)  # Global average pooling along the time dimension
+            # x = x.view(x.size(0), -1)
+            x = self.hidden_space(x)
 
-            # y = self.tanh(y)
+            return x
+        
+        # Decoder part
+        if reverse == True:
+            x = self.decoder_input(x)
+            x = x.view(x.size(0), self.cnn_channels, -1)
+            x = x.repeat(1,1,self.autoencode_samples)
+            
+            # Apply decoder residual blocks
+            for block in self.decoder_blocks:
+                # skip, residual = block(x)
+                # residual = block(x)
+                # skip_connections.append(skip)
+                x = x + block(x)  # Residual connection
+            
+            # # Combine skip connections
+            # skip_out = sum(skip_connections)
+            # skip_out = F.relu(skip_out)
+            # skip_out = self.skip_conv(skip_out)
+            # skip_out = F.relu(skip_out)
+            
+            # Final output layer
+            # output = self.final_skip_conv(skip_out)
+            x = self.output_conv(x)
 
-        return y
+            x = self.tanh(x)
+            
+            return x
+
+
+# # Example usage:
+# batch_size = 8
+# sequence_length = 256
+# in_channels = 1  # 1D signal with one channel (e.g., a single time series)
+# out_channels = 1
+# latent_dim = 128  # Size of the latent representation
+
+# # Create a dummy input tensor
+# input_tensor = torch.randn(batch_size, in_channels, sequence_length)
+
+# # Initialize the model
+# model = WaveNetAutoencoder(in_channels=in_channels, out_channels=out_channels, latent_dim=latent_dim)
+
+# # Forward pass through the model
+# output = model(input_tensor)
+
+# print(f"Input shape: {input_tensor.shape}")
+# print(f"Output shape: {output.shape}")
+
+
+
+
+
+
+    #     self.encoder = nn.ModuleList()
+    #     self.decoder = nn.ModuleList()
+
+    #     # Build the encoder
+    #     curr_channels = self.in_channels
+    #     for b in range(num_cnn_blocks):
+    #         for l in range(num_cnn_layers):
+    #             dilation = 2 ** l  # Exponential dilation
+    #             self.encoder.append(
+    #                 CausalConv1D(curr_channels,  self.cnn_channels, kernel_size=kernel_size, stride=stride, dilation=dilation)
+    #             )
+    #             curr_channels =  self.cnn_channels
+        
+    #     # Hidden representation
+    #     self.to_hidden = nn.Linear(self.cnn_channels, self.head_interface_dims)
+
+    #     # Build the decoder
+    #     self.from_hidden = nn.Linear(self.head_interface_dims, self.cnn_channels)
+    #     for b in range(num_cnn_blocks):
+    #         for l in range(num_cnn_layers):
+    #             dilation = 2 ** (num_cnn_layers - l - 1)  # Reverse the dilation pattern
+    #             self.decoder.append(
+    #                 nn.ConvTranspose1d(self.cnn_channels,  self.cnn_channels, kernel_size, dilation=dilation)
+    #             )
+    #     self.final_layer = nn.Conv1d(self.cnn_channels, self.in_channels, kernel_size=1)
+
+
+    #     # # FC
+    #     # self.subject_to_head = nn.Linear(self.in_features, self.head_interface_dims, bias=False)
+    #     # self.head_to_subject = nn.Linear(self.head_interface_dims, self.in_features, bias=False)
+    #     # self.head_to_subject.weight = nn.Parameter(self.subject_to_head.weight.T)
+
+
+    #     # # self.leaky_relu = nn.LeakyReLU(0.2)
+    #     # self.tanh = nn.Tanh()
+    #     # self.silu = nn.SiLU()
+
+    #     # self.norm0 = RMSNorm(dim=self.head_interface_dims)
+    #     # # self.norm1 = RMSNorm(dim=self.head_interface_dims)
+    #     # # self.norm2 = RMSNorm(dim=self.head_interface_dims)
+    #     # # self.norm3 = RMSNorm(dim=self.head_interface_dims)
+    #     # # self.norm4 = RMSNorm(dim=self.head_interface_dims)
+
+    #     # self.norm0rev = RMSNorm(dim=self.head_interface_dims)
+    #     # # self.norm1rev = RMSNorm(dim=self.head_interface_dims)
+    #     # # self.norm2rev = RMSNorm(dim=self.head_interface_dims)
+    #     # # self.norm3rev = RMSNorm(dim=self.head_interface_dims)
+    #     # # self.norm4rev = RMSNorm(dim=self.head_interface_dims)
+
+    # def forward(self, x, reverse=False):
+        
+    #     if reverse == False:
+    #     # Encoder
+    #         for layer in self.encoder:
+    #             x = F.relu(layer(x))
+
+    #         # Global pooling for hidden space
+    #         x = x.mean(dim=-1)  # Global average pooling along the time dimension
+    #         x = self.to_hidden(x)
+    #         return x
+
+    #     elif reverse == True:
+    #         # Decoder
+    #         x = self.from_hidden(x).unsqueeze(-1)  # Expand for 1D convolution
+    #         for layer in self.decoder:
+    #             x = F.relu(layer(x))
+            
+    #         # Final output layer
+    #         x = self.final_layer(x)
+    #         return x
+
+
+    # def forward(self, x, reverse=False):
+        
+    #     if reverse == False:
+    #         # y = self.conv0(x)
+    #         # y = self.silu(y)
+    #         # # y = self.norm0(y)
+    #         # y = self.conv1(y)
+    #         # y = self.silu(y)
+    #         # # y = self.norm1(y)
+    #         # y = self.conv2(y)
+    #         # y = self.silu(y)
+    #         # # y = self.norm2(y)
+    #         y = x.flatten(start_dim=1)
+    #         y = self.subject_to_head(y)
+    #         # y = self.tanh(y)
+    #         y = self.silu(y)
+    #         y = self.norm0(y)
+    #         # y = self.head0_to_head1(y)
+    #         # # y = self.tanh(y)
+    #         # y = self.silu(y)
+    #         # y = self.norm1(y)
+    #         # y = self.head1_to_head2(y)
+    #         # # y = self.tanh(y)
+    #         # y = self.silu(y)
+    #         # y = self.norm2(y)
+    #         # y = self.head2_to_head3(y)
+    #         # # y = self.tanh(y)
+    #         # y = self.silu(y)
+    #         # y = self.norm3(y)
+    #         # y = self.head3_to_head4(y)
+    #         # # y = self.tanh(y)
+    #         # y = self.silu(y)
+    #         # y = self.norm4(y)
+
+    #     elif reverse == True:
+    #         # y = self.tanh(y)
+    #         # y = self.silu(x)
+    #         # y = self.norm4rev(y)
+    #         # y = self.head4_to_head3(y)
+    #         # # y = self.tanh(y)
+    #         # y = self.silu(y)
+    #         # y = self.norm3rev(y)
+    #         # y = self.head3_to_head2(y)
+    #         # # y = self.tanh(y)
+    #         # y = self.silu(y)
+    #         # y = self.norm2rev(y)
+    #         # y = self.head2_to_head1(y)
+    #         # # y = self.tanh(y)
+    #         # y = self.silu(y)
+    #         # y = self.norm1rev(y)
+    #         # y = self.head1_to_head0(y)
+    #         # y = self.tanh(x)
+            
+    #         y = self.norm0rev(x)
+    #         y = self.silu(y)
+    #         y = self.head_to_subject(y)
+    #         y = y.reshape(y.shape[0], self.in_channels, self.autoencode_samples)
+    #         # y = y.reshape(y.shape[0], self.cnn_channels, -1)
+    #         # y = self.norm2rev(y)
+    #         # y = self.convtrans2(y)
+    #         # y = self.silu(y)
+    #         # # y = self.norm1rev(y)
+    #         # y = self.convtrans1(y)
+    #         # y = self.silu(y)
+    #         # # y = self.norm0rev(y)
+    #         # y = self.convtrans0(y)
+
+    #         # y = self.tanh(y)
+
+    #     return y
 
 class VAE(nn.Module):
     '''
@@ -222,7 +437,7 @@ class VAE(nn.Module):
 
         # self.leaky_relu = nn.LeakyReLU(0.2)
         self.tanh = nn.Tanh()
-        self.silu = nn.SiLU()
+        # self.silu = nn.SiLU()
 
         self.norm_top = RMSNorm(dim=self.top_dims)
         self.norm_top_rev = RMSNorm(dim=self.top_dims)
@@ -240,13 +455,13 @@ class VAE(nn.Module):
 
         if reverse == False:
             y = self.head_to_top(x)
-            # y = self.tanh(y)
-            y = self.silu(y)
+            y = self.tanh(y)
+            # y = self.silu(y)
             y = self.norm_top(y)
             y = self.top_to_hidden(y)
             # y = self.leaky_relu(y)
-            # y = self.tanh(y)
-            y = self.silu(y)
+            y = self.tanh(y)
+            # y = self.silu(y)
             y = self.norm_hidden(y)
             # mean, logvar = self.mean_fc_layer(y), self.logvar_fc_layer(y)
             # z = self.reparameterization(mean, logvar)
@@ -258,13 +473,13 @@ class VAE(nn.Module):
         elif reverse == True:
             y = self.latent_to_hidden(x)
             # y = self.leaky_relu(y)
-            # y = self.tanh(y)
-            y = self.silu(y)
+            y = self.tanh(y)
+            # y = self.silu(y)
             y = self.norm_hidden_rev(y)
             y = self.hidden_to_top(y)
             # y = self.leaky_relu(y)
-            # y = self.tanh(y)
-            y = self.silu(y)
+            y = self.tanh(y)
+            # y = self.silu(y)
             y = self.norm_top_rev(y)
             y = self.top_to_head(y)
             # y = self.tanh(y)

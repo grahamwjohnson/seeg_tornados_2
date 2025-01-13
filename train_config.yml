@@ -27,26 +27,34 @@ preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
 # Training settings
 continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/2pats/trained_models/dataset_train50.0_val50.0/americanwigeon_Sat_Jan_11_07_02_24_2025' 
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/2pats/trained_models/dataset_train50.0_val50.0/agama_Sun_Jan_12_13_31_40_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
-### VAE 
-autoencode_samples: 1
-head_interface_dims: 4096
+### VAE Head
+autoencode_samples: 512
+cnn_channels: 256
+num_cnn_blocks: 8 
+num_cnn_layers_per_block: 1 
+kernel_size: 3 
+dilation_base: 2 # dilation = dilation_base ** (b * num_cnn_layers_per_block + i)
+head_interface_dims: 1024
+
+### VAE Core
 top_dims: 4096 
-hidden_dims: 2048
-latent_dim: 1024  # 1024
+hidden_dims: 4096
+latent_dim: 2048  # 1024
 
 ### Transformer
-transformer_seq_length: 512
+transformer_seq_length: 64
 # Model hardware limits
 max_seq_len: 512
 max_batch_size: 8
 # Model size
-n_layers: 32
-n_heads: 32
-multiple_of: 256 # Feedforward scaling?
-attention_dropout: 0.5
+n_layers: 16
+n_heads: 16
+multiple_of: 256 # 256, Feedforward scaling?
+ffn_dim_multiplier: 0.2
+attention_dropout: 0.0
 
 core_weight_decay: 0.1
 head_weight_decay: 0.1
@@ -54,7 +62,7 @@ transformer_weight_decay: 0.1
 adamW_beta1: 0.9
 adamW_beta2: 0.95
 
-train_subsample_file_factor: 16000 # randomly decreases training passes per file per epoch
+train_subsample_file_factor: 32 # randomly decreases training passes per file per epoch
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 8 # this is for when loss is not being calculated
 pacmap_every: 99999 # Must be within a 'quick_recon_val_every' to be reached
@@ -67,7 +75,7 @@ epochs_to_train: 999999
 realtime_latent_printing: True
 num_realtime_channels_recon: 1 # columns of random channel plots
 realtime_printing_interval: 100
-num_recon_samples: 512 # this will limit how much is shown in recon plots, ERROR if not enough samples, pulls from END of transformer sequence 
+num_recon_samples: 1024 # this will limit how much is shown in recon plots, ERROR if not enough samples, pulls from END of transformer sequence 
 num_realtime_dims: 5
 recent_display_iters: 5 # How often to print to console when training & how often to log to WandB
 
