@@ -191,21 +191,26 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
         # return x[:,-1,:] # Return last in sequence (should be embedded with meaning)
 
 class TimeSeriesDecoder(nn.Module):
-    def __init__(self, embed_dim, num_channels, seq_len, num_layers, kernel_size, dropout=0.0):
+    def __init__(self, in_dim, num_channels, seq_len, num_layers, kernel_size, dropout=0.0):
         super(TimeSeriesDecoder, self).__init__()
 
-        self.embed_dim = embed_dim
+        self.in_dim = in_dim
         self.num_channels = num_channels
         self.seq_len = seq_len
         self.num_layers = num_layers
         self.kernel_size = kernel_size
         self.dropout = dropout
 
+        layers = []
+
+        # First, we will apply a convolution to map to num_channels
+        layers.append(nn.ConvTranspose1d(in_channels=self.in_dim, out_channels=num_channels, kernel_size=kernel_size, stride=2, padding=(kernel_size // 2), output_padding=1))
+        layers.append(nn.SiLU())
+        layers.append(RMSNorm_Conv(num_channels))
+
         # First, we need to expand the input (batch_size, embed_dim) to (batch_size, embed_dim, 1)
         # The output will be passed through N dilated 1D convolutional layers.
 
-        layers = []
-        in_channels = embed_dim
         # dilation_rate = 1  # We will increase the dilation rate with each layer
         output_length = seq_len  # Initial sequence length
 
@@ -215,19 +220,22 @@ class TimeSeriesDecoder(nn.Module):
             #                         kernel_size=kernel_size, 
             #                         dilation=dilation_rate, 
             #                         padding=(kernel_size // 2) * dilation_rate))
-            layers.append(nn.ConvTranspose1d(in_channels=in_channels, out_channels=in_channels, 
+            layers.append(nn.ConvTranspose1d(in_channels=num_channels, out_channels=num_channels, 
                                     kernel_size=kernel_size, stride=2, padding=(kernel_size // 2), output_padding=1))
-            layers.append(nn.Tanh())
-            layers.append(RMSNorm_Conv(in_channels))
-            layers.append(nn.Dropout(self.dropout))
+            
+
+            if i < (num_layers -1):
+                layers.append(nn.SiLU())
+                layers.append(RMSNorm_Conv(num_channels))
+                layers.append(nn.Dropout(self.dropout))
+
+            elif i == num_layers -1:
+                layers.append(nn.Tanh())
             
             # Increase the sequence length progressively
             # layers.append(nn.Upsample(scale_factor=2, mode='linear'))  # This doubles the sequence length after each layer
             
             # dilation_rate *= 2  # Increase the dilation rate for each layer (progressively dilates the sequence)
-
-        # After the last convolution, we will apply a final convolution to map to num_channels
-        layers.append(nn.Conv1d(in_channels=in_channels, out_channels=num_channels, kernel_size=kernel_size, padding=(kernel_size // 2)))
 
         # Combine the layers into a Sequential container
         self.cnn = nn.Sequential(*layers)
@@ -248,7 +256,7 @@ class VAEHead_TiedEncDec(nn.Module):
     Interface from a single patient's raw data channels to core VAE
     Reversible with tied weights
     '''
-    def __init__(self, pat_id, in_channels, autoencode_samples, crattn_embed_dim, num_decode_layers, decode_kernel_size, **kwargs):
+    def __init__(self, pat_id, in_channels, autoencode_samples, crattn_embed_dim, num_decode_layers, decode_kernel_size, top_dims, **kwargs):
         super(VAEHead_TiedEncDec, self).__init__()
 
         self.pat_id = pat_id
@@ -262,7 +270,7 @@ class VAEHead_TiedEncDec(nn.Module):
         self.encoder = Encoder_TimeSeriesCNNWithCrossAttention(in_channels = self.in_channels, crattn_embed_dim=crattn_embed_dim, **kwargs)
 
         ### DECODER
-        self.decoder = TimeSeriesDecoder(embed_dim=crattn_embed_dim, num_channels = self.in_channels, seq_len=autoencode_samples, num_layers=num_decode_layers, kernel_size=decode_kernel_size)
+        self.decoder = TimeSeriesDecoder(in_dim=top_dims, num_channels = self.in_channels, seq_len=autoencode_samples, num_layers=num_decode_layers, kernel_size=decode_kernel_size)
 
     def forward(self, x, reverse=False):
 
@@ -300,7 +308,7 @@ class VAE(nn.Module):
         self.latent_dim = latent_dim
 
         self.head_to_top = nn.Linear(self.crattn_embed_dim, self.top_dims, bias=False)
-        self.top_to_head = nn.Linear(self.top_dims, self.crattn_embed_dim, bias=False)
+        # self.top_to_head = nn.Linear(self.top_dims, self.crattn_embed_dim, bias=False)
         # self.top_to_head.weight = nn.Parameter(self.head_to_top.weight.T)
         # self.hidden_to_top.bias = nn.Parameter(self.top_to_hidden.bias.T.detach()) # Shapes do not match to share biases (could duplicate it??? naaa)
 
@@ -367,7 +375,7 @@ class VAE(nn.Module):
             # y = self.tanh(y)
             y = self.silu(y)
             y = self.norm_top_rev(y)
-            y = self.top_to_head(y)
+            # y = self.top_to_head(y)
             # y = self.tanh(y)
             return y
 

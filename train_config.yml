@@ -1,8 +1,8 @@
 # Patient selection
 # pat_id: 'Epat31'
 
-pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/2pats'     # 10pats' 
-train_val_pat_perc: kwargs['train_val_pat_perc'] = [0.5, 0.5] # [0.8, 0.2]
+pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats' #   2pats'     # 10pats' 
+train_val_pat_perc: kwargs['train_val_pat_perc'] = [0.8, 0.2] #[0.5, 0.5] # [0.8, 0.2]
 num_freq_bands: 1
 pat_num_channels_LUT: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/pats_num_channels_LUT.csv'
 num_samples: kwargs['num_samples'] = 1024*512 # MATCH TO FILE SELECTION 'duration_stride_str' BELOW 512*512, 10*512 , 60*512    
@@ -17,7 +17,7 @@ channel_scale_style: 'By_Channel_Scale' # 'Same_Scale_For_All_Channels' # By_Cha
 bipole_or_monopole: 'Bipole_datasets'
 scale_epoch_str: 'data_normalized_to_first_24_hours' # 'data_normalized_to_first_24_hours' # 'data_normalized_to_first_seizure_centered_24_hours' # , 'Dictated by preprocessing: Should probably decide to have duration match 'train_hours_desired', but do not HAVE to
 # duration_stride_str: 'DurStr_1024s896s_epoched_datasets' # 'DurStr_1024s896s_epoched_datasets', 'DurStr_512s480s_epoched_datasets', 'DurStr_10s2s_epoched_datasets', 'DurStr_60s10s_epoched_datasets'
-duration_stride_str: '2pats'
+duration_stride_str: '10pats'
 freq_bands_str: 'wholeband' # 1to12Hz_12to59Hz_61to179Hz, wholeband
 intrapatient_dataset_style: 2 # 1 all data (no SPES), 2 all data (with SPES), 3 ONLY SPES
 train_hour_dataset_range: kwargs['train_hour_dataset_range'] = [-1, -1]  # [-1, -1] means all, [X, -1] means from X to end
@@ -26,44 +26,44 @@ periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if
 preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
 # Training settings
-continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/2pats/trained_models/dataset_train50.0_val50.0/agama_Sun_Jan_12_13_31_40_2025' 
+continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/reptile_Mon_Jan_13_22_41_18_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### VAE Head
-autoencode_samples: 512
-cnn_channels: 256
+autoencode_samples: 8
+cnn_channels: 512
 num_cnn_blocks: 8 
 num_cnn_layers_per_block: 1 
 kernel_size: 3 
 dilation_base: 2 # dilation = dilation_base ** (b * num_cnn_layers_per_block + i)
 
 crattn_embed_dim: 64
-crattn_num_heads: 4
-crattn_num_layers: 2 
+crattn_num_heads: 8
+crattn_num_layers: 4 
 crattn_max_seq_len: 512
 crattn_cnn_kernel_size: 3
 crattn_dropout: 0.1
 
-num_decode_layers: kwargs['num_decode_layers'] = int(math.log(kwargs['autoencode_samples'],2))
+num_decode_layers: kwargs['num_decode_layers'] = int(math.log(kwargs['autoencode_samples'],2) - 1) # Minus 1 because of first conv that goes from hidden dims to output channel dims
 decode_kernel_size: 3
 
 ### VAE Core
-top_dims: 4096 
-hidden_dims: 4096
+top_dims: 2048 
+hidden_dims: 2048
 latent_dim: 2048  # 1024
 
 ### Transformer
-transformer_seq_length: 64
+transformer_seq_length: 512
 # Model hardware limits
 max_seq_len: 512
 max_batch_size: 8
 # Model size
 n_layers: 16
 n_heads: 16
-multiple_of: 256 # 256, Feedforward scaling?
+multiple_of: 256 
 ffn_dim_multiplier: 0.2
-attention_dropout: 0.0
+attention_dropout: 0.2  #### ####
 
 core_weight_decay: 0.1
 head_weight_decay: 0.1
@@ -71,7 +71,7 @@ transformer_weight_decay: 0.1
 adamW_beta1: 0.9
 adamW_beta2: 0.95
 
-train_subsample_file_factor: 32 # randomly decreases training passes per file per epoch
+train_subsample_file_factor: 20480 # randomly decreases training passes per file per epoch
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 8 # this is for when loss is not being calculated
 pacmap_every: 99999 # Must be within a 'quick_recon_val_every' to be reached
@@ -94,7 +94,7 @@ autoreg_context_tokens: kwargs['autoreg_context_tokens'] = kwargs['transformer_s
 autoreg_tokens_to_gen: 32 # kwargs['autoreg_tokens_to_gen'] = kwargs['transformer_seq_length']
 autoreg_channels: 3
 autoreg_batchsize: 2
-autoreg_num_rand_pats: 1
+autoreg_num_rand_pats: 2
 autoreg_num_rand_files: 2
 
 # Beta VAE controls
