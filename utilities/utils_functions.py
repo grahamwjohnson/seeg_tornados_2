@@ -786,7 +786,7 @@ def plot_recon(x, x_hat, plot_dict, batch_file_names, epoch, savedir, gpu_id, pa
     all_starts = plot_dict['start_dt']
     all_stops = plot_dict['stop_dt']
 
-    if gpu_id == 0: time.sleep(2) # Avoid file collision 
+    if gpu_id == 0: time.sleep(1) # Avoid file collision 
 
     for i in range(num_loops):
 

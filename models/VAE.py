@@ -307,25 +307,25 @@ class VAE(nn.Module):
         self.hidden_dims = hidden_dims
         self.latent_dim = latent_dim
 
-        self.head_to_top = nn.Linear(self.crattn_embed_dim, self.top_dims, bias=False)
+        self.head_to_top = nn.Linear(self.crattn_embed_dim, self.top_dims, bias=True)
         # self.top_to_head = nn.Linear(self.top_dims, self.crattn_embed_dim, bias=False)
         # self.top_to_head.weight = nn.Parameter(self.head_to_top.weight.T)
         # self.hidden_to_top.bias = nn.Parameter(self.top_to_hidden.bias.T.detach()) # Shapes do not match to share biases (could duplicate it??? naaa)
 
-        self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=False)
-        self.hidden_to_top = nn.Linear(self.hidden_dims, self.top_dims, bias=False)
+        self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=True)
+        self.hidden_to_top = nn.Linear(self.hidden_dims, self.top_dims, bias=True)
         # self.hidden_to_top.weight = nn.Parameter(self.top_to_hidden.weight.T)
         # self.hidden_to_top.bias = nn.Parameter(self.top_to_hidden.bias.T.detach()) # Shapes do not match to share biases (could duplicate it??? naaa)
 
-        # # Variational layers (not shared between enc/dec)
-        # self.mean_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=False)  # bias=False
-        # self.logvar_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=False) # bias=False
+        # Variational layers (not shared between enc/dec)
+        self.mean_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
+        self.logvar_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True) # bias=False
 
         # Hidden to latent
-        self.hidden_to_latent = nn.Linear(self.hidden_dims, self.latent_dim, bias=False)  # bias=False
+        # self.hidden_to_latent = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
 
         # Latent to hidden (not shared between enc/dec)
-        self.latent_to_hidden = nn.Linear(self.latent_dim, self.hidden_dims, bias=False) # bias=False
+        self.latent_to_hidden = nn.Linear(self.latent_dim, self.hidden_dims, bias=True) # bias=False
         # self.latent_to_hidden.weight = nn.Parameter(self.mean_fc_layer.weight.T.detach()) # Tie the "mean" layer weights
         # self.latent_to_hidden.weight = nn.Parameter(self.hidden_to_latent.weight.T) # Tie weights
 
@@ -339,11 +339,11 @@ class VAE(nn.Module):
         self.norm_hidden = RMSNorm(dim=self.hidden_dims)
         self.norm_hidden_rev = RMSNorm(dim=self.hidden_dims)
 
-    # def reparameterization(self, mean, logvar):
-    #     std = torch.exp(0.5 * logvar)  
-    #     epsilon = torch.randn_like(std).to(self.gpu_id) 
-    #     z = mean + std * epsilon
-    #     return z
+    def reparameterization(self, mean, logvar):
+        std = torch.exp(0.5 * logvar)  
+        epsilon = torch.randn_like(std).to(self.gpu_id) 
+        z = mean + std * epsilon
+        return z
 
     def forward(self, x, reverse=False):
 
@@ -357,12 +357,12 @@ class VAE(nn.Module):
             # y = self.tanh(y)
             y = self.silu(y)
             y = self.norm_hidden(y)
-            # mean, logvar = self.mean_fc_layer(y), self.logvar_fc_layer(y)
-            # z = self.reparameterization(mean, logvar)
+            mean, logvar = self.mean_fc_layer(y), self.logvar_fc_layer(y)
+            y = self.reparameterization(mean, logvar)
             # return mean, logvar, z
-            y = self.hidden_to_latent(y)
+            # y = self.hidden_to_latent(y)
             # y = self.tanh(y)
-            return y
+            return mean, logvar, y
 
         elif reverse == True:
             y = self.latent_to_hidden(x)
@@ -408,11 +408,11 @@ def print_models_flow(x, transformer_seq_length, **kwargs):
     print(f"\n\n\nINPUT TO <VAE TIED ENC/DEC - Encoder Mode>\n"
     f"x_posthead:{x_posthead.shape}\n")
     # mean, logvar, latent = vae(x_posthead, reverse=False)  
-    latent = vae(x_posthead, reverse=False)  
+    mean, logvar, latent = vae(x_posthead, reverse=False)  
     summary(vae, input_size=(x_posthead.shape), depth=999, device="cpu")
     print(
-    # f"mean:{mean.shape}\n"
-    # f"logvar:{logvar.shape}\n"
+    f"mean:{mean.shape}\n"
+    f"logvar:{logvar.shape}\n"
     f"latent:{latent.shape}\n")
 
     # Run through Transformer

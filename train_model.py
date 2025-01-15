@@ -600,13 +600,12 @@ class Trainer:
         context_batched = head(context_batched, reverse=False)
         target_batched = head(target_batched, reverse=False)
         # mean_batched, logvar_batched, latent_batched, = self.vae(x_posthead, reverse=False)
-        autoreg_latent_context = self.vae(context_batched, reverse=False)
-        autoreg_latent_target = self.vae(target_batched, reverse=False)
+        _, _, autoreg_latent_context = self.vae(context_batched, reverse=False)
+        _, _, autoreg_latent_target = self.vae(target_batched, reverse=False)
 
         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
         autoreg_latent_context = torch.split(autoreg_latent_context, context_token_len, dim=0)
         autoreg_latent_context = torch.stack(autoreg_latent_context, dim=0)
-        
         autoreg_latent_target = torch.split(autoreg_latent_target, target_token_len, dim=0)
         autoreg_latent_target = torch.stack(autoreg_latent_target, dim=0)
 
@@ -811,7 +810,7 @@ class Trainer:
                         # Forward pass in stacked batch through head then VAE encoder
                         x_posthead = head(x_batched, reverse=False)
                         # mean_batched, logvar_batched, latent_batched, = self.vae(x_posthead, reverse=False)
-                        latent_batched = self.vae(x_posthead, reverse=False)
+                        mean_batched, logvar_batched, latent_batched = self.vae(x_posthead, reverse=False)
 
                         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
                         latent_seq = torch.split(latent_batched, self.transformer_seq_length, dim=0)
@@ -840,15 +839,15 @@ class Trainer:
                             x_hat=x_hat,
                             recon_weight=self.recon_weight)
 
-                        # kld_loss = loss_functions.kld_loss_function(
-                        #     mean=mean_batched, 
-                        #     logvar=logvar_batched, 
-                        #     KL_multiplier=self.KL_multiplier)
+                        kld_loss = loss_functions.kld_loss_function(
+                            mean=mean_batched, 
+                            logvar=logvar_batched, 
+                            KL_multiplier=self.KL_multiplier)
 
                         mean_loss = loss_functions.simple_mean_latent_loss(latent_seq, **kwargs)
 
                         # Intrapatient backprop
-                        loss = recon_loss + mean_loss + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        loss = recon_loss + kld_loss + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
                         loss.backward()
 
                         # Realtime info as epoch is running
@@ -858,16 +857,16 @@ class Trainer:
                             now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
                             if (self.gpu_id == 1):
                                 sys.stdout.write(
-                                    f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, Iter [BatchSize:{batchsize}]: " + 
+                                    f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, EPOCH {self.epoch}, Iter [BatchSize:{batchsize}]: " + 
                                     str(iter_curr) + "/" + str(total_train_iters) + 
                                     ", MeanLoss: " + str(round(loss.detach().item(), 2)) + ", [" + 
                                         "Rec: " + str(round(recon_loss.detach().item(), 2)) + " + " + 
-                                        # "KLD: {:0.3e}".format(kld_loss.detach().item(), 2) + " + " +
-                                        "Trnsfr {:0.3e}".format(transformer_loss.detach().item(), 2) + "], " + 
-                                        "Core LR: {:0.3e}".format(self.opt_vae.param_groups[0]['lr']) + 
-                                        ", Head LR: {:0.3e}".format(head_opts_curr.get_lr()) + 
-                                        ", Transformer LR: {:0.3e}".format(self.opt_transformer.param_groups[0]['lr']) +
-                                    ", Beta: {:0.3e}".format(self.KL_multiplier) + "         ")
+                                        "KLD: {:0.3e}".format(kld_loss.detach().item(), 2) + " + " +
+                                        "Trnsfr {:0.3e}".format(transformer_loss.detach().item(), 2) + "], ") # + 
+                                    #     "Core LR: {:0.3e}".format(self.opt_vae.param_groups[0]['lr']) + 
+                                    #     ", Head LR: {:0.3e}".format(head_opts_curr.get_lr()) + 
+                                    #     ", Transformer LR: {:0.3e}".format(self.opt_transformer.param_groups[0]['lr']) +
+                                    # ", Beta: {:0.3e}".format(self.KL_multiplier) + "         ")
                                 sys.stdout.flush() 
 
                             # Log to WandB
@@ -880,7 +879,7 @@ class Trainer:
                                     train_transformer_loss=transformer_loss,
                                     train_recon_loss=recon_loss, 
                                     train_mean_loss=mean_loss,
-                                    # train_kld_loss=kld_loss, 
+                                    train_kld_loss=kld_loss, 
                                     train_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     train_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
                                     train_LR_heads=head_opts_curr.get_lr(),
@@ -894,7 +893,7 @@ class Trainer:
                                     val_finetune_transformer_loss=transformer_loss,
                                     val_finetune_recon_loss=recon_loss, 
                                     val_finetune_mean_loss=mean_loss,
-                                    # val_finetune_kld_loss=kld_loss, 
+                                    val_finetune_kld_loss=kld_loss, 
                                     val_finetune_LR_heads=head_opts_curr.get_lr(),
                                     val_finetune_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     val_finetune_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
