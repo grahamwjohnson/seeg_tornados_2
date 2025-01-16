@@ -82,41 +82,44 @@ class TimeSeriesCrossAttentionLayer(nn.Module):
         
         return query
 
-class TimeSeriesCrossAttentionLayer_ShapeDilationNoResidual(nn.Module):
-    def __init__(self, in_dim, out_dim, dropout=0.1):
-        super(TimeSeriesCrossAttentionLayer_ShapeDilationNoResidual, self).__init__()
-        self.attn = nn.MultiheadAttention(in_dim, num_heads=1, dropout=dropout)
-        self.norm1 = RMSNorm(in_dim)
-        self.dropout1 = nn.Dropout(dropout)
-        self.ffn = nn.Sequential(
-            nn.Linear(in_dim, in_dim * 4),
-            nn.SiLU(),
-            nn.Linear(in_dim * 4, out_dim)
-        )
-        # self.norm2 = RMSNorm(out_dim)
-        # self.dropout2 = nn.Dropout(dropout)
+# class TimeSeriesCrossAttentionLayer_ShapeDilationNoResidual(nn.Module):
+#     def __init__(self, in_dim, out_dim, dropout=0.1):
+#         super(TimeSeriesCrossAttentionLayer_ShapeDilationNoResidual, self).__init__()
+#         self.attn = nn.MultiheadAttention(in_dim, num_heads=1, dropout=dropout)
+#         self.norm1 = RMSNorm(in_dim)
+#         self.dropout1 = nn.Dropout(dropout)
+#         self.ffn = nn.Sequential(
+#             nn.Linear(in_dim, in_dim * 4),
+#             nn.SiLU(),
+#             nn.Linear(in_dim * 4, out_dim)
+#         )
+#         # self.norm2 = RMSNorm(out_dim)
+#         # self.dropout2 = nn.Dropout(dropout)
 
-    def forward(self, query, key, value):
-        # Cross-attention: query comes from the target, key and value come from the source
-        # query: (seq_len, batch_size, embed_dim)
-        # key, value: (seq_len, batch_size, embed_dim)
+#     def forward(self, query, key, value):
+#         # Cross-attention: query comes from the target, key and value come from the source
+#         # query: (seq_len, batch_size, embed_dim)
+#         # key, value: (seq_len, batch_size, embed_dim)
 
-        # Cross-attention layer
-        attn_output, _ = self.attn(query, key, value)  # q=query, k=key, v=value
-        query = self.norm1(query + self.dropout1(attn_output))  # Residual connection
+#         # Cross-attention layer
+#         attn_output, _ = self.attn(query, key, value)  # q=query, k=key, v=value
+#         query = self.norm1(query + self.dropout1(attn_output))  # Residual connection
 
-        # Feed-forward network, no residual
-        ffn_output = self.ffn(query)
-        # query = self.norm2(query + self.dropout2(ffn_output))  # Residual connection
+#         # Feed-forward network, no residual
+#         ffn_output = self.ffn(query)
+#         # query = self.norm2(query + self.dropout2(ffn_output))  # Residual connection
         
-        return ffn_output
+#         return ffn_output
 
 class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
     def __init__(self, 
         in_channels, 
+        crattn_in_channel_padding,
         crattn_embed_dim,
-        crattn_num_heads,
-        crattn_num_layers,
+        crattn_num_highdim_heads,
+        crattn_num_highdim_layers,
+        crattn_num_lowdim_heads,
+        crattn_num_lowdim_layers,
         crattn_max_seq_len,
         crattn_cnn_kernel_size, 
         crattn_dropout, 
@@ -125,28 +128,46 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
         super(Encoder_TimeSeriesCNNWithCrossAttention, self).__init__()
         
         self.in_channels = in_channels
+        self.in_channel_padded_dims = crattn_in_channel_padding
         self.embed_dim = crattn_embed_dim
-        self.num_heads = crattn_num_heads
-        self.num_layers = crattn_num_layers
+        self.num_highdim_heads = crattn_num_highdim_heads
+        self.num_highdim_layers = crattn_num_highdim_layers
+        self.num_lowdim_heads = crattn_num_lowdim_heads
+        self.num_lowdim_layers = crattn_num_lowdim_layers
         self.max_seq_len = crattn_max_seq_len
-        self.cnn_kernel_size = crattn_cnn_kernel_size
+        # self.cnn_kernel_size = crattn_cnn_kernel_size
         self.dropout = crattn_dropout
+
+        self.crattn_in_channel_padding = crattn_in_channel_padding
 
         # Depthwise 1D CNN (groups=in_channels)
         # self.cnn = nn.Conv1d(in_channels=self.in_channels, out_channels=self.in_channels, kernel_size=self.cnn_kernel_size, 
                             #  padding=(self.cnn_kernel_size // 2), groups=self.in_channels)  # Depthwise convolution
         
         # Input Cross-attention Layer (also converts from in_channels to embed_dim in feedforward layer)
-        self.input_cross_attention = TimeSeriesCrossAttentionLayer_ShapeDilationNoResidual(self.in_channels, self.embed_dim, dropout=self.dropout) # Num_heads will be ONLY 1 due to divisible problem
+        self.highdim_attention_layers = nn.ModuleList([
+            TimeSeriesCrossAttentionLayer(self.in_channel_padded_dims, self.num_highdim_heads, self.dropout)
+            for _ in range(self.num_highdim_layers)
+        ])
+
+        # Convert to low dims
+        self.high_to_low_dims = nn.Sequential(
+            nn.Linear(self.in_channel_padded_dims, self.in_channel_padded_dims * 2),
+            nn.SiLU(),
+            nn.Linear(self.in_channel_padded_dims * 2, self.in_channel_padded_dims),
+            nn.SiLU(),
+            nn.Linear(self.in_channel_padded_dims, self.embed_dim),
+            nn.SiLU()
+        )
 
         # Embed-Dim Cross-attention layers
-        self.attention_layers = nn.ModuleList([
-            TimeSeriesCrossAttentionLayer(self.embed_dim, self.num_heads, self.dropout)
-            for _ in range(self.num_layers)
+        self.lowdim_attention_layers = nn.ModuleList([
+            TimeSeriesCrossAttentionLayer(self.embed_dim, self.num_lowdim_heads, self.dropout)
+            for _ in range(self.num_lowdim_layers)
         ])
         
         # Positional encoding
-        self.positional_encoding_raw = self._get_positional_encoding(self.max_seq_len, self.in_channels)
+        self.positional_encoding = self._get_positional_encoding(self.max_seq_len, self.in_channel_padded_dims)
         # self.positional_encoding_embed_dim = self._get_positional_encoding(self.max_seq_len, self.embed_dim)
         
     def _get_positional_encoding(self, max_seq_len, dim):
@@ -169,23 +190,31 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
         # Directly pass input to the CNN (input shape: batch_size, num_channels, seq_len)
         # x = self.cnn(x)  # Shape: (batch_size, cnn_out_channels, seq_len)
         
+        # Step 1: pad the channel dimension
+        padding = (0, 0, 0, self.in_channel_padded_dims - self.in_channels, 0, 0) # (dim0 left padding, dim0 right padding... etc.)
+        x = F.pad(x, padding, mode='constant', value=0)
+
         # Step 2: Permute CNN output to (batch_size, seq_len, cnn_out_channels)
         x = x.permute(0, 2, 1)  # Shape: (batch_size, seq_len, cnn_out_channels)
         
         # Step 3: Add positional encoding
-        x = x + self.positional_encoding_raw[:, :x.size(1), :].to(x.device)
+        x = x + self.positional_encoding[:, :x.size(1), :].to(x.device)
         
-        # Step 4: Reshape for multi-head attention (seq_len, batch_size, embed_dim)
+        # Step 4: Reshape for multi-head attention (seq_len, batch_size, high_dim)
         x = x.permute(1, 0, 2)  # Shape: (seq_len, batch_size, cnn_out_channels)
 
-        # Step 5: Apply Input Cross-Attention Layers
-        x = self.input_cross_attention(x, x, x)
-
-        # Step 6: Apply Embed-Dim Cross-Attention Layers
-        for layer in self.attention_layers:
+        # Step 5: Apply Input Cross-Attention at PADDED dimension 
+        for layer in self.highdim_attention_layers:
             x = layer(x, x, x)  # Cross-attention (q=k=v)
 
-        x = x.permute(1, 0, 2)  # Return to shape (batch_size, seq_len, embed_dim)
+        # Step 6: Conver from high dims to low dims
+        x = self.high_to_low_dims(x)
+
+        # Step 7: Apply Embed-Dim Cross-Attention Layers
+        for layer in self.lowdim_attention_layers:
+            x = layer(x, x, x)  # Cross-attention (q=k=v)
+
+        x = x.permute(1, 0, 2)  # Return to shape (batch_size, seq_len, low_dim)
 
         return torch.mean(x, dim=1) # Mean along the sequence direction
         # return x[:,-1,:] # Return last in sequence (should be embedded with meaning)
@@ -386,7 +415,7 @@ def print_models_flow(x, transformer_seq_length, **kwargs):
     '''
 
     batch_size = x.shape[0]
-    pat_num_channels = x.shape[1]
+    pat_num_channels = x.shape[1] 
     data_length = x.shape[2]
 
     train_head = VAEHead_TiedEncDec(pat_id="na", in_channels=pat_num_channels, **kwargs)

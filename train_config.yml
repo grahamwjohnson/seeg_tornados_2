@@ -38,9 +38,12 @@ num_cnn_layers_per_block: 1
 kernel_size: 3 
 dilation_base: 2 # dilation = dilation_base ** (b * num_cnn_layers_per_block + i)
 
+crattn_in_channel_padding: 256 #input padded to allow for multiple cross attention heads
 crattn_embed_dim: 64
-crattn_num_heads: 16
-crattn_num_layers: 16
+crattn_num_highdim_heads: 8 # at padding dimension
+crattn_num_highdim_layers: 8
+crattn_num_lowdim_heads: 16 # at embed dim dimension
+crattn_num_lowdim_layers: 16
 crattn_max_seq_len: 512
 crattn_cnn_kernel_size: 3
 crattn_dropout: 0.1
@@ -69,7 +72,7 @@ core_weight_decay: 0.1
 head_weight_decay: 0.1
 transformer_weight_decay: 0.1
 adamW_beta1: 0.9
-adamW_beta2: 0.95
+adamW_beta2: 0.95 
 
 train_subsample_file_factor: 20480 # randomly decreases training passes per file per epoch
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
@@ -105,7 +108,7 @@ KL_epochs_TO_max: 5
 
 # Weights
 recon_weight: 3
-transformer_weight: 1 # 0.01  ############# CHeck if loss is actually used!!! May be commented out ###############
+transformer_weight: 0.1 # 0.01  ############# CHeck if loss is actually used!!! May be commented out ###############
 mean_loss_weight: 1
 
 # Train heads learning rate controls

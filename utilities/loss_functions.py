@@ -20,10 +20,10 @@ def kld_loss_function(mean, logvar, KL_multiplier):
 
 def transformer_loss_function(target_embeddings, out_embeddings, transformer_weight):
     
-    criterion = nn.CosineSimilarity(dim = 2)
-    transformer_loss = 1 - criterion(target_embeddings, out_embeddings).mean()
-    # loss_fn = nn.MSELoss(reduction='mean')
-    # transformer_loss = transformer_weight * loss_fn(target_embeddings, out_embeddings) 
+    # criterion = nn.CosineSimilarity(dim = 2)
+    # transformer_loss = 1 - criterion(target_embeddings, out_embeddings).mean()
+    loss_fn = nn.MSELoss(reduction='mean')
+    transformer_loss = transformer_weight * loss_fn(target_embeddings, out_embeddings) 
 
     return transformer_weight * transformer_loss #/ in_embeddings.shape[0] / in_embeddings.shape[1] # normalize by batch size and seq length
 
