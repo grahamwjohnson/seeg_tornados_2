@@ -8,38 +8,6 @@ from torchinfo import summary
 # Local imports
 from .Transformer import ModelArgs, Transformer, RMSNorm
 
-class Head_Optimizers():
-    def __init__(self, heads, wd, betas, lr):
-        super(Head_Optimizers, self).__init__()
-
-        self.head_opts = [-1]*len(heads)
-        for i in range(0, len(heads)):
-            self.head_opts[i] = torch.optim.AdamW(heads[i].parameters(), lr=lr, weight_decay=wd, betas=betas)
-
-    def set_all_lr(self, lr):
-        for i in range(0, len(self.head_opts)):
-            for g in self.head_opts[i].param_groups:
-                g['lr'] = lr
-
-    def get_lr(self):
-        lrs = []
-        for i in range(0, len(self.head_opts)):
-            for g in self.head_opts[i].param_groups:
-                lrs.append(g['lr'])
-
-        if len(set(lrs)) <= 1:
-            return lrs[0]
-        else:
-            raise Exception(f"Head LRs not all the same [{lrs}], not currently the same. Not coded to handle heads having different learning rates.")
-
-    def zero_grad(self):
-        for i in range(0, len(self.head_opts)):
-            self.head_opts[i].zero_grad()
-        
-    def step(self):
-        for i in range(0, len(self.head_opts)):
-            self.head_opts[i].step()
-
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
@@ -113,8 +81,8 @@ class TimeSeriesCrossAttentionLayer(nn.Module):
 
 class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
     def __init__(self, 
-        in_channels, 
-        crattn_in_channel_padding,
+        # in_channels, 
+        padded_channels,
         crattn_embed_dim,
         crattn_num_highdim_heads,
         crattn_num_highdim_layers,
@@ -127,8 +95,8 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
 
         super(Encoder_TimeSeriesCNNWithCrossAttention, self).__init__()
         
-        self.in_channels = in_channels
-        self.in_channel_padded_dims = crattn_in_channel_padding
+        # self.in_channels = in_channels
+        self.padded_channels = padded_channels
         self.embed_dim = crattn_embed_dim
         self.num_highdim_heads = crattn_num_highdim_heads
         self.num_highdim_layers = crattn_num_highdim_layers
@@ -138,25 +106,23 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
         # self.cnn_kernel_size = crattn_cnn_kernel_size
         self.dropout = crattn_dropout
 
-        self.crattn_in_channel_padding = crattn_in_channel_padding
-
         # Depthwise 1D CNN (groups=in_channels)
         # self.cnn = nn.Conv1d(in_channels=self.in_channels, out_channels=self.in_channels, kernel_size=self.cnn_kernel_size, 
                             #  padding=(self.cnn_kernel_size // 2), groups=self.in_channels)  # Depthwise convolution
         
-        # Input Cross-attention Layer (also converts from in_channels to embed_dim in feedforward layer)
+        # Input Cross-attention Layer 
         self.highdim_attention_layers = nn.ModuleList([
-            TimeSeriesCrossAttentionLayer(self.in_channel_padded_dims, self.num_highdim_heads, self.dropout)
+            TimeSeriesCrossAttentionLayer(self.padded_channels, self.num_highdim_heads, self.dropout)
             for _ in range(self.num_highdim_layers)
         ])
 
         # Convert to low dims
         self.high_to_low_dims = nn.Sequential(
-            nn.Linear(self.in_channel_padded_dims, self.in_channel_padded_dims * 2),
+            nn.Linear(self.padded_channels, self.padded_channels * 2),
             nn.SiLU(),
-            nn.Linear(self.in_channel_padded_dims * 2, self.in_channel_padded_dims),
+            nn.Linear(self.padded_channels * 2, self.padded_channels),
             nn.SiLU(),
-            nn.Linear(self.in_channel_padded_dims, self.embed_dim),
+            nn.Linear(self.padded_channels, self.embed_dim),
             nn.SiLU()
         )
 
@@ -167,7 +133,7 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
         ])
         
         # Positional encoding
-        self.positional_encoding = self._get_positional_encoding(self.max_seq_len, self.in_channel_padded_dims)
+        self.positional_encoding = self._get_positional_encoding(self.max_seq_len, self.padded_channels)
         # self.positional_encoding_embed_dim = self._get_positional_encoding(self.max_seq_len, self.embed_dim)
         
     def _get_positional_encoding(self, max_seq_len, dim):
@@ -190,8 +156,10 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
         # Directly pass input to the CNN (input shape: batch_size, num_channels, seq_len)
         # x = self.cnn(x)  # Shape: (batch_size, cnn_out_channels, seq_len)
         
+        in_channels = x.shape[1]
+
         # Step 1: pad the channel dimension
-        padding = (0, 0, 0, self.in_channel_padded_dims - self.in_channels, 0, 0) # (dim0 left padding, dim0 right padding... etc.)
+        padding = (0, 0, 0, self.padded_channels - in_channels, 0, 0) # (dim0 left padding, dim0 right padding... etc.)
         x = F.pad(x, padding, mode='constant', value=0)
 
         # Step 2: Permute CNN output to (batch_size, seq_len, cnn_out_channels)
@@ -216,15 +184,15 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
 
         x = x.permute(1, 0, 2)  # Return to shape (batch_size, seq_len, low_dim)
 
-        return torch.mean(x, dim=1) # Mean along the sequence direction
+        return x.flatten(start_dim=1) # Mean along the sequence direction
         # return x[:,-1,:] # Return last in sequence (should be embedded with meaning)
 
 class TimeSeriesDecoder(nn.Module):
-    def __init__(self, in_dim, num_channels, seq_len, num_layers, kernel_size, dropout=0.0):
+    def __init__(self, in_dim, padded_channels, seq_len, num_layers, kernel_size, dropout=0.0):
         super(TimeSeriesDecoder, self).__init__()
 
         self.in_dim = in_dim
-        self.num_channels = num_channels
+        self.padded_channels = padded_channels
         self.seq_len = seq_len
         self.num_layers = num_layers
         self.kernel_size = kernel_size
@@ -232,10 +200,10 @@ class TimeSeriesDecoder(nn.Module):
 
         layers = []
 
-        # First, we will apply a convolution to map to num_channels
-        layers.append(nn.ConvTranspose1d(in_channels=self.in_dim, out_channels=num_channels, kernel_size=kernel_size, stride=2, padding=(kernel_size // 2), output_padding=1))
+        # First, we will apply a convolution to map to padded_channels
+        layers.append(nn.ConvTranspose1d(in_channels=self.in_dim, out_channels=padded_channels, kernel_size=kernel_size, stride=2, padding=(kernel_size // 2), output_padding=1))
         layers.append(nn.SiLU())
-        layers.append(RMSNorm_Conv(num_channels))
+        layers.append(RMSNorm_Conv(padded_channels))
 
         # First, we need to expand the input (batch_size, embed_dim) to (batch_size, embed_dim, 1)
         # The output will be passed through N dilated 1D convolutional layers.
@@ -249,13 +217,13 @@ class TimeSeriesDecoder(nn.Module):
             #                         kernel_size=kernel_size, 
             #                         dilation=dilation_rate, 
             #                         padding=(kernel_size // 2) * dilation_rate))
-            layers.append(nn.ConvTranspose1d(in_channels=num_channels, out_channels=num_channels, 
+            layers.append(nn.ConvTranspose1d(in_channels=padded_channels, out_channels=padded_channels, 
                                     kernel_size=kernel_size, stride=2, padding=(kernel_size // 2), output_padding=1))
             
 
             if i < (num_layers -1):
                 layers.append(nn.SiLU())
-                layers.append(RMSNorm_Conv(num_channels))
+                layers.append(RMSNorm_Conv(padded_channels))
                 layers.append(nn.Dropout(self.dropout))
 
             elif i == num_layers -1:
@@ -269,7 +237,7 @@ class TimeSeriesDecoder(nn.Module):
         # Combine the layers into a Sequential container
         self.cnn = nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x, out_channels):
         # x: (batch_size, embed_dim)
         
         # Unsqueeze to add the sequence dimension
@@ -277,40 +245,11 @@ class TimeSeriesDecoder(nn.Module):
         
         # Pass through the convolutional layers
         x = self.cnn(x)  # Shape: (batch_size, num_channels, seq_len)
+
+        # Index only desired output channels
+        x = x[:, :out_channels, :]
         
         return x
-
-class VAEHead_TiedEncDec(nn.Module):
-    '''
-    Interface from a single patient's raw data channels to core VAE
-    Reversible with tied weights
-    '''
-    def __init__(self, pat_id, in_channels, autoencode_samples, crattn_embed_dim, num_decode_layers, decode_kernel_size, top_dims, **kwargs):
-        super(VAEHead_TiedEncDec, self).__init__()
-
-        self.pat_id = pat_id
-        self.in_channels = in_channels
-        self.autoencode_samples = autoencode_samples
-        self.crattn_embed_dim = crattn_embed_dim
-        self.num_decode_layers = num_decode_layers
-        self.decode_kernel_size = decode_kernel_size
-        
-        ### ENCODER
-        self.encoder = Encoder_TimeSeriesCNNWithCrossAttention(in_channels = self.in_channels, crattn_embed_dim=crattn_embed_dim, **kwargs)
-
-        ### DECODER
-        self.decoder = TimeSeriesDecoder(in_dim=top_dims, num_channels = self.in_channels, seq_len=autoencode_samples, num_layers=num_decode_layers, kernel_size=decode_kernel_size)
-
-    def forward(self, x, reverse=False):
-
-        # Encoder part
-        if reverse == False: 
-            return self.encoder(x)
-        
-        # Decoder part
-        if reverse == True:
-            return self.decoder(x)
-
 
 class VAE(nn.Module):
     '''
@@ -320,10 +259,13 @@ class VAE(nn.Module):
     def __init__(
         self, 
         autoencode_samples,
+        padded_channels,
         crattn_embed_dim,
         top_dims,
         hidden_dims,
         latent_dim, 
+        num_decode_layers,
+        decode_kernel_size,
         gpu_id=None, 
         **kwargs):
 
@@ -331,42 +273,33 @@ class VAE(nn.Module):
 
         self.gpu_id = gpu_id
         self.autoencode_samples = autoencode_samples
+        self.padded_channels = padded_channels
         self.crattn_embed_dim = crattn_embed_dim
         self.top_dims = top_dims
         self.hidden_dims = hidden_dims
-        self.latent_dim = latent_dim
+        self.latent_dim = latent_dim 
+        self.num_decode_layers = num_decode_layers
+        self.decode_kernel_size = decode_kernel_size
 
-        self.head_to_top = nn.Linear(self.crattn_embed_dim, self.top_dims, bias=True)
-        # self.top_to_head = nn.Linear(self.top_dims, self.crattn_embed_dim, bias=False)
-        # self.top_to_head.weight = nn.Parameter(self.head_to_top.weight.T)
-        # self.hidden_to_top.bias = nn.Parameter(self.top_to_hidden.bias.T.detach()) # Shapes do not match to share biases (could duplicate it??? naaa)
+        self.encoder_head = Encoder_TimeSeriesCNNWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=crattn_embed_dim, **kwargs)
 
+        self.head_to_top = nn.Linear(self.crattn_embed_dim * self.autoencode_samples, self.top_dims, bias=True)
+        self.norm_top = RMSNorm(dim=self.top_dims)
         self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=True)
-        self.hidden_to_top = nn.Linear(self.hidden_dims, self.top_dims, bias=True)
-        # self.hidden_to_top.weight = nn.Parameter(self.top_to_hidden.weight.T)
-        # self.hidden_to_top.bias = nn.Parameter(self.top_to_hidden.bias.T.detach()) # Shapes do not match to share biases (could duplicate it??? naaa)
-
+        self.norm_hidden = RMSNorm(dim=self.hidden_dims)
+        
         # Variational layers (not shared between enc/dec)
         self.mean_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
         self.logvar_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True) # bias=False
 
-        # Hidden to latent
-        # self.hidden_to_latent = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
-
-        # Latent to hidden (not shared between enc/dec)
         self.latent_to_hidden = nn.Linear(self.latent_dim, self.hidden_dims, bias=True) # bias=False
-        # self.latent_to_hidden.weight = nn.Parameter(self.mean_fc_layer.weight.T.detach()) # Tie the "mean" layer weights
-        # self.latent_to_hidden.weight = nn.Parameter(self.hidden_to_latent.weight.T) # Tie weights
-
-        # self.leaky_relu = nn.LeakyReLU(0.2)
-        # self.tanh = nn.Tanh()
-        self.silu = nn.SiLU()
-
-        self.norm_top = RMSNorm(dim=self.top_dims)
+        self.norm_hidden_rev = RMSNorm(dim=self.hidden_dims)
+        self.hidden_to_top = nn.Linear(self.hidden_dims, self.top_dims, bias=True)
         self.norm_top_rev = RMSNorm(dim=self.top_dims)
 
-        self.norm_hidden = RMSNorm(dim=self.hidden_dims)
-        self.norm_hidden_rev = RMSNorm(dim=self.hidden_dims)
+        self.decoder_head = TimeSeriesDecoder(in_dim=top_dims, padded_channels = self.padded_channels, seq_len=autoencode_samples, num_layers=num_decode_layers, kernel_size=decode_kernel_size)
+
+        self.silu = nn.SiLU()
 
     def reparameterization(self, mean, logvar):
         std = torch.exp(0.5 * logvar)  
@@ -374,38 +307,39 @@ class VAE(nn.Module):
         z = mean + std * epsilon
         return z
 
-    def forward(self, x, reverse=False):
+    def forward(self, x, reverse=False, hash_pat_embedding=-1, out_channels=-1):
 
         if reverse == False:
-            y = self.head_to_top(x)
-            # y = self.tanh(y)
+
+            # FEATURE HEAD
+            y = self.encoder_head(x)
+
+            # VAE CORE
+            y = self.head_to_top(y)
             y = self.silu(y)
             y = self.norm_top(y)
             y = self.top_to_hidden(y)
-            # y = self.leaky_relu(y)
-            # y = self.tanh(y)
             y = self.silu(y)
             y = self.norm_hidden(y)
             mean, logvar = self.mean_fc_layer(y), self.logvar_fc_layer(y)
             y = self.reparameterization(mean, logvar)
-            # return mean, logvar, z
-            # y = self.hidden_to_latent(y)
-            # y = self.tanh(y)
             return mean, logvar, y
 
         elif reverse == True:
-            y = self.latent_to_hidden(x)
-            # y = self.leaky_relu(y)
-            # y = self.tanh(y)
+
+            # Add the hash_pat_embedding to latent vector
+            y = x + hash_pat_embedding
+
+            # VAE CORE
+            y = self.latent_to_hidden(y)
             y = self.silu(y)
             y = self.norm_hidden_rev(y)
             y = self.hidden_to_top(y)
-            # y = self.leaky_relu(y)
-            # y = self.tanh(y)
             y = self.silu(y)
             y = self.norm_top_rev(y)
-            # y = self.top_to_head(y)
-            # y = self.tanh(y)
+
+            # FEATURE HEAD
+            y = self.decoder_head(y, out_channels)
             return y
 
 def print_models_flow(x, transformer_seq_length, **kwargs):
@@ -418,27 +352,17 @@ def print_models_flow(x, transformer_seq_length, **kwargs):
     pat_num_channels = x.shape[1] 
     data_length = x.shape[2]
 
-    train_head = VAEHead_TiedEncDec(pat_id="na", in_channels=pat_num_channels, **kwargs)
-
-    # Build the core models
+    # Build the VAE
     vae = VAE(**kwargs) 
 
     # Build the Transformer
     transformer = Transformer(ModelArgs(**kwargs))
 
     # Run through Enc Head
-    print(f"INPUT TO <ENC HEAD>\n"
+    print(f"INPUT TO <ENC>\n"
     f"x:{x.shape}")
-    x_posthead = train_head(x, reverse=False)
-    summary(train_head, input_size=x.shape, depth=999, device="cpu")
-    print(f"x_posthead:{x_posthead.shape}\n")
-
-    # Run through VAE Enc
-    print(f"\n\n\nINPUT TO <VAE TIED ENC/DEC - Encoder Mode>\n"
-    f"x_posthead:{x_posthead.shape}\n")
-    # mean, logvar, latent = vae(x_posthead, reverse=False)  
-    mean, logvar, latent = vae(x_posthead, reverse=False)  
-    summary(vae, input_size=(x_posthead.shape), depth=999, device="cpu")
+    mean, logvar, latent = vae(x, reverse=False)  
+    summary(vae, input_size=(x.shape), depth=999, device="cpu")
     print(
     f"mean:{mean.shape}\n"
     f"logvar:{logvar.shape}\n"
@@ -454,19 +378,14 @@ def print_models_flow(x, transformer_seq_length, **kwargs):
     print(f"trans_out:{trans_out.shape}\n")
 
     # Run through VAE decoder
-    print(f"\n\n\nINPUT TO <VAE TIED ENC/DEC - Deocder Mode> mostly same weights as core encoder\n"
-    f"z:{latent.shape}\n")
-    core_out = vae(latent, reverse=True)  
+    hash_pat_embedding = torch.rand(latent.shape[1])
+    print(f"\n\n\nINPUT TO <VAE - Decoder Mode> \n"
+    f"z:{latent.shape}\n"
+    f"hash_pat_embedding:{hash_pat_embedding.shape}\n")
+    core_out = vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=pat_num_channels)  
     print(f"core_out:{core_out.shape}\n")
 
-    # Run through Dec Head
-    print(f"\nINPUT TO <TIED HEAD - Decoder Mode> not the same as head encoder\n"
-    f"core_out:{core_out.shape}")
-    x_hat = train_head(core_out, reverse=True)
-    print(f"\n<FINAL OUTPUT>\n"
-    f"x_hat:{x_hat.shape}\n")
-
-    del train_head, vae, transformer
+    del vae, transformer
 
 if __name__ == "__main__":
 

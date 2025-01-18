@@ -6,6 +6,7 @@ Created on Mon Feb  6 22:05:34 2023
 """
 
 import time
+import hashlib
 import random
 import datetime
 import pandas as pd
@@ -211,14 +212,11 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         KL_max, KL_min, KL_epochs_TO_max, KL_epochs_AT_max, 
-        LR_max_heads, LR_min_heads, 
         LR_max_core, LR_min_core, 
         LR_max_transformer, LR_min_transformer, 
         LR_epochs_TO_max_core, LR_epochs_AT_max_core, 
-        LR_epochs_TO_max_heads, LR_epochs_AT_max_heads, 
         LR_epochs_TO_max_transformer, LR_epochs_AT_max_transformer, 
         manual_gamma_core, manual_step_size_core,
-        manual_gamma_heads, manual_step_size_heads,
         manual_gamma_transformer, manual_step_size_transformer,
         KL_rise_first=True, LR_rise_first=True, **kwargs):
             
@@ -274,19 +272,6 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first 
     )
 
-    # HEADS
-    LR_val_heads = LR_subfunction(
-        iter_curr=iter_curr,
-        LR_min=LR_min_heads,
-        LR_max=LR_max_heads,
-        epoch=epoch, 
-        manual_gamma=manual_gamma_heads, 
-        manual_step_size=manual_step_size_heads, 
-        LR_epochs_TO_max=LR_epochs_TO_max_heads, 
-        LR_epochs_AT_max=LR_epochs_AT_max_heads, 
-        iters_per_epoch=iters_per_epoch,
-        LR_rise_first=LR_rise_first
-    )
 
     # TRANSFORMER
     LR_val_transformer = LR_subfunction(
@@ -303,7 +288,7 @@ def LR_and_weight_schedules(
     )
 
             
-    return KL_val, LR_val_core, LR_val_heads, LR_val_transformer
+    return KL_val, LR_val_core, LR_val_transformer
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
@@ -504,6 +489,39 @@ def pseudobatch_raw_data(x, token_samples):
     x_batched = x_batched.reshape(x_batched.shape[0]*x_batched.shape[1], x_batched.shape[2], x_batched.shape[3])
     
     return x_batched
+
+def hash_to_vector(input_string, num_channels, latent_dim, modifier):
+    # Incorporate the modifier into the input string to vary the output
+    modified_input = f"{input_string}_{modifier}"
+
+    # Generate a SHA-256 hash from the modified input string
+    hash_object = hashlib.sha256(modified_input.encode('utf-8'))
+    hash_digest = hash_object.digest()  # 32 bytes (256 bits)
+
+    # If latent_dim > 256, repeat the hash digest to ensure we have enough data
+    extended_hash = (hash_digest * ((latent_dim // 32) + 1))[:latent_dim]  # Repeat and slice to exactly latent_dim bytes
+    
+    # Generate a vector of size latent_dim with values from -1 to 1
+    hashed_vector = np.zeros(latent_dim)
+
+    for i in range(latent_dim):
+        # Use the i-th byte from the extended hash digest
+        byte_value = extended_hash[i]
+        
+        # Normalize the byte value to the range [-1, 1]
+        hashed_vector[i] = (byte_value / 127.5) - 1  # Normalize to [-1, 1]
+
+    # Convert hashed_vector to a PyTorch tensor
+    hashed_vector_tensor = torch.tensor(hashed_vector, dtype=torch.float32)
+
+    # Generate a vector of shuffled numbers 0 to num_channels-1
+    ordered_vector = list(range(num_channels))
+    
+    # Set the seed for deterministic shuffling based on the hash of the modified input string
+    random.seed(int.from_bytes(hash_digest[:8], 'big'))  # Use first 8 bytes of hash as the seed
+    random.shuffle(ordered_vector)  # Shuffle the list in place
+    
+    return hashed_vector_tensor, ordered_vector
 
 # def un_pseudobatch_raw_data(x_batched, token_samples):
 #     ''' 
@@ -2377,7 +2395,6 @@ def initialize_directories(
         # Construct the proper file names to get CORE state dicts
         kwargs['vae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae.pt'
         kwargs['vae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_opt.pt'
-        kwargs['heads_prev_dir'] = check_dir + f'/Epoch_{str(max_epoch)}/heads_checkpoints'
         kwargs['transformer_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/transformer_checkpoints/checkpoint_epoch{str(max_epoch)}_transformer.pt'
         kwargs['opt_transformer_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/transformer_checkpoints/checkpoint_epoch{str(max_epoch)}_opt_transformer.pt'
 

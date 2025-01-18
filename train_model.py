@@ -35,7 +35,7 @@ from utilities import utils_functions
 from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
 from models.Transformer import ModelArgs, Transformer
-from models.VAE import VAE, VAEHead_TiedEncDec, Head_Optimizers
+from models.VAE import VAE
 
 
 ######
@@ -69,7 +69,6 @@ def load_train_objs(
     
     # Optimizers
     core_weight_decay, 
-    head_weight_decay, 
     transformer_weight_decay,
     adamW_beta1,
     adamW_beta2,
@@ -117,22 +116,6 @@ def load_train_objs(
         hour_dataset_range=val_unseen_hour_dataset_range,
         **kwargs)
      
-    # ### VAE HEADS ###
-
-    # Train Heads
-    train_heads = [-1]*len(train_pats_list)
-    for i in range(0, len(train_pats_list)):
-        train_heads[i] = VAEHead_TiedEncDec(pat_id=train_pats_list[i], in_channels=train_dataset.pat_num_channels[i], **kwargs).to(gpu_id)
-    
-    opt_head_train = Head_Optimizers(heads=train_heads, wd=head_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_heads'])
-
-    # Val Heads
-    val_heads = [-1]*len(val_pats_list)
-    for i in range(0, len(val_pats_list)):
-        val_heads[i] = VAEHead_TiedEncDec(pat_id=val_pats_list[i], in_channels=valfinetune_dataset.pat_num_channels[i], **kwargs).to(gpu_id)
-    
-    opt_head_val = Head_Optimizers(heads=val_heads, wd=head_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_heads'])
-
     ### VAE ###
     vae = VAE(gpu_id=gpu_id, **kwargs) 
     vae = vae.to(gpu_id) 
@@ -144,7 +127,7 @@ def load_train_objs(
     opt_transformer = torch.optim.AdamW(transformer.parameters(), weight_decay=transformer_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_transformer'])
     print(f"[GPU{gpu_id}] transformer loaded")
 
-    return train_dataset, valfinetune_dataset, valunseen_dataset, transformer, vae, train_heads, val_heads, opt_head_train, opt_head_val, opt_vae, opt_transformer 
+    return train_dataset, valfinetune_dataset, valunseen_dataset, transformer, vae, opt_vae, opt_transformer 
 
 def main(         
     # Ordered variables
@@ -164,7 +147,6 @@ def main(
     vae_opt_state_dict_prev_path = [],
     transformer_state_dict_prev_path = [],
     opt_transformer_state_dict_prev_path = [],
-    heads_prev_dir = [],
     epochs_to_train: int = -1,
     **kwargs):
 
@@ -186,7 +168,7 @@ def main(
     ddp_setup(gpu_id, world_size)
 
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
-    train_dataset, valfinetune_dataset, valunseen_dataset, transformer, vae, train_heads, val_heads, opt_head_train, opt_head_val, opt_vae, opt_transformer = load_train_objs(gpu_id=gpu_id, **kwargs) 
+    train_dataset, valfinetune_dataset, valunseen_dataset, transformer, vae, opt_vae, opt_transformer = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
     # Load the model/opt/sch states if not first epoch & if in training mode
     if (start_epoch > 0):
@@ -204,28 +186,7 @@ def main(
         opt_transformer_state_dict_prev = torch.load(opt_transformer_state_dict_prev_path, map_location=map_location)
         opt_transformer.load_state_dict(opt_transformer_state_dict_prev)
 
-        # Load in train heads and opts, val heads are never pretrained by design
-        vae_head_weight_files = glob.glob(heads_prev_dir + "/*head.pt")
-        vae_head_opt_files = glob.glob(heads_prev_dir + "/*head_opt.pt")
-
-        # Sort the file names to line up with pat idxs
-        vae_head_weight_files.sort()
-        vae_head_opt_files.sort()
-
-        for pat_idx in range(len(train_heads)):
-            # Load model weights for heads (enc, dec)
-            filename_vae_head = vae_head_weight_files[pat_idx]
-            pat_idx_in_filename = int(filename_vae_head.split("/")[-1].split("_")[2].replace("patidx",""))
-            if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
-            train_heads[pat_idx].load_state_dict(torch.load(filename_vae_head, map_location=map_location))
-
-            # Load the optimizers
-            filename_vae_OPT = vae_head_opt_files[pat_idx]
-            pat_idx_in_filename = int(filename_vae_OPT.split("/")[-1].split("_")[2].replace("patidx",""))
-            if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
-            opt_head_train.head_opts[pat_idx].load_state_dict(torch.load(filename_vae_OPT, map_location=map_location))
-
-        print("Core and Head Weights and Opts loaded from checkpoints")
+        print("Weights and Opts loaded from checkpoints")
 
     trainer = Trainer(
         world_size=world_size,
@@ -233,15 +194,11 @@ def main(
         transformer=transformer,
         opt_transformer=opt_transformer,
         vae=vae, 
-        train_heads=train_heads,
-        val_heads=val_heads,
         start_epoch=start_epoch,
         train_dataset=train_dataset, 
         valfinetune_dataset=valfinetune_dataset,
         valunseen_dataset=valunseen_dataset,
         opt_vae=opt_vae,
-        opt_head_train=opt_head_train,
-        opt_head_val=opt_head_val,
         wdecode_batch_size=wdecode_batch_size,
         onlylatent_batch_size=onlylatent_batch_size,
         PaCMAP_model_to_infer=PaCMAP_model_to_infer,
@@ -267,7 +224,6 @@ def main(
             with torch.no_grad():
                 trainer._random_autoreg_plots(
                     dataset_curr = trainer.train_dataset, 
-                    heads_curr = trainer.train_heads,
                     **kwargs)
 
         # TRAIN
@@ -275,8 +231,6 @@ def main(
         trainer._run_epoch(
             dataset_curr = trainer.train_dataset, 
             batchsize=trainer.wdecode_batch_size,
-            heads_curr = trainer.train_heads,
-            head_opts_curr = trainer.opt_head_train,
             random_bool = True, # will subsample and randomize
             subsample_file_factor_curr = train_subsample_file_factor, # only valid if 'random_bool' is True
             only_latent = False, # Do not run decoder or transformer
@@ -303,15 +257,11 @@ class Trainer:
         transformer: torch.nn.Module,
         opt_transformer: torch.optim.Optimizer,
         vae: torch.nn.Module,
-        train_heads: tuple,
-        val_heads: tuple,
         start_epoch: int,
         train_dataset: SEEG_Tornado_Dataset,
         valfinetune_dataset: SEEG_Tornado_Dataset,
         valunseen_dataset: SEEG_Tornado_Dataset,
         opt_vae: torch.optim.Optimizer,
-        opt_head_train,
-        opt_head_val,
         wdecode_batch_size: int,
         onlylatent_batch_size: int,
         wandb_run,
@@ -340,15 +290,11 @@ class Trainer:
         self.transformer = transformer
         self.opt_transformer = opt_transformer
         self.vae = vae
-        self.train_heads = train_heads
-        self.val_heads = val_heads
         self.start_epoch = start_epoch
         self.train_dataset = train_dataset
         self.valfinetune_dataset = valfinetune_dataset
         self.valunseen_dataset = valunseen_dataset
         self.opt_vae = opt_vae
-        self.opt_head_train = opt_head_train
-        self.opt_head_val = opt_head_val
         self.wdecode_batch_size = wdecode_batch_size
         self.onlylatent_batch_size = onlylatent_batch_size
         self.model_dir = model_dir
@@ -363,7 +309,6 @@ class Trainer:
         self.FS = FS
         self.intrapatient_dataset_style = intrapatient_dataset_style
         self.curr_LR_core = -1
-        self.curr_LR_heads = -1
         self.transformer_weight = transformer_weight
         self.recon_weight = recon_weight
         self.atd_file = atd_file
@@ -379,54 +324,25 @@ class Trainer:
         # Number of iterations per file
         self.num_windows = int((self.num_samples - self.transformer_seq_length * self.autoencode_samples - self.autoencode_samples)/self.autoencode_samples) - 2
 
-        # Set up Core/Heads & transformer with DDP
+        # Set up vae & transformer with DDP
         self.vae = DDP(vae, device_ids=[gpu_id])   # find_unused_parameters=True
         self.transformer = DDP(transformer, device_ids=[gpu_id])   # find_unused_parameters=True
-        
-        self.train_heads = [-1]*len(train_heads) 
-        for i in range(0, len(train_heads)):
-            self.train_heads[i] = DDP(train_heads[i], device_ids=[gpu_id])
-
-        self.val_heads = [-1]*len(val_heads)
-        for i in range(0, len(val_heads)):
-            self.val_heads[i] = DDP(val_heads[i], device_ids=[gpu_id])
-
-        self.num_train_pats = len(train_heads) 
-        self.train_pat_ids = [self.train_heads[i].module.pat_id for i in range(len(self.train_heads))]
-
-        self.num_val_pats = len(val_heads)
-        self.val_pat_ids = [self.val_heads[i].module.pat_id for i in range(len(self.val_heads))]
-                
+                    
         # Watch with WandB
-        # TODO: watch heads as well?
         wandb.watch(self.vae)
         wandb.watch(self.transformer)
         
     def _set_to_train(self):
         self.vae.train()
         self.transformer.train()
-        self._set_heads_to_train(self.train_heads)
-        self._set_heads_to_train(self.val_heads)
 
     def _set_to_eval(self):
         self.vae.eval()
         self.transformer.eval()
-        self._set_heads_to_eval(self.train_heads)
-        self._set_heads_to_eval(self.val_heads)
-
-    def _set_heads_to_train(self, heads):
-        for i in range(0, len(heads)):
-            heads[i].train()
-                           
-    def _set_heads_to_eval(self, heads):
-        for i in range(0, len(heads)):
-            heads[i].eval()
 
     def _zero_all_grads(self):
         self.opt_vae.zero_grad()
         self.opt_transformer.zero_grad()
-        self.opt_head_train.zero_grad()
-        self.opt_head_val.zero_grad()
 
     def _save_checkpoint(self, epoch, saveModels, savePaCMAP, delete_old_checkpoints, **kwargs):
             
@@ -439,39 +355,23 @@ class Trainer:
             # MODEL SAVES
             if saveModels:
 
-                print("Saving core/head model weights")
+                print("Saving vae model weights")
 
-                ### CORE CHECKPOINT 
+                ### VAE CHECKPOINT 
                 check_core_dir = check_epoch_dir + "/core_checkpoints"
                 if not os.path.exists(check_core_dir): os.makedirs(check_core_dir)
 
-                # Save core model
+                # Save vae model
                 ckp = self.vae.module.state_dict()
                 check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae.pt"
                 torch.save(ckp, check_path)
 
-                # Save opt core
+                # Save vae core
                 opt_ckp = self.opt_vae.state_dict()
                 opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_opt.pt"
                 torch.save(opt_ckp, opt_path)
 
-                ### HEADS CHECKPOINT
-                check_heads_dir = check_epoch_dir + "/heads_checkpoints"
-                if not os.path.exists(check_heads_dir): os.makedirs(check_heads_dir)
-
-                # Save train heads model
-                for pat_idx in range(0, len(self.train_heads)):
-                    ckp = self.train_heads[pat_idx].module.state_dict()
-                    check_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_head.pt"
-                    torch.save(ckp, check_path)
-
-                # Opts are indexed by head name, thus must iterate #TODO not hardcoded
-                for pat_idx in range(0, len(self.train_heads)):
-                    opt_ckp = self.opt_head_train.head_opts[pat_idx].state_dict()
-                    opt_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_head_opt.pt"
-                    torch.save(opt_ckp, opt_path)
-
-                ### Transformer ###
+                ### TRANSFORMER CHECKPOINT ###
 
                 print("Saving Transformer model weights")
 
@@ -585,9 +485,10 @@ class Trainer:
         
         return start_idxs
 
-    def _autoreg(self, head, context, target, autoreg_tokens_to_gen, n_layers, **kwargs):
+    def _autoreg(self, context, target, autoreg_tokens_to_gen, n_layers, hash_pat_embedding, **kwargs):
 
         real_batchsize = context.shape[0]
+        out_channels = context.shape[1]
         context_token_len = int(context.shape[2]/self.autoencode_samples)
         target_token_len = int(target.shape[2]/self.autoencode_samples)
 
@@ -596,10 +497,7 @@ class Trainer:
         target_batched = utils_functions.pseudobatch_raw_data(target, self.autoencode_samples)
 
         ### VAE ENCODER
-        # Forward pass in stacked batch through head then VAE encoder
-        context_batched = head(context_batched, reverse=False)
-        target_batched = head(target_batched, reverse=False)
-        # mean_batched, logvar_batched, latent_batched, = self.vae(x_posthead, reverse=False)
+        # Forward pass in stacked batch VAE encoder
         _, _, autoreg_latent_context = self.vae(context_batched, reverse=False)
         _, _, autoreg_latent_target = self.vae(target_batched, reverse=False)
 
@@ -625,8 +523,7 @@ class Trainer:
         ### VAE DECODER
         # Run the predicted embeddings through decoder
         autoreg_latent_pred_batched = autoreg_latent_pred.reshape(autoreg_latent_pred.shape[0]*autoreg_latent_pred.shape[1], autoreg_latent_pred.shape[2])                        
-        core_out = self.vae(autoreg_latent_pred_batched, reverse=True)  
-        x_hat_batched = head(core_out, reverse=True)
+        x_hat_batched = self.vae(autoreg_latent_pred_batched, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=out_channels)  
         x_hat = torch.split(x_hat_batched, autoreg_tokens_to_gen, dim=0)
         x_hat = torch.stack(x_hat, dim=0)
         x_hat = x_hat.transpose(3, 2)
@@ -635,7 +532,7 @@ class Trainer:
 
         return autoreg_latent_context, autoreg_latent_pred, autoreg_latent_target, x_hat, scores_allSeq_firstLayer_meanHeads_lastRow
 
-    def _random_autoreg_plots(self, dataset_curr, heads_curr, autoreg_num_rand_pats, autoreg_context_tokens, autoreg_tokens_to_gen, autoreg_batchsize, autoreg_num_rand_files, num_dataloader_workers_SEQUENTIAL, **kwargs):
+    def _random_autoreg_plots(self, dataset_curr, autoreg_num_rand_pats, autoreg_context_tokens, autoreg_tokens_to_gen, autoreg_batchsize, autoreg_num_rand_files, num_rand_hashes, num_dataloader_workers_SEQUENTIAL, **kwargs):
 
         # Set up which pats will be selected for random autoreg
         np.random.seed(seed=None) # should replace with Generator for newer code        
@@ -648,9 +545,6 @@ class Trainer:
             dataloader_curr = utils_functions.prepare_dataloader(dataset_curr, batch_size=autoreg_batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
             dataloader_curr.sampler.set_epoch(self.epoch)
 
-            # Pull out the patient's heads
-            head=heads_curr[pat_idx] 
-
             # Iterate through 
             rand_file_count = 0
             for data_tensor, file_name in dataloader_curr:
@@ -660,18 +554,27 @@ class Trainer:
                 np.random.shuffle(random_start_idx)
                 random_start_idx = random_start_idx[0]
 
+                # HASHING: Get the patient channel order and patid_embedding for this channel order
+                np.random.seed(seed=None) 
+                rand_modifer = int(random.uniform(0, num_rand_hashes -1))
+                hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
+                    input_string=pat_id, 
+                    num_channels=data_tensor.shape[1], 
+                    latent_dim=self.latent_dim, 
+                    modifier=rand_modifer)
+
                 # Pull out context and target raw data and move to GPU
-                context_raw = data_tensor[:, :, random_start_idx: random_start_idx + autoreg_context_tokens * self.autoencode_samples]
-                target_raw = data_tensor[:, :, random_start_idx + autoreg_context_tokens * self.autoencode_samples : random_start_idx + autoreg_context_tokens * self.autoencode_samples + autoreg_tokens_to_gen * self.autoencode_samples]
+                context_raw = data_tensor[:, hash_channel_order, random_start_idx: random_start_idx + autoreg_context_tokens * self.autoencode_samples]
+                target_raw = data_tensor[:, hash_channel_order, random_start_idx + autoreg_context_tokens * self.autoencode_samples : random_start_idx + autoreg_context_tokens * self.autoencode_samples + autoreg_tokens_to_gen * self.autoencode_samples]
                 context_raw = context_raw.to(self.gpu_id)
                 target_raw = target_raw.to(self.gpu_id)
 
                 # Conduct the autoregressive decoding
                 autoreg_latent_context, autoreg_latent_pred, autoreg_latent_target, autoreg_raw_pred, scores_allSeq_firstLayer_meanHeads_lastRow = self._autoreg(
-                    head=head,
                     context=context_raw, 
                     target=target_raw,
                     autoreg_tokens_to_gen=autoreg_tokens_to_gen,
+                    hash_pat_embedding=hash_pat_embedding,
                     **kwargs)
 
                 # Plot the latent predictions
@@ -716,8 +619,6 @@ class Trainer:
         self, 
         dataset_curr, 
         batchsize,
-        heads_curr,
-        head_opts_curr,
         attention_dropout,
         random_bool, # will subsample and randomize
         subsample_file_factor_curr, # only valid if 'random' is True
@@ -728,6 +629,7 @@ class Trainer:
         val_finetune,
         realtime_latent_printing,
         realtime_printing_interval,
+        num_rand_hashes,
         **kwargs):
 
         print(f"autoencode_samples: {self.autoencode_samples}")
@@ -761,12 +663,11 @@ class Trainer:
                 for start_idx in start_idxs: # Same start_idx for all patients (has no biological meaning)
 
                     # Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                    self.KL_multiplier, self.curr_LR_core, self.curr_LR_heads, self.transformer_LR = utils_functions.LR_and_weight_schedules(
+                    self.KL_multiplier, self.curr_LR_core, self.transformer_LR = utils_functions.LR_and_weight_schedules(
                         epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
                     
-                    # Update Core and Heads LR
+                    # Update LR
                     self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
-                    head_opts_curr.set_all_lr(self.curr_LR_heads)
                     self.opt_transformer.param_groups[0]['lr'] = self.transformer_LR
 
                     # Reset the cumulative losses & zero gradients
@@ -783,21 +684,27 @@ class Trainer:
                     # Iterate through all patients and accumulate losses before stepping optimizers
                     for pat_idx in np.arange(0,num_pats_curr): 
 
-                        # Pull out the patient's heads
-                        head=heads_curr[pat_idx] 
-
                         # Pull patient's data
                         data_tensor = data_tensor_by_pat[pat_idx]
 
                         # Reset the data vars for Transformer Sequence and put on GPU
                         x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.autoencode_samples).to(self.gpu_id)
 
+                        # HASHING: Get the patient channel order and patid_embedding for this channel order
+                        np.random.seed(seed=None) 
+                        rand_modifer = int(random.uniform(0, num_rand_hashes -1))
+                        hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
+                            input_string=dataset_curr.pat_ids[pat_idx], 
+                            num_channels=data_tensor.shape[1], 
+                            latent_dim=self.latent_dim, 
+                            modifier=rand_modifer)
+
                         # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
                         for embedding_idx in range(0, self.transformer_seq_length):
 
                             # Pull out data for this window
                             end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
-                            x[:, embedding_idx, :, :] = data_tensor[:, :, end_idx-self.autoencode_samples : end_idx]
+                            x[:, embedding_idx, :, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
 
                         # Stack the vars into batch dimension 
                         x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
@@ -807,10 +714,8 @@ class Trainer:
                         # b = torch.stack(a, dim=0)
 
                         ### VAE ENCODER
-                        # Forward pass in stacked batch through head then VAE encoder
-                        x_posthead = head(x_batched, reverse=False)
-                        # mean_batched, logvar_batched, latent_batched, = self.vae(x_posthead, reverse=False)
-                        mean_batched, logvar_batched, latent_batched = self.vae(x_posthead, reverse=False)
+                        # Forward pass in stacked batch through VAE encoder
+                        mean_batched, logvar_batched, latent_batched = self.vae(x_batched, reverse=False)
 
                         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
                         latent_seq = torch.split(latent_batched, self.transformer_seq_length, dim=0)
@@ -823,8 +728,7 @@ class Trainer:
                         ### VAE DECODER
                         # Run the predicted embeddings through decoder
                         predicted_embeddings_batched = predicted_embeddings.reshape(predicted_embeddings.shape[0]*predicted_embeddings.shape[1], predicted_embeddings.shape[2])                        
-                        core_out = self.vae(predicted_embeddings_batched, reverse=True)  
-                        x_hat_batched = head(core_out, reverse=True)
+                        x_hat_batched = self.vae(predicted_embeddings_batched, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=x_batched.shape[1])  
                         x_hat = torch.split(x_hat_batched, self.transformer_seq_length-1, dim=0)
                         x_hat = torch.stack(x_hat, dim=0)
  
@@ -847,7 +751,7 @@ class Trainer:
                         mean_loss = loss_functions.simple_mean_latent_loss(latent_seq, **kwargs)
 
                         # Intrapatient backprop
-                        loss = recon_loss + kld_loss + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        loss = recon_loss # + kld_loss + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
                         loss.backward()
 
                         # Realtime info as epoch is running
@@ -862,11 +766,7 @@ class Trainer:
                                     ", MeanLoss: " + str(round(loss.detach().item(), 2)) + ", [" + 
                                         "Rec: " + str(round(recon_loss.detach().item(), 2)) + " + " + 
                                         "KLD: {:0.3e}".format(kld_loss.detach().item(), 2) + " + " +
-                                        "Trnsfr {:0.3e}".format(transformer_loss.detach().item(), 2) + "], ") # + 
-                                    #     "Core LR: {:0.3e}".format(self.opt_vae.param_groups[0]['lr']) + 
-                                    #     ", Head LR: {:0.3e}".format(head_opts_curr.get_lr()) + 
-                                    #     ", Transformer LR: {:0.3e}".format(self.opt_transformer.param_groups[0]['lr']) +
-                                    # ", Beta: {:0.3e}".format(self.KL_multiplier) + "         ")
+                                        "Trnsfr {:0.3e}".format(transformer_loss.detach().item(), 2) + "], ") 
                                 sys.stdout.flush() 
 
                             # Log to WandB
@@ -882,7 +782,6 @@ class Trainer:
                                     train_kld_loss=kld_loss, 
                                     train_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     train_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
-                                    train_LR_heads=head_opts_curr.get_lr(),
                                     train_KL_Beta=self.KL_multiplier, 
                                     train_ReconWeight=self.recon_weight,
                                     train_Transformer_weight=self.transformer_weight,
@@ -894,7 +793,6 @@ class Trainer:
                                     val_finetune_recon_loss=recon_loss, 
                                     val_finetune_mean_loss=mean_loss,
                                     val_finetune_kld_loss=kld_loss, 
-                                    val_finetune_LR_heads=head_opts_curr.get_lr(),
                                     val_finetune_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     val_finetune_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
                                     val_finetune_KL_Beta=self.KL_multiplier, 
@@ -935,12 +833,12 @@ class Trainer:
                     # Step optimizers after all patients have been backpropgated
                     self.opt_transformer.step()
                     self.opt_vae.step()
-                    head_opts_curr.step()
                         
         
-        
-
 if __name__ == "__main__":
+
+    # Set the hash seed 
+    os.environ['PYTHONHASHSEED'] = '1234'  
 
     # Read in configuration file & setup the run
     config_f = 'train_config.yml'
