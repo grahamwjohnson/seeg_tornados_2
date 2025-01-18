@@ -2380,7 +2380,6 @@ def initialize_directories(
     if kwargs['continue_existing_training']:
 
         kwargs['model_dir'] = cont_train_model_dir
-        kwargs['pic_save_dir'] = kwargs['model_dir'] + '/latent_snapshots'
         kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs'
 
         # Find the epoch to start training
@@ -2408,11 +2407,8 @@ def initialize_directories(
         # Make run directories
         kwargs['model_dir'] = append_timestamp(kwargs['root_save_dir'] + '/trained_models/' + kwargs['run_params_dir_name'] + '/' + run_notes + '_')
         os.makedirs(kwargs['model_dir'])
-        kwargs['pic_save_dir'] = kwargs['model_dir'] + '/latent_snapshots'
-        os.makedirs(kwargs['pic_save_dir'])
         kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs'
         os.makedirs(kwargs['pic_dataset_dir'])
-        [os.makedirs(f"{kwargs['pic_save_dir']}/{pic_sub_dirs[i]}/{ptype}") for i in range(0, len(pic_sub_dirs)) for ptype in pic_types]
 
         # Fresh run 
         kwargs['start_epoch'] = 0

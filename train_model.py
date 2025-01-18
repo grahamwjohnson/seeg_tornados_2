@@ -129,7 +129,7 @@ def load_train_objs(
 
     return train_dataset, valfinetune_dataset, valunseen_dataset, transformer, vae, opt_vae, opt_transformer 
 
-def main(         
+def main(  
     # Ordered variables
     gpu_id: int, 
     world_size: int, 
@@ -142,6 +142,12 @@ def main(
     wdecode_batch_size: int,
     onlylatent_batch_size: int,
     train_subsample_file_factor: int,
+    valfinetune_subsample_file_factor: int,
+    valunseen_subsample_file_factor: int,
+    train_num_rand_hashes: int,
+    val_num_rand_hashes: int,
+    LR_val_vae: float,
+    LR_val_transformer: float,
     PaCMAP_model_to_infer = [],
     vae_state_dict_prev_path = [],
     vae_opt_state_dict_prev_path = [],
@@ -149,6 +155,11 @@ def main(
     opt_transformer_state_dict_prev_path = [],
     epochs_to_train: int = -1,
     **kwargs):
+
+    '''
+    Highest level loop to run train epochs, validate, pacmap... etc. 
+    
+    '''
 
     # Initialize new WandB here aand group GPUs together with DDP
     wandb.require("service")
@@ -217,7 +228,8 @@ def main(
             barrier()
             if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=False, savePaCMAP=True, **kwargs)
         
-        # AUTOREGRESSIVE INFERENCE
+        # AUTOREGRESSIVE INFERENCE 
+        # Training data
         if (trainer.epoch + 1) % trainer.autoreg_every == 0:
             trainer._set_to_eval()
             print("RUNNING AUTOREGRESSION on random pats/files")
@@ -230,6 +242,7 @@ def main(
         trainer._set_to_train()
         trainer._run_epoch(
             dataset_curr = trainer.train_dataset, 
+            dataset_string = "train",
             batchsize=trainer.wdecode_batch_size,
             random_bool = True, # will subsample and randomize
             subsample_file_factor_curr = train_subsample_file_factor, # only valid if 'random_bool' is True
@@ -237,12 +250,68 @@ def main(
             save_latents = False, # will save the latents to tmp_directory
             all_files_bool = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
             val_finetune = False,
+            val_unseen = False,
+            backprop = True,
+            num_rand_hashes = train_num_rand_hashes,
             **kwargs)
         
-        # Checkpoint after every train epoch, optionally delete old checkpoints
+        # CHECKPOINT
+        # After every train epoch, optionally delete old checkpoints
         print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
         barrier()
         if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=True, savePaCMAP=False, **kwargs)
+
+        # VALIDATE
+        if (trainer.epoch + 1) % trainer.val_every == 0:
+            # Save pre-finetune model/opt weights
+            vae_dict = trainer.vae.module.state_dict()
+            vae_opt_dict = trainer.opt_vae.state_dict()
+            transformer_dict = trainer.transformer.module.state_dict()
+            transformer_opt_dict = trainer.opt_transformer.state_dict()
+
+            # FINETUNE on beginning of validation patients (currently only one epoch)
+            # Set to train and change LR to validate settings
+            trainer._set_to_train()
+            trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
+            trainer.opt_transformer.param_groups[0]['lr'] = LR_val_transformer
+            trainer._run_epoch(
+                dataset_curr = trainer.valfinetune_dataset, 
+                dataset_string = "valfinetune",
+                batchsize=trainer.wdecode_batch_size,
+                random_bool = True, # will subsample and randomize
+                subsample_file_factor_curr = valfinetune_subsample_file_factor, # only valid if 'random_bool' is True
+                only_latent = False, # Do not run decoder or transformer
+                save_latents = False, # will save the latents to tmp_directory
+                all_files_bool = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+                val_finetune = True,
+                val_unseen = False,
+                backprop = True,
+                num_rand_hashes = val_num_rand_hashes,
+                **kwargs)
+
+            # Inference on UNSEEN portion of validation patients 
+            trainer._set_to_eval()
+            with torch.no_grad():
+                trainer._run_epoch(
+                    dataset_curr = trainer.valunseen_dataset, 
+                    dataset_string = "valunseen",
+                    batchsize=trainer.wdecode_batch_size,
+                    random_bool = True, # will subsample and randomize
+                    subsample_file_factor_curr = valunseen_subsample_file_factor, # only valid if 'random_bool' is True
+                    only_latent = False, # Do not run decoder or transformer
+                    save_latents = False, # will save the latents to tmp_directory
+                    all_files_bool = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+                    val_finetune = False,
+                    val_unseen = True,
+                    backprop = False,
+                    num_rand_hashes = val_num_rand_hashes,
+                    **kwargs)
+
+            # Restore model/opt weights to pre-finetune
+            trainer.vae.load_state_dict(vae_dict)
+            trainer.opt_vae.load_state_dict(vae_opt_dict)
+            trainer.transformer.load_state_dict(transformer_dict)
+            trainer.opt_transformer.load_state_dict(transformer_opt_dict)
 
     # Kill the process after training loop completes
     print(f"[GPU{gpu_id}]: End of train loop, killing subprocess")
@@ -267,9 +336,9 @@ class Trainer:
         wandb_run,
         model_dir: str,
         autoreg_every: int,
+        val_every: int,
         pacmap_every: int,
         finetune_pacmap: bool,
-        pic_save_dir: str,
         latent_dim: int,
         autoencode_samples: int,
         num_samples: int,
@@ -299,9 +368,9 @@ class Trainer:
         self.onlylatent_batch_size = onlylatent_batch_size
         self.model_dir = model_dir
         self.autoreg_every = autoreg_every
+        self.val_every = val_every
         self.pacmap_every = pacmap_every
         self.finetune_pacmap = finetune_pacmap
-        self.pic_save_dir = pic_save_dir
         self.latent_dim = latent_dim
         self.autoencode_samples = autoencode_samples
         self.num_samples = num_samples
@@ -586,7 +655,7 @@ class Trainer:
                     latent_context=autoreg_latent_context,
                     latent_predictions=autoreg_latent_pred, 
                     latent_target=autoreg_latent_target,
-                    savedir = self.model_dir + "/autoreg_latents",
+                    savedir = self.model_dir + f"/autoreg_plots/{dataset_string}/autoreg_latents",
                     **kwargs)
 
                 # Plot the raw predictions
@@ -598,7 +667,7 @@ class Trainer:
                     raw_context=context_raw,
                     raw_pred=autoreg_raw_pred,
                     raw_target=target_raw,
-                    savedir = self.model_dir + "/autoreg_raw",
+                    savedir = self.model_dir + f"/autoreg_plots/{dataset_string}/autoreg_raw",
                     **kwargs)
 
                 # Plot the Attention Scores along the generated sequence in First Transformer Layer (mean of heads)
@@ -608,8 +677,7 @@ class Trainer:
                     pat_id=pat_id,
                     rand_file_count=rand_file_count,
                     scores_allSeq_firstLayer_meanHeads_lastRow=scores_allSeq_firstLayer_meanHeads_lastRow, 
-                    savedir = self.model_dir + "/autoreg_attention",
-                )
+                    savedir = self.model_dir + f"/autoreg_plots/{dataset_string}/autoreg_attention")
 
                 # Kill after number of random files is complete
                 rand_file_count = rand_file_count + 1
@@ -618,6 +686,7 @@ class Trainer:
     def _run_epoch(
         self, 
         dataset_curr, 
+        dataset_string,
         batchsize,
         attention_dropout,
         random_bool, # will subsample and randomize
@@ -627,6 +696,8 @@ class Trainer:
         all_files_bool,
         num_dataloader_workers_SEQUENTIAL,
         val_finetune,
+        val_unseen,
+        backprop,
         realtime_latent_printing,
         realtime_printing_interval,
         num_rand_hashes,
@@ -662,13 +733,14 @@ class Trainer:
             for data_tensor_by_pat, file_name_by_pat in dataloader_curr: # Paralell random file pull accross patients
                 for start_idx in start_idxs: # Same start_idx for all patients (has no biological meaning)
 
-                    # Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
+                    # For Training: Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
                     self.KL_multiplier, self.curr_LR_core, self.transformer_LR = utils_functions.LR_and_weight_schedules(
                         epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
                     
-                    # Update LR
-                    self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
-                    self.opt_transformer.param_groups[0]['lr'] = self.transformer_LR
+                    # Update LR to schedule
+                    if (not val_finetune) & (not val_unseen):
+                        self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
+                        self.opt_transformer.param_groups[0]['lr'] = self.transformer_LR
 
                     # Reset the cumulative losses & zero gradients
                     kld_loss = 0
@@ -751,12 +823,13 @@ class Trainer:
                         mean_loss = loss_functions.simple_mean_latent_loss(latent_seq, **kwargs)
 
                         # Intrapatient backprop
-                        loss = recon_loss # + kld_loss + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
-                        loss.backward()
+                        loss = recon_loss + kld_loss # + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        if backprop: loss.backward()
 
                         # Realtime info as epoch is running
                         if (iter_curr%self.recent_display_iters==0):
                             if val_finetune: state_str = "VAL FINETUNE"
+                            elif val_unseen: state_str = "VAL UNSEEN"
                             else: state_str = "TRAIN"
                             now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
                             if (self.gpu_id == 1):
@@ -773,7 +846,7 @@ class Trainer:
                             wandb.define_metric('Steps')
                             wandb.define_metric("*", step_metric="Steps")
                             train_step = self.epoch * int(total_train_iters) + iter_curr
-                            if not val_finetune:
+                            if (not val_finetune) & (not val_unseen):
                                 metrics = dict(
                                     train_loss=loss,
                                     train_transformer_loss=transformer_loss,
@@ -786,7 +859,8 @@ class Trainer:
                                     train_ReconWeight=self.recon_weight,
                                     train_Transformer_weight=self.transformer_weight,
                                     train_epoch=self.epoch)
-                            else:
+
+                            elif val_finetune:
                                 metrics = dict(
                                     val_finetune_loss=loss, 
                                     val_finetune_transformer_loss=transformer_loss,
@@ -799,6 +873,20 @@ class Trainer:
                                     val_finetune_ReconWeight=self.recon_weight,
                                     val_finetune_Transformer_weight=self.transformer_weight,
                                     val_finetune_epoch=self.epoch)
+
+                            elif val_unseen:
+                                metrics = dict(
+                                    val_unseen_loss=loss, 
+                                    val_unseen_transformer_loss=transformer_loss,
+                                    val_unseen_recon_loss=recon_loss, 
+                                    val_unseen_mean_loss=mean_loss,
+                                    val_unseen_kld_loss=kld_loss, 
+                                    val_unseen_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
+                                    val_unseen_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
+                                    val_unseen_KL_Beta=self.KL_multiplier, 
+                                    val_unseen_ReconWeight=self.recon_weight,
+                                    val_unseen_Transformer_weight=self.transformer_weight,
+                                    val_unseen_epoch=self.epoch)
 
                             wandb.log({**metrics, 'Steps': train_step})
 
@@ -814,7 +902,7 @@ class Trainer:
                                 utils_functions.print_latent_realtime(
                                     target_emb = latent_seq[:, 1:, :].cpu().detach().numpy(), 
                                     predicted_emb = predicted_embeddings.cpu().detach().numpy(),
-                                    savedir = self.model_dir + "/realtime_latents",
+                                    savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
                                     epoch = self.epoch,
                                     iter_curr = iter_curr,
                                     pat_id = dataset_curr.pat_ids[pat_idx],
@@ -822,7 +910,7 @@ class Trainer:
                                 utils_functions.print_recon_realtime(
                                     x_decode_shifted=x[:, 1:, :, :], 
                                     x_hat=x_hat, 
-                                    savedir = self.model_dir + "/realtime_recon",
+                                    savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_recon",
                                     epoch = self.epoch,
                                     iter_curr = iter_curr,
                                     pat_id = dataset_curr.pat_ids[pat_idx],
