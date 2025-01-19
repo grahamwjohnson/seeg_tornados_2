@@ -83,8 +83,8 @@ valunseen_subsample_file_factor: 20480
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 4 # this is for when loss is not being calculated
 pseudobatch_onlylatent: 4096 # Maximum size to stack sequential parts of file into batch dimension during only latent inference
-pacmap_every: 1 # Must be within a 'quick_recon_val_every' to be reached
-finetune_pacmap: True
+pacmap_every: 60 # Must be within a 'quick_recon_val_every' to be reached
+finetune_pacmap: True  #(#*)(%&#()%&#)%(&*)
 quickval_red: 8 # This will divide num_samples in a file to do a very quick validation recon by truncating mid file
 val_every: 20
 num_rand_recon_plots: 4

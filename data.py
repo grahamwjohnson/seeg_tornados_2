@@ -116,7 +116,7 @@ class SEEG_Tornado_Dataset(Dataset):
 
             return min(file_counts)
     
-    def __getitem__(self, idx):
+    def __getitem__(self, idx): 
         
 
         if self.single_pat_seq:

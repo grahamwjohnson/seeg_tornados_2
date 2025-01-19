@@ -28,6 +28,7 @@ import pacmap
 import yaml
 import auraloss
 import wandb
+import math
 
 # Local Imports
 from utilities import latent_plotting
@@ -215,6 +216,7 @@ def main(
         onlylatent_batch_size=onlylatent_batch_size,
         PaCMAP_model_to_infer=PaCMAP_model_to_infer,
         wandb_run=wandb_run,
+        finetune_pacmap=finetune_pacmap,
         **kwargs)
     
     # Run through all epochs
@@ -231,23 +233,23 @@ def main(
                 transformer_dict = trainer.transformer.module.state_dict()
                 transformer_opt_dict = trainer.opt_transformer.state_dict()
 
-            # FINETUNE on beginning of validation patients (currently only one epoch)
-            # Set to train and change LR to validate settings
-            trainer._set_to_train()
-            trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
-            trainer.opt_transformer.param_groups[0]['lr'] = LR_val_transformer
-            trainer._run_epoch(
-                dataset_curr = trainer.valfinetune_dataset, 
-                dataset_string = "valfinetune",
-                batchsize=trainer.wdecode_batch_size,
-                random_bool = True, # will subsample and randomize
-                subsample_file_factor_curr = valfinetune_subsample_file_factor, # only valid if 'random_bool' is True
-                all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
-                val_finetune = True,
-                val_unseen = False,
-                backprop = True,
-                num_rand_hashes = val_num_rand_hashes,
-                **kwargs)
+                # FINETUNE on beginning of validation patients (currently only one epoch)
+                # Set to train and change LR to validate settings
+                trainer._set_to_train()
+                trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
+                trainer.opt_transformer.param_groups[0]['lr'] = LR_val_transformer
+                trainer._run_epoch(
+                    dataset_curr = trainer.valfinetune_dataset, 
+                    dataset_string = "valfinetune",
+                    batchsize=trainer.wdecode_batch_size,
+                    random_bool = True, # will subsample and randomize
+                    subsample_file_factor_curr = valfinetune_subsample_file_factor, # only valid if 'random_bool' is True
+                    all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+                    val_finetune = True,
+                    val_unseen = False,
+                    backprop = True,
+                    num_rand_hashes = val_num_rand_hashes,
+                    **kwargs)
 
             # INFERENCE on all datasets
             trainer._set_to_eval()
@@ -256,8 +258,8 @@ def main(
                 dataset_strs = ["train", "valfinetune", "valunseen"]
                 for d in range(0, len(dataset_list)):
                     trainer._run_epoch(
-                        dataset_curr = dataset_list[i], 
-                        dataset_string = dataset_strs[i],
+                        dataset_curr = dataset_list[d], 
+                        dataset_string = dataset_strs[d],
                         batchsize=trainer.onlylatent_batch_size,
                         random_bool = False, # will subsample and randomize
                         subsample_file_factor_curr = -1, # only valid if 'random_bool' is True
@@ -268,11 +270,13 @@ def main(
                         num_rand_hashes = -1,
                         **kwargs)
 
-            # PACMAP
-            trainer._pacmap(
-                dataset_strs, 
-                finetune_pacmap=finetune_pacmap, 
-                **kwargs)
+            # # PACMAP
+            # # Only initiate for one GPU process - but calculations are done on CPU
+            # if (gpu_id == 0):
+            #     utils_functions.pacmap(
+            #         dataset_strs, 
+            #         finetune_pacmap=finetune_pacmap, 
+            #         **kwargs)
 
             # Restore model/opt weights to pre-finetune
             if finetune_pacmap:
@@ -587,18 +591,6 @@ class Trainer:
                 utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch)
                 print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
 
-    def _pacmap(self, dataset_strs,  delete_latent_files, finetune_pacmap, **kwargs):
-        
-        raise Exception("TODO")
-
-        if finetune_pacmap:
-            raise Exception("TODO")
-
-
-        # If desired, delete the latent files after running pacmap
-        if delete_latent_files:
-            raise Exception("Need to code")
-
     def _train_start_idxs(self, subsample_file_factor, random_bool):
 
         np.random.seed(seed=None) # should replace with Generator for newer code
@@ -776,25 +768,70 @@ class Trainer:
                 dataset_curr.set_pat_curr(pat_idx)
                 dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
                 
-                raise Exception("not coded up")
-
                 # Go through every file in dataset
+                file_count = 0
+                for data_tensor, file_name in dataloader_curr:
 
+                    # Print status
+                    file_count = file_count + len(file_name)
+                    if (self.gpu_id == 0):
+                        sys.stdout.write(f"\rPat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP)               ") 
+                        sys.stdout.flush() 
 
                     # Pseudo batch the file to speed up processing - up to pseudobatch_onlylatent size each encode pass
-                    
                     # Determine how many pseudo windows are in file based on pseudobatch_onlylatent
+                    num_pseudo_windows = data_tensor.shape[2] / self.autoencode_samples / pseudobatch_onlylatent
+                    assert num_pseudo_windows % 1 == 0
+                    num_pseudo_windows = int(num_pseudo_windows)
+                    
+                    # Split the data by number of pseudo windows
+                    data_tensor_split = torch.stack(torch.split(data_tensor, self.autoencode_samples, dim=2), dim=1)
 
+                    # Create the sequential latent sequence array for the file
+                    num_windows_in_file = data_tensor.shape[2] / self.autoencode_samples
+                    assert (num_windows_in_file % 1) == 0
+                    num_windows_in_file = int(num_windows_in_file)
+                    file_latents = np.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim])
+
+                    for w in range(num_pseudo_windows):
                         # Pseudobatch and encode
+                        x = data_tensor_split[:, w * pseudobatch_onlylatent:  w * pseudobatch_onlylatent + pseudobatch_onlylatent, :, :]
+                        x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
+                        x_batched = x_batched.to(self.gpu_id)
 
-                    # After file complete, pacmap_window/stride the file and save
+                         ### VAE ENCODER
+                        # Forward pass in stacked batch through VAE encoder
+                        _, _, latent_batched = self.vae(x_batched, reverse=False)
+                        
+                        # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
+                        latent_seq = torch.split(latent_batched, pseudobatch_onlylatent, dim=0)
+                        file_latents[:, w * pseudobatch_onlylatent:  w * pseudobatch_onlylatent + pseudobatch_onlylatent, :] = torch.stack(latent_seq, dim=0).cpu().numpy()
+
+                    # After file complete, pacmap_window/stride the file and save each file from batch seperately
+                    num_latents_in_win = self.pre_PaCMAP_window_sec / (self.autoencode_samples / self.FS) 
+                    assert (num_latents_in_win % 1) == 0
+                    num_latents_in_win = int(num_latents_in_win)
+
+                    num_latents_in_stride = self.pre_PaCMAP_stride_sec / (self.autoencode_samples / self.FS) 
+                    assert (num_latents_in_stride % 1) == 0
+                    num_latents_in_stride = int(num_latents_in_stride)
+
+                    # May not go in evenly, that is ok
+                    num_strides_in_file = int((file_latents.shape[1] - num_latents_in_win) / num_latents_in_stride) 
+                    windowed_file_latent = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
+                    for s in range(num_strides_in_file):
+                        windowed_file_latent[:, s, :] = np.mean(file_latents[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
+
+                    # Save each windowed latent in a pickle for each file
+                    for b in range(data_tensor.shape[0]):
+                        filename_curr = file_name[b]
+                        save_dir = f"{self.model_dir}/latent_files/Epoch{self.epoch}/{dataset_string}"
+                        if not os.path.exists(save_dir): os.makedirs(save_dir)
+                        output_obj = open(f"{save_dir}/{filename_curr}_latent_{self.pre_PaCMAP_window_sec}secWindow_{self.pre_PaCMAP_stride_sec}secStride.pkl", 'wb')
+                        pickle.dump(windowed_file_latent[b, :, :], output_obj)
+                        output_obj.close()
 
 
-
-
-
-
-        
         ### SUBSET OF FILES ###
         # Can run the patients in parallel
         else: 

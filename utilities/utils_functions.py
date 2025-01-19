@@ -1419,6 +1419,17 @@ def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
         cmap(np.linspace(minval, maxval, n)))
     return new_cmap
 
+def pacmap(self, dataset_strs,  delete_latent_files, finetune_pacmap, **kwargs):
+    
+    raise Exception("TODO")
+
+    if finetune_pacmap:
+        raise Exception("TODO")
+
+
+    # If desired, delete the latent files after running pacmap
+    if delete_latent_files:
+        raise Exception("Need to code")
 
 
 # FILE I/O
