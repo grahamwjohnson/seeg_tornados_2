@@ -285,10 +285,10 @@ def main(
                 trainer.transformer.module.load_state_dict(transformer_dict)
                 trainer.opt_transformer.load_state_dict(transformer_opt_dict)
 
-            # Checkpoint after PACMAP, do not save finetuned model weights
-            print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
-            barrier()
-            if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=False, savePaCMAP=True, **kwargs)
+            # # Checkpoint after PACMAP, do not save finetuned model weights
+            # print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
+            # barrier()
+            # if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=False, savePaCMAP=True, **kwargs)
         
         # AUTOREGRESSIVE INFERENCE 
         # Training data
@@ -310,7 +310,7 @@ def main(
             batchsize=trainer.wdecode_batch_size,
             random_bool = True, # will subsample and randomize
             subsample_file_factor_curr = train_subsample_file_factor, # only valid if 'random_bool' is True
-            all_files_bool = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+            all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
             val_finetune = False,
             val_unseen = False,
             backprop = True,
@@ -756,6 +756,7 @@ class Trainer:
         print(f"autoencode_samples: {self.autoencode_samples}")
 
         ### ALL/FULL FILES - LATENT ONLY ### 
+        # This setting is used for inference
         # If wanting all files from every patient, need to run patients serially
         if all_files_latent_only: 
 
@@ -832,8 +833,9 @@ class Trainer:
                         output_obj.close()
 
 
-        ### SUBSET OF FILES ###
-        # Can run the patients in parallel
+        ### RANDOM SUBSET OF FILES ###
+        # This setting is used for regular training 
+        # Can run the patients in parallel with this setting
         else: 
             dataset_curr.set_pat_curr(-1) # -1 enables all pat mode
 
@@ -940,7 +942,7 @@ class Trainer:
                         mean_loss = loss_functions.simple_mean_latent_loss(latent_seq, **kwargs)
 
                         # Intrapatient backprop
-                        loss = recon_loss + kld_loss + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        loss = recon_loss # + kld_loss + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
                         if backprop: loss.backward()
 
                         # Realtime info as epoch is running
