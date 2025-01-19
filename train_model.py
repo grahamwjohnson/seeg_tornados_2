@@ -148,6 +148,7 @@ def main(
     val_num_rand_hashes: int,
     LR_val_vae: float,
     LR_val_transformer: float,
+    finetune_pacmap: bool, 
     PaCMAP_model_to_infer = [],
     vae_state_dict_prev_path = [],
     vae_opt_state_dict_prev_path = [],
@@ -158,7 +159,7 @@ def main(
 
     '''
     Highest level loop to run train epochs, validate, pacmap... etc. 
-    
+
     '''
 
     # Initialize new WandB here aand group GPUs together with DDP
@@ -222,7 +223,64 @@ def main(
 
         # PACMAP
         if (epoch > 0) & ((trainer.epoch + 1) % trainer.pacmap_every == 0):
-            trainer._pacmap(**kwargs)
+
+            # Save pre-finetune model/opt weights
+            if finetune_pacmap:
+                vae_dict = trainer.vae.module.state_dict()
+                vae_opt_dict = trainer.opt_vae.state_dict()
+                transformer_dict = trainer.transformer.module.state_dict()
+                transformer_opt_dict = trainer.opt_transformer.state_dict()
+
+            # FINETUNE on beginning of validation patients (currently only one epoch)
+            # Set to train and change LR to validate settings
+            trainer._set_to_train()
+            trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
+            trainer.opt_transformer.param_groups[0]['lr'] = LR_val_transformer
+            trainer._run_epoch(
+                dataset_curr = trainer.valfinetune_dataset, 
+                dataset_string = "valfinetune",
+                batchsize=trainer.wdecode_batch_size,
+                random_bool = True, # will subsample and randomize
+                subsample_file_factor_curr = valfinetune_subsample_file_factor, # only valid if 'random_bool' is True
+                all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+                val_finetune = True,
+                val_unseen = False,
+                backprop = True,
+                num_rand_hashes = val_num_rand_hashes,
+                **kwargs)
+
+            # INFERENCE on all datasets
+            trainer._set_to_eval()
+            with torch.no_grad():
+                dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
+                dataset_strs = ["train", "valfinetune", "valunseen"]
+                for d in range(0, len(dataset_list)):
+                    trainer._run_epoch(
+                        dataset_curr = dataset_list[i], 
+                        dataset_string = dataset_strs[i],
+                        batchsize=trainer.onlylatent_batch_size,
+                        random_bool = False, # will subsample and randomize
+                        subsample_file_factor_curr = -1, # only valid if 'random_bool' is True
+                        all_files_latent_only = True, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+                        val_finetune = False,
+                        val_unseen = False,
+                        backprop = False,
+                        num_rand_hashes = -1,
+                        **kwargs)
+
+            # PACMAP
+            trainer._pacmap(
+                dataset_strs, 
+                finetune_pacmap=finetune_pacmap, 
+                **kwargs)
+
+            # Restore model/opt weights to pre-finetune
+            if finetune_pacmap:
+                trainer.vae.module.load_state_dict(vae_dict)
+                trainer.opt_vae.load_state_dict(vae_opt_dict)
+                trainer.transformer.module.load_state_dict(transformer_dict)
+                trainer.opt_transformer.load_state_dict(transformer_opt_dict)
+
             # Checkpoint after PACMAP, do not save finetuned model weights
             print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
             barrier()
@@ -236,6 +294,8 @@ def main(
             with torch.no_grad():
                 trainer._random_autoreg_plots(
                     dataset_curr = trainer.train_dataset, 
+                    dataset_string = "train",
+                    num_rand_hashes = train_num_rand_hashes,
                     **kwargs)
 
         # TRAIN
@@ -246,8 +306,6 @@ def main(
             batchsize=trainer.wdecode_batch_size,
             random_bool = True, # will subsample and randomize
             subsample_file_factor_curr = train_subsample_file_factor, # only valid if 'random_bool' is True
-            only_latent = False, # Do not run decoder or transformer
-            save_latents = False, # will save the latents to tmp_directory
             all_files_bool = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
             val_finetune = False,
             val_unseen = False,
@@ -261,8 +319,9 @@ def main(
         barrier()
         if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=True, savePaCMAP=False, **kwargs)
 
-        # VALIDATE
-        if (trainer.epoch + 1) % trainer.val_every == 0:
+        # VALIDATE 
+        # (skip if it's a pacmap epoch because it will already have been done)
+        if ((trainer.epoch + 1) % trainer.val_every == 0) & ((trainer.epoch + 1) % trainer.pacmap_every != 0):
             # Save pre-finetune model/opt weights
             vae_dict = trainer.vae.module.state_dict()
             vae_opt_dict = trainer.opt_vae.state_dict()
@@ -280,9 +339,7 @@ def main(
                 batchsize=trainer.wdecode_batch_size,
                 random_bool = True, # will subsample and randomize
                 subsample_file_factor_curr = valfinetune_subsample_file_factor, # only valid if 'random_bool' is True
-                only_latent = False, # Do not run decoder or transformer
-                save_latents = False, # will save the latents to tmp_directory
-                all_files_bool = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+                all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
                 val_finetune = True,
                 val_unseen = False,
                 backprop = True,
@@ -298,9 +355,7 @@ def main(
                     batchsize=trainer.wdecode_batch_size,
                     random_bool = True, # will subsample and randomize
                     subsample_file_factor_curr = valunseen_subsample_file_factor, # only valid if 'random_bool' is True
-                    only_latent = False, # Do not run decoder or transformer
-                    save_latents = False, # will save the latents to tmp_directory
-                    all_files_bool = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+                    all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
                     val_finetune = False,
                     val_unseen = True,
                     backprop = False,
@@ -308,9 +363,9 @@ def main(
                     **kwargs)
 
             # Restore model/opt weights to pre-finetune
-            trainer.vae.load_state_dict(vae_dict)
+            trainer.vae.module.load_state_dict(vae_dict)
             trainer.opt_vae.load_state_dict(vae_opt_dict)
-            trainer.transformer.load_state_dict(transformer_dict)
+            trainer.transformer.module.load_state_dict(transformer_dict)
             trainer.opt_transformer.load_state_dict(transformer_opt_dict)
 
     # Kill the process after training loop completes
@@ -532,13 +587,17 @@ class Trainer:
                 utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch)
                 print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
 
-    def _pacmap(self, **kwargs):
-
-        if self.finetune_pacmap:
-            raise Exception("TODO")
-
+    def _pacmap(self, dataset_strs,  delete_latent_files, finetune_pacmap, **kwargs):
         
         raise Exception("TODO")
+
+        if finetune_pacmap:
+            raise Exception("TODO")
+
+
+        # If desired, delete the latent files after running pacmap
+        if delete_latent_files:
+            raise Exception("Need to code")
 
     def _train_start_idxs(self, subsample_file_factor, random_bool):
 
@@ -601,7 +660,7 @@ class Trainer:
 
         return autoreg_latent_context, autoreg_latent_pred, autoreg_latent_target, x_hat, scores_allSeq_firstLayer_meanHeads_lastRow
 
-    def _random_autoreg_plots(self, dataset_curr, autoreg_num_rand_pats, autoreg_context_tokens, autoreg_tokens_to_gen, autoreg_batchsize, autoreg_num_rand_files, num_rand_hashes, num_dataloader_workers_SEQUENTIAL, **kwargs):
+    def _random_autoreg_plots(self, dataset_curr, dataset_string, autoreg_num_rand_pats, autoreg_context_tokens, autoreg_tokens_to_gen, autoreg_batchsize, autoreg_num_rand_files, num_rand_hashes, num_dataloader_workers_SEQUENTIAL, **kwargs):
 
         # Set up which pats will be selected for random autoreg
         np.random.seed(seed=None) # should replace with Generator for newer code        
@@ -691,9 +750,7 @@ class Trainer:
         attention_dropout,
         random_bool, # will subsample and randomize
         subsample_file_factor_curr, # only valid if 'random' is True
-        only_latent,
-        save_latents, 
-        all_files_bool,
+        all_files_latent_only,
         num_dataloader_workers_SEQUENTIAL,
         val_finetune,
         val_unseen,
@@ -701,18 +758,41 @@ class Trainer:
         realtime_latent_printing,
         realtime_printing_interval,
         num_rand_hashes,
+        pseudobatch_onlylatent,
         **kwargs):
 
         print(f"autoencode_samples: {self.autoencode_samples}")
 
-        ### ALL FILES ### 
+        ### ALL/FULL FILES - LATENT ONLY ### 
         # If wanting all files from every patient, need to run patients serially
-        if all_files_bool: 
-            # Go through every subject 
+        if all_files_latent_only: 
+
+            # Check for erroneous configs
+            if backprop or random_bool or val_finetune or val_unseen:
+                raise Exception("ERROR: innapropriate config: if running all files then backprop/random_bool/val_finetune/val_unseen must all be False")
+
+            # Go through every subject in this dataset
             for pat_idx in range(0,len(dataset_curr.pat_ids)):
                 dataset_curr.set_pat_curr(pat_idx)
                 dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
+                
                 raise Exception("not coded up")
+
+                # Go through every file in dataset
+
+
+                    # Pseudo batch the file to speed up processing - up to pseudobatch_onlylatent size each encode pass
+                    
+                    # Determine how many pseudo windows are in file based on pseudobatch_onlylatent
+
+                        # Pseudobatch and encode
+
+                    # After file complete, pacmap_window/stride the file and save
+
+
+
+
+
 
         
         ### SUBSET OF FILES ###
@@ -823,7 +903,7 @@ class Trainer:
                         mean_loss = loss_functions.simple_mean_latent_loss(latent_seq, **kwargs)
 
                         # Intrapatient backprop
-                        loss = recon_loss + kld_loss # + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        loss = recon_loss + kld_loss + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
                         if backprop: loss.backward()
 
                         # Realtime info as epoch is running
