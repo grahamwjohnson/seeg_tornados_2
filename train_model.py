@@ -226,69 +226,69 @@ def main(
         # PACMAP
         if (epoch > 0) & ((trainer.epoch + 1) % trainer.pacmap_every == 0):
 
-            # Save pre-finetune model/opt weights
-            if finetune_pacmap:
-                vae_dict = trainer.vae.module.state_dict()
-                vae_opt_dict = trainer.opt_vae.state_dict()
-                transformer_dict = trainer.transformer.module.state_dict()
-                transformer_opt_dict = trainer.opt_transformer.state_dict()
+            # # Save pre-finetune model/opt weights
+            # if finetune_pacmap:
+            #     vae_dict = trainer.vae.module.state_dict()
+            #     vae_opt_dict = trainer.opt_vae.state_dict()
+            #     transformer_dict = trainer.transformer.module.state_dict()
+            #     transformer_opt_dict = trainer.opt_transformer.state_dict()
 
-                # FINETUNE on beginning of validation patients (currently only one epoch)
-                # Set to train and change LR to validate settings
-                trainer._set_to_train()
-                trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
-                trainer.opt_transformer.param_groups[0]['lr'] = LR_val_transformer
-                trainer._run_epoch(
-                    dataset_curr = trainer.valfinetune_dataset, 
-                    dataset_string = "valfinetune",
-                    batchsize=trainer.wdecode_batch_size,
-                    random_bool = True, # will subsample and randomize
-                    subsample_file_factor_curr = valfinetune_subsample_file_factor, # only valid if 'random_bool' is True
-                    all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
-                    val_finetune = True,
-                    val_unseen = False,
-                    backprop = True,
-                    num_rand_hashes = val_num_rand_hashes,
-                    **kwargs)
-
-            # INFERENCE on all datasets
-            trainer._set_to_eval()
-            with torch.no_grad():
-                dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
-                dataset_strs = ["train", "valfinetune", "valunseen"]
-                for d in range(0, len(dataset_list)):
-                    trainer._run_epoch(
-                        dataset_curr = dataset_list[d], 
-                        dataset_string = dataset_strs[d],
-                        batchsize=trainer.onlylatent_batch_size,
-                        random_bool = False, # will subsample and randomize
-                        subsample_file_factor_curr = -1, # only valid if 'random_bool' is True
-                        all_files_latent_only = True, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
-                        val_finetune = False,
-                        val_unseen = False,
-                        backprop = False,
-                        num_rand_hashes = -1,
-                        **kwargs)
-
-            # # PACMAP
-            # # Only initiate for one GPU process - but calculations are done on CPU
-            # if (gpu_id == 0):
-            #     utils_functions.pacmap(
-            #         dataset_strs, 
-            #         finetune_pacmap=finetune_pacmap, 
+            #     # FINETUNE on beginning of validation patients (currently only one epoch)
+            #     # Set to train and change LR to validate settings
+            #     trainer._set_to_train()
+            #     trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
+            #     trainer.opt_transformer.param_groups[0]['lr'] = LR_val_transformer
+            #     trainer._run_epoch(
+            #         dataset_curr = trainer.valfinetune_dataset, 
+            #         dataset_string = "valfinetune",
+            #         batchsize=trainer.wdecode_batch_size,
+            #         random_bool = True, # will subsample and randomize
+            #         subsample_file_factor_curr = valfinetune_subsample_file_factor, # only valid if 'random_bool' is True
+            #         all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+            #         val_finetune = True,
+            #         val_unseen = False,
+            #         backprop = True,
+            #         num_rand_hashes = val_num_rand_hashes,
             #         **kwargs)
 
-            # Restore model/opt weights to pre-finetune
-            if finetune_pacmap:
-                trainer.vae.module.load_state_dict(vae_dict)
-                trainer.opt_vae.load_state_dict(vae_opt_dict)
-                trainer.transformer.module.load_state_dict(transformer_dict)
-                trainer.opt_transformer.load_state_dict(transformer_opt_dict)
+            # # INFERENCE on all datasets
+            dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
+            dataset_strs = ["train", "valfinetune", "valunseen"]
+            # trainer._set_to_eval()
+            # with torch.no_grad():
+            #     for d in range(0, len(dataset_list)):
+            #         trainer._run_epoch(
+            #             dataset_curr = dataset_list[d], 
+            #             dataset_string = dataset_strs[d],
+            #             batchsize=trainer.onlylatent_batch_size,
+            #             random_bool = False, # will subsample and randomize
+            #             subsample_file_factor_curr = -1, # only valid if 'random_bool' is True
+            #             all_files_latent_only = True, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+            #             val_finetune = False,
+            #             val_unseen = False,
+            #             backprop = False,
+            #             num_rand_hashes = -1,
+            #             **kwargs)
 
-            # # Checkpoint after PACMAP, do not save finetuned model weights
-            # print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
-            # barrier()
-            # if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=False, savePaCMAP=True, **kwargs)
+            # PACMAP
+            # Only initiate for one GPU process - but calculations are done on CPU
+            if (gpu_id == 0): 
+                # New pacmap run for every win/stride combination
+                for i in range(len(trainer.pre_PaCMAP_window_sec_list)):
+                    utils_functions.run_pacmap(
+                        dataset_strs=dataset_strs, 
+                        epoch=epoch, 
+                        win_sec=trainer.pre_PaCMAP_window_sec_list[i], 
+                        stride_sec=trainer.pre_PaCMAP_stride_sec_list[i], 
+                        latent_subdir=f"/latent_files/Epoch{epoch}", 
+                        **kwargs)
+
+            # # Restore model/opt weights to pre-finetune
+            # if finetune_pacmap:
+            #     trainer.vae.module.load_state_dict(vae_dict)
+            #     trainer.opt_vae.load_state_dict(vae_opt_dict)
+            #     trainer.transformer.module.load_state_dict(transformer_dict)
+            #     trainer.opt_transformer.load_state_dict(transformer_opt_dict)
         
         # AUTOREGRESSIVE INFERENCE 
         # Training data
@@ -321,7 +321,7 @@ def main(
         # After every train epoch, optionally delete old checkpoints
         print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
         barrier()
-        if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=True, savePaCMAP=False, **kwargs)
+        if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, **kwargs)
 
         # VALIDATE 
         # (skip if it's a pacmap epoch because it will already have been done)
@@ -408,8 +408,8 @@ class Trainer:
         recon_weight: float,
         atd_file: str,
         PaCMAP_model_to_infer,
-        pre_PaCMAP_window_sec: float,
-        pre_PaCMAP_stride_sec: float,
+        pre_PaCMAP_window_sec_list: list,
+        pre_PaCMAP_stride_sec_list: list,
         recent_display_iters: int,
         **kwargs
     ) -> None:
@@ -441,11 +441,13 @@ class Trainer:
         self.recon_weight = recon_weight
         self.atd_file = atd_file
         self.PaCMAP_model_to_infer = PaCMAP_model_to_infer
-        self.pre_PaCMAP_window_sec = pre_PaCMAP_window_sec
-        self.pre_PaCMAP_stride_sec = pre_PaCMAP_stride_sec
+        self.pre_PaCMAP_window_sec_list = pre_PaCMAP_window_sec_list
+        self.pre_PaCMAP_stride_sec_list = pre_PaCMAP_stride_sec_list
         self.recent_display_iters = recent_display_iters
         self.wandb_run = wandb_run
         self.kwargs = kwargs
+
+        assert len(self.pre_PaCMAP_window_sec_list) == len(self.pre_PaCMAP_stride_sec_list)
 
         self.KL_multiplier = -1 # dummy variable, only needed when debugging and training is skipped
 
@@ -472,124 +474,51 @@ class Trainer:
         self.opt_vae.zero_grad()
         self.opt_transformer.zero_grad()
 
-    def _save_checkpoint(self, epoch, saveModels, savePaCMAP, delete_old_checkpoints, **kwargs):
+    def _save_checkpoint(self, epoch, delete_old_checkpoints, **kwargs):
             
-            print("CHECKPOINT SAVE")
+        print("CHECKPOINT SAVE")
 
-            # Create new directory for this epoch
-            base_checkpoint_dir = self.model_dir + f"/checkpoints"
-            check_epoch_dir = base_checkpoint_dir + f"/Epoch_{str(epoch)}"
+        # Create new directory for this epoch
+        base_checkpoint_dir = self.model_dir + f"/checkpoints"
+        check_epoch_dir = base_checkpoint_dir + f"/Epoch_{str(epoch)}"
 
-            # MODEL SAVES
-            if saveModels:
+        print("Saving vae model weights")
 
-                print("Saving vae model weights")
+        ### VAE CHECKPOINT 
+        check_core_dir = check_epoch_dir + "/core_checkpoints"
+        if not os.path.exists(check_core_dir): os.makedirs(check_core_dir)
 
-                ### VAE CHECKPOINT 
-                check_core_dir = check_epoch_dir + "/core_checkpoints"
-                if not os.path.exists(check_core_dir): os.makedirs(check_core_dir)
+        # Save vae model
+        ckp = self.vae.module.state_dict()
+        check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae.pt"
+        torch.save(ckp, check_path)
 
-                # Save vae model
-                ckp = self.vae.module.state_dict()
-                check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae.pt"
-                torch.save(ckp, check_path)
+        # Save vae core
+        opt_ckp = self.opt_vae.state_dict()
+        opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_opt.pt"
+        torch.save(opt_ckp, opt_path)
 
-                # Save vae core
-                opt_ckp = self.opt_vae.state_dict()
-                opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_opt.pt"
-                torch.save(opt_ckp, opt_path)
+        ### TRANSFORMER CHECKPOINT ###
 
-                ### TRANSFORMER CHECKPOINT ###
+        print("Saving Transformer model weights")
 
-                print("Saving Transformer model weights")
+        # Save transformer model
+        check_transformer_dir = check_epoch_dir + "/transformer_checkpoints"
+        if not os.path.exists(check_transformer_dir): os.makedirs(check_transformer_dir)
+        ckp = self.transformer.module.state_dict()
+        check_path = check_transformer_dir + "/checkpoint_epoch" +str(epoch) + "_transformer.pt"
+        torch.save(ckp, check_path)
+        
+        # Save transformer optimizer
+        opt_ckp = self.opt_transformer.state_dict()
+        opt_path = check_transformer_dir + "/checkpoint_epoch" +str(epoch) + "_opt_transformer.pt"
+        torch.save(opt_ckp, opt_path)
 
-                # Save transformer model
-                check_transformer_dir = check_epoch_dir + "/transformer_checkpoints"
-                if not os.path.exists(check_transformer_dir): os.makedirs(check_transformer_dir)
-                ckp = self.transformer.module.state_dict()
-                check_path = check_transformer_dir + "/checkpoint_epoch" +str(epoch) + "_transformer.pt"
-                torch.save(ckp, check_path)
-                
-                # Save transformer optimizer
-                opt_ckp = self.opt_transformer.state_dict()
-                opt_path = check_transformer_dir + "/checkpoint_epoch" +str(epoch) + "_opt_transformer.pt"
-                torch.save(opt_ckp, opt_path)
+        print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
 
-                print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
-
-
-            ### PACMAP & HDBSCAN
-            if savePaCMAP:
-
-                print("Saving PaCMAP models")
-
-                # Path
-                pacmap_dir = check_epoch_dir + "/pacmap"
-                if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir) 
-
-                # Save the PaCMAP model for use in inference
-                PaCMAP_common_prefix = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_PaCMAP"
-                pacmap.save(self.PaCMAP, PaCMAP_common_prefix)
-
-                PaCMAP_common_prefix_MedDim = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_PaCMAP_MedDim"
-                pacmap.save(self.PaCMAP_MedDim, PaCMAP_common_prefix_MedDim)
-
-                pre_PaCMAP_window_sec_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_pre_PaCMAP_window_sec.pkl"
-                output_obj2 = open(pre_PaCMAP_window_sec_path, 'wb')
-                pickle.dump(self.pre_PaCMAP_window_sec, output_obj2)
-                output_obj2.close()
-
-                pre_PaCMAP_stride_sec_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_pre_PaCMAP_stride_sec.pkl"
-                output_obj3 = open(pre_PaCMAP_stride_sec_path, 'wb')
-                pickle.dump(self.pre_PaCMAP_stride_sec, output_obj3)
-                output_obj3.close()
-                print("Saved PaCMAP 2-dim and MedDim models")
-
-                hdbscan_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_hdbscan.pkl"
-                output_obj4 = open(hdbscan_path, 'wb')
-                pickle.dump(self.HDBSCAN, output_obj4)
-                output_obj4.close()
-                print("Saved HDBSCAN model")
-
-                pca_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_PCA.pkl"
-                output_obj5 = open(pca_path, 'wb')
-                pickle.dump(self.pca, output_obj5)
-                output_obj5.close()
-                print("Saved PCA model")
-
-                reorder_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_cluster_reorder_indexes.pkl"
-                output_obj6 = open(reorder_path, 'wb')
-                pickle.dump(self.cluster_reorder_indexes, output_obj6)
-                output_obj6.close()
-                print("Saved cluster reorder indexes")
-
-                xylim_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_xy_lims.pkl"
-                output_obj7 = open(xylim_path, 'wb')
-                pickle.dump(self.xy_lims, output_obj7)
-                output_obj7.close()
-                print("Saved xy_lims for PaCMAP")
-
-                xylims_RAWDIMS_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_xy_lims_RAW_DIMS.pkl"
-                output_obj8 = open(xylims_RAWDIMS_path, 'wb')
-                pickle.dump(self.xy_lims_RAW_DIMS, output_obj8)
-                output_obj8.close()
-                print("Saved xy_lims RAW DIMS")
-
-                xylims_PCA_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_xy_lims_PCA.pkl"
-                output_obj9 = open(xylims_PCA_path, 'wb')
-                pickle.dump(self.xy_lims_PCA, output_obj9)
-                output_obj9.close()
-                print("Saved xy_lims PCA")
-
-                infoscore_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_info_score_idxs.pkl"
-                output_obj10 = open(infoscore_path, 'wb')
-                pickle.dump(self.info_score_idxs, output_obj10)
-                output_obj10.close()
-                print("Saved info score indexes for raw dims")
-
-            if delete_old_checkpoints:
-                utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch)
-                print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
+        if delete_old_checkpoints:
+            utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch)
+            print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
 
     def _train_start_idxs(self, subsample_file_factor, random_bool):
 
@@ -809,28 +738,33 @@ class Trainer:
                         file_latents[:, w * pseudobatch_onlylatent:  w * pseudobatch_onlylatent + pseudobatch_onlylatent, :] = torch.stack(latent_seq, dim=0).cpu().numpy()
 
                     # After file complete, pacmap_window/stride the file and save each file from batch seperately
-                    num_latents_in_win = self.pre_PaCMAP_window_sec / (self.autoencode_samples / self.FS) 
-                    assert (num_latents_in_win % 1) == 0
-                    num_latents_in_win = int(num_latents_in_win)
+                    # Seperate directory for each win/stride combination
+                    for i in range(len(self.pre_PaCMAP_window_sec_list)):
+                        win_sec_curr = self.pre_PaCMAP_window_sec_list[i]
+                        stride_sec_curr = self.pre_PaCMAP_stride_sec_list[i]
+                        
+                        num_latents_in_win = win_sec_curr / (self.autoencode_samples / self.FS) 
+                        assert (num_latents_in_win % 1) == 0
+                        num_latents_in_win = int(num_latents_in_win)
 
-                    num_latents_in_stride = self.pre_PaCMAP_stride_sec / (self.autoencode_samples / self.FS) 
-                    assert (num_latents_in_stride % 1) == 0
-                    num_latents_in_stride = int(num_latents_in_stride)
+                        num_latents_in_stride = stride_sec_curr / (self.autoencode_samples / self.FS) 
+                        assert (num_latents_in_stride % 1) == 0
+                        num_latents_in_stride = int(num_latents_in_stride)
 
-                    # May not go in evenly, that is ok
-                    num_strides_in_file = int((file_latents.shape[1] - num_latents_in_win) / num_latents_in_stride) 
-                    windowed_file_latent = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
-                    for s in range(num_strides_in_file):
-                        windowed_file_latent[:, s, :] = np.mean(file_latents[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
+                        # May not go in evenly, that is ok
+                        num_strides_in_file = int((file_latents.shape[1] - num_latents_in_win) / num_latents_in_stride) 
+                        windowed_file_latent = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
+                        for s in range(num_strides_in_file):
+                            windowed_file_latent[:, s, :] = np.mean(file_latents[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
 
-                    # Save each windowed latent in a pickle for each file
-                    for b in range(data_tensor.shape[0]):
-                        filename_curr = file_name[b]
-                        save_dir = f"{self.model_dir}/latent_files/Epoch{self.epoch}/{dataset_string}"
-                        if not os.path.exists(save_dir): os.makedirs(save_dir)
-                        output_obj = open(f"{save_dir}/{filename_curr}_latent_{self.pre_PaCMAP_window_sec}secWindow_{self.pre_PaCMAP_stride_sec}secStride.pkl", 'wb')
-                        pickle.dump(windowed_file_latent[b, :, :], output_obj)
-                        output_obj.close()
+                        # Save each windowed latent in a pickle for each file
+                        for b in range(data_tensor.shape[0]):
+                            filename_curr = file_name[b]
+                            save_dir = f"{self.model_dir}/latent_files/Epoch{self.epoch}/{win_sec_curr}SecondWindow_{stride_sec_curr}SecondStride/{dataset_string}"
+                            if not os.path.exists(save_dir): os.makedirs(save_dir)
+                            output_obj = open(f"{save_dir}/{filename_curr}_latent_{self.win_sec_curr}secWindow_{self.stride_sec_curr}secStride.pkl", 'wb')
+                            pickle.dump(windowed_file_latent[b, :, :], output_obj)
+                            output_obj.close()
 
 
         ### RANDOM SUBSET OF FILES ###

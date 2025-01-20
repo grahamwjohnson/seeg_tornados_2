@@ -112,7 +112,7 @@ def cmap_map(function, cmap):
 
 
 def plot_latent(
-    ax, interCont_ax, seiztype_ax, time_ax, cluster_ax, 
+    ax, interCont_ax, seiztype_ax, time_ax, cluster_ax,  
     latent_data, modified_samp_freq, start_datetimes, stop_datetimes, 
     win_sec, stride_sec, seiz_start_dt, seiz_stop_dt, seiz_types,
     preictal_dur, postictal_dur, seiz_type_list, seiz_plot_mult, hdb_labels, hdb_probabilities, hdb,

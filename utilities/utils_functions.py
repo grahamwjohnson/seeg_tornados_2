@@ -95,9 +95,7 @@ def get_num_channels(pat_id, pat_num_channels_LUT):
 def epoch_contains_pacmap_hdbscan(model_dir, epoch, return_paths=False):
 
     needed_files = [
-        f'checkpoint_epoch{epoch}_cluster_reorder_indexes.pkl', # for cluster timeline
         f'checkpoint_epoch{epoch}_hdbscan.pkl',
-        f'checkpoint_epoch{epoch}_cluster_reorder_indexes.pkl',
         f'checkpoint_epoch{epoch}_PaCMAP.ann',
         f'checkpoint_epoch{epoch}_PaCMAP.pkl',
         f'checkpoint_epoch{epoch}_PaCMAP_MedDim.ann',
@@ -108,7 +106,6 @@ def epoch_contains_pacmap_hdbscan(model_dir, epoch, return_paths=False):
         f'checkpoint_epoch{epoch}_xy_lims.pkl',
         f'checkpoint_epoch{epoch}_xy_lims_RAW_DIMS.pkl',
         f'checkpoint_epoch{epoch}_xy_lims_PCA.pkl',
-        f'checkpoint_epoch{epoch}_info_score_idxs.pkl'
     ]
 
     found_file_paths = [''] * len(needed_files)
@@ -655,7 +652,7 @@ def print_autoreg_latent_predictions(gpu_id, epoch, pat_id, rand_file_count, lat
 
         sns.jointplot(data=df, x="target_emb", y="predicted_emb", hue="dimension")
         fig.suptitle(f"{pat_id}, epoch: {epoch}, file: {rand_file_count}")
-        if gpu_id == 0: time.sleep(1)
+        if gpu_id == 0: time.sleep(0.1)
         if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
         if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
         savename_jpg = f"{savedir}/JPEGs/AutoregressiveLatent_epoch{epoch}_{pat_id}_batch{b}_randfile{rand_file_count}_gpu{gpu_id}.jpg"
@@ -703,7 +700,7 @@ def print_autoreg_raw_predictions(gpu_id, epoch, pat_id, rand_file_count, raw_co
             ax.set_title(f"Ch:{random_ch_idxs[c]}")
             
         fig.suptitle(f"Ch:{random_ch_idxs}")
-        if gpu_id == 0: time.sleep(1)
+        if gpu_id == 0: time.sleep(0.1)
         if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
         if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
         savename_jpg = f"{savedir}/JPEGs/AutoregressiveRecon_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.jpg"
@@ -739,7 +736,7 @@ def print_autoreg_AttentionScores_AlongSeq(gpu_id, epoch, pat_id, rand_file_coun
         ax1.set_ylabel("Attention Weight by Current Past Index")
             
         fig.suptitle(f"Attention Weights")
-        if gpu_id == 0: time.sleep(1)
+        if gpu_id == 0: time.sleep(0.1)
         if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
         if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
         savename_jpg = f"{savedir}/JPEGs/AutoregressiveAttention_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.jpg"
@@ -843,33 +840,17 @@ def plot_recon(x, x_hat, plot_dict, batch_file_names, epoch, savedir, gpu_id, pa
         pl.savefig(savename_svg)
         pl.close(fig) 
         
-def pacmap_latent(  
-    FS, 
-    latent_data_windowed,
-    in_data_samples,
-    decode_samples,
-    start_datetimes_epoch,
+def pacmap_subfunction(  
+    pat_ids_list,
+    latent_data_windowed, 
+    start_datetimes_epoch,  
     stop_datetimes_epoch,
     epoch, 
-    iter, 
-    gpu_id, 
+    FS, 
     win_sec, 
     stride_sec, 
-    absolute_latent,
-    file_name,
     savedir,
-    pat_ids_list, 
-    plot_dict,
-    premade_PaCMAP,
-    premade_PaCMAP_MedDim,
     pacmap_MedDim_numdims,
-    premade_PCA,
-    premade_HDBSCAN,
-    xy_lims,
-    info_score_idxs,
-    xy_lims_RAW_DIMS,
-    xy_lims_PCA,
-    cluster_reorder_indexes,
     pacmap_LR,
     pacmap_NumIters,
     pacmap_NN,
@@ -881,21 +862,40 @@ def pacmap_latent(
     HDBSCAN_min_samples,
     interictal_contour=False,
     verbose=True,
+    xy_lims = [],
+    xy_lims_RAW_DIMS = [],
+    xy_lims_PCA = [],
+    premade_PaCMAP = [],
+    premade_PaCMAP_MedDim = [],
+    premade_PCA = [],
+    premade_HDBSCAN = [],
     **kwargs):
 
-    # Goal of function:
-    # Make 2D PaCMAP, make 10D PaCMAP, HDBSCAN cluster on 10D, visualize clusters on 2D
+    '''
+    Goal of function:
+    Make 2D PaCMAP, make 10D PaCMAP, HDBSCAN cluster on 10D, visualize clusters on 2D
 
-    WIN_STYLE='end'
+    '''
 
     # Metadata
-    latent_dim = latent_data_windowed[0][0].shape[0]
-    num_timepoints_in_windowed_file = latent_data_windowed[0][0].shape[1]
+    latent_dim = latent_data_windowed[0].shape[1]
+    num_timepoints_in_windowed_file = latent_data_windowed[0].shape[0]
     modified_FS = 1 / stride_sec
 
-    # Flatten data into [points, dim] to feed into PaCMAP, original data is [pat, file, dim, points]
-    latent_windowed_flat_perpat = [np.concatenate(latent_data_windowed[i], axis=1).swapaxes(0,1) for i in range(len(latent_data_windowed))]
-    latent_PaCMAP_input = np.concatenate(latent_windowed_flat_perpat, axis=0)
+    # Check for NaNs in files
+    delete_file_idxs = []
+    for i in range(len(latent_data_windowed)):
+        if np.sum(np.isnan(latent_data_windowed[i])) > 0:
+            delete_file_idxs = delete_file_idxs + [i]
+            print(f"WARNING: Deleted file {start_datetimes_epoch[i]} that had NaNs")
+
+    # Delete files with NaN
+    latent_data_windowed = [item for i, item in enumerate(latent_data_windowed) if i not in delete_file_idxs]
+    start_datetimes_epoch = [item for i, item in enumerate(start_datetimes_epoch) if i not in delete_file_idxs]  
+    stop_datetimes_epoch = [item for i, item in enumerate(stop_datetimes_epoch) if i not in delete_file_idxs]
+
+    # Flatten data into [miniepoch, dim] to feed into PaCMAP, original data is [file, seq_miniepoch_in_file, latent_dim]
+    latent_PaCMAP_input = np.concatenate(latent_data_windowed, axis=0)
 
     # PaCMAP 2-Dim
     # Make new PaCMAP
@@ -923,14 +923,15 @@ def pacmap_latent(
         print("Using existing 2-dim PaCMAP for visualization")
         reducer = premade_PaCMAP
 
-    # Project data through reducer (i.e. PaCMAP) one patient at a time
-    latent_flat_postPaCMAP_perpat = [reducer.transform(latent_windowed_flat_perpat[i]) for i in range(len(latent_windowed_flat_perpat))]
-    latent_embedding_allFiles_perpat = [latent_flat_postPaCMAP_perpat[i].reshape(num_timepoints_in_windowed_file, -1, 2).swapaxes(1, 2).swapaxes(0, 2) for i in range(len(latent_windowed_flat_perpat))]
+    # Project data through reducer (i.e. PaCMAP) one file at a time
+    latent_postPaCMAP_perfile = [reducer.transform(latent_data_windowed[i]) for i in range(len(latent_data_windowed))]
+    # latent_flat_postPaCMAP_perpat = [reducer.transform(latent_windowed_flat_perpat[i]) for i in range(len(latent_windowed_flat_perpat))]
+    # latent_embedding_allFiles_perpat = [latent_flat_postPaCMAP_perpat[i].reshape(num_timepoints_in_windowed_file, -1, 2).swapaxes(1, 2).swapaxes(0, 2) for i in range(len(latent_windowed_flat_perpat))]
 
     # **** PaCMAP (MedDim)--> HDBSCAN ***** i.e. NOTE This is the pacmap used for clustering
     if premade_PaCMAP_MedDim == []: 
         # Make new PaCMAP
-        print("Making new medium dim PaCMAP to use for HDBSCAN clustering")
+        print("Making new Medium-dim PaCMAP to use for HDBSCAN clustering")
         
         # initializing the pacmap instance
         # Setting n_neighbors to "None" leads to a default choice shown below in "parameter" section
@@ -955,11 +956,12 @@ def pacmap_latent(
         reducer_MedDim = premade_PaCMAP_MedDim
 
     # Project data through reducer (i.e. PaCMAP) to get embeddings in shape [timepoint, med-dim, file]
-    latent_flat_postPaCMAP_perpat_MEDdim = [reducer_MedDim.transform(latent_windowed_flat_perpat[i]) for i in range(len(latent_windowed_flat_perpat))]
+    latent_postPaCMAP_perfile_MEDdim = [reducer_MedDim.transform(latent_data_windowed[i]) for i in range(len(latent_data_windowed))]
+    # latent_flat_postPaCMAP_perpat_MEDdim = [reducer_MedDim.transform(latent_windowed_flat_perpat[i]) for i in range(len(latent_windowed_flat_perpat))]
     # latent_embedding_allFiles_MEDdim_perpat = [latent_flat_postPaCMAP_perpat_MEDdim[i].reshape(num_timepoints_in_windowed_file, -1, pacmap_MedDim_numdims).swapaxes(1, 2).swapaxes(0, 2) for i in range(len(latent_windowed_flat_perpat))]
 
     # Concatenate to feed into HDBSCAN
-    hdbscan_input = np.concatenate(latent_flat_postPaCMAP_perpat_MEDdim, axis=0)
+    hdbscan_input = np.concatenate(latent_postPaCMAP_perfile_MEDdim, axis=0)
 
     # If training, create new cluster model, otherwise "approximate_predict()" if running on val data
     if premade_HDBSCAN == []:
@@ -997,23 +999,23 @@ def pacmap_latent(
     #TODO Destaurate according to probability of being in cluster
 
     # Per patient, Run data through model & Reshape the labels and probabilities for plotting
-    hdb_labels_flat_perpat = [-1] * len(latent_flat_postPaCMAP_perpat_MEDdim)
-    hdb_probabilities_flat_perpat = [-1] * len(latent_flat_postPaCMAP_perpat_MEDdim)
-    for i in range(len(latent_flat_postPaCMAP_perpat_MEDdim)):
-        hdb_labels_flat_perpat[i], hdb_probabilities_flat_perpat[i] = hdbscan.prediction.approximate_predict(hdb, latent_flat_postPaCMAP_perpat_MEDdim[i])
+    hdb_labels_flat_perpat = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
+    hdb_probabilities_flat_perpat = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
+    for i in range(len(latent_postPaCMAP_perfile_MEDdim)):
+        hdb_labels_flat_perpat[i], hdb_probabilities_flat_perpat[i] = hdbscan.prediction.approximate_predict(hdb, latent_postPaCMAP_perfile_MEDdim[i])
         
-    # Reshape to get [file/epoch, timepoint]
-    hdb_labels_allFiles_perpat = [hdb_labels_flat_perpat[i].reshape(num_timepoints_in_windowed_file, -1).swapaxes(0,1) for i in range(len(latent_windowed_flat_perpat))]
-    hdb_probabilities_allFiles_perpat = [hdb_probabilities_flat_perpat[i].reshape(num_timepoints_in_windowed_file, -1).swapaxes(0,1) for i in range(len(latent_windowed_flat_perpat))]
+    # # Reshape to get [file/epoch, timepoint]
+    # hdb_labels_allFiles_perpat = [hdb_labels_flat_perpat[i].reshape(num_timepoints_in_windowed_file, -1).swapaxes(0,1) for i in range(len(latent_windowed_flat_perpat))]
+    # hdb_probabilities_allFiles_perpat = [hdb_probabilities_flat_perpat[i].reshape(num_timepoints_in_windowed_file, -1).swapaxes(0,1) for i in range(len(latent_windowed_flat_perpat))]
 
 
     ###### START OF PLOTTING #####
 
     # Get all of the seizure times and types
-    seiz_start_dt_perpat = [-1] * len(latent_flat_postPaCMAP_perpat_MEDdim)
-    seiz_stop_dt_perpat = [-1] * len(latent_flat_postPaCMAP_perpat_MEDdim)
-    seiz_types_perpat = [-1] * len(latent_flat_postPaCMAP_perpat_MEDdim)
-    for i in range(len(latent_flat_postPaCMAP_perpat_MEDdim)):
+    seiz_start_dt_perpat = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
+    seiz_stop_dt_perpat = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
+    seiz_types_perpat = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
+    for i in range(len(latent_postPaCMAP_perfile_MEDdim)):
         seiz_start_dt_perpat[i], seiz_stop_dt_perpat[i], seiz_types_perpat[i] = get_pat_seiz_datetimes(pat_ids_list[i])
 
     # Stack the patients data together for plotting
@@ -1051,7 +1053,7 @@ def pacmap_latent(
         time_ax=ax23,
         cluster_ax=ax24,
         latent_data=latent_plotting_allpats_filestacked, ## stacked all pats
-        modified_samp_freq=modified_FS,  ############ update to be 'modified FS' to account for un-expanded data
+        modified_samp_freq=modified_FS,  # accounts for windowing/stride
         start_datetimes=start_datetimes_allpats_filestacked, 
         stop_datetimes=stop_datetimes_allpats_filestacked, 
         win_sec=win_sec,
@@ -1198,7 +1200,112 @@ def pacmap_latent(
 
     # Bundle the save metrics together
     # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
-    return reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS, cluster_reorder_indexes # save_tuple
+    return reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS # save_tuple
+
+def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_build_strs, pacmap_eval_strs, delete_latent_files=False, **kwargs):
+    
+    print(f"Running PaCMAP: {win_sec}SecondWindow_{stride_sec}SecondStride")
+
+    # Build paths and create pacmap directory for saving pacmap models and outputs
+    latent_dir = f"{model_dir}/{latent_subdir}/{win_sec}SecondWindow_{stride_sec}SecondStride" 
+    pacmap_dir = f"{model_dir}/pacmap/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
+    if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir)
+
+    # Collect pacmap build files - i.e. what data is being used to construct data manifold approximator
+    build_filepaths = []
+    for i in range(len(pacmap_build_strs)):
+        dir_curr = f"{latent_dir}/{pacmap_build_strs[i]}"
+        build_filepaths = build_filepaths + glob.glob(dir_curr + '/*.pkl')
+
+    # Double check window and stride are correct based on file naming [HARDCODED]
+    assert (build_filepaths[0].split("/")[-1].split("_")[-1] == f"{stride_sec}secStride.pkl") & (build_filepaths[0].split("/")[-1].split("_")[-2] == f"{win_sec}secWindow")
+
+    # Get start/stop datetimes
+    build_start_datetimes, build_stop_datetimes = filename_to_datetimes([s.split("/")[-1] for s in build_filepaths])
+
+    # Get the build pat_ids
+    build_pat_ids_list = 1
+
+    # Load all of the data into system RAM - list of [window, latent_dim]
+    print("Loading all BUILD latent data from files")
+    latent_data_windowed = [''] * len(build_filepaths)
+    for i in range(len(build_filepaths)):
+        with open(build_filepaths[i], "rb") as f: 
+            latent_data_windowed[i] = pickle.load(f)
+         
+    # Call the subfunction to create/use pacmap and plot
+    reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = pacmap_subfunction(
+        pat_ids_list=build_pat_ids_list
+        latent_data_windowed=latent_data_windowed, 
+        start_datetimes_epoch=build_start_datetimes,  
+        stop_datetimes_epoch=build_stop_datetimes,
+        epoch=epoch, 
+        win_sec=win_sec, 
+        stride_sec=stride_sec, 
+        savedir=pacmap_dir,
+        **kwargs)
+
+    # Now run the desired data through the pacmap/hdbscan models
+
+
+
+
+    # SAVE OBJECTS
+    save_pacmap_objects(
+        pacmap_dir=pacmap_dir,
+        reducer=reducer, 
+        reducer_MedDim=reducer_MedDim, 
+        hdb=hdb, 
+        pca=pca, 
+        xy_lims=xy_lims, 
+        xy_lims_PCA=xy_lims_PCA, 
+        xy_lims_RAW_DIMS=xy_lims_RAW_DIMS)
+
+    # If desired, delete the latent files after running pacmap
+    if delete_latent_files:
+        shutil.rmtree(latent_dir)
+
+def save_pacmap_objects(pacmap_dir, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS):
+
+    if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir) 
+
+    # Save the PaCMAP model for use in inference
+    PaCMAP_common_prefix = pacmap_dir + "/epoch" +str(epoch) + "_PaCMAP"
+    pacmap.save(reducer, PaCMAP_common_prefix)
+
+    PaCMAP_common_prefix_MedDim = pacmap_dir + "/epoch" +str(epoch) + "_PaCMAP_MedDim"
+    pacmap.save(reducer_MedDim, PaCMAP_common_prefix_MedDim)
+    print("Saved PaCMAP 2-dim and MedDim models")
+
+    hdbscan_path = pacmap_dir + "/epoch" +str(epoch) + "_hdbscan.pkl"
+    output_obj4 = open(hdbscan_path, 'wb')
+    pickle.dump(hdb, output_obj4)
+    output_obj4.close()
+    print("Saved HDBSCAN model")
+
+    pca_path = pacmap_dir + "/epoch" +str(epoch) + "_PCA.pkl"
+    output_obj5 = open(pca_path, 'wb')
+    pickle.dump(pca, output_obj5)
+    output_obj5.close()
+    print("Saved PCA model")
+
+    xylim_path = pacmap_dir + "/epoch" +str(epoch) + "_xy_lims.pkl"
+    output_obj7 = open(xylim_path, 'wb')
+    pickle.dump(xy_lims, output_obj7)
+    output_obj7.close()
+    print("Saved xy_lims for PaCMAP")
+
+    xylims_RAWDIMS_path = pacmap_dir + "/epoch" +str(epoch) + "_xy_lims_RAW_DIMS.pkl"
+    output_obj8 = open(xylims_RAWDIMS_path, 'wb')
+    pickle.dump(xy_lims_RAW_DIMS, output_obj8)
+    output_obj8.close()
+    print("Saved xy_lims RAW DIMS")
+
+    xylims_PCA_path = pacmap_dir + "/epoch" +str(epoch) + "_xy_lims_PCA.pkl"
+    output_obj9 = open(xylims_PCA_path, 'wb')
+    pickle.dump(xy_lims_PCA, output_obj9)
+    output_obj9.close()
+    print("Saved xy_lims PCA")
 
 def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, pre_ictal_taper_sec=120, post_ictal_taper_sec=120):
 
@@ -1419,20 +1526,18 @@ def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
         cmap(np.linspace(minval, maxval, n)))
     return new_cmap
 
-def pacmap(self, dataset_strs,  delete_latent_files, finetune_pacmap, **kwargs):
-    
-    raise Exception("TODO")
-
-    if finetune_pacmap:
-        raise Exception("TODO")
-
-
-    # If desired, delete the latent files after running pacmap
-    if delete_latent_files:
-        raise Exception("Need to code")
 
 
 # FILE I/O
+
+def exec_kwargs(kwargs):
+    # exec all kwargs in case there is python code
+    for k in kwargs:
+            if isinstance(kwargs[k], str):
+                if kwargs[k][0:6] == 'kwargs':
+                    exec(kwargs[k])
+
+    return kwargs
 
 def get_PaCMAP_model(model_common_prefix, pre_PaCMAP_window_sec_path, pre_PaCMAP_stride_sec_path):
     # with open(model_path, "rb") as f: PaCMAP = pickle.load(f)
@@ -1442,31 +1547,31 @@ def get_PaCMAP_model(model_common_prefix, pre_PaCMAP_window_sec_path, pre_PaCMAP
 
     return PaCMAP, pre_PaCMAP_window_sec, pre_PaCMAP_stride_sec
 
-def load_inferred_pkl(file):
-    # Assumes the .pkl files have the following order for their save tuple:
-    # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
+# def load_inferred_pkl(file):
+#     # Assumes the .pkl files have the following order for their save tuple:
+#     # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
    
-    # Each array expected to have shape of [batch, latent dim/label dim, time elements]
+#     # Each array expected to have shape of [batch, latent dim/label dim, time elements]
 
-    # Import the window/smooth seconds and stride seconds from filename
-    splitties = file.split("/")[-1].split("_")
-    str_of_interest = splitties[8]
-    if ('window' not in str_of_interest) | ('stride' not in str_of_interest): raise Exception(f"Expected string to have 'window' and 'stride' parsed from filename, but got {str_of_interest}")
-    str_of_interest = str_of_interest.split("seconds")[0]
-    window_sec = float(str_of_interest.split('window')[-1].split('stride')[0])
-    stride_sec = float(str_of_interest.split('window')[-1].split('stride')[1])
+#     # Import the window/smooth seconds and stride seconds from filename
+#     splitties = file.split("/")[-1].split("_")
+#     str_of_interest = splitties[8]
+#     if ('window' not in str_of_interest) | ('stride' not in str_of_interest): raise Exception(f"Expected string to have 'window' and 'stride' parsed from filename, but got {str_of_interest}")
+#     str_of_interest = str_of_interest.split("seconds")[0]
+#     window_sec = float(str_of_interest.split('window')[-1].split('stride')[0])
+#     stride_sec = float(str_of_interest.split('window')[-1].split('stride')[1])
 
-    expected_len = 6
-    with open(file, "rb") as f: S = pickle.load(f)
-    if len(S) != expected_len: raise Exception(f"ERROR: expected tuple to have {expected_len} elements, but it has {len(S)}")
-    latent_data_windowed = S[0]                                         
-    latent_PCA_allFiles = S[1]
-    latent_topPaCMAP_allFiles = S[2]
-    latent_topPaCMAP_MedDim_allFiles = S[3]
-    hdb_labels_allFiles = S[4]
-    hdb_probabilities_allFiles = S[5]
+#     expected_len = 6
+#     with open(file, "rb") as f: S = pickle.load(f)
+#     if len(S) != expected_len: raise Exception(f"ERROR: expected tuple to have {expected_len} elements, but it has {len(S)}")
+#     latent_data_windowed = S[0]                                         
+#     latent_PCA_allFiles = S[1]
+#     latent_topPaCMAP_allFiles = S[2]
+#     latent_topPaCMAP_MedDim_allFiles = S[3]
+#     hdb_labels_allFiles = S[4]
+#     hdb_probabilities_allFiles = S[5]
 
-    return window_sec, stride_sec, latent_data_windowed, latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles
+#     return window_sec, stride_sec, latent_data_windowed, latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles
 
 def load_data_tensor(filename):
     file = open(filename,'rb')
@@ -1475,134 +1580,134 @@ def load_data_tensor(filename):
     # data_channel_subset = data[0:self.num_channels,:]   
     return torch.FloatTensor(data)
 
-def collect_latent_tmp_files(path, keyword, expected_GPU_count, approx_file_count, win_sec, stride_sec, decode_samples, FS):
-    # Determine how many GPUs have saved tmp files
-    potential_paths = glob.glob(f"{path}/*{keyword}*")
+# def collect_latent_tmp_files(path, keyword, expected_GPU_count, approx_file_count, win_sec, stride_sec, decode_samples, FS):
+#     # Determine how many GPUs have saved tmp files
+#     potential_paths = glob.glob(f"{path}/*{keyword}*")
 
-    print("WARNING: expected file count check suspended")
-    # file_buffer = 2 # files should be spread evenly over GPUs by DDP, so buffer of 1 is even probably sufficient
-    # if (len(potential_paths) < (approx_file_count * expected_GPU_count - file_buffer)) or (len(potential_paths) > (approx_file_count * expected_GPU_count + file_buffer)):
-    #     raise Exception (f"ERROR: expected approximately {str(approx_file_count)} files across {str(expected_GPU_count)} GPUs, but found {str(len(potential_paths))} in {path}")
+#     print("WARNING: expected file count check suspended")
+#     # file_buffer = 2 # files should be spread evenly over GPUs by DDP, so buffer of 1 is even probably sufficient
+#     # if (len(potential_paths) < (approx_file_count * expected_GPU_count - file_buffer)) or (len(potential_paths) > (approx_file_count * expected_GPU_count + file_buffer)):
+#     #     raise Exception (f"ERROR: expected approximately {str(approx_file_count)} files across {str(expected_GPU_count)} GPUs, but found {str(len(potential_paths))} in {path}")
 
-    for f in range(len(potential_paths)):
-        with open(potential_paths[f], 'rb') as file: 
-            latent_tuple = pickle.load(file)
+#     for f in range(len(potential_paths)):
+#         with open(potential_paths[f], 'rb') as file: 
+#             latent_tuple = pickle.load(file)
         
-        latent_raw = latent_tuple[0].detach().numpy()
-        # Average the data temporally according to smoothing seconds, before feeding into PaCMAP
-        num_iters = int((latent_raw.shape[2]*decode_samples - win_sec * FS)/(stride_sec * FS)+ 1)
-        if num_iters == 0: raise Exception("ERROR: num_iters = 0 somehow. It should be > 0")
-        window_subsamps = int((win_sec * FS) / decode_samples)
-        stride_subsamps = int((stride_sec * FS) / decode_samples)
-        latent_windowed = [np.zeros([latent_raw.shape[1], num_iters], dtype=np.float16)] * latent_raw.shape[0]
-        for j in range(0, latent_raw.shape[0]):
-            latent_windowed[j] = np.array([np.mean(latent_raw[j, :, i*stride_subsamps: i*stride_subsamps + window_subsamps], axis=1) for i in range(0,num_iters)], dtype=np.float32).transpose()
+#         latent_raw = latent_tuple[0].detach().numpy()
+#         # Average the data temporally according to smoothing seconds, before feeding into PaCMAP
+#         num_iters = int((latent_raw.shape[2]*decode_samples - win_sec * FS)/(stride_sec * FS)+ 1)
+#         if num_iters == 0: raise Exception("ERROR: num_iters = 0 somehow. It should be > 0")
+#         window_subsamps = int((win_sec * FS) / decode_samples)
+#         stride_subsamps = int((stride_sec * FS) / decode_samples)
+#         latent_windowed = [np.zeros([latent_raw.shape[1], num_iters], dtype=np.float16)] * latent_raw.shape[0]
+#         for j in range(0, latent_raw.shape[0]):
+#             latent_windowed[j] = np.array([np.mean(latent_raw[j, :, i*stride_subsamps: i*stride_subsamps + window_subsamps], axis=1) for i in range(0,num_iters)], dtype=np.float32).transpose()
 
-        if f == 0:            
-            latent_windowed_ALL = latent_windowed
-            start_ALL = latent_tuple[1] # ensure it is a list 
-            stop_ALL = latent_tuple[2] # ensure it is a list 
+#         if f == 0:            
+#             latent_windowed_ALL = latent_windowed
+#             start_ALL = latent_tuple[1] # ensure it is a list 
+#             stop_ALL = latent_tuple[2] # ensure it is a list 
 
-        else: 
-            latent_windowed_ALL = latent_windowed_ALL + latent_windowed
-            start_ALL = start_ALL + latent_tuple[1]
-            stop_ALL = stop_ALL + latent_tuple[2]
+#         else: 
+#             latent_windowed_ALL = latent_windowed_ALL + latent_windowed
+#             start_ALL = start_ALL + latent_tuple[1]
+#             stop_ALL = stop_ALL + latent_tuple[2]
 
-    return latent_windowed_ALL, start_ALL, stop_ALL
+#     return latent_windowed_ALL, start_ALL, stop_ALL
 
-def collate_latent_tmps(save_dir: str, samp_freq: int, patid: str, epoch_used: int, hours_inferred_str: str, save_dimension_style: str, stride: int):
-    print("\nCollating tmp files")
-    # Pull in all the tmp files across all tmp directories (assumes directory is named 'tmp<#>')
-    dirs = glob.glob(save_dir + '/tmp*')
-    file_count = len(glob.glob(save_dir + "/tmp*/*.pkl"))
-    all_filenames = ["NaN"]*(file_count)
+# def collate_latent_tmps(save_dir: str, samp_freq: int, patid: str, epoch_used: int, hours_inferred_str: str, save_dimension_style: str, stride: int):
+#     print("\nCollating tmp files")
+#     # Pull in all the tmp files across all tmp directories (assumes directory is named 'tmp<#>')
+#     dirs = glob.glob(save_dir + '/tmp*')
+#     file_count = len(glob.glob(save_dir + "/tmp*/*.pkl"))
+#     all_filenames = ["NaN"]*(file_count)
 
-    # Pull in one latent file to get the sample size in latent variable
-    f1 = glob.glob(dirs[0] + "/*.pkl")[0]
-    with open(f1, 'rb') as file: 
-        latent_sample_data = pickle.load(file)
-    latent_dims = latent_sample_data[1].shape[1]
-    latent_samples_in_epoch = latent_sample_data[1].shape[2]
-    del latent_sample_data
+#     # Pull in one latent file to get the sample size in latent variable
+#     f1 = glob.glob(dirs[0] + "/*.pkl")[0]
+#     with open(f1, 'rb') as file: 
+#         latent_sample_data = pickle.load(file)
+#     latent_dims = latent_sample_data[1].shape[1]
+#     latent_samples_in_epoch = latent_sample_data[1].shape[2]
+#     del latent_sample_data
 
-    all_latent = np.zeros([file_count, latent_dims, latent_samples_in_epoch], dtype=np.float16)
-    d_count = 0
-    ff_count = 0
-    individual_count = 0
-    for d in dirs:
-        d_count= d_count + 1
-        files = glob.glob(d + "/*.pkl")
-        for ff in files:
-            ff_count = ff_count + 1
-            if ff_count%10 == 0: print("GPUDir " + str(d_count) + "/" + str(len(dirs)) + ": File " + str(ff_count) + "/" + str(file_count))
-            with open(ff, 'rb') as file:
-                file_data = pickle.load(file)
+#     all_latent = np.zeros([file_count, latent_dims, latent_samples_in_epoch], dtype=np.float16)
+#     d_count = 0
+#     ff_count = 0
+#     individual_count = 0
+#     for d in dirs:
+#         d_count= d_count + 1
+#         files = glob.glob(d + "/*.pkl")
+#         for ff in files:
+#             ff_count = ff_count + 1
+#             if ff_count%10 == 0: print("GPUDir " + str(d_count) + "/" + str(len(dirs)) + ": File " + str(ff_count) + "/" + str(file_count))
+#             with open(ff, 'rb') as file:
+#                 file_data = pickle.load(file)
 
-                # Check to see the actual count of data within the batch
-                batch_count = len(file_data[0])
-                if batch_count != 1: raise Exception("Batch size not equal to one, batch size must be one")
+#                 # Check to see the actual count of data within the batch
+#                 batch_count = len(file_data[0])
+#                 if batch_count != 1: raise Exception("Batch size not equal to one, batch size must be one")
                 
-                all_filenames[individual_count : individual_count + batch_count] = file_data[0]
+#                 all_filenames[individual_count : individual_count + batch_count] = file_data[0]
 
-                # Get the start and end datetime objects. IMPORTANT: base the start datetime on the end datetime working backwards,
-                # because there may have been time shrinkage due to NO PADDING in the time dimension
+#                 # Get the start and end datetime objects. IMPORTANT: base the start datetime on the end datetime working backwards,
+#                 # because there may have been time shrinkage due to NO PADDING in the time dimension
 
-                # Append the data together batchwise (mandated batch of 1)
-                all_latent[individual_count : individual_count + batch_count, :, :] = file_data[1][0, :, :].astype(np.float16)
+#                 # Append the data together batchwise (mandated batch of 1)
+#                 all_latent[individual_count : individual_count + batch_count, :, :] = file_data[1][0, :, :].astype(np.float16)
                
-                individual_count = individual_count + batch_count
+#                 individual_count = individual_count + batch_count
 
-    # sort the filenames to find the last file and the first file to get a total number of samples to initialize in final variable
-    sort_idxs = np.argsort(all_filenames)
+#     # sort the filenames to find the last file and the first file to get a total number of samples to initialize in final variable
+#     sort_idxs = np.argsort(all_filenames)
 
-    # Get all of end objects to prepare for iterating through batches and placing 
-    file_end_objects = [filename_to_dateobj(f, start_or_end=1) for f in all_filenames]
-    first_end_datetime = file_end_objects[sort_idxs[0]]
+#     # Get all of end objects to prepare for iterating through batches and placing 
+#     file_end_objects = [filename_to_dateobj(f, start_or_end=1) for f in all_filenames]
+#     first_end_datetime = file_end_objects[sort_idxs[0]]
 
-    # Get the length of the latent variable (will be shorter than input data if NO PADDING)
-    # TODO Get the total EMU time utilized in seconds and sample
-    # VERY IMPORTANT, define the start time based off the end time and samples in latent space  
-    dur_latentVar_seconds = all_latent.shape[2] / samp_freq
-    file_start_objects = [fend - datetime.timedelta(seconds=dur_latentVar_seconds) for fend in file_end_objects] # All of the start times for the files (NOT the same as filename start times if there is latent time shrinking)
+#     # Get the length of the latent variable (will be shorter than input data if NO PADDING)
+#     # TODO Get the total EMU time utilized in seconds and sample
+#     # VERY IMPORTANT, define the start time based off the end time and samples in latent space  
+#     dur_latentVar_seconds = all_latent.shape[2] / samp_freq
+#     file_start_objects = [fend - datetime.timedelta(seconds=dur_latentVar_seconds) for fend in file_end_objects] # All of the start times for the files (NOT the same as filename start times if there is latent time shrinking)
     
-    first_start_dateobj = first_end_datetime - datetime.timedelta(seconds=dur_latentVar_seconds) # Only the first file
-    last_end_dateobj = file_end_objects[sort_idxs[-1]]
+#     first_start_dateobj = first_end_datetime - datetime.timedelta(seconds=dur_latentVar_seconds) # Only the first file
+#     last_end_dateobj = file_end_objects[sort_idxs[-1]]
 
-    # Total samples of latent space (may not all get filled)
-    master_latent_samples = round(((last_end_dateobj - first_start_dateobj).total_seconds() * samp_freq)) 
+#     # Total samples of latent space (may not all get filled)
+#     master_latent_samples = round(((last_end_dateobj - first_start_dateobj).total_seconds() * samp_freq)) 
 
-    # Initialize the final output variable
-    master_latent = np.zeros([latent_dims, master_latent_samples], dtype=np.float16)
-    num_files_avgd_at_sample = np.zeros([master_latent.shape[1]], dtype=np.uint8) # WIll use this for weighting the new data as it comes in
+#     # Initialize the final output variable
+#     master_latent = np.zeros([latent_dims, master_latent_samples], dtype=np.float16)
+#     num_files_avgd_at_sample = np.zeros([master_latent.shape[1]], dtype=np.uint8) # WIll use this for weighting the new data as it comes in
 
-    # Fill the master latent variables using the filiename timestamps
-    # Average latent variables for any time overlap due to sliding window of training data (weighted average as new overlaps are discovered)
-    for i in range(0,len(sort_idxs)):
-        curr_idx = sort_idxs[i]
-        latent_data = all_latent[curr_idx, :, :]
-        dt = file_start_objects[sort_idxs[i]]
-        ai = round((dt - first_start_dateobj).total_seconds() * samp_freq) # insert start sample index
-        bi = ai + latent_data.shape[1] # insert end sample index
+#     # Fill the master latent variables using the filename timestamps
+#     # Average latent variables for any time overlap due to sliding window of training data (weighted average as new overlaps are discovered)
+#     for i in range(0,len(sort_idxs)):
+#         curr_idx = sort_idxs[i]
+#         latent_data = all_latent[curr_idx, :, :]
+#         dt = file_start_objects[sort_idxs[i]]
+#         ai = round((dt - first_start_dateobj).total_seconds() * samp_freq) # insert start sample index
+#         bi = ai + latent_data.shape[1] # insert end sample index
 
-        # Insert each latent channel as a weighted average of what is already there
-        master_latent[:, ai:bi] = master_latent[:, ai:bi] * (num_files_avgd_at_sample[ai:bi]/(num_files_avgd_at_sample[ai:bi] + 1)) + latent_data * (1/(num_files_avgd_at_sample[ai:bi] + 1))
+#         # Insert each latent channel as a weighted average of what is already there
+#         master_latent[:, ai:bi] = master_latent[:, ai:bi] * (num_files_avgd_at_sample[ai:bi]/(num_files_avgd_at_sample[ai:bi] + 1)) + latent_data * (1/(num_files_avgd_at_sample[ai:bi] + 1))
 
-        # Increment the number of files used at these sample points                                                              
-        num_files_avgd_at_sample[ai:bi] = num_files_avgd_at_sample[ai:bi] + 1                                                                           
+#         # Increment the number of files used at these sample points                                                              
+#         num_files_avgd_at_sample[ai:bi] = num_files_avgd_at_sample[ai:bi] + 1                                                                           
 
-    # Change wherever there are zero files contributing to latent data into np.nan
-    zero_files_used_idxs = np.where(num_files_avgd_at_sample == 0)[0]
-    master_latent[:,zero_files_used_idxs] = np.nan
+#     # Change wherever there are zero files contributing to latent data into np.nan
+#     zero_files_used_idxs = np.where(num_files_avgd_at_sample == 0)[0]
+#     master_latent[:,zero_files_used_idxs] = np.nan
 
-    # Pickle the master_latent variable
-    s_start = all_filenames[sort_idxs[0]].split("_")
-    s_end = all_filenames[sort_idxs[-1]].split("_")
-    master_filename = save_dir + "/" + patid + "_" + save_dimension_style + "_master_latent_" + hours_inferred_str + "_trainedepoch" + str(epoch_used) + "_" + s_start[1] + "_" + s_start[2] + "_to_" + s_end[4] + "_" + s_end[5] + ".pkl"
-    with open(master_filename, 'wb') as file: pickle.dump(master_latent, file)
+#     # Pickle the master_latent variable
+#     s_start = all_filenames[sort_idxs[0]].split("_")
+#     s_end = all_filenames[sort_idxs[-1]].split("_")
+#     master_filename = save_dir + "/" + patid + "_" + save_dimension_style + "_master_latent_" + hours_inferred_str + "_trainedepoch" + str(epoch_used) + "_" + s_start[1] + "_" + s_start[2] + "_to_" + s_end[4] + "_" + s_end[5] + ".pkl"
+#     with open(master_filename, 'wb') as file: pickle.dump(master_latent, file)
 
-    # Delete tmp directories
-    for d in dirs:
-        shutil.rmtree(d)
+#     # # Delete tmp directories
+#     # for d in dirs:
+#     #     shutil.rmtree(d)
 
 def filename_to_dateobj(f: str, start_or_end: int):
     # if start_or_end is '0' the beginning of file timestamp is used, if '1' the end
@@ -1783,11 +1888,6 @@ def import_all_val_files(file_list):
     pca_path = file_list[[idx for idx, s in enumerate(file_list) if pca_key in s][0]]
     with open(pca_path, "rb") as f: pca = pickle.load(f)
 
-    # Cluster reorder indexes
-    cluster_key = '_cluster_reorder_indexes.pkl'
-    cluster_path = file_list[[idx for idx, s in enumerate(file_list) if cluster_key in s][0]]
-    with open(cluster_path, "rb") as f: cluster_reorder_indexes = pickle.load(f)
-
     # Import xy_lims
     key = '_xy_lims.pkl'
     path = file_list[[idx for idx, s in enumerate(file_list) if key in s][0]]
@@ -1803,12 +1903,7 @@ def import_all_val_files(file_list):
     path = file_list[[idx for idx, s in enumerate(file_list) if key in s][0]]
     with open(path, "rb") as f: xy_lims_RAW_DIMS = pickle.load(f)
 
-    # Import info_score_idxs
-    key = '_info_score_idxs.pkl'
-    path = file_list[[idx for idx, s in enumerate(file_list) if key in s][0]]
-    with open(path, "rb") as f: info_score_idxs = pickle.load(f)
-
-    return pre_PaCMAP_window_sec, pre_PaCMAP_stride_sec, PaCMAP, PaCMAP_MedDim, pca, HDBSCAN, cluster_reorder_indexes, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS, info_score_idxs
+    return pre_PaCMAP_window_sec, pre_PaCMAP_stride_sec, PaCMAP, PaCMAP_MedDim, pca, HDBSCAN, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS
 
 def filename_to_datetimes(list_file_names):
         start_datetimes = [datetime.datetime.min]*len(list_file_names)
@@ -2118,15 +2213,6 @@ def get_sorted_datetimes_from_files(files):
 
 
 # SIGNAL PROCESSING
-
-def exec_kwargs(kwargs):
-    # exec all kwargs in case there is python code
-    for k in kwargs:
-            if isinstance(kwargs[k], str):
-                if kwargs[k][0:6] == 'kwargs':
-                    exec(kwargs[k])
-
-    return kwargs
 
 def create_bip_mont(channels: list[str], pat_id: str, ch_names_to_ignore: list, save_dir: str):
     bip_names = []

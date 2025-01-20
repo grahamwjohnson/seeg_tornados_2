@@ -46,7 +46,7 @@ crattn_num_lowdim_heads: 1 # at embed dim dimension
 crattn_num_lowdim_layers: 1
 crattn_max_seq_len: 8
 crattn_cnn_kernel_size: 3
-crattn_dropout: 0.1
+crattn_dropout: 0.0
 
 num_decode_layers: kwargs['num_decode_layers'] = int(math.log(kwargs['autoencode_samples'],2) - 1) # Minus 1 because of first conv that goes from hidden dims to output channel dims
 decode_kernel_size: 3
@@ -66,7 +66,7 @@ n_layers: 16
 n_heads: 16
 multiple_of: 256 
 ffn_dim_multiplier: 0.2
-attention_dropout: 0.2  #### ####
+attention_dropout: 0.8  #### ####
 
 core_weight_decay: 0.1
 transformer_weight_decay: 0.1
@@ -83,7 +83,7 @@ valunseen_subsample_file_factor: 20480
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 4 # this is for when loss is not being calculated
 pseudobatch_onlylatent: 4096 # Maximum size to stack sequential parts of file into batch dimension during only latent inference
-pacmap_every: 120 # Must be within a 'quick_recon_val_every' to be reached
+pacmap_every: 1 # Must be within a 'quick_recon_val_every' to be reached
 finetune_pacmap: True  #(#*)(%&#()%&#)%(&*)
 quickval_red: 8 # This will divide num_samples in a file to do a very quick validation recon by truncating mid file
 val_every: 20
@@ -164,10 +164,12 @@ tmp_file_dir: '/tmp_files'
   # w_MN = 0.0
   # w_neighbors = 1.
   # w_FP = 1.
-pre_PaCMAP_window_sec: 10 
-pre_PaCMAP_stride_sec: 5 
+pre_PaCMAP_window_sec_list: [10, 1]
+pre_PaCMAP_stride_sec_list: [5, 1] 
+pacmap_build_strs:  kwargs['pacmap_build_strs'] = ["valfinetune"] #kwargs['pacmap_build_strs'] = ['train', "valfinetune"]
+pacmap_eval_strs: kwargs['pacmap_eval_strs'] = ["valfinetune"] #kwargs['pacmap_eval_strs'] = ['train', "valfinetune", "valunseen"]
 pacmap_LR: 1 # 0.5                                                                                              #################
-pacmap_NumIters: kwargs['pacmap_NumIters'] = (300,150,150) # (Phase 1,2,3), default (100, 100, 250) ##################################
+pacmap_NumIters: kwargs['pacmap_NumIters'] = (1, 1, 1) # (300,150,150) # (Phase 1,2,3), default (100, 100, 250) ##################################
 pacmap_NN: kwargs['pacmap_NN'] = None
 pacmap_MN_ratio: 0.5 # 2.0 # 2.0 # Default 0.5
 pacmap_FP_ratio: 2.0 # 0.5 # Default 2.0
