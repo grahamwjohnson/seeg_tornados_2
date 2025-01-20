@@ -860,6 +860,8 @@ def pacmap_subfunction(
     pacmap_FP_ratio_MedDim,
     HDBSCAN_min_cluster_size,
     HDBSCAN_min_samples,
+    plot_preictal_color_sec,
+    plot_postictal_color_sec,
     interictal_contour=False,
     verbose=True,
     xy_lims = [],
@@ -889,10 +891,11 @@ def pacmap_subfunction(
             delete_file_idxs = delete_file_idxs + [i]
             print(f"WARNING: Deleted file {start_datetimes_epoch[i]} that had NaNs")
 
-    # Delete files with NaN
+    # Delete entries/files in lists where there is NaN in latent space for that file
     latent_data_windowed = [item for i, item in enumerate(latent_data_windowed) if i not in delete_file_idxs]
     start_datetimes_epoch = [item for i, item in enumerate(start_datetimes_epoch) if i not in delete_file_idxs]  
     stop_datetimes_epoch = [item for i, item in enumerate(stop_datetimes_epoch) if i not in delete_file_idxs]
+    pat_ids_list = [item for i, item in enumerate(pat_ids_list) if i not in delete_file_idxs]
 
     # Flatten data into [miniepoch, dim] to feed into PaCMAP, original data is [file, seq_miniepoch_in_file, latent_dim]
     latent_PaCMAP_input = np.concatenate(latent_data_windowed, axis=0)
@@ -999,37 +1002,20 @@ def pacmap_subfunction(
     #TODO Destaurate according to probability of being in cluster
 
     # Per patient, Run data through model & Reshape the labels and probabilities for plotting
-    hdb_labels_flat_perpat = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
-    hdb_probabilities_flat_perpat = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
+    hdb_labels_flat_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
+    hdb_probabilities_flat_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
     for i in range(len(latent_postPaCMAP_perfile_MEDdim)):
-        hdb_labels_flat_perpat[i], hdb_probabilities_flat_perpat[i] = hdbscan.prediction.approximate_predict(hdb, latent_postPaCMAP_perfile_MEDdim[i])
-        
-    # # Reshape to get [file/epoch, timepoint]
-    # hdb_labels_allFiles_perpat = [hdb_labels_flat_perpat[i].reshape(num_timepoints_in_windowed_file, -1).swapaxes(0,1) for i in range(len(latent_windowed_flat_perpat))]
-    # hdb_probabilities_allFiles_perpat = [hdb_probabilities_flat_perpat[i].reshape(num_timepoints_in_windowed_file, -1).swapaxes(0,1) for i in range(len(latent_windowed_flat_perpat))]
-
+        hdb_labels_flat_perfile[i], hdb_probabilities_flat_perfile[i] = hdbscan.prediction.approximate_predict(hdb, latent_postPaCMAP_perfile_MEDdim[i])
 
     ###### START OF PLOTTING #####
 
     # Get all of the seizure times and types
-    seiz_start_dt_perpat = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
-    seiz_stop_dt_perpat = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
-    seiz_types_perpat = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
+    seiz_start_dt_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
+    seiz_stop_dt_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
+    seiz_types_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
     for i in range(len(latent_postPaCMAP_perfile_MEDdim)):
-        seiz_start_dt_perpat[i], seiz_stop_dt_perpat[i], seiz_types_perpat[i] = get_pat_seiz_datetimes(pat_ids_list[i])
+        seiz_start_dt_perfile[i], seiz_stop_dt_perfile[i], seiz_types_perfile[i] = get_pat_seiz_datetimes(pat_ids_list[i])
 
-    # Stack the patients data together for plotting
-    latent_plotting_allpats_filestacked = np.concatenate(latent_embedding_allFiles_perpat ,axis=0)
-    hdb_labels_allpats_filestacked = np.expand_dims(np.concatenate(hdb_labels_allFiles_perpat ,axis=0), axis=1)
-    hdb_probabilities_allpats_filestacked = np.expand_dims(np.concatenate(hdb_probabilities_allFiles_perpat ,axis=0), axis=1)
-    start_datetimes_allpats_filestacked = [element for nestedlist in start_datetimes_epoch for element in nestedlist]
-    stop_datetimes_allpats_filestacked = [element for nestedlist in stop_datetimes_epoch for element in nestedlist]
-    file_patids_allpats_filestacked = [pat_ids_list[i] for i in range(len(stop_datetimes_epoch)) for element in stop_datetimes_epoch[i]]
-    seiz_start_dt_allpats_stacked = [element for nestedlist in seiz_start_dt_perpat for element in nestedlist]
-    seiz_stop_dt_allpats_stacked = [element for nestedlist in seiz_stop_dt_perpat for element in nestedlist]
-    seiz_types_allpats_stacked = [element for nestedlist in seiz_types_perpat for element in nestedlist]
-    seiz_patids_allpats_stacked = [pat_ids_list[i] for i in range(len(seiz_types_perpat)) for element in seiz_types_perpat[i]]
-    
     # Intialize master figure 
     fig = pl.figure(figsize=(40, 25))
     gs = gridspec.GridSpec(3, 5, figure=fig)
@@ -1037,7 +1023,7 @@ def pacmap_subfunction(
 
     # **** PACMAP PLOTTING ****
 
-    print(f"[GPU{str(gpu_id)}] PaCMAP Plotting")
+    print(f"PaCMAP Plotting")
     ax20 = fig.add_subplot(gs[2, 0]) 
     ax21 = fig.add_subplot(gs[2, 1]) 
     ax22 = fig.add_subplot(gs[2, 2]) 
@@ -1052,20 +1038,20 @@ def pacmap_subfunction(
         seiztype_ax=ax22,
         time_ax=ax23,
         cluster_ax=ax24,
-        latent_data=latent_plotting_allpats_filestacked, ## stacked all pats
+        latent_data=np.stack(latent_postPaCMAP_perfile, axis=0).swapaxes(1,2), # [epoch, 2, timesample]
         modified_samp_freq=modified_FS,  # accounts for windowing/stride
-        start_datetimes=start_datetimes_allpats_filestacked, 
-        stop_datetimes=stop_datetimes_allpats_filestacked, 
+        start_datetimes=start_datetimes_epoch, 
+        stop_datetimes=stop_datetimes_epoch, 
         win_sec=win_sec,
         stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt_allpats_stacked, 
-        seiz_stop_dt=seiz_stop_dt_allpats_stacked, 
-        seiz_types=seiz_types_allpats_stacked,
-        preictal_dur=plot_dict["plot_preictal_color"],
-        postictal_dur=plot_dict["plot_postictal_color"],
+        seiz_start_dt=seiz_start_dt_perfile, 
+        seiz_stop_dt=seiz_stop_dt_perfile, 
+        seiz_types=seiz_types_perfile,
+        preictal_dur=plot_preictal_color_sec,
+        postictal_dur=plot_postictal_color_sec,
         plot_ictal=True,
-        hdb_labels=hdb_labels_allpats_filestacked,
-        hdb_probabilities=hdb_probabilities_allpats_filestacked,
+        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
+        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
         hdb=hdb,
         xy_lims=xy_lims,
         **kwargs)        
@@ -1094,13 +1080,13 @@ def pacmap_subfunction(
         pca = premade_PCA
         
     # Project data through PCA one pat at a time
-    latent_PCA_flat_transformed_perpat = [pca.transform(latent_windowed_flat_perpat[i]) for i in range(len(latent_windowed_flat_perpat))]
-    latent_PCA_allFiles_perpat = [latent_PCA_flat_transformed_perpat[i].reshape(num_timepoints_in_windowed_file, -1, 2).swapaxes(1, 2).swapaxes(0, 2) for i in range(len(latent_windowed_flat_perpat))]
+    latent_PCA_flat_transformed_perfile = [pca.transform(latent_data_windowed[i]) for i in range(len(latent_data_windowed))]
+    # latent_PCA_allFiles_perpat = [latent_PCA_flat_transformed_perpat[i].reshape(num_timepoints_in_windowed_file, -1, 2).swapaxes(1, 2).swapaxes(0, 2) for i in range(len(latent_windowed_flat_perpat))]
 
-    # Stack the PCA data 
-    latent_PCA_plotting_allpats_filestacked = np.concatenate(latent_PCA_allFiles_perpat ,axis=0)
+    # # Stack the PCA data 
+    # latent_PCA_plotting_allpats_filestacked = np.concatenate(latent_PCA_flat_transformed_perfile ,axis=0)
 
-    print(f"[GPU{str(gpu_id)}] PCA Plotting")
+    print(f"PCA Plotting")
     ax10 = fig.add_subplot(gs[1, 0]) 
     ax11 = fig.add_subplot(gs[1, 1]) 
     ax12 = fig.add_subplot(gs[1, 2]) 
@@ -1115,20 +1101,20 @@ def pacmap_subfunction(
         seiztype_ax=ax12,
         time_ax=ax13,
         cluster_ax=ax14,
-        latent_data=latent_PCA_plotting_allpats_filestacked,   # latent_PCA_expanded_allFiles, 
+        latent_data=np.stack(latent_PCA_flat_transformed_perfile,axis=0).swapaxes(1,2),   # [epoch, 2, timesample]
         modified_samp_freq=modified_FS,
-        start_datetimes=start_datetimes_allpats_filestacked, 
-        stop_datetimes=stop_datetimes_allpats_filestacked, 
+        start_datetimes=start_datetimes_epoch, 
+        stop_datetimes=stop_datetimes_epoch, 
         win_sec=win_sec,
         stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt_allpats_stacked, 
-        seiz_stop_dt=seiz_stop_dt_allpats_stacked, 
-        seiz_types=seiz_types_allpats_stacked,
-        preictal_dur=plot_dict["plot_preictal_color"],
-        postictal_dur=plot_dict["plot_postictal_color"],
+        seiz_start_dt=seiz_start_dt_perfile, 
+        seiz_stop_dt=seiz_stop_dt_perfile, 
+        seiz_types=seiz_types_perfile,
+        preictal_dur=plot_preictal_color_sec,
+        postictal_dur=plot_postictal_color_sec,
         plot_ictal=True,
-        hdb_labels=hdb_labels_allpats_filestacked,
-        hdb_probabilities=hdb_probabilities_allpats_filestacked,
+        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
+        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
         hdb=hdb,
         xy_lims=xy_lims_PCA,
         **kwargs)        
@@ -1139,16 +1125,12 @@ def pacmap_subfunction(
 
     # **** INFO RAW DIM PLOTTING *****
 
-    raw_dims_to_plot = info_score_idxs[-2:]
+    raw_dims_to_plot = [0,1]
 
     # Pull out the raw dims of interest and stack the data by file
-    latent_flat_RawDim_perpat = [latent_windowed_flat_perpat[i][:, raw_dims_to_plot] for i in range(len(latent_windowed_flat_perpat))]
-    latent_RawDim_allFiles_perpat = [latent_flat_RawDim_perpat[i].reshape(num_timepoints_in_windowed_file, -1, 2).swapaxes(1, 2).swapaxes(0, 2) for i in range(len(latent_windowed_flat_perpat))]
+    latent_flat_RawDim_perfile = [latent_data_windowed[i][:, raw_dims_to_plot] for i in range(len(latent_data_windowed))]
 
-    # Stack the raw data
-    latent_RawDim_filestacked = np.concatenate(latent_RawDim_allFiles_perpat ,axis=0)
-
-    print(f"[GPU{str(gpu_id)}] Raw Dims Plotting")
+    print(f"Raw Dims Plotting")
     ax00 = fig.add_subplot(gs[0, 0]) 
     ax01 = fig.add_subplot(gs[0, 1]) 
     ax02 = fig.add_subplot(gs[0, 2]) 
@@ -1163,20 +1145,20 @@ def pacmap_subfunction(
         seiztype_ax=ax02,
         time_ax=ax03,
         cluster_ax=ax04,
-        latent_data=latent_RawDim_filestacked,
+        latent_data=np.stack(latent_flat_RawDim_perfile,axis=0).swapaxes(1,2), # [epoch, 2, timesample]
         modified_samp_freq=modified_FS,
-        start_datetimes=start_datetimes_allpats_filestacked, 
-        stop_datetimes=stop_datetimes_allpats_filestacked, 
+        start_datetimes=start_datetimes_epoch, 
+        stop_datetimes=stop_datetimes_epoch, 
         win_sec=win_sec,
         stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt_allpats_stacked, 
-        seiz_stop_dt=seiz_stop_dt_allpats_stacked, 
-        seiz_types=seiz_types_allpats_stacked,
-        preictal_dur=plot_dict["plot_preictal_color"],
-        postictal_dur=plot_dict["plot_postictal_color"],
+        seiz_start_dt=seiz_start_dt_perfile, 
+        seiz_stop_dt=seiz_stop_dt_perfile, 
+        seiz_types=seiz_types_perfile,
+        preictal_dur=plot_preictal_color_sec,
+        postictal_dur=plot_postictal_color_sec,
         plot_ictal=True,
-        hdb_labels=hdb_labels_allpats_filestacked,
-        hdb_probabilities=hdb_probabilities_allpats_filestacked,
+        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
+        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
         hdb=hdb,
         xy_lims=xy_lims_RAW_DIMS,
         **kwargs)        
@@ -1185,14 +1167,12 @@ def pacmap_subfunction(
     ax01.title.set_text('Interictal Contour (no peri-ictal data)')
 
     # **** Save entire figure *****
-
-    fig.suptitle(file_name + create_metadata_subtitle(plot_dict))
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-    if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-    savename_jpg = savedir + f"/JPEGs/{file_name}_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_iter" + str(iter) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + "_gpu" + str(gpu_id)  + ".jpg"
-    savename_svg = savedir + f"/SVGs/{file_name}latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_iter" + str(iter) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + "_gpu" + str(gpu_id)  + ".svg"
+    # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+    savename_jpg = savedir + f"/JPEGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + ".jpg"
+    # savename_svg = savedir + f"/SVGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + ".svg"
     pl.savefig(savename_jpg, dpi=300)
-    pl.savefig(savename_svg)
+    # pl.savefig(savename_svg)
 
     # TODO Upload to WandB
 
@@ -1206,10 +1186,13 @@ def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_buil
     
     print(f"Running PaCMAP: {win_sec}SecondWindow_{stride_sec}SecondStride")
 
-    # Build paths and create pacmap directory for saving pacmap models and outputs
+    # Create paths and create pacmap directory for saving pacmap models and outputs
     latent_dir = f"{model_dir}/{latent_subdir}/{win_sec}SecondWindow_{stride_sec}SecondStride" 
     pacmap_dir = f"{model_dir}/pacmap/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
     if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir)
+
+
+    ### PACMAP GENERATION ###
 
     # Collect pacmap build files - i.e. what data is being used to construct data manifold approximator
     build_filepaths = []
@@ -1224,7 +1207,7 @@ def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_buil
     build_start_datetimes, build_stop_datetimes = filename_to_datetimes([s.split("/")[-1] for s in build_filepaths])
 
     # Get the build pat_ids
-    build_pat_ids_list = 1
+    build_pat_ids_list = [s.split("/")[-1].split("_")[0] for s in build_filepaths]
 
     # Load all of the data into system RAM - list of [window, latent_dim]
     print("Loading all BUILD latent data from files")
@@ -1235,24 +1218,65 @@ def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_buil
          
     # Call the subfunction to create/use pacmap and plot
     reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = pacmap_subfunction(
-        pat_ids_list=build_pat_ids_list
+        pat_ids_list=build_pat_ids_list,
         latent_data_windowed=latent_data_windowed, 
         start_datetimes_epoch=build_start_datetimes,  
         stop_datetimes_epoch=build_stop_datetimes,
         epoch=epoch, 
         win_sec=win_sec, 
         stride_sec=stride_sec, 
-        savedir=pacmap_dir,
+        savedir=f"{pacmap_dir}/pacmap_generation",
         **kwargs)
 
+
+    ### PACMAP EVAL ONLY ###
+
     # Now run the desired data through the pacmap/hdbscan models
+    # Collect pacmap eval files - i.e. what data is being used to construct data manifold approximator
+    eval_filepaths = []
+    for i in range(len(pacmap_eval_strs)):
+        dir_curr = f"{latent_dir}/{pacmap_eval_strs[i]}"
+        eval_filepaths = eval_filepaths + glob.glob(dir_curr + '/*.pkl')
 
+    # Double check window and stride are correct based on file naming [HARDCODED]
+    assert (eval_filepaths[0].split("/")[-1].split("_")[-1] == f"{stride_sec}secStride.pkl") & (eval_filepaths[0].split("/")[-1].split("_")[-2] == f"{win_sec}secWindow")
 
+    # Get start/stop datetimes
+    eval_start_datetimes, eval_stop_datetimes = filename_to_datetimes([s.split("/")[-1] for s in eval_filepaths])
 
+    # Get the eval pat_ids
+    eval_pat_ids_list = [s.split("/")[-1].split("_")[0] for s in eval_filepaths]
+
+    # Load all of the data into system RAM - list of [window, latent_dim]
+    print("Loading all eval latent data from files")
+    latent_data_windowed = [''] * len(eval_filepaths)
+    for i in range(len(eval_filepaths)):
+        with open(eval_filepaths[i], "rb") as f: 
+            latent_data_windowed[i] = pickle.load(f)
+         
+    # Call the subfunction to create/use pacmap and plot
+    pacmap_subfunction(
+        pat_ids_list=eval_pat_ids_list,
+        latent_data_windowed=latent_data_windowed, 
+        start_datetimes_epoch=eval_start_datetimes,  
+        stop_datetimes_epoch=eval_stop_datetimes,
+        epoch=epoch, 
+        win_sec=win_sec, 
+        stride_sec=stride_sec, 
+        savedir=f"{pacmap_dir}/pacmap_eval_only",
+        xy_lims = xy_lims,
+        xy_lims_RAW_DIMS = xy_lims_RAW_DIMS,
+        xy_lims_PCA = xy_lims_PCA,
+        premade_PaCMAP = reducer,
+        premade_PaCMAP_MedDim = reducer_MedDim,
+        premade_PCA = pca,
+        premade_HDBSCAN = hdb,
+        **kwargs)
 
     # SAVE OBJECTS
     save_pacmap_objects(
         pacmap_dir=pacmap_dir,
+        epoch=epoch,
         reducer=reducer, 
         reducer_MedDim=reducer_MedDim, 
         hdb=hdb, 
@@ -1265,7 +1289,7 @@ def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_buil
     if delete_latent_files:
         shutil.rmtree(latent_dir)
 
-def save_pacmap_objects(pacmap_dir, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS):
+def save_pacmap_objects(pacmap_dir, epoch, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS):
 
     if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir) 
 
@@ -1959,9 +1983,8 @@ def get_pat_seiz_datetimes(
     **kwargs
     ):
 
-
-    # Debugging
-    print(pat_id)
+    # # Debugging
+    # print(pat_id)
 
     # Original ATD file from Derek was tab seperated
     atd_df = pd.read_csv(atd_file, sep=',', header='infer')

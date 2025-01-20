@@ -172,17 +172,17 @@ def plot_latent(
         c_ST = np.ones(len(x_datetimes)) * c_interictal_val_MIN
 
         # Calculate colors for each subplot type
-        for i in range(0, len(seiz_start_dt)):
+        for i in range(0, len(seiz_start_dt[iii])):
             # THIS WILL BE POSITIVE IF ANY PART OF AVERAGING WINDOW IS ICTAL
-            x_win_ictal_bool_curr = [(d >= seiz_start_dt[i]) & (d - datetime.timedelta(seconds=win_sec) <= seiz_stop_dt[i]) for d in x_datetimes] 
+            x_win_ictal_bool_curr = [(d >= seiz_start_dt[iii][i]) & (d - datetime.timedelta(seconds=win_sec) <= seiz_stop_dt[iii][i]) for d in x_datetimes] 
             
             # WILL BE POSITIVE IF leading edge of sliding window hits preictal period, but has not entered ictal period AT ALL
             # Add a 2 second buffer to account for coloring gap (any ictal encroaching will be overwtitten by ictal later)
-            x_win_preictal_bool_curr = [(d > (seiz_start_dt[i] - datetime.timedelta(seconds=preictal_sec))) & (d < seiz_start_dt[i] + datetime.timedelta(seconds=2)) for d in x_datetimes]
+            x_win_preictal_bool_curr = [(d > (seiz_start_dt[iii][i] - datetime.timedelta(seconds=preictal_sec))) & (d < seiz_start_dt[iii][i] + datetime.timedelta(seconds=2)) for d in x_datetimes]
             x_win_preictal_IDXs = [i for i, x in enumerate(x_win_preictal_bool_curr) if x]
             
             # WIll be Positive if TRAILING edge of window is out of ictal period and TRAILING edge is within postictal seconds desired
-            x_win_postictal_bool_curr = [(d - datetime.timedelta(seconds=win_sec) > seiz_stop_dt[i]) & (d - datetime.timedelta(seconds=win_sec) < seiz_stop_dt[i] + datetime.timedelta(seconds=postictal_sec)) for d in x_datetimes]
+            x_win_postictal_bool_curr = [(d - datetime.timedelta(seconds=win_sec) > seiz_stop_dt[iii][i]) & (d - datetime.timedelta(seconds=win_sec) < seiz_stop_dt[iii][i] + datetime.timedelta(seconds=postictal_sec)) for d in x_datetimes]
             x_win_postictal_IDXs = [i for i, x in enumerate(x_win_postictal_bool_curr) if x] 
 
             # Update colors if this seizure is in plot's time range.
@@ -190,7 +190,7 @@ def plot_latent(
             # Prioritize color override as ictal > preictyal > postictal
 
             # Seiztype colorvals, cyclical surrounding CHANGES based on seiz_type
-            curr_seiz_type = seiz_types[i]
+            curr_seiz_type = seiz_types[iii][i]
             seiz_type_shiftval = seiz_plot_mult[seiz_type_list.index(curr_seiz_type)]
             c_ST_interictal_val_MIN = 0 + seiz_type_shiftval
             c_ST_preictal_max_val = 0.25 + seiz_type_shiftval
@@ -269,13 +269,16 @@ def plot_latent(
         s = ax.scatter(x_plot[plot_order], y_plot[plot_order], c=c_toplot[plot_order], alpha=plot_alpha, s=s_plot, cmap=cmap, edgecolors='none', vmin=c_interictal_val_MIN, vmax=c_interictal_val_MAX)
         
         # Peri-ictal colorbar
-        cbar = plt.colorbar(ax.collections[0], ax=ax, ticks=[c_interictal_val_MIN,
-                                                    c_interictal_val_MIN/2, 
-                                                    0,
-                                                    c_interictal_val_MAX/2,
-                                                    c_interictal_val_MAX], 
-                                                    orientation='horizontal',
-                                                    shrink=0.7)
+        cbar = plt.colorbar(
+            ax.collections[0], 
+            ax=ax, 
+            ticks=[c_interictal_val_MIN,
+            c_interictal_val_MIN/2, 
+            0,
+            c_interictal_val_MAX/2,
+            c_interictal_val_MAX], 
+            orientation='horizontal',
+            shrink=0.7)
         cbar.ax.set_xticklabels(['Interictal', 'Preictal', 'Ictal', 'Postictal', 'Interictal'])
         # cbar.ax.set_title('Peri-Ictal Labels')
 
