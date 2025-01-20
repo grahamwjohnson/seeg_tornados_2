@@ -27,7 +27,7 @@ preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
 # Training settings
 continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/spoonbill_Sat_Jan_18_18_16_22_2025' 
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/rhesusmonkey_Sun_Jan_19_21_15_17_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### VAE 
@@ -66,7 +66,7 @@ n_layers: 16
 n_heads: 16
 multiple_of: 256 
 ffn_dim_multiplier: 0.2
-attention_dropout: 0.8  #### ####
+attention_dropout: 0.8                  #### IMPORTANT ####
 
 core_weight_decay: 0.1
 transformer_weight_decay: 0.1
