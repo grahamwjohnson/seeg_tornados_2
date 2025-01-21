@@ -209,13 +209,14 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         KL_max, KL_min, KL_epochs_TO_max, KL_epochs_AT_max, 
+        Transformer_max, Transformer_min, Transformer_epochs_TO_max, Transformer_epochs_AT_max, 
         LR_max_core, LR_min_core, 
         LR_max_transformer, LR_min_transformer, 
         LR_epochs_TO_max_core, LR_epochs_AT_max_core, 
         LR_epochs_TO_max_transformer, LR_epochs_AT_max_transformer, 
         manual_gamma_core, manual_step_size_core,
         manual_gamma_transformer, manual_step_size_transformer,
-        KL_rise_first=True, LR_rise_first=True, **kwargs):
+        KL_rise_first=True, Transformer_rise_first=True, LR_rise_first=True, **kwargs):
             
     
     # *** KL SCHEDULE ***
@@ -252,7 +253,36 @@ def LR_and_weight_schedules(
         #     KL_floor = KL_ceil - ( KL_range * (KL_epoch_residual + 1) /KL_state_length)
         #     KL_val = KL_ceil - iter/iters_per_epoch * (KL_ceil - KL_floor)   
 
- 
+
+
+    # *** Transformer Weight ***
+
+    Transformer_epoch_period = Transformer_epochs_TO_max + Transformer_epochs_AT_max
+    Transformer_epoch_residual = epoch % Transformer_epoch_period
+
+    Transformer_range = 10**Transformer_max - 10**Transformer_min
+    # Transformer_range = Transformer_max - Transformer_min
+
+    # START with rise
+    # Logarithmic rise
+    if Transformer_rise_first: 
+        if Transformer_epoch_residual < Transformer_epochs_TO_max:
+            # Transformer_state_length = Transformer_epochs_AT_max
+            # Transformer_ceil = Transformer_max - ( Transformer_range * (Transformer_epoch_residual/Transformer_state_length) )
+            # Transformer_floor = Transformer_ceil - ( Transformer_range * (Transformer_epoch_residual + 1) /Transformer_state_length)
+            # Transformer_val = Transformer_ceil - iter_curr/iters_per_epoch * (Transformer_ceil - Transformer_floor) 
+
+            Transformer_state_length = Transformer_epochs_TO_max 
+            Transformer_floor = 10 ** Transformer_min + Transformer_range * (Transformer_epoch_residual/Transformer_state_length)
+            Transformer_ceil = Transformer_floor + Transformer_range * (1) /Transformer_state_length
+            Transformer_val = math.log10(Transformer_floor + iter_curr/iters_per_epoch * (Transformer_ceil - Transformer_floor))
+        else:
+            Transformer_val = Transformer_max
+
+    else:
+        raise Exception("ERROR: not coded up")
+
+
     # *** LR SCHEDULES ***
 
     # CORE
@@ -285,7 +315,7 @@ def LR_and_weight_schedules(
     )
 
             
-    return KL_val, LR_val_core, LR_val_transformer
+    return KL_val, LR_val_core, LR_val_transformer, transformer_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop

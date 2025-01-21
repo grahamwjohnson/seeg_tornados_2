@@ -405,7 +405,7 @@ class Trainer:
         transformer_seq_length: int,
         FS: int,
         intrapatient_dataset_style: list,
-        transformer_weight: float,
+        # transformer_weight: float,
         recon_weight: float,
         atd_file: str,
         PaCMAP_model_to_infer,
@@ -438,7 +438,7 @@ class Trainer:
         self.FS = FS
         self.intrapatient_dataset_style = intrapatient_dataset_style
         self.curr_LR_core = -1
-        self.transformer_weight = transformer_weight
+        # self.transformer_weight = transformer_weight
         self.recon_weight = recon_weight
         self.atd_file = atd_file
         self.PaCMAP_model_to_infer = PaCMAP_model_to_infer
@@ -535,7 +535,7 @@ class Trainer:
         
         return start_idxs
 
-    def _autoreg(self, context, target, autoreg_tokens_to_gen, n_layers, hash_pat_embedding, **kwargs):
+    def _autoreg(self, context, target, autoreg_tokens_to_gen, n_layers, hash_pat_embedding, autoreg_attention_dropout, **kwargs):
 
         real_batchsize = context.shape[0]
         out_channels = context.shape[1]
@@ -564,7 +564,7 @@ class Trainer:
         scores_allSeq_firstLayer_meanHeads_lastRow = torch.zeros(context.shape[0], autoreg_tokens_to_gen, context_token_len)
         for i in range(0, autoreg_tokens_to_gen):
             # Run sequence through transformer and get transformer loss
-            predicted_embeddings, scores_allSeq_firstLayer_meanHeads_lastRow[:, i, :] = self.transformer(autoreg_latent_pred[:, i:i + context_token_len, :], attention_dropout= 0.0, return_attW=True)
+            predicted_embeddings, scores_allSeq_firstLayer_meanHeads_lastRow[:, i, :] = self.transformer(autoreg_latent_pred[:, i:i + context_token_len, :], attention_dropout=autoreg_attention_dropout, return_attW=True)
             autoreg_latent_pred[:, context_token_len + i, :] = predicted_embeddings[:, -1, :]
 
         # Prune the latent predictions to just the generated sequence
@@ -788,7 +788,7 @@ class Trainer:
                 for start_idx in start_idxs: # Same start_idx for all patients (has no biological meaning)
 
                     # For Training: Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                    self.KL_multiplier, self.curr_LR_core, self.transformer_LR = utils_functions.LR_and_weight_schedules(
+                    self.KL_multiplier, self.curr_LR_core, self.transformer_LR, self.transformer_weight = utils_functions.LR_and_weight_schedules(
                         epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
                     
                     # Update LR to schedule
@@ -880,7 +880,7 @@ class Trainer:
                         loss = recon_loss + kld_loss + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
                         if backprop: loss.backward()
 
-                        # Realtime info as epoch is running
+                        # Realtime terminal info and WandB 
                         if (iter_curr%self.recent_display_iters==0):
                             if val_finetune: state_str = "VAL FINETUNE"
                             elif val_unseen: state_str = "VAL UNSEEN"
@@ -902,6 +902,7 @@ class Trainer:
                             train_step = self.epoch * int(total_train_iters) + iter_curr
                             if (not val_finetune) & (not val_unseen):
                                 metrics = dict(
+                                    train_attention_dropout=attention_dropout,
                                     train_loss=loss,
                                     train_transformer_loss=transformer_loss,
                                     train_recon_loss=recon_loss, 
@@ -916,6 +917,7 @@ class Trainer:
 
                             elif val_finetune:
                                 metrics = dict(
+                                    val_finetune_attention_dropout=attention_dropout,
                                     val_finetune_loss=loss, 
                                     val_finetune_transformer_loss=transformer_loss,
                                     val_finetune_recon_loss=recon_loss, 
@@ -930,6 +932,7 @@ class Trainer:
 
                             elif val_unseen:
                                 metrics = dict(
+                                    val_unseen_attention_dropout=attention_dropout,
                                     val_unseen_loss=loss, 
                                     val_unseen_transformer_loss=transformer_loss,
                                     val_unseen_recon_loss=recon_loss, 
