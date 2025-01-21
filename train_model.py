@@ -877,7 +877,7 @@ class Trainer:
                         mean_loss = loss_functions.simple_mean_latent_loss(latent_seq, **kwargs)
 
                         # Intrapatient backprop
-                        loss = recon_loss # + kld_loss + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        loss = recon_loss + kld_loss + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
                         if backprop: loss.backward()
 
                         # Realtime info as epoch is running

@@ -26,7 +26,7 @@ periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if
 preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
 # Training settings
-continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/rhesusmonkey_Sun_Jan_19_21_15_17_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
@@ -66,7 +66,7 @@ n_layers: 16
 n_heads: 16
 multiple_of: 256 
 ffn_dim_multiplier: 0.2
-attention_dropout: 0.8                  #### IMPORTANT ####
+attention_dropout: 0.8          ###            #### IMPORTANT ####            ###
 
 core_weight_decay: 0.1
 transformer_weight_decay: 0.1
@@ -83,7 +83,7 @@ valunseen_subsample_file_factor: 20480
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 4 # this is for when loss is not being calculated
 pseudobatch_onlylatent: 4096 # Maximum size to stack sequential parts of file into batch dimension during only latent inference
-pacmap_every: 75 # Must be within a 'quick_recon_val_every' to be reached
+pacmap_every: 50 # Must be within a 'quick_recon_val_every' to be reached
 finetune_pacmap: True  #(#*)(%&#()%&#)%(&*)
 quickval_red: 8 # This will divide num_samples in a file to do a very quick validation recon by truncating mid file
 val_every: 20
@@ -108,7 +108,7 @@ autoreg_num_rand_pats: 2
 autoreg_num_rand_files: 2
 
 # Beta VAE controls
-KL_max: kwargs['KL_max'] = 1e-5 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# CHeck if loss is actually used!!! May be commented out ###############
+KL_max: kwargs['KL_max'] = 1e-3 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
 KL_min: kwargs['KL_min'] = 0
 KL_epochs_AT_max: 5
 KL_epochs_TO_max: 5
@@ -164,8 +164,8 @@ tmp_file_dir: '/tmp_files'
   # w_MN = 0.0
   # w_neighbors = 1.
   # w_FP = 1.
-pre_PaCMAP_window_sec_list: [60, 10, 1]
-pre_PaCMAP_stride_sec_list: [30, 5,  1] 
+pre_PaCMAP_window_sec_list: [60, 10]
+pre_PaCMAP_stride_sec_list: [30, 5] 
 pacmap_build_strs: kwargs['pacmap_build_strs'] = ['train', "valfinetune"]
 pacmap_eval_strs: kwargs['pacmap_eval_strs'] = ["valunseen"]
 pacmap_LR: 1 # 0.5                                                                                              #################
