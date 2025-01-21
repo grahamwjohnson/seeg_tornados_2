@@ -83,7 +83,7 @@ valunseen_subsample_file_factor: 20480
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 4 # this is for when loss is not being calculated
 pseudobatch_onlylatent: 4096 # Maximum size to stack sequential parts of file into batch dimension during only latent inference
-pacmap_every: 150 # Must be within a 'quick_recon_val_every' to be reached
+pacmap_every: 75 # Must be within a 'quick_recon_val_every' to be reached
 finetune_pacmap: True  #(#*)(%&#()%&#)%(&*)
 quickval_red: 8 # This will divide num_samples in a file to do a very quick validation recon by truncating mid file
 val_every: 20
@@ -164,8 +164,8 @@ tmp_file_dir: '/tmp_files'
   # w_MN = 0.0
   # w_neighbors = 1.
   # w_FP = 1.
-pre_PaCMAP_window_sec_list: [10, 1]
-pre_PaCMAP_stride_sec_list: [5, 1] 
+pre_PaCMAP_window_sec_list: [60, 10, 1]
+pre_PaCMAP_stride_sec_list: [30, 5,  1] 
 pacmap_build_strs: kwargs['pacmap_build_strs'] = ['train', "valfinetune"]
 pacmap_eval_strs: kwargs['pacmap_eval_strs'] = ["valunseen"]
 pacmap_LR: 1 # 0.5                                                                                              #################

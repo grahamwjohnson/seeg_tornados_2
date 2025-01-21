@@ -252,7 +252,7 @@ def main(
                     num_rand_hashes = val_num_rand_hashes,
                     **kwargs)
 
-            # INFERENCE on all datasets
+            # # INFERENCE on all datasets
             dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
             dataset_strs = ["train", "valfinetune", "valunseen"]
             trainer._set_to_eval()
@@ -763,7 +763,7 @@ class Trainer:
                             filename_curr = file_name[b]
                             save_dir = f"{self.model_dir}/latent_files/Epoch{self.epoch}/{win_sec_curr}SecondWindow_{stride_sec_curr}SecondStride/{dataset_string}"
                             if not os.path.exists(save_dir): os.makedirs(save_dir)
-                            output_obj = open(f"{save_dir}/{filename_curr}_latent_{self.win_sec_curr}secWindow_{self.stride_sec_curr}secStride.pkl", 'wb')
+                            output_obj = open(f"{save_dir}/{filename_curr}_latent_{win_sec_curr}secWindow_{stride_sec_curr}secStride.pkl", 'wb')
                             pickle.dump(windowed_file_latent[b, :, :], output_obj)
                             output_obj.close()
 
