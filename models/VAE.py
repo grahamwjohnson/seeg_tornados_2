@@ -184,55 +184,46 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
 
         x = x.permute(1, 0, 2)  # Return to shape (batch_size, seq_len, low_dim)
 
-        return x.flatten(start_dim=1) # Mean along the sequence direction
+        return x.flatten(start_dim=1) # (batch, seq_len * low_dim)
         # return x[:,-1,:] # Return last in sequence (should be embedded with meaning)
 
 class TimeSeriesDecoder(nn.Module):
-    def __init__(self, in_dim, padded_channels, seq_len, num_layers, kernel_size, dropout=0.0):
+    def __init__(self, in_dim, padded_channels, seq_len, num_layers, kernel_size):
         super(TimeSeriesDecoder, self).__init__()
 
         self.in_dim = in_dim
         self.padded_channels = padded_channels
         self.seq_len = seq_len
-        self.num_layers = num_layers
+        self.num_time_dilation_layers = num_layers
+        self.num_channel_reduction_layers = int(math.sqrt(in_dim / padded_channels))
         self.kernel_size = kernel_size
-        self.dropout = dropout
+
+        assert math.sqrt(in_dim/padded_channels) % 1 == 0
 
         layers = []
 
-        # First, we will apply a convolution to map to padded_channels
-        layers.append(nn.ConvTranspose1d(in_channels=self.in_dim, out_channels=padded_channels, kernel_size=kernel_size, stride=2, padding=(kernel_size // 2), output_padding=1))
-        layers.append(nn.SiLU())
-        layers.append(RMSNorm_Conv(padded_channels))
-
-        # First, we need to expand the input (batch_size, embed_dim) to (batch_size, embed_dim, 1)
-        # The output will be passed through N dilated 1D convolutional layers.
-
-        # dilation_rate = 1  # We will increase the dilation rate with each layer
-        output_length = seq_len  # Initial sequence length
-
-        for i in range(num_layers):
-            # Dilated convolution
-            # layers.append(nn.Conv1d(in_channels=in_channels, out_channels=in_channels, 
-            #                         kernel_size=kernel_size, 
-            #                         dilation=dilation_rate, 
-            #                         padding=(kernel_size // 2) * dilation_rate))
-            layers.append(nn.ConvTranspose1d(in_channels=padded_channels, out_channels=padded_channels, 
+        # First we will expand the time dimension to raw time step size
+        for i in range(self.num_time_dilation_layers):
+            # Expand the time dimension with stride of 2 and output padding 1
+            layers.append(nn.ConvTranspose1d(in_channels=self.in_dim, out_channels=self.in_dim, 
                                     kernel_size=kernel_size, stride=2, padding=(kernel_size // 2), output_padding=1))
-            
+            layers.append(nn.SiLU())
+            layers.append(RMSNorm_Conv(self.in_dim))
 
-            if i < (num_layers -1):
+        # Keep track of stepping down the channel dimension
+        in_channel_count_curr = self.in_dim
+        for i in range(self.num_channel_reduction_layers):
+            # Now we will step the channel count down to padded channels, no output padding, stride is 1
+            layers.append(nn.ConvTranspose1d(in_channels=in_channel_count_curr, out_channels=int(in_channel_count_curr/2), kernel_size=kernel_size, stride=1, padding=(kernel_size // 2), output_padding=0))
+
+            if i < self.num_channel_reduction_layers -1:
                 layers.append(nn.SiLU())
-                layers.append(RMSNorm_Conv(padded_channels))
-                layers.append(nn.Dropout(self.dropout))
+                layers.append(RMSNorm_Conv(int(in_channel_count_curr/2)))
+                in_channel_count_curr = int(in_channel_count_curr / 2)
 
-            elif i == num_layers -1:
+            # Final output no normalization and smooth with tanh
+            elif i == self.num_channel_reduction_layers -1:
                 layers.append(nn.Tanh())
-            
-            # Increase the sequence length progressively
-            # layers.append(nn.Upsample(scale_factor=2, mode='linear'))  # This doubles the sequence length after each layer
-            
-            # dilation_rate *= 2  # Increase the dilation rate for each layer (progressively dilates the sequence)
 
         # Combine the layers into a Sequential container
         self.cnn = nn.Sequential(*layers)
@@ -266,7 +257,7 @@ class VAE(nn.Module):
         latent_dim, 
         num_decode_layers,
         decode_kernel_size,
-        gpu_id=None, 
+        gpu_id=None,  
         **kwargs):
 
         super(VAE, self).__init__()
@@ -281,22 +272,26 @@ class VAE(nn.Module):
         self.num_decode_layers = num_decode_layers
         self.decode_kernel_size = decode_kernel_size
 
+        # Encoder Head
         self.encoder_head = Encoder_TimeSeriesCNNWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=crattn_embed_dim, **kwargs)
 
+        # Core Encoder
         self.head_to_top = nn.Linear(self.crattn_embed_dim * self.autoencode_samples, self.top_dims, bias=True)
         self.norm_top = RMSNorm(dim=self.top_dims)
         self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=True)
         self.norm_hidden = RMSNorm(dim=self.hidden_dims)
         
-        # Variational layers (not shared between enc/dec)
+        # Encoder variational layers (not shared between enc/dec)
         self.mean_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
         self.logvar_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True) # bias=False
 
+        # Core Decoder
         self.latent_to_hidden = nn.Linear(self.latent_dim, self.hidden_dims, bias=True) # bias=False
         self.norm_hidden_rev = RMSNorm(dim=self.hidden_dims)
         self.hidden_to_top = nn.Linear(self.hidden_dims, self.top_dims, bias=True)
         self.norm_top_rev = RMSNorm(dim=self.top_dims)
 
+        # Deocder head
         self.decoder_head = TimeSeriesDecoder(in_dim=top_dims, padded_channels = self.padded_channels, seq_len=autoencode_samples, num_layers=num_decode_layers, kernel_size=decode_kernel_size)
 
         self.silu = nn.SiLU()

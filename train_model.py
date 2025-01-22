@@ -871,7 +871,7 @@ class Trainer:
 
                         kld_loss = loss_functions.kld_loss_function(
                             mean=mean_batched, 
-                            logvar=logvar_batched,  
+                            logvar=logvar_batched,
                             KL_multiplier=self.KL_multiplier)
 
                         mean_loss = loss_functions.simple_mean_latent_loss(latent_seq, **kwargs)

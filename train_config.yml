@@ -28,46 +28,43 @@ preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
 # Training settings
 continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/rhesusmonkey_Sun_Jan_19_21_15_17_2025' 
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/argentineruddyduck_Tue_Jan_21_20_16_06_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### VAE 
-autoencode_samples: 8
-cnn_channels: 512
-num_cnn_blocks: 8 
-num_cnn_layers_per_block: 1 
-kernel_size: 3 
-dilation_base: 2 # dilation = dilation_base ** (b * num_cnn_layers_per_block + i)
+autoencode_samples: 4 # 8
 
-padded_channels: 256 #input padded to allow for different number of channels
-crattn_embed_dim: 512
-crattn_num_highdim_heads: 8 # at padding dimension
-crattn_num_highdim_layers: 8
-crattn_num_lowdim_heads: 1 # at embed dim dimension
-crattn_num_lowdim_layers: 1
-crattn_max_seq_len: 8
+# Cross atttention embedder
+padded_channels: 256 #input padded to allow for different number of channels, also the top level embed dim
+crattn_embed_dim: 1024  # Was using 512 for autoencode 8 samples
+crattn_num_highdim_heads: 16 # at padding dimension
+crattn_num_highdim_layers: 16
+crattn_num_lowdim_heads: 1 # at embed dim dimension, was using 1 at 8 autoencode and 512 embed dim
+crattn_num_lowdim_layers: 1 # was using 1 at 8 autoencode and 512 embed dim
+crattn_max_seq_len: 4
 crattn_cnn_kernel_size: 3
 crattn_dropout: 0.0
 
-num_decode_layers: kwargs['num_decode_layers'] = int(math.log(kwargs['autoencode_samples'],2) - 1) # Minus 1 because of first conv that goes from hidden dims to output channel dims
+num_decode_layers: kwargs['num_decode_layers'] = int(math.log(kwargs['autoencode_samples'],2))
 decode_kernel_size: 3
 
 ### VAE Core
 top_dims: 4096 
 hidden_dims: 4096
-latent_dim: 2048  # 1024
+latent_dim: 2048 
 
 ### Transformer
 transformer_seq_length: 512
+
 # Model hardware limits
 max_seq_len: 512
-max_batch_size: 8
+max_batch_size: 4
 # Model size
 n_layers: 16
 n_heads: 16
 multiple_of: 256 
-ffn_dim_multiplier: 0.2
-attention_dropout: 0.8          ###            #### IMPORTANT ####            ###
+ffn_dim_multiplier: 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
+attention_dropout: 0.8          ###    0.8 is aggressive        #### IMPORTANT ####            ###
 
 core_weight_decay: 0.1
 transformer_weight_decay: 0.1
@@ -75,18 +72,17 @@ adamW_beta1: 0.9
 adamW_beta2: 0.95 
 
 # Patient hash embedding
-train_num_rand_hashes: 256
+train_num_rand_hashes: 256  # Number of random channel orders, with deterministic hash embedding for each
 val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
 
-train_subsample_file_factor: 20480 # randomly decreases training passes per file per epoch
-valfinetune_subsample_file_factor: 2048
-valunseen_subsample_file_factor: 20480
+train_subsample_file_factor: 40000 # randomly decreases training passes per file per epoch
+valfinetune_subsample_file_factor: 1024
+valunseen_subsample_file_factor: 40000
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 4 # this is for when loss is not being calculated
 pseudobatch_onlylatent: 4096 # Maximum size to stack sequential parts of file into batch dimension during only latent inference
 pacmap_every: 50 # Must be within a 'quick_recon_val_every' to be reached
-finetune_pacmap: True  #(#*)(%&#()%&#)%(&*)
-quickval_red: 8 # This will divide num_samples in a file to do a very quick validation recon by truncating mid file
+finetune_pacmap: True  
 val_every: 20
 num_rand_recon_plots: 4
 epochs_to_train: 999999 
@@ -112,13 +108,13 @@ autoreg_attention_dropout: 0.0
 # Beta VAE controls
 KL_max: kwargs['KL_max'] = 1e-4 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
 KL_min: kwargs['KL_min'] = 0
-KL_epochs_AT_max: 5
-KL_epochs_TO_max: 5
+KL_epochs_AT_max: 50
+KL_epochs_TO_max: 50
 
 Transformer_max: kwargs['Transformer_max'] = 0.1 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
 Transformer_min: kwargs['Transformer_min'] = 0
 Transformer_epochs_AT_max: 99999
-Transformer_epochs_TO_max: 20
+Transformer_epochs_TO_max: 100
 
 # Weights
 recon_weight: 3

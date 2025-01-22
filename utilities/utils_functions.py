@@ -293,7 +293,7 @@ def LR_and_weight_schedules(
         epoch=epoch, 
         manual_gamma=manual_gamma_core, 
         manual_step_size=manual_step_size_core, 
-        LR_epochs_TO_max=LR_epochs_TO_max_core, 
+        LR_epochs_TO_max=LR_epochs_TO_max_core,  
         LR_epochs_AT_max=LR_epochs_AT_max_core, 
         iters_per_epoch=iters_per_epoch,
         LR_rise_first=LR_rise_first 
@@ -315,7 +315,7 @@ def LR_and_weight_schedules(
     )
 
             
-    return KL_val, LR_val_core, LR_val_transformer, transformer_val
+    return KL_val, LR_val_core, LR_val_transformer, Transformer_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
