@@ -957,14 +957,17 @@ def pacmap_subfunction(
         reducer = premade_PaCMAP
 
     # Project data through reducer (i.e. PaCMAP) one file at a time
-    latent_postPaCMAP_perfile = [reducer.transform(latent_data_windowed[i]) for i in range(len(latent_data_windowed))]
-    # latent_flat_postPaCMAP_perpat = [reducer.transform(latent_windowed_flat_perpat[i]) for i in range(len(latent_windowed_flat_perpat))]
-    # latent_embedding_allFiles_perpat = [latent_flat_postPaCMAP_perpat[i].reshape(num_timepoints_in_windowed_file, -1, 2).swapaxes(1, 2).swapaxes(0, 2) for i in range(len(latent_windowed_flat_perpat))]
+    reducer.verbose = False
+    latent_postPaCMAP_perfile = np.zeros((len(latent_data_windowed), num_timepoints_in_windowed_file, 2))
+    for i in range(len(latent_data_windowed)):
+        sys.stdout.write(f"\rRunning data through built 2-Dim PaCMAP: {i}/{len(latent_data_windowed)}") 
+        sys.stdout.flush() 
+        latent_postPaCMAP_perfile[i, :, :] = reducer.transform(latent_data_windowed[i])
 
     # **** PaCMAP (MedDim)--> HDBSCAN ***** i.e. NOTE This is the pacmap used for clustering
     if premade_PaCMAP_MedDim == []: 
         # Make new PaCMAP
-        print("Making new Medium-dim PaCMAP to use for HDBSCAN clustering")
+        print(f"Making new {pacmap_MedDim_numdims}-dim PaCMAP to use for HDBSCAN clustering")
         
         # initializing the pacmap instance
         # Setting n_neighbors to "None" leads to a default choice shown below in "parameter" section
@@ -989,12 +992,12 @@ def pacmap_subfunction(
         reducer_MedDim = premade_PaCMAP_MedDim
 
     # Project data through reducer (i.e. PaCMAP) to get embeddings in shape [timepoint, med-dim, file]
-    latent_postPaCMAP_perfile_MEDdim = [reducer_MedDim.transform(latent_data_windowed[i]) for i in range(len(latent_data_windowed))]
-    # latent_flat_postPaCMAP_perpat_MEDdim = [reducer_MedDim.transform(latent_windowed_flat_perpat[i]) for i in range(len(latent_windowed_flat_perpat))]
-    # latent_embedding_allFiles_MEDdim_perpat = [latent_flat_postPaCMAP_perpat_MEDdim[i].reshape(num_timepoints_in_windowed_file, -1, pacmap_MedDim_numdims).swapaxes(1, 2).swapaxes(0, 2) for i in range(len(latent_windowed_flat_perpat))]
-
-    # Concatenate to feed into HDBSCAN
-    hdbscan_input = np.concatenate(latent_postPaCMAP_perfile_MEDdim, axis=0)
+    reducer_MedDim.verbose = False
+    latent_postPaCMAP_perfile_MEDdim = np.zeros((len(latent_data_windowed), num_timepoints_in_windowed_file, pacmap_MedDim_numdims))
+    for i in range(len(latent_data_windowed)):
+        sys.stdout.write(f"\rRunning data through built {pacmap_MedDim_numdims}-Dim PaCMAP: {i}/{len(latent_data_windowed)}") 
+        sys.stdout.flush() 
+        latent_postPaCMAP_perfile_MEDdim[i, :, :] = reducer_MedDim.transform(latent_data_windowed[i])
 
     # If training, create new cluster model, otherwise "approximate_predict()" if running on val data
     if premade_HDBSCAN == []:
@@ -1011,7 +1014,7 @@ def pacmap_subfunction(
             prediction_data=True
             )
         
-        hdb.fit(hdbscan_input)
+        hdb.fit(latent_postPaCMAP_perfile_MEDdim)
 
          #TODO Look into soft clustering
         # soft_cluster_vecs = np.array(hdbscan.all_points_membership_vectors(hdb))
@@ -1032,10 +1035,10 @@ def pacmap_subfunction(
     #TODO Destaurate according to probability of being in cluster
 
     # Per patient, Run data through model & Reshape the labels and probabilities for plotting
-    hdb_labels_flat_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
-    hdb_probabilities_flat_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
+    hdb_labels_flat_perfile = [-1] * latent_postPaCMAP_perfile_MEDdim.shape[0]
+    hdb_probabilities_flat_perfile = [-1] * latent_postPaCMAP_perfile_MEDdim.shape[0]
     for i in range(len(latent_postPaCMAP_perfile_MEDdim)):
-        hdb_labels_flat_perfile[i], hdb_probabilities_flat_perfile[i] = hdbscan.prediction.approximate_predict(hdb, latent_postPaCMAP_perfile_MEDdim[i])
+        hdb_labels_flat_perfile[i], hdb_probabilities_flat_perfile[i] = hdbscan.prediction.approximate_predict(hdb, latent_postPaCMAP_perfile_MEDdim[i, :, :])
 
     ###### START OF PLOTTING #####
 
@@ -1068,7 +1071,7 @@ def pacmap_subfunction(
         seiztype_ax=ax22,
         time_ax=ax23,
         cluster_ax=ax24,
-        latent_data=np.stack(latent_postPaCMAP_perfile, axis=0).swapaxes(1,2), # [epoch, 2, timesample]
+        latent_data=latent_postPaCMAP_perfile.swapaxes(1,2), # [epoch, 2, timesample]
         modified_samp_freq=modified_FS,  # accounts for windowing/stride
         start_datetimes=start_datetimes_epoch, 
         stop_datetimes=stop_datetimes_epoch, 

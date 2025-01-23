@@ -223,7 +223,8 @@ class TimeSeriesDecoder(nn.Module):
 
             # Final output no normalization and smooth with tanh
             elif i == self.num_channel_reduction_layers -1:
-                layers.append(nn.Tanh())
+                # layers.append(nn.Tanh())
+                layers.append(nn.Hardtanh())
 
         # Combine the layers into a Sequential container
         self.cnn = nn.Sequential(*layers)
@@ -276,8 +277,8 @@ class VAE(nn.Module):
         self.encoder_head = Encoder_TimeSeriesCNNWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=crattn_embed_dim, **kwargs)
 
         # Core Encoder
-        self.head_to_top = nn.Linear(self.crattn_embed_dim * self.autoencode_samples, self.top_dims, bias=True)
-        self.norm_top = RMSNorm(dim=self.top_dims)
+        # self.head_to_top = nn.Linear(self.crattn_embed_dim * self.autoencode_samples, self.top_dims, bias=True)
+        # self.norm_top = RMSNorm(dim=self.top_dims)
         self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=True)
         self.norm_hidden = RMSNorm(dim=self.hidden_dims)
         
@@ -310,9 +311,9 @@ class VAE(nn.Module):
             y = self.encoder_head(x)
 
             # VAE CORE
-            y = self.head_to_top(y)
-            y = self.silu(y)
-            y = self.norm_top(y)
+            # y = self.head_to_top(y)
+            # y = self.silu(y)
+            # y = self.norm_top(y)
             y = self.top_to_hidden(y)
             y = self.silu(y)
             y = self.norm_hidden(y)

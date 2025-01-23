@@ -146,6 +146,7 @@ def main(
     valfinetune_subsample_file_factor: int,
     valunseen_subsample_file_factor: int,
     train_num_rand_hashes: int,
+    autoreg_num_rand_hashes: int,
     val_num_rand_hashes: int,
     LR_val_vae: float,
     LR_val_transformer: float,
@@ -227,51 +228,51 @@ def main(
         # PACMAP
         if (epoch > 0) & ((trainer.epoch + 1) % trainer.pacmap_every == 0):
 
-            # Save pre-finetune model/opt weights
-            if finetune_pacmap:
-                vae_dict = trainer.vae.module.state_dict()
-                vae_opt_dict = trainer.opt_vae.state_dict()
-                transformer_dict = trainer.transformer.module.state_dict()
-                transformer_opt_dict = trainer.opt_transformer.state_dict()
+            # # Save pre-finetune model/opt weights
+            # if finetune_pacmap:
+            #     vae_dict = trainer.vae.module.state_dict()
+            #     vae_opt_dict = trainer.opt_vae.state_dict()
+            #     transformer_dict = trainer.transformer.module.state_dict()
+            #     transformer_opt_dict = trainer.opt_transformer.state_dict()
 
-                # FINETUNE on beginning of validation patients (currently only one epoch)
-                # Set to train and change LR to validate settings
-                trainer._set_to_train()
-                trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
-                trainer.opt_transformer.param_groups[0]['lr'] = LR_val_transformer
-                trainer._run_epoch(
-                    dataset_curr = trainer.valfinetune_dataset, 
-                    dataset_string = "valfinetune",
-                    batchsize=trainer.wdecode_batch_size,
-                    random_bool = True, # will subsample and randomize
-                    subsample_file_factor_curr = valfinetune_subsample_file_factor, # only valid if 'random_bool' is True
-                    all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
-                    val_finetune = True,
-                    val_unseen = False,
-                    backprop = True,
-                    num_rand_hashes = val_num_rand_hashes,
-                    **kwargs)
+            #     # FINETUNE on beginning of validation patients (currently only one epoch)
+            #     # Set to train and change LR to validate settings
+            #     trainer._set_to_train()
+            #     trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
+            #     trainer.opt_transformer.param_groups[0]['lr'] = LR_val_transformer
+            #     trainer._run_epoch(
+            #         dataset_curr = trainer.valfinetune_dataset, 
+            #         dataset_string = "valfinetune",
+            #         batchsize=trainer.wdecode_batch_size,
+            #         random_bool = True, # will subsample and randomize
+            #         subsample_file_factor_curr = valfinetune_subsample_file_factor, # only valid if 'random_bool' is True
+            #         all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+            #         val_finetune = True,
+            #         val_unseen = False,
+            #         backprop = True,
+            #         num_rand_hashes = val_num_rand_hashes,
+            #         **kwargs)
 
             # # INFERENCE on all datasets
             dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
             dataset_strs = ["train", "valfinetune", "valunseen"]
-            trainer._set_to_eval()
-            with torch.no_grad():
-                for d in range(0, len(dataset_list)):
-                    trainer._run_epoch(
-                        dataset_curr = dataset_list[d], 
-                        dataset_string = dataset_strs[d],
-                        batchsize=trainer.onlylatent_batch_size,
-                        random_bool = False, # will subsample and randomize
-                        subsample_file_factor_curr = -1, # only valid if 'random_bool' is True
-                        all_files_latent_only = True, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
-                        val_finetune = False,
-                        val_unseen = False,
-                        backprop = False,
-                        num_rand_hashes = -1,
-                        **kwargs)
+            # trainer._set_to_eval()
+            # with torch.no_grad():
+            #     for d in range(0, len(dataset_list)):
+            #         trainer._run_epoch(
+            #             dataset_curr = dataset_list[d], 
+            #             dataset_string = dataset_strs[d],
+            #             batchsize=trainer.onlylatent_batch_size,
+            #             random_bool = False, # will subsample and randomize
+            #             subsample_file_factor_curr = -1, # only valid if 'random_bool' is True
+            #             all_files_latent_only = True, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+            #             val_finetune = False,
+            #             val_unseen = False,
+            #             backprop = False,
+            #             num_rand_hashes = -1,
+            #             **kwargs)
 
-            # PACMAP
+            # After inferenece, run the PACMAP
             # Only initiate for one GPU process - but calculations are done on CPU
             if (gpu_id == 0): 
                 # New pacmap run for every win/stride combination
@@ -284,12 +285,15 @@ def main(
                         latent_subdir=f"/latent_files/Epoch{epoch}", 
                         **kwargs)
 
-            # Restore model/opt weights to pre-finetune
-            if finetune_pacmap:
-                trainer.vae.module.load_state_dict(vae_dict)
-                trainer.opt_vae.load_state_dict(vae_opt_dict)
-                trainer.transformer.module.load_state_dict(transformer_dict)
-                trainer.opt_transformer.load_state_dict(transformer_opt_dict)
+            # # Restore model/opt weights to pre-finetune
+            # if finetune_pacmap:
+            #     trainer.vae.module.load_state_dict(vae_dict)
+            #     trainer.opt_vae.load_state_dict(vae_opt_dict)
+            #     trainer.transformer.module.load_state_dict(transformer_dict)
+            #     trainer.opt_transformer.load_state_dict(transformer_opt_dict)
+
+            print(f"GPU{str(trainer.gpu_id)} at post PaCMAP barrier")
+            barrier()
         
         # AUTOREGRESSIVE INFERENCE 
         # Training data
@@ -300,7 +304,7 @@ def main(
                 trainer._random_autoreg_plots(
                     dataset_curr = trainer.train_dataset, 
                     dataset_string = "train",
-                    num_rand_hashes = train_num_rand_hashes,
+                    num_rand_hashes = autoreg_num_rand_hashes,
                     **kwargs)
 
         # TRAIN
@@ -876,8 +880,10 @@ class Trainer:
 
                         mean_loss = loss_functions.simple_mean_latent_loss(latent_seq, **kwargs)
 
+                        sparse_loss = loss_functions.sparse_kl_divergence(latent_batched, **kwargs)
+
                         # Intrapatient backprop
-                        loss = recon_loss + kld_loss + transformer_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        loss = recon_loss  + transformer_loss + sparse_loss #  kld_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
                         if backprop: loss.backward()
 
                         # Realtime terminal info and WandB 
@@ -908,6 +914,7 @@ class Trainer:
                                     train_recon_loss=recon_loss, 
                                     train_mean_loss=mean_loss,
                                     train_kld_loss=kld_loss, 
+                                    train_sparse_loss=sparse_loss,
                                     train_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     train_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
                                     train_KL_Beta=self.KL_multiplier, 
@@ -923,6 +930,7 @@ class Trainer:
                                     val_finetune_recon_loss=recon_loss, 
                                     val_finetune_mean_loss=mean_loss,
                                     val_finetune_kld_loss=kld_loss, 
+                                    val_finetune_sparse_loss=sparse_loss,
                                     val_finetune_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     val_finetune_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
                                     val_finetune_KL_Beta=self.KL_multiplier, 
@@ -938,6 +946,7 @@ class Trainer:
                                     val_unseen_recon_loss=recon_loss, 
                                     val_unseen_mean_loss=mean_loss,
                                     val_unseen_kld_loss=kld_loss, 
+                                    val_unseen_sparse_loss=sparse_loss,
                                     val_unseen_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     val_unseen_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
                                     val_unseen_KL_Beta=self.KL_multiplier, 
