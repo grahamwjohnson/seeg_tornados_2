@@ -106,22 +106,36 @@ autoreg_num_rand_pats: 2
 autoreg_num_rand_files: 2
 autoreg_attention_dropout: 0.0
 
+
+
+
+### Dynamic Weights ###
+
 # Beta VAE controls
 KL_max: kwargs['KL_max'] = 1e-4 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
 KL_min: kwargs['KL_min'] = 0
 KL_epochs_AT_max: 50
 KL_epochs_TO_max: 50
 
+# Transformer weight control
 Transformer_max: kwargs['Transformer_max'] = 0.1 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
 Transformer_min: kwargs['Transformer_min'] = 0
 Transformer_epochs_AT_max: 99999
 Transformer_epochs_TO_max: 100
 
-# Weights
+# Sparsity weight control
+Sparse_max: kwargs['Sparse_max'] = 0.1 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
+Sparse_min: kwargs['Sparse_min'] = 0
+Sparse_epochs_AT_max: 99999
+Sparse_epochs_TO_max: 0
+
+### Static Weights ###
 recon_weight: 3
-# transformer_weight: 0.1 # 0.01  ############# CHeck if loss is actually used!!! May be commented out ###############
 mean_loss_weight: 1
-lambda_sparse: 1
+
+
+
+### Dynamic Learning Rates ###
 
 # VAE learning rate controls
 LR_max_core: kwargs['LR_max_core'] = 1e-5

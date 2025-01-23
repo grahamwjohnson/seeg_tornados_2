@@ -792,7 +792,7 @@ class Trainer:
                 for start_idx in start_idxs: # Same start_idx for all patients (has no biological meaning)
 
                     # For Training: Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                    self.KL_multiplier, self.curr_LR_core, self.transformer_LR, self.transformer_weight = utils_functions.LR_and_weight_schedules(
+                    self.KL_multiplier, self.curr_LR_core, self.transformer_LR, self.transformer_weight, self.sparse_weight = utils_functions.LR_and_weight_schedules(
                         epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
                     
                     # Update LR to schedule
@@ -878,9 +878,14 @@ class Trainer:
                             logvar=logvar_batched,
                             KL_multiplier=self.KL_multiplier)
 
-                        mean_loss = loss_functions.simple_mean_latent_loss(latent_seq, **kwargs)
+                        mean_loss = loss_functions.simple_mean_latent_loss(
+                            latent_seq, 
+                            **kwargs)
 
-                        sparse_loss = loss_functions.sparse_kl_divergence(latent_batched, **kwargs)
+                        sparse_loss = loss_functions.sparse_kl_divergence(
+                            z=latent_batched, 
+                            sparse_weight=self.sparse_weight, 
+                            **kwargs)
 
                         # Intrapatient backprop
                         loss = recon_loss  + transformer_loss + sparse_loss #  kld_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
