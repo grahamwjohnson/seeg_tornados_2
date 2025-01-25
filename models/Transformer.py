@@ -20,7 +20,7 @@ from torch import nn
 class ModelArgs:
     def __init__(
         self, 
-        latent_dim: int = None,
+        dim: int = None,
         n_layers: int = 16,
         n_heads: int = 16,
         n_kv_heads: Optional[int] = None,
@@ -36,8 +36,7 @@ class ModelArgs:
         **kwargs):
 
         super().__init__()
-        self.dim = latent_dim
-        self.vae_dim= latent_dim
+        self.dim = dim
         self.n_layers = n_layers
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads

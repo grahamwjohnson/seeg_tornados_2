@@ -67,6 +67,17 @@ def load_train_objs(
     val_finetune_hour_dataset_range, 
     val_unseen_hour_dataset_range, 
     inference_selection, 
+
+    latent_dim,
+
+    master_transformer_seq_length,
+    master_max_seq_len,
+    master_max_batch_size,
+    master_n_layers,
+    master_n_heads,
+    master_multiple_of, 
+    master_ffn_dim_multiplier, 
+    master_attention_dropout,    
     
     # Optimizers
     core_weight_decay, 
@@ -118,12 +129,22 @@ def load_train_objs(
         **kwargs)
      
     ### VAE ###
-    vae = VAE(gpu_id=gpu_id, **kwargs) 
+    vae = VAE(gpu_id=gpu_id, latent_dim=latent_dim, **kwargs) 
     vae = vae.to(gpu_id) 
     opt_vae = torch.optim.AdamW(vae.parameters(), weight_decay=core_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_core'])
     
     ### Transformer ###
-    transformer = Transformer(ModelArgs(device=gpu_id, **kwargs))
+    transformer = Transformer(ModelArgs(
+        device=gpu_id, 
+        dim = latent_dim,
+        max_seq_len = master_max_seq_len,
+        max_batch_size = master_max_batch_size,
+        n_layers = master_n_layers,
+        n_heads = master_n_heads,
+        multiple_of = master_multiple_of, 
+        ffn_dim_multiplier = master_ffn_dim_multiplier, 
+        **kwargs))
+
     transformer = transformer.to(gpu_id)
     opt_transformer = torch.optim.AdamW(transformer.parameters(), weight_decay=transformer_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_transformer'])
     print(f"[GPU{gpu_id}] transformer loaded")
@@ -404,9 +425,10 @@ class Trainer:
         pacmap_every: int,
         finetune_pacmap: bool,
         latent_dim: int,
-        autoencode_samples: int,
+        encode_samples: int,
+        decode_samples: int,
         num_samples: int,
-        transformer_seq_length: int,
+        master_transformer_seq_length: int,
         FS: int,
         intrapatient_dataset_style: list,
         # transformer_weight: float,
@@ -436,9 +458,10 @@ class Trainer:
         self.pacmap_every = pacmap_every
         self.finetune_pacmap = finetune_pacmap
         self.latent_dim = latent_dim
-        self.autoencode_samples = autoencode_samples
+        self.encode_samples = encode_samples
+        self.decode_samples = decode_samples
         self.num_samples = num_samples
-        self.transformer_seq_length = transformer_seq_length
+        self.master_transformer_seq_length = master_transformer_seq_length
         self.FS = FS
         self.intrapatient_dataset_style = intrapatient_dataset_style
         self.curr_LR_core = -1
@@ -457,7 +480,7 @@ class Trainer:
         self.KL_multiplier = -1 # dummy variable, only needed when debugging and training is skipped
 
         # Number of iterations per file
-        self.num_windows = int((self.num_samples - self.transformer_seq_length * self.autoencode_samples - self.autoencode_samples)/self.autoencode_samples) - 2
+        self.num_windows = int((self.num_samples - self.master_transformer_seq_length * self.encode_samples - self.encode_samples)/self.encode_samples) - 2
 
         # Set up vae & transformer with DDP
         self.vae = DDP(vae, device_ids=[gpu_id])   # find_unused_parameters=True
@@ -529,26 +552,26 @@ class Trainer:
 
         np.random.seed(seed=None) # should replace with Generator for newer code
         
-        if random_bool: frame_shift = int(random.uniform(0, self.autoencode_samples -1))
+        if random_bool: frame_shift = int(random.uniform(0, self.encode_samples -1))
         else: frame_shift = 0
         
-        start_idxs = np.arange(0,self.num_windows - self.transformer_seq_length - 1) * self.autoencode_samples + frame_shift
+        start_idxs = np.arange(0,self.num_windows - self.master_transformer_seq_length - 1) * self.encode_samples + frame_shift
         if random_bool: np.random.shuffle(start_idxs)
 
         if random_bool: start_idxs = start_idxs[0::subsample_file_factor]
         
         return start_idxs
 
-    def _autoreg(self, context, target, autoreg_tokens_to_gen, n_layers, hash_pat_embedding, autoreg_attention_dropout, **kwargs):
+    def _autoreg(self, context, target, autoreg_tokens_to_gen, hash_pat_embedding, autoreg_attention_dropout, **kwargs):
 
         real_batchsize = context.shape[0]
         out_channels = context.shape[1]
-        context_token_len = int(context.shape[2]/self.autoencode_samples)
-        target_token_len = int(target.shape[2]/self.autoencode_samples)
+        context_token_len = int(context.shape[2]/self.encode_samples)
+        target_token_len = int(target.shape[2]/self.decode_samples)
 
         # Pseudo-batch the context
-        context_batched = utils_functions.pseudobatch_raw_data(context, self.autoencode_samples)
-        target_batched = utils_functions.pseudobatch_raw_data(target, self.autoencode_samples)
+        context_batched = utils_functions.pseudobatch_raw_data(context, self.encode_samples)
+        target_batched = utils_functions.pseudobatch_raw_data(target, self.decode_samples)
 
         ### VAE ENCODER
         # Forward pass in stacked batch VAE encoder
@@ -604,7 +627,7 @@ class Trainer:
             for data_tensor, file_name in dataloader_curr:
 
                 # Get the random start idx in file
-                random_start_idx = np.arange(0, self.num_samples - (autoreg_context_tokens + autoreg_tokens_to_gen)*self.autoencode_samples - 1)
+                random_start_idx = np.arange(0, self.num_samples - (autoreg_context_tokens + autoreg_tokens_to_gen)*self.encode_samples - 1)
                 np.random.shuffle(random_start_idx)
                 random_start_idx = random_start_idx[0]
 
@@ -618,8 +641,8 @@ class Trainer:
                     modifier=rand_modifer)
 
                 # Pull out context and target raw data and move to GPU
-                context_raw = data_tensor[:, hash_channel_order, random_start_idx: random_start_idx + autoreg_context_tokens * self.autoencode_samples]
-                target_raw = data_tensor[:, hash_channel_order, random_start_idx + autoreg_context_tokens * self.autoencode_samples : random_start_idx + autoreg_context_tokens * self.autoencode_samples + autoreg_tokens_to_gen * self.autoencode_samples]
+                context_raw = data_tensor[:, hash_channel_order, random_start_idx: random_start_idx + autoreg_context_tokens * self.encode_samples]
+                target_raw = data_tensor[:, hash_channel_order, random_start_idx + autoreg_context_tokens * self.decode_samples : random_start_idx + autoreg_context_tokens * self.decode_samples + autoreg_tokens_to_gen * self.decode_samples]
                 context_raw = context_raw.to(self.gpu_id)
                 target_raw = target_raw.to(self.gpu_id)
 
@@ -687,7 +710,8 @@ class Trainer:
         pseudobatch_onlylatent,
         **kwargs):
 
-        print(f"autoencode_samples: {self.autoencode_samples}")
+        print(f"encode_samples: {self.encode_samples}")
+        print(f"decode_samples: {self.decode_samples}")
 
         ### ALL/FULL FILES - LATENT ONLY ### 
         # This setting is used for inference
@@ -715,15 +739,15 @@ class Trainer:
 
                     # Pseudo batch the file to speed up processing - up to pseudobatch_onlylatent size each encode pass
                     # Determine how many pseudo windows are in file based on pseudobatch_onlylatent
-                    num_pseudo_windows = data_tensor.shape[2] / self.autoencode_samples / pseudobatch_onlylatent
+                    num_pseudo_windows = data_tensor.shape[2] / self.decode_samples / pseudobatch_onlylatent
                     assert num_pseudo_windows % 1 == 0
                     num_pseudo_windows = int(num_pseudo_windows)
                     
                     # Split the data by number of pseudo windows
-                    data_tensor_split = torch.stack(torch.split(data_tensor, self.autoencode_samples, dim=2), dim=1)
+                    data_tensor_split = torch.stack(torch.split(data_tensor, self.decode_samples, dim=2), dim=1)
 
                     # Create the sequential latent sequence array for the file
-                    num_windows_in_file = data_tensor.shape[2] / self.autoencode_samples
+                    num_windows_in_file = data_tensor.shape[2] / self.decode_samples
                     assert (num_windows_in_file % 1) == 0
                     num_windows_in_file = int(num_windows_in_file)
                     file_latents = np.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim])
@@ -748,11 +772,11 @@ class Trainer:
                         win_sec_curr = self.pre_PaCMAP_window_sec_list[i]
                         stride_sec_curr = self.pre_PaCMAP_stride_sec_list[i]
                         
-                        num_latents_in_win = win_sec_curr / (self.autoencode_samples / self.FS) 
+                        num_latents_in_win = win_sec_curr / (self.decode_samples / self.FS) 
                         assert (num_latents_in_win % 1) == 0
                         num_latents_in_win = int(num_latents_in_win)
 
-                        num_latents_in_stride = stride_sec_curr / (self.autoencode_samples / self.FS) 
+                        num_latents_in_stride = stride_sec_curr / (self.decode_samples / self.FS) 
                         assert (num_latents_in_stride % 1) == 0
                         num_latents_in_stride = int(num_latents_in_stride)
 
@@ -808,8 +832,8 @@ class Trainer:
 
                     # # Save mean/logvar across all patients' transformer sequences so we can calculate KLD across patient cohort instead on individual transformer sequences
                     # # [pat, batch, transformer seq idx, vals]
-                    # mean_allpats = torch.zeros(num_pats_curr, batchsize, self.transformer_seq_length, self.latent_dim).to(self.gpu_id)
-                    # logvar_allpats = torch.zeros(num_pats_curr, batchsize, self.transformer_seq_length, self.latent_dim).to(self.gpu_id)
+                    # mean_allpats = torch.zeros(num_pats_curr, batchsize, self.master_transformer_seq_length, self.latent_dim).to(self.gpu_id)
+                    # logvar_allpats = torch.zeros(num_pats_curr, batchsize, self.master_transformer_seq_length, self.latent_dim).to(self.gpu_id)
 
                     # Iterate through all patients and accumulate losses before stepping optimizers
                     for pat_idx in np.arange(0,num_pats_curr): 
@@ -818,7 +842,7 @@ class Trainer:
                         data_tensor = data_tensor_by_pat[pat_idx]
 
                         # Reset the data vars for Transformer Sequence and put on GPU
-                        x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.autoencode_samples).to(self.gpu_id)
+                        x = torch.zeros(data_tensor.shape[0], self.master_transformer_seq_length, data_tensor.shape[1], self.encode_samples).to(self.gpu_id)
 
                         # HASHING: Get the patient channel order and patid_embedding for this channel order
                         np.random.seed(seed=None) 
@@ -830,17 +854,17 @@ class Trainer:
                             modifier=rand_modifer)
 
                         # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
-                        for embedding_idx in range(0, self.transformer_seq_length):
+                        for embedding_idx in range(0, self.master_transformer_seq_length):
 
                             # Pull out data for this window
-                            end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
-                            x[:, embedding_idx, :, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
+                            end_idx = start_idx + self.encode_samples * embedding_idx + self.encode_samples 
+                            x[:, embedding_idx, :, :] = data_tensor[:, hash_channel_order, end_idx-self.encode_samples : end_idx]
 
                         # Stack the vars into batch dimension 
                         x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
 
                         # To remember how to split back to original:
-                        # a = torch.split(x_decode_shifted_batched, self.transformer_seq_length-1, dim=0)
+                        # a = torch.split(x_decode_shifted_batched, self.master_transformer_seq_length-1, dim=0)
                         # b = torch.stack(a, dim=0)
 
                         ### VAE ENCODER
@@ -848,7 +872,7 @@ class Trainer:
                         mean_batched, logvar_batched, latent_batched = self.vae(x_batched, reverse=False)
 
                         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
-                        latent_seq = torch.split(latent_batched, self.transformer_seq_length, dim=0)
+                        latent_seq = torch.split(latent_batched, self.master_transformer_seq_length, dim=0)
                         latent_seq = torch.stack(latent_seq, dim=0)
   
                         ### TRANSFORMER
@@ -859,7 +883,7 @@ class Trainer:
                         # Run the predicted embeddings through decoder
                         predicted_embeddings_batched = predicted_embeddings.reshape(predicted_embeddings.shape[0]*predicted_embeddings.shape[1], predicted_embeddings.shape[2])                        
                         x_hat_batched = self.vae(predicted_embeddings_batched, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=x_batched.shape[1])  
-                        x_hat = torch.split(x_hat_batched, self.transformer_seq_length-1, dim=0)
+                        x_hat = torch.split(x_hat_batched, self.master_transformer_seq_length-1, dim=0)
                         x_hat = torch.stack(x_hat, dim=0)
  
                         # LOSSES: Intra-Patient 

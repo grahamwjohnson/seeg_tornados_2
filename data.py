@@ -29,7 +29,7 @@ class SEEG_Tornado_Dataset(Dataset):
             hour_dataset_range,
             dataset_pic_dir, 
             num_samples,
-            autoencode_samples,
+            decode_samples,
             periictal_augmentation_perc,
             preictal_augmentation_seconds,
             **kwargs
@@ -37,14 +37,14 @@ class SEEG_Tornado_Dataset(Dataset):
 
         self.gpu_id = gpu_id
         self.num_samples = num_samples
-        self.autoencode_samples = autoencode_samples
+        self.decode_samples = decode_samples
         self.FS = FS
         self.kwargs = kwargs
 
         self.periictal_augmentation_perc = periictal_augmentation_perc
         self.preictal_augmentation_seconds = preictal_augmentation_seconds
 
-        self.num_windows = int((self.num_samples - self.autoencode_samples)/self.autoencode_samples) - 2
+        self.num_windows = int((self.num_samples - self.decode_samples)/self.decode_samples) - 2
     
         # Get ONLY the .pkl file names in the subdirectories of choice
         # self.data_dir = data_dir

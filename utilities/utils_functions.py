@@ -51,7 +51,8 @@ from tkinter import filedialog
 import re
 from functools import partial
 
-from models.VAE import print_models_flow
+from models.Transformer import ModelArgs, Transformer
+from models.VAE import VAE
 
 def fill_hist_by_channel(data_in: np.ndarray, histo_bin_edges: np.ndarray, zero_island_delete_idxs: list):
 
@@ -2608,7 +2609,7 @@ def run_setup(**kwargs):
     kwargs = initialize_directories(run_notes=run_notes, **kwargs)
 
     # Print the model forward pass sizes
-    fake_data = torch.rand(kwargs['wdecode_batch_size'], 199, kwargs['autoencode_samples']) # 199 is just an example of number of patient channels
+    fake_data = torch.rand(kwargs['wdecode_batch_size'], 199, kwargs['encode_samples']) # 199 is just an example of number of patient channels
     print_models_flow(x=fake_data, **kwargs)
 
     # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)
@@ -2617,3 +2618,70 @@ def run_setup(**kwargs):
     kwargs['run_name'] = '_'.join(map(str,s.split('_')[0:2]))
 
     return world_size, kwargs
+
+def print_models_flow(
+    x, 
+    latent_dim,
+    master_transformer_seq_length,
+    master_max_seq_len,
+    master_max_batch_size,
+    master_n_layers,
+    master_n_heads,
+    master_multiple_of, 
+    master_ffn_dim_multiplier, 
+    master_attention_dropout,    
+    **kwargs):
+    '''
+    Builds models on CPU and prints sizes of forward passes
+
+    '''
+
+    batch_size = x.shape[0]
+    pat_num_channels = x.shape[1] 
+    data_length = x.shape[2]
+
+    # Build the VAE
+    vae = VAE(latent_dim=latent_dim, **kwargs) 
+
+    # Build the Transformer
+    transformer = Transformer(ModelArgs(
+        device='cpu', 
+        dim = latent_dim,
+        max_seq_len = master_max_seq_len,
+        max_batch_size = master_max_batch_size,
+        n_layers = master_n_layers,
+        n_heads = master_n_heads,
+        multiple_of = master_multiple_of, 
+        ffn_dim_multiplier = master_ffn_dim_multiplier, 
+        **kwargs))
+
+    # Run through Enc Head
+    print(f"INPUT TO <ENC>\n"
+    f"x:{x.shape}")
+    mean, logvar, latent = vae(x, reverse=False)  
+    summary(vae, input_size=(x.shape), depth=999, device="cpu")
+    print(
+    f"mean:{mean.shape}\n"
+    f"logvar:{logvar.shape}\n"
+    f"latent:{latent.shape}\n")
+
+    # Run through Transformer
+    # Generate fake seuqential latents and shift the latent
+    latent_shifted = torch.rand(latent.shape[0], master_transformer_seq_length-1, latent.shape[1])
+    print(f"\n\n\nINPUT TO <Transformer>\n"
+    f"Multiple enoder passes to get sequential latents: latent_shifted:{latent_shifted.shape}\n")
+    trans_out = transformer(latent_shifted)  
+    summary(transformer, input_size=(latent_shifted.shape), depth=999, device="cpu")
+    print(f"trans_out:{trans_out.shape}\n")
+
+    # Run through VAE decoder
+    hash_pat_embedding = torch.rand(latent.shape[1])
+    print(f"\n\n\nINPUT TO <VAE - Decoder Mode> \n"
+    f"z:{latent.shape}\n"
+    f"hash_pat_embedding:{hash_pat_embedding.shape}\n")
+    core_out = vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=pat_num_channels)  
+    print(f"core_out:{core_out.shape}\n")
+
+    del vae, transformer
+
+

@@ -28,13 +28,15 @@ preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
 # Training settings
 continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/jackal_Fri_Jan_24_06_53_53_2025' 
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/ungulate_Fri_Jan_24_18_31_46_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
-### VAE 
-autoencode_samples: 4 # 8 
+### Staged VAE 
 
-# Cross atttention embedder
+encode_samples: kwargs['encode_samples'] = kwargs['crattn_encode_samples'] * kwargs['stage1_transformer_seq_length']
+
+### VAE Encoder Stage 0: Cross atttention embedder on raw data
+crattn_encode_samples: 4
 padded_channels: 256 #input padded to allow for different number of channels, also to ensure multiple of 2 for attention heads
 crattn_embed_dim: 512  # After all of attention on raw data is completed, mean across autoencode dimension (sequence) will be conducted
 crattn_num_highdim_heads: 16 # at padding dimension
@@ -45,31 +47,40 @@ crattn_max_seq_len: 4
 crattn_cnn_kernel_size: 3
 crattn_dropout: 0.1
 
-num_decode_layers: kwargs['num_decode_layers'] = int(math.log(kwargs['autoencode_samples'],2))
-decode_kernel_size: 3
+### VAE Encoder Stage 1: Transformer
+stage1_transformer_dim: 512
+stage1_transformer_seq_length: 64
+stage1_max_seq_len: 512
+stage1_max_batch_size: 4
+stage1_n_layers: 16
+stage1_n_heads: 16
+stage1_multiple_of: 256 
+stage1_ffn_dim_multiplier: 0.2 # 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
+stage1_attention_dropout: 0.1     
 
-### VAE Encoder
-top_dims: 512 
+top_dims: 1024 
 hidden_dims: 2048 # 4096
-latent_dim: 512 # 2048
+latent_dim: 1024 # 2048
+
+### Master Transformer
+master_transformer_seq_length: 128
+master_max_seq_len: 512
+master_max_batch_size: 4
+master_n_layers: 16
+master_n_heads: 16
+master_multiple_of: 256 
+master_ffn_dim_multiplier: 0.2 # 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
+master_attention_dropout: 0.1         
 
 ### Decoder
-decoder_hidden_dims: 2048
-decoder_top_dims: 4096
+decode_samples: 512
+decoder_hidden_dims: 1024
+decoder_top_dims: 1024
+num_decode_layers: kwargs['num_decode_layers'] = int(math.log(kwargs['decode_samples'],2))
+decode_kernel_size: 3
 
-### Transformer
-transformer_seq_length: 512
 
-# Model hardware limits
-max_seq_len: 512
-max_batch_size: 4
-# Model size
-n_layers: 16
-n_heads: 16
-multiple_of: 256 
-ffn_dim_multiplier: 0.2 # 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
-attention_dropout: 0.1          ###    0.8 is aggressive        #### IMPORTANT ####            ###
-
+# AdamW Hyperparams
 core_weight_decay: 0.1
 transformer_weight_decay: 0.1
 adamW_beta1: 0.9
@@ -83,7 +94,7 @@ val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that mo
 train_subsample_file_factor: 40000 # randomly decreases training passes per file per epoch
 valfinetune_subsample_file_factor: 10000
 valunseen_subsample_file_factor: 40000
-wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
+wdecode_batch_size: 2 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 4 # this is for when loss is not being calculated
 pseudobatch_onlylatent: 4096 # Maximum size to stack sequential parts of file into batch dimension during only latent inference
 pacmap_every: 40 # Must be within a 'quick_recon_val_every' to be reached
@@ -102,8 +113,8 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 
 # Autoregressive Inference
 autoreg_every: 1
-autoreg_context_tokens: kwargs['autoreg_context_tokens'] = kwargs['transformer_seq_length'] - 1
-autoreg_tokens_to_gen: 32 # kwargs['autoreg_tokens_to_gen'] = kwargs['transformer_seq_length']
+autoreg_context_tokens: kwargs['autoreg_context_tokens'] = kwargs['master_transformer_seq_length'] - 1
+autoreg_tokens_to_gen: 32 # kwargs['autoreg_tokens_to_gen'] = kwargs['master_transformer_seq_length']
 autoreg_channels: 3
 autoreg_batchsize: 2
 autoreg_num_rand_pats: 2
@@ -141,17 +152,17 @@ mean_loss_weight: 1
 
 # VAE learning rate controls
 LR_max_core: kwargs['LR_max_core'] = 1e-5
-LR_min_core: kwargs['LR_min_core'] = 1e-6
+LR_min_core: kwargs['LR_min_core'] = 1e-7
 LR_epochs_TO_max_core: 2
-LR_epochs_AT_max_core: 0
+LR_epochs_AT_max_core: 99999
 manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
 manual_step_size_core: 99999
 
 # Transformer learning rate controls
-LR_max_transformer: kwargs['LR_max_transformer'] = 1e-6
-LR_min_transformer: kwargs['LR_min_transformer'] = 1e-8
-LR_epochs_TO_max_transformer: 3
-LR_epochs_AT_max_transformer: 0
+LR_max_transformer: kwargs['LR_max_transformer'] = 1e-5
+LR_min_transformer: kwargs['LR_min_transformer'] = 1e-7
+LR_epochs_TO_max_transformer: 2
+LR_epochs_AT_max_transformer: 99999
 manual_gamma_transformer: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
 manual_step_size_transformer: 99999
 

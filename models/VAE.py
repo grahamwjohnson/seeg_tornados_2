@@ -244,6 +244,28 @@ class TimeSeriesDecoder(nn.Module):
         
         return x
 
+class TransformerEncoderBlock(nn.Module):
+    def __init__(self, args, output_dims):
+        super(TransformerEncoderBlock, self).__init__()
+
+        self.transformer = Transformer(args)
+
+        # Convert to output dims
+        self.output_dim_convert = nn.Sequential(
+            nn.Linear(args.dim, output_dims),
+            nn.SiLU(),
+            RMSNorm(output_dims),
+            nn.Linear(output_dims, output_dims),
+            nn.SiLU(),
+            RMSNorm(output_dims)
+        )
+
+    def forward(self, x):
+        y = self.transformer(x)
+        y = y.mean(dim=1)
+        y = self.output_dim_convert(y)
+        return y
+
 class VAE(nn.Module):
     '''
     The Reverseable Encoder/Decoder 
@@ -251,12 +273,27 @@ class VAE(nn.Module):
     '''
     def __init__(
         self, 
-        autoencode_samples,
+        encode_samples,
+
         padded_channels,
+        crattn_encode_samples,
         crattn_embed_dim,
+
+        stage1_transformer_dim,
+        stage1_transformer_seq_length,
+        stage1_max_seq_len,
+        stage1_max_batch_size,
+        stage1_n_layers,
+        stage1_n_heads,
+        stage1_multiple_of,
+        stage1_ffn_dim_multiplier,
+        stage1_attention_dropout,
+
         top_dims,
         hidden_dims,
         latent_dim, 
+
+        decode_samples,
         decoder_hidden_dims,
         decoder_top_dims,
         num_decode_layers,
@@ -267,7 +304,8 @@ class VAE(nn.Module):
         super(VAE, self).__init__()
 
         self.gpu_id = gpu_id
-        self.autoencode_samples = autoencode_samples
+        self.encode_samples = encode_samples
+        self.crattn_encode_samples = crattn_encode_samples
         self.padded_channels = padded_channels
         self.crattn_embed_dim = crattn_embed_dim
         self.top_dims = top_dims
@@ -279,8 +317,23 @@ class VAE(nn.Module):
         self.num_decode_layers = num_decode_layers
         self.decode_kernel_size = decode_kernel_size
 
-        # Encoder Head
+        # Stage 0: Cross Attention Encoder Head
         self.encoder_head = Encoder_TimeSeriesCNNWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=crattn_embed_dim, **kwargs)
+
+        # Stage 1: Transformer 
+        self.stage1_transformer = TransformerEncoderBlock(
+            ModelArgs(
+                device = gpu_id, 
+                dim = stage1_transformer_dim,
+                max_seq_len = stage1_max_seq_len,
+                max_batch_size = stage1_max_batch_size,
+                n_layers = stage1_n_layers,
+                n_heads = stage1_n_heads,
+                multiple_of = stage1_multiple_of, 
+                ffn_dim_multiplier = stage1_ffn_dim_multiplier),
+            
+            output_dims = top_dims
+        )
 
         # Core Encoder
         # self.head_to_top = nn.Linear(self.crattn_embed_dim * self.autoencode_samples, self.top_dims, bias=True)
@@ -298,8 +351,8 @@ class VAE(nn.Module):
         self.hidden_to_top = nn.Linear(self.decoder_hidden_dims,  self.decoder_top_dims, bias=True)
         self.norm_top_rev = RMSNorm(dim=self.decoder_top_dims)
 
-        # Deocder head
-        self.decoder_head = TimeSeriesDecoder(in_dim=self.decoder_top_dims, padded_channels = self.padded_channels, seq_len=autoencode_samples, num_layers=num_decode_layers, kernel_size=decode_kernel_size)
+        # Decoder head
+        self.decoder_head = TimeSeriesDecoder(in_dim=self.decoder_top_dims, padded_channels = self.padded_channels, seq_len=decode_samples, num_layers=num_decode_layers, kernel_size=decode_kernel_size)
 
         self.silu = nn.SiLU()
 
@@ -313,13 +366,21 @@ class VAE(nn.Module):
 
         if reverse == False:
 
-            # FEATURE HEAD
-            y = self.encoder_head(x)
+            # STAGE 0: CROSS ATTENTION
+            
+            # Pseudobatch the data
+            y = x.view(x.shape[0], x.shape[1], -1, self.crattn_encode_samples).transpose(1,2)
+            y = y.reshape(y.shape[0]*y.shape[1], y.shape[2], y.shape[3])
+
+            y = self.encoder_head(y)
+
+            # Unpseudobatch the data
+            y = y.view(x.shape[0], -1, y.shape[1])
+
+            # STAGE 1: TRANSFORMER
+            y = self.stage1_transformer(y)
 
             # VAE CORE
-            # y = self.head_to_top(y)
-            # y = self.silu(y)
-            # y = self.norm_top(y)
             y = self.top_to_hidden(y)
             y = self.silu(y)
             y = self.norm_hidden(y)
