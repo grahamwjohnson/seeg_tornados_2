@@ -184,7 +184,8 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
 
         x = x.permute(1, 0, 2)  # Return to shape (batch_size, seq_len, low_dim)
 
-        return x.flatten(start_dim=1) # (batch, seq_len * low_dim)
+        # return x.flatten(start_dim=1) # (batch, seq_len * low_dim)
+        return torch.mean(x, dim=1)
         # return x[:,-1,:] # Return last in sequence (should be embedded with meaning)
 
 class TimeSeriesDecoder(nn.Module):
@@ -256,6 +257,8 @@ class VAE(nn.Module):
         top_dims,
         hidden_dims,
         latent_dim, 
+        decoder_hidden_dims,
+        decoder_top_dims,
         num_decode_layers,
         decode_kernel_size,
         gpu_id=None,  
@@ -270,6 +273,9 @@ class VAE(nn.Module):
         self.top_dims = top_dims
         self.hidden_dims = hidden_dims
         self.latent_dim = latent_dim 
+
+        self.decoder_hidden_dims = decoder_hidden_dims
+        self.decoder_top_dims = decoder_top_dims
         self.num_decode_layers = num_decode_layers
         self.decode_kernel_size = decode_kernel_size
 
@@ -287,13 +293,13 @@ class VAE(nn.Module):
         self.logvar_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True) # bias=False
 
         # Core Decoder
-        self.latent_to_hidden = nn.Linear(self.latent_dim, self.hidden_dims, bias=True) # bias=False
-        self.norm_hidden_rev = RMSNorm(dim=self.hidden_dims)
-        self.hidden_to_top = nn.Linear(self.hidden_dims, self.top_dims, bias=True)
-        self.norm_top_rev = RMSNorm(dim=self.top_dims)
+        self.latent_to_hidden = nn.Linear(self.latent_dim, self.decoder_hidden_dims, bias=True) # bias=False
+        self.norm_hidden_rev = RMSNorm(dim=self.decoder_hidden_dims)
+        self.hidden_to_top = nn.Linear(self.decoder_hidden_dims,  self.decoder_top_dims, bias=True)
+        self.norm_top_rev = RMSNorm(dim=self.decoder_top_dims)
 
         # Deocder head
-        self.decoder_head = TimeSeriesDecoder(in_dim=top_dims, padded_channels = self.padded_channels, seq_len=autoencode_samples, num_layers=num_decode_layers, kernel_size=decode_kernel_size)
+        self.decoder_head = TimeSeriesDecoder(in_dim=self.decoder_top_dims, padded_channels = self.padded_channels, seq_len=autoencode_samples, num_layers=num_decode_layers, kernel_size=decode_kernel_size)
 
         self.silu = nn.SiLU()
 

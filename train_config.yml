@@ -27,8 +27,8 @@ periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if
 preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
 # Training settings
-continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/mosquito_Wed_Jan_22_15_54_16_2025' 
+continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/jackal_Fri_Jan_24_06_53_53_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### VAE 
@@ -36,22 +36,26 @@ autoencode_samples: 4 # 8
 
 # Cross atttention embedder
 padded_channels: 256 #input padded to allow for different number of channels, also the top level embed dim
-crattn_embed_dim: 1024  # Was using 512 for autoencode 8 samples
+crattn_embed_dim: 512  # Was using 512 for autoencode 8 samples, with current architecture, must change assure: crattn_embed_dim * autoencode_samples == top_dims
 crattn_num_highdim_heads: 16 # at padding dimension
-crattn_num_highdim_layers: 16
-crattn_num_lowdim_heads: 1 # at embed dim dimension, was using 1 at 8 autoencode and 512 embed dim
-crattn_num_lowdim_layers: 1 # was using 1 at 8 autoencode and 512 embed dim
+crattn_num_highdim_layers: 16 # at padding dimension
+crattn_num_lowdim_heads: 4 # at embed dim dimension
+crattn_num_lowdim_layers: 4 # at embed dim dimension
 crattn_max_seq_len: 4
 crattn_cnn_kernel_size: 3
-crattn_dropout: 0.0
+crattn_dropout: 0.1
 
 num_decode_layers: kwargs['num_decode_layers'] = int(math.log(kwargs['autoencode_samples'],2))
 decode_kernel_size: 3
 
-### VAE Core
-top_dims: 4096 
-hidden_dims: 4096
-latent_dim: 2048 
+### VAE Encoder
+top_dims: 512 
+hidden_dims: 2048 # 4096
+latent_dim: 512 # 2048
+
+### Decoder
+decoder_hidden_dims: 2048
+decoder_top_dims: 4096
 
 ### Transformer
 transformer_seq_length: 512
@@ -63,8 +67,8 @@ max_batch_size: 4
 n_layers: 16
 n_heads: 16
 multiple_of: 256 
-ffn_dim_multiplier: 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
-attention_dropout: 0.8          ###    0.8 is aggressive        #### IMPORTANT ####            ###
+ffn_dim_multiplier: 0.2 # 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
+attention_dropout: 0.1          ###    0.8 is aggressive        #### IMPORTANT ####            ###
 
 core_weight_decay: 0.1
 transformer_weight_decay: 0.1
@@ -76,13 +80,13 @@ train_num_rand_hashes: 256  # Number of random channel orders, with deterministi
 autoreg_num_rand_hashes: 1 # Need to be only one to work? in theory should work with many?
 val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
 
-train_subsample_file_factor: 80000 # randomly decreases training passes per file per epoch
+train_subsample_file_factor: 40000 # randomly decreases training passes per file per epoch
 valfinetune_subsample_file_factor: 10000
-valunseen_subsample_file_factor: 80000
-wdecode_batch_size: 2 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
+valunseen_subsample_file_factor: 40000
+wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 4 # this is for when loss is not being calculated
 pseudobatch_onlylatent: 4096 # Maximum size to stack sequential parts of file into batch dimension during only latent inference
-pacmap_every: 1 # Must be within a 'quick_recon_val_every' to be reached
+pacmap_every: 40 # Must be within a 'quick_recon_val_every' to be reached
 finetune_pacmap: True  
 val_every: 20
 num_rand_recon_plots: 4
@@ -107,8 +111,6 @@ autoreg_num_rand_files: 2
 autoreg_attention_dropout: 0.0
 
 
-
-
 ### Dynamic Weights ###
 
 # Beta VAE controls
@@ -124,7 +126,7 @@ Transformer_epochs_AT_max: 99999
 Transformer_epochs_TO_max: 100
 
 # Sparsity weight control
-Sparse_max: kwargs['Sparse_max'] = 0.1 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
+Sparse_max: kwargs['Sparse_max'] = 1e-7 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
 Sparse_min: kwargs['Sparse_min'] = 0
 Sparse_epochs_AT_max: 99999
 Sparse_epochs_TO_max: 0
@@ -163,9 +165,6 @@ manual_step_size_val_core: 10
 manual_gamma_val_core: 0.5
 val_subsample_file_factor: 64 # Only iterates through file_lnegth/X
 
-# Sparsity loss
-sparsity_param: 0.05
-
 
 delete_old_checkpoints: True   
 
@@ -186,8 +185,8 @@ tmp_file_dir: '/tmp_files'
   # w_MN = 0.0
   # w_neighbors = 1.
   # w_FP = 1.
-pre_PaCMAP_window_sec_list: [60, 10]
-pre_PaCMAP_stride_sec_list: [30, 5] 
+pre_PaCMAP_window_sec_list: [60] # [60, 10]
+pre_PaCMAP_stride_sec_list: [30] #[30, 5] 
 pacmap_build_strs: kwargs['pacmap_build_strs'] = ['train', "valfinetune"]
 pacmap_eval_strs: kwargs['pacmap_eval_strs'] = ["valunseen"]
 pacmap_LR: 1 # 0.5                                                                                              #################

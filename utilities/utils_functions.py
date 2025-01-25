@@ -217,7 +217,7 @@ def LR_and_weight_schedules(
         LR_epochs_TO_max_transformer, LR_epochs_AT_max_transformer, 
         manual_gamma_core, manual_step_size_core,
         manual_gamma_transformer, manual_step_size_transformer,
-        KL_rise_first=True, Transformer_rise_first=True, LR_rise_first=True, **kwargs):
+        KL_rise_first=True, Transformer_rise_first=True, Sparse_rise_first=True, LR_rise_first=True, **kwargs):
             
     
     # *** KL SCHEDULE ***

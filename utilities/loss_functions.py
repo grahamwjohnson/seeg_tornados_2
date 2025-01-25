@@ -30,13 +30,9 @@ def transformer_loss_function(target_embeddings, out_embeddings, transformer_wei
 def simple_mean_latent_loss(latent, mean_loss_weight, **kwargs):
     return mean_loss_weight * torch.sum(torch.abs(torch.mean(latent, dim=1))) / latent.shape[2]
 
-def sparse_kl_divergence(z, sparsity_param, sparse_weight, **kwargs):
-    # Compute the mean of the activations (q(z_i))
-    q_z = torch.mean(z, dim=0)  # (batch_size, latent_dim) -> (latent_dim,)
+def sparse_l1_reg(z, sparse_weight, **kwargs):
     
-    # Compute the sparse KL divergence term
-    kl_term = sparsity_param * torch.log(sparsity_param / (q_z + 1e-8)) + \
-                (1 - sparsity_param) * torch.log((1 - sparsity_param) / (1 - q_z + 1e-8))
+    l1_penalty = torch.sum(torch.abs(z))  # L1 norm
+
+    return sparse_weight * l1_penalty
     
-    # Return the sum of KL divergences over all latent units
-    return sparse_weight * torch.sum(kl_term)
