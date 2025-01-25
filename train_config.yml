@@ -32,11 +32,11 @@ cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/re
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### VAE 
-autoencode_samples: 4 # 8
+autoencode_samples: 4 # 8 
 
 # Cross atttention embedder
-padded_channels: 256 #input padded to allow for different number of channels, also the top level embed dim
-crattn_embed_dim: 512  # Was using 512 for autoencode 8 samples, with current architecture, must change assure: crattn_embed_dim * autoencode_samples == top_dims
+padded_channels: 256 #input padded to allow for different number of channels, also to ensure multiple of 2 for attention heads
+crattn_embed_dim: 512  # After all of attention on raw data is completed, mean across autoencode dimension (sequence) will be conducted
 crattn_num_highdim_heads: 16 # at padding dimension
 crattn_num_highdim_layers: 16 # at padding dimension
 crattn_num_lowdim_heads: 4 # at embed dim dimension
