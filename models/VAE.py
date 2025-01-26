@@ -188,8 +188,58 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
         return torch.mean(x, dim=1)
         # return x[:,-1,:] # Return last in sequence (should be embedded with meaning)
 
+class MultiTransKernelBlock(nn.Module):
+    '''
+    One Layer of Transposed Convolutions
+
+    Can expand time with: stride=2, output_padding=1
+    Or keep time same with: stride=1, output_padding=0
+    
+    Have not implemented dilated kernels yet
+    '''
+    def __init__(self, in_channels, out_channels, kernel_sizes, stride, output_padding, final_layer):
+        super(MultiTransKernelBlock, self).__init__()
+
+        self.kernel_sizes = kernel_sizes
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.final_layer = final_layer
+
+        self.units = [-1] * len(self.kernel_sizes)
+        self.norms = [-1] * len(self.kernel_sizes)
+
+        for i in range(len(self.kernel_sizes)):
+            k = self.kernel_sizes[i]
+            self.units[i] = (nn.ConvTranspose1d(in_channels=in_channels, out_channels=out_channels, kernel_size=k, stride=stride, padding=int((k-1)/2), output_padding=output_padding))
+            self.norms[i] = RMSNorm_Conv(out_channels)
+
+        self.silu = nn.SiLU()
+        self.hardtanh = nn.Hardtanh()
+        
+        
+    def forward(self, x):
+        for i in range(len(self.kernel_sizes)):
+            unit = self.units[i]
+
+            # If the first conv, then create y, otherwise just add new stuff onto y
+            if i == 0: y = unit(x)
+            else: y = y + unit(x)
+
+            # Only hardtanh the final output, no norm
+            if self.final_layer:
+                y = self.hardtanh(y)
+            
+            # Output non-linearity and normalization
+            else:
+                norm = self.norms[i]
+                y = self.silu(y)
+                y = norm(y)
+
+        return y
+
+
 class TimeSeriesDecoder(nn.Module):
-    def __init__(self, in_dim, padded_channels, seq_len, num_layers, kernel_size):
+    def __init__(self, in_dim, padded_channels, seq_len, num_layers, time_dilate_kernel_sizes, channel_shrink_kernel_sizes):
         super(TimeSeriesDecoder, self).__init__()
 
         self.in_dim = in_dim
@@ -197,38 +247,28 @@ class TimeSeriesDecoder(nn.Module):
         self.seq_len = seq_len
         self.num_time_dilation_layers = num_layers
         self.num_channel_reduction_layers = int(math.sqrt(in_dim / padded_channels))
-        self.kernel_size = kernel_size
+        self.channel_shrink_kernel_sizes = channel_shrink_kernel_sizes
 
         assert math.sqrt(in_dim/padded_channels) % 1 == 0
 
-        layers = []
+        self.time_dilate_layers = [-1] * self.num_time_dilation_layers
+        self.channel_reduction_layers = [-1] * self.num_channel_reduction_layers
 
-        # First we will expand the time dimension to raw time step size
+        # Decouple time dilation and channel shrinking for flexibility and convenience
+
+        # First we will expand the time dimension to raw time step size with multi-kernel blocks
+        final_layer = False
         for i in range(self.num_time_dilation_layers):
             # Expand the time dimension with stride of 2 and output padding 1
-            layers.append(nn.ConvTranspose1d(in_channels=self.in_dim, out_channels=self.in_dim, 
-                                    kernel_size=kernel_size, stride=2, padding=(kernel_size // 2), output_padding=1))
-            layers.append(nn.SiLU())
-            layers.append(RMSNorm_Conv(self.in_dim))
+            self.time_dilate_layers[i] = MultiTransKernelBlock(in_channels=self.in_dim, out_channels=self.in_dim, kernel_sizes=time_dilate_kernel_sizes, stride=2, output_padding=1, final_layer=final_layer)
 
-        # Keep track of stepping down the channel dimension
+        # Keep track of stepping down channel dimension
         in_channel_count_curr = self.in_dim
         for i in range(self.num_channel_reduction_layers):
-            # Now we will step the channel count down to padded channels, no output padding, stride is 1
-            layers.append(nn.ConvTranspose1d(in_channels=in_channel_count_curr, out_channels=int(in_channel_count_curr/2), kernel_size=kernel_size, stride=1, padding=(kernel_size // 2), output_padding=0))
-
-            if i < self.num_channel_reduction_layers -1:
-                layers.append(nn.SiLU())
-                layers.append(RMSNorm_Conv(int(in_channel_count_curr/2)))
-                in_channel_count_curr = int(in_channel_count_curr / 2)
-
-            # Final output no normalization and smooth with tanh
-            elif i == self.num_channel_reduction_layers -1:
-                # layers.append(nn.Tanh())
-                layers.append(nn.Hardtanh())
-
-        # Combine the layers into a Sequential container
-        self.cnn = nn.Sequential(*layers)
+            # Shrink channels down to padded channel dimension, with stride = 1 and 
+            if i == self.num_channel_reduction_layers - 1: final_layer = True
+            self.channel_reduction_layers[i] = MultiTransKernelBlock(in_channels=in_channel_count_curr, out_channels=int(in_channel_count_curr/2), kernel_sizes=channel_shrink_kernel_sizes, stride=1, output_padding=0, final_layer=final_layer)
+            in_channel_count_curr = int(in_channel_count_curr/2)
 
     def forward(self, x, out_channels):
         # x: (batch_size, embed_dim)
@@ -236,8 +276,17 @@ class TimeSeriesDecoder(nn.Module):
         # Unsqueeze to add the sequence dimension
         x = x.unsqueeze(2)  # Shape: (batch_size, embed_dim, 1)
         
-        # Pass through the convolutional layers
-        x = self.cnn(x)  # Shape: (batch_size, num_channels, seq_len)
+        # Pass through the time dilating convolutional layers
+        # Shape: (batch_size, num_channels, seq_len)
+        for i in range(self.num_time_dilation_layers):
+            unit = self.time_dilate_layers[i]
+            x = unit(x)
+
+        # Now through the channel reduction layers
+        # Shape: (batch_size, num_channels, seq_len)
+        for i in range(self.num_channel_reduction_layers):
+            unit = self.channel_reduction_layers[i]
+            x = unit(x)
 
         # Index only desired output channels
         x = x[:, :out_channels, :]
@@ -260,7 +309,8 @@ class VAE(nn.Module):
         decoder_hidden_dims,
         decoder_top_dims,
         num_decode_layers,
-        decode_kernel_size,
+        time_dilate_kernel_sizes,
+        channel_shrink_kernel_sizes,
         gpu_id=None,  
         **kwargs):
 
@@ -277,7 +327,8 @@ class VAE(nn.Module):
         self.decoder_hidden_dims = decoder_hidden_dims
         self.decoder_top_dims = decoder_top_dims
         self.num_decode_layers = num_decode_layers
-        self.decode_kernel_size = decode_kernel_size
+        self.channel_shrink_kernel_sizes = channel_shrink_kernel_sizes
+        self.time_dilate_kernel_sizes = time_dilate_kernel_sizes
 
         # Encoder Head
         self.encoder_head = Encoder_TimeSeriesCNNWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=crattn_embed_dim, **kwargs)
@@ -299,7 +350,13 @@ class VAE(nn.Module):
         self.norm_top_rev = RMSNorm(dim=self.decoder_top_dims)
 
         # Deocder head
-        self.decoder_head = TimeSeriesDecoder(in_dim=self.decoder_top_dims, padded_channels = self.padded_channels, seq_len=autoencode_samples, num_layers=num_decode_layers, kernel_size=decode_kernel_size)
+        self.decoder_head = TimeSeriesDecoder(
+            in_dim=self.decoder_top_dims, 
+            padded_channels = self.padded_channels, 
+            seq_len=autoencode_samples, 
+            num_layers=num_decode_layers, 
+            time_dilate_kernel_sizes=self.time_dilate_kernel_sizes, 
+            channel_shrink_kernel_sizes=self.channel_shrink_kernel_sizes)
 
         self.silu = nn.SiLU()
 
