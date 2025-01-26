@@ -32,6 +32,7 @@ class ModelArgs:
         # Hardware limitations
         max_batch_size: int = 32,
         max_seq_len: int = 2048,
+        use_diag_mask: bool = True,
         device: int = None,
         **kwargs):
 
@@ -48,6 +49,7 @@ class ModelArgs:
         # Hardware limitations
         self.max_batch_size = max_batch_size
         self.max_seq_len = max_seq_len
+        self.use_diag_mask = use_diag_mask
         self.device = device
 
 class RMSNorm(torch.nn.Module):
@@ -310,6 +312,7 @@ class Transformer(nn.Module):
         self.n_layers = params.n_layers
         self.multiple_of = params.multiple_of
         self.device = params.device
+        self.use_diag_mask = params.use_diag_mask
 
         # self.tok_embeddings = VocabParallelEmbedding(
         #     params.vocab_size, params.dim, init_method=lambda x: x
@@ -365,7 +368,7 @@ class Transformer(nn.Module):
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
         mask = None
-        if seqlen > 1:
+        if (seqlen > 1) & self.use_diag_mask:
             mask = torch.full((seqlen, seqlen), float("-inf"), device=self.device)
 
             mask = torch.triu(mask, diagonal=1)

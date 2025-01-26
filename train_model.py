@@ -77,7 +77,6 @@ def load_train_objs(
     master_n_heads,
     master_multiple_of, 
     master_ffn_dim_multiplier, 
-    master_attention_dropout,    
     
     # Optimizers
     core_weight_decay, 
@@ -163,15 +162,16 @@ def main(
     start_epoch: int,
     wdecode_batch_size: int,
     onlylatent_batch_size: int,
-    train_subsample_file_factor: int,
-    valfinetune_subsample_file_factor: int,
-    valunseen_subsample_file_factor: int,
+    train_runs_per_file: int,
+    valfinetune_runs_per_file: int,
+    valunseen_runs_per_file: int,
     train_num_rand_hashes: int,
     autoreg_num_rand_hashes: int,
     val_num_rand_hashes: int,
     LR_val_vae: float,
     LR_val_transformer: float,
     finetune_pacmap: bool, 
+    master_attention_dropout: float,
     PaCMAP_model_to_infer = [],
     vae_state_dict_prev_path = [],
     vae_opt_state_dict_prev_path = [],
@@ -265,8 +265,7 @@ def main(
                     dataset_curr = trainer.valfinetune_dataset, 
                     dataset_string = "valfinetune",
                     batchsize=trainer.wdecode_batch_size,
-                    random_bool = True, # will subsample and randomize
-                    subsample_file_factor_curr = valfinetune_subsample_file_factor, # only valid if 'random_bool' is True
+                    runs_per_file = valfinetune_runs_per_file, 
                     all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
                     val_finetune = True,
                     val_unseen = False,
@@ -284,8 +283,7 @@ def main(
                         dataset_curr = dataset_list[d], 
                         dataset_string = dataset_strs[d],
                         batchsize=trainer.onlylatent_batch_size,
-                        random_bool = False, # will subsample and randomize
-                        subsample_file_factor_curr = -1, # only valid if 'random_bool' is True
+                        runs_per_file = -1, 
                         all_files_latent_only = True, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
                         val_finetune = False,
                         val_unseen = False,
@@ -334,13 +332,13 @@ def main(
             dataset_curr = trainer.train_dataset, 
             dataset_string = "train",
             batchsize=trainer.wdecode_batch_size,
-            random_bool = True, # will subsample and randomize
-            subsample_file_factor_curr = train_subsample_file_factor, # only valid if 'random_bool' is True
+            runs_per_file = train_runs_per_file, 
             all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
             val_finetune = False,
             val_unseen = False,
             backprop = True,
             num_rand_hashes = train_num_rand_hashes,
+            attention_dropout = master_attention_dropout,
             **kwargs)
         
         # CHECKPOINT
@@ -367,13 +365,13 @@ def main(
                 dataset_curr = trainer.valfinetune_dataset, 
                 dataset_string = "valfinetune",
                 batchsize=trainer.wdecode_batch_size,
-                random_bool = True, # will subsample and randomize
-                subsample_file_factor_curr = valfinetune_subsample_file_factor, # only valid if 'random_bool' is True
+                runs_per_file = valfinetune_runs_per_file, 
                 all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
                 val_finetune = True,
                 val_unseen = False,
                 backprop = True,
                 num_rand_hashes = val_num_rand_hashes,
+                attention_dropout=master_attention_dropout,
                 **kwargs)
 
             # Inference on UNSEEN portion of validation patients 
@@ -383,13 +381,13 @@ def main(
                     dataset_curr = trainer.valunseen_dataset, 
                     dataset_string = "valunseen",
                     batchsize=trainer.wdecode_batch_size,
-                    random_bool = True, # will subsample and randomize
-                    subsample_file_factor_curr = valunseen_subsample_file_factor, # only valid if 'random_bool' is True
+                    runs_per_file = valunseen_runs_per_file, 
                     all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
                     val_finetune = False,
                     val_unseen = True,
                     backprop = False,
                     num_rand_hashes = val_num_rand_hashes,
+                    attention_dropout=master_attention_dropout,
                     **kwargs)
 
             # Restore model/opt weights to pre-finetune
@@ -479,9 +477,6 @@ class Trainer:
 
         self.KL_multiplier = -1 # dummy variable, only needed when debugging and training is skipped
 
-        # Number of iterations per file
-        self.num_windows = int((self.num_samples - self.master_transformer_seq_length * self.encode_samples - self.encode_samples)/self.encode_samples) - 2
-
         # Set up vae & transformer with DDP
         self.vae = DDP(vae, device_ids=[gpu_id])   # find_unused_parameters=True
         self.transformer = DDP(transformer, device_ids=[gpu_id])   # find_unused_parameters=True
@@ -548,41 +543,45 @@ class Trainer:
             utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch)
             print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
 
-    def _train_start_idxs(self, subsample_file_factor, random_bool):
+    def _train_start_idxs(self, runs_per_file):
 
-        np.random.seed(seed=None) # should replace with Generator for newer code
-        
-        if random_bool: frame_shift = int(random.uniform(0, self.encode_samples -1))
-        else: frame_shift = 0
-        
-        start_idxs = np.arange(0,self.num_windows - self.master_transformer_seq_length - 1) * self.encode_samples + frame_shift
-        if random_bool: np.random.shuffle(start_idxs)
+        last_possible_start_idx = self.num_samples - (self.master_transformer_seq_length) * self.decode_samples - self.encode_samples 
 
-        if random_bool: start_idxs = start_idxs[0::subsample_file_factor]
+        start_idxs = np.zeros(runs_per_file, dtype=int)
+        for i in range(runs_per_file):
+            np.random.seed(seed=None) 
+            start_idxs[i] = np.random.randint(0, last_possible_start_idx+1)
         
         return start_idxs
 
     def _autoreg(self, context, target, autoreg_tokens_to_gen, hash_pat_embedding, autoreg_attention_dropout, **kwargs):
 
+        '''
+        Autoregression using sliding window
+        '''
+
         real_batchsize = context.shape[0]
         out_channels = context.shape[1]
-        context_token_len = int(context.shape[2]/self.encode_samples)
-        target_token_len = int(target.shape[2]/self.decode_samples)
+        context_token_len = int((context.shape[2]- self.encode_samples)/self.decode_samples)
 
-        # Pseudo-batch the context
-        context_batched = utils_functions.pseudobatch_raw_data(context, self.encode_samples)
-        target_batched = utils_functions.pseudobatch_raw_data(target, self.decode_samples)
+        # # Pseudo-batch the context
+        # context_batched = utils_functions.pseudobatch_raw_data(context, self.encode_samples)
+        # target_batched = utils_functions.pseudobatch_raw_data(target, self.decode_samples)
 
-        ### VAE ENCODER
+        ### VAE ENCODER - Sliding window For loop
+        autoreg_latent_context = torch.zeros(real_batchsize, context_token_len, self.latent_dim).to(self.gpu_id)
         # Forward pass in stacked batch VAE encoder
-        _, _, autoreg_latent_context = self.vae(context_batched, reverse=False)
-        _, _, autoreg_latent_target = self.vae(target_batched, reverse=False)
+        for i in range(context_token_len):
+            win_start_curr = i*self.decode_samples
+            win_stop_curr = win_start_curr + self.encode_samples
+            _, _, autoreg_latent_context[:, i, :] = self.vae(context[:, :, win_start_curr:win_stop_curr], reverse=False)
 
-        # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
-        autoreg_latent_context = torch.split(autoreg_latent_context, context_token_len, dim=0)
-        autoreg_latent_context = torch.stack(autoreg_latent_context, dim=0)
-        autoreg_latent_target = torch.split(autoreg_latent_target, target_token_len, dim=0)
-        autoreg_latent_target = torch.stack(autoreg_latent_target, dim=0)
+        autoreg_latent_target = torch.zeros(real_batchsize, autoreg_tokens_to_gen, self.latent_dim).to(self.gpu_id)
+        # Forward pass in stacked batch VAE encoder
+        for i in range(autoreg_tokens_to_gen):
+            win_start_curr = i*self.decode_samples
+            win_stop_curr = win_start_curr + self.encode_samples
+            _, _, autoreg_latent_target[:, i, :] = self.vae(target[:, :, win_start_curr:win_stop_curr], reverse=False)
 
         ### TRANSFORMER
         # Greedy decoder
@@ -627,7 +626,7 @@ class Trainer:
             for data_tensor, file_name in dataloader_curr:
 
                 # Get the random start idx in file
-                random_start_idx = np.arange(0, self.num_samples - (autoreg_context_tokens + autoreg_tokens_to_gen)*self.encode_samples - 1)
+                random_start_idx = np.arange(self.encode_samples, (self.num_samples) - (autoreg_context_tokens + autoreg_tokens_to_gen)*self.decode_samples - 1)
                 np.random.shuffle(random_start_idx)
                 random_start_idx = random_start_idx[0]
 
@@ -641,8 +640,8 @@ class Trainer:
                     modifier=rand_modifer)
 
                 # Pull out context and target raw data and move to GPU
-                context_raw = data_tensor[:, hash_channel_order, random_start_idx: random_start_idx + autoreg_context_tokens * self.encode_samples]
-                target_raw = data_tensor[:, hash_channel_order, random_start_idx + autoreg_context_tokens * self.decode_samples : random_start_idx + autoreg_context_tokens * self.decode_samples + autoreg_tokens_to_gen * self.decode_samples]
+                context_raw = data_tensor[:, hash_channel_order, random_start_idx - self.encode_samples: random_start_idx + autoreg_context_tokens * self.decode_samples]
+                target_raw = data_tensor[:, hash_channel_order, random_start_idx + autoreg_context_tokens * self.decode_samples - self.encode_samples: random_start_idx + autoreg_context_tokens * self.decode_samples + autoreg_tokens_to_gen * self.decode_samples]
                 context_raw = context_raw.to(self.gpu_id)
                 target_raw = target_raw.to(self.gpu_id)
 
@@ -674,7 +673,7 @@ class Trainer:
                     rand_file_count=rand_file_count,
                     raw_context=context_raw,
                     raw_pred=autoreg_raw_pred,
-                    raw_target=target_raw,
+                    raw_target=target_raw[:, :, self.encode_samples:],
                     savedir = self.model_dir + f"/autoreg_plots/{dataset_string}/autoreg_raw",
                     **kwargs)
 
@@ -697,8 +696,7 @@ class Trainer:
         dataset_string,
         batchsize,
         attention_dropout,
-        random_bool, # will subsample and randomize
-        subsample_file_factor_curr, # only valid if 'random' is True
+        runs_per_file, # only valid if 'random' is True
         all_files_latent_only,
         num_dataloader_workers_SEQUENTIAL,
         val_finetune,
@@ -718,9 +716,11 @@ class Trainer:
         # If wanting all files from every patient, need to run patients serially
         if all_files_latent_only: 
 
+            raise Exception("Error: need to code up for sliding window")
+
             # Check for erroneous configs
-            if backprop or random_bool or val_finetune or val_unseen:
-                raise Exception("ERROR: innapropriate config: if running all files then backprop/random_bool/val_finetune/val_unseen must all be False")
+            if backprop or val_finetune or val_unseen:
+                raise Exception("ERROR: innapropriate config: if running all files then backprop/val_finetune/val_unseen must all be False")
 
             # Go through every subject in this dataset
             for pat_idx in range(0,len(dataset_curr.pat_ids)):
@@ -808,7 +808,7 @@ class Trainer:
             num_pats_curr = dataloader_curr.dataset.get_pat_count()
             
             # Get miniepoch start indexes. Same random indexes will be used for all patients' files.
-            start_idxs = self._train_start_idxs(random_bool=random_bool, subsample_file_factor=subsample_file_factor_curr)
+            start_idxs = self._train_start_idxs(runs_per_file=runs_per_file)
             total_train_iters = int(len(dataloader_curr) * len(start_idxs) * num_pats_curr) # 
             iter_curr = 0 # Iteration across all sequential trian files
 
@@ -843,6 +843,7 @@ class Trainer:
 
                         # Reset the data vars for Transformer Sequence and put on GPU
                         x = torch.zeros(data_tensor.shape[0], self.master_transformer_seq_length, data_tensor.shape[1], self.encode_samples).to(self.gpu_id)
+                        x_decode = torch.zeros(data_tensor.shape[0], self.master_transformer_seq_length, data_tensor.shape[1], self.decode_samples).to(self.gpu_id)
 
                         # HASHING: Get the patient channel order and patid_embedding for this channel order
                         np.random.seed(seed=None) 
@@ -857,8 +858,9 @@ class Trainer:
                         for embedding_idx in range(0, self.master_transformer_seq_length):
 
                             # Pull out data for this window
-                            end_idx = start_idx + self.encode_samples * embedding_idx + self.encode_samples 
+                            end_idx = start_idx + self.decode_samples * embedding_idx + self.encode_samples 
                             x[:, embedding_idx, :, :] = data_tensor[:, hash_channel_order, end_idx-self.encode_samples : end_idx]
+                            x_decode[:, embedding_idx, :, :] = data_tensor[:, hash_channel_order, end_idx: end_idx + self.decode_samples] # N samples AFTER the encode epoch
 
                         # Stack the vars into batch dimension 
                         x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
@@ -893,7 +895,7 @@ class Trainer:
                             transformer_weight=self.transformer_weight) 
 
                         recon_loss = loss_functions.recon_loss_function(
-                            x=x[:, 1:, :, :], # Shifted by 1 due to predictions having gone through transformer
+                            x=x_decode[:, :-1, :, :],  # Opposite of typical shifting because decode is already shifted !!!
                             x_hat=x_hat,
                             recon_weight=self.recon_weight)
 
@@ -912,7 +914,7 @@ class Trainer:
                             **kwargs)
 
                         # Intrapatient backprop
-                        loss = recon_loss + transformer_loss + sparse_loss + kld_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        loss = recon_loss # + transformer_loss + sparse_loss + kld_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
                         if backprop: loss.backward()
 
                         # Realtime terminal info and WandB 
@@ -1003,7 +1005,7 @@ class Trainer:
                                     pat_id = dataset_curr.pat_ids[pat_idx],
                                     **kwargs)
                                 utils_functions.print_recon_realtime(
-                                    x_decode_shifted=x[:, 1:, :, :], 
+                                    x_decode_shifted=x_decode[:, :-1, :, :], # Opposite of typical shifting because decode is already shifted !!!
                                     x_hat=x_hat, 
                                     savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_recon",
                                     epoch = self.epoch,

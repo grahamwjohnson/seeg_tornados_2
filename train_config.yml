@@ -36,46 +36,45 @@ inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES
 encode_samples: kwargs['encode_samples'] = kwargs['crattn_encode_samples'] * kwargs['stage1_transformer_seq_length']
 
 ### VAE Encoder Stage 0: Cross atttention embedder on raw data
-crattn_encode_samples: 4
+crattn_encode_samples: 16
 padded_channels: 256 #input padded to allow for different number of channels, also to ensure multiple of 2 for attention heads
-crattn_embed_dim: 512  # After all of attention on raw data is completed, mean across autoencode dimension (sequence) will be conducted
-crattn_num_highdim_heads: 16 # at padding dimension
-crattn_num_highdim_layers: 16 # at padding dimension
-crattn_num_lowdim_heads: 4 # at embed dim dimension
-crattn_num_lowdim_layers: 4 # at embed dim dimension
-crattn_max_seq_len: 4
+crattn_embed_dim: 256  # After all of attention on raw data is completed, mean across autoencode dimension (sequence) will be conducted
+crattn_num_heads: 4 # at padding dimension
+crattn_num_layers: 4 # at padding dimension
+crattn_max_seq_len: 64
 crattn_cnn_kernel_size: 3
-crattn_dropout: 0.1
+crattn_dropout: 0.0
 
 ### VAE Encoder Stage 1: Transformer
 stage1_transformer_dim: 512
-stage1_transformer_seq_length: 64
+stage1_transformer_seq_length: 16
 stage1_max_seq_len: 512
-stage1_max_batch_size: 4
-stage1_n_layers: 16
-stage1_n_heads: 16
+stage1_max_batch_size: 512
+stage1_n_layers: 8
+stage1_n_heads: 8
 stage1_multiple_of: 256 
-stage1_ffn_dim_multiplier: 0.2 # 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
-stage1_attention_dropout: 0.1     
+stage1_ffn_dim_multiplier: 1 # 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
+stage1_attention_dropout: 0.0 # NOT used currently because diagonal mask is not used    
 
-top_dims: 1024 
-hidden_dims: 2048 # 4096
-latent_dim: 1024 # 2048
+# top_dims: 4096 # Calculated based on stage1 transformer sequence length & stage1 transformer dim
+hidden_dims: 4096 # 4096
 
 ### Master Transformer
-master_transformer_seq_length: 128
+latent_dim: 1024 # 2048
+master_transformer_seq_length: 16
 master_max_seq_len: 512
 master_max_batch_size: 4
 master_n_layers: 16
 master_n_heads: 16
 master_multiple_of: 256 
-master_ffn_dim_multiplier: 0.2 # 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
-master_attention_dropout: 0.1         
+master_ffn_dim_multiplier: 1 # 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
+master_attention_dropout: 0.0       
+
 
 ### Decoder
-decode_samples: 512
-decoder_hidden_dims: 1024
-decoder_top_dims: 1024
+decode_samples: 16
+decoder_hidden_dims: 2048
+decoder_top_dims: 4096
 num_decode_layers: kwargs['num_decode_layers'] = int(math.log(kwargs['decode_samples'],2))
 decode_kernel_size: 3
 
@@ -91,9 +90,9 @@ train_num_rand_hashes: 256  # Number of random channel orders, with deterministi
 autoreg_num_rand_hashes: 1 # Need to be only one to work? in theory should work with many?
 val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
 
-train_subsample_file_factor: 40000 # randomly decreases training passes per file per epoch
-valfinetune_subsample_file_factor: 10000
-valunseen_subsample_file_factor: 40000
+train_runs_per_file: 4 # randomly decreases training passes per file per epoch
+valfinetune_runs_per_file: 4
+valunseen_runs_per_file: 4
 wdecode_batch_size: 2 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 4 # this is for when loss is not being calculated
 pseudobatch_onlylatent: 4096 # Maximum size to stack sequential parts of file into batch dimension during only latent inference
@@ -107,14 +106,14 @@ epochs_to_train: 999999
 realtime_latent_printing: True
 num_realtime_channels_recon: 1 # columns of random channel plots
 realtime_printing_interval: 100
-num_recon_samples: 1024 # this will limit how much is shown in recon plots, ERROR if not enough samples, pulls from START and END of transformer sequence 
+num_recon_samples: kwargs['num_recon_samples'] = 1024 # this will limit how much is shown in recon plots, ERROR if not enough samples, pulls from START and END of transformer sequence 
 num_realtime_dims: 5
 recent_display_iters: 5 # How often to print to console when training & how often to log to WandB
 
 # Autoregressive Inference
 autoreg_every: 1
-autoreg_context_tokens: kwargs['autoreg_context_tokens'] = kwargs['master_transformer_seq_length'] - 1
-autoreg_tokens_to_gen: 32 # kwargs['autoreg_tokens_to_gen'] = kwargs['master_transformer_seq_length']
+autoreg_context_tokens: kwargs['autoreg_context_tokens'] = kwargs['master_transformer_seq_length'] # No minus one 
+autoreg_tokens_to_gen: 8 # kwargs['autoreg_tokens_to_gen'] = kwargs['master_transformer_seq_length']
 autoreg_channels: 3
 autoreg_batchsize: 2
 autoreg_num_rand_pats: 2
@@ -147,22 +146,21 @@ recon_weight: 3
 mean_loss_weight: 1
 
 
-
 ### Dynamic Learning Rates ###
 
 # VAE learning rate controls
-LR_max_core: kwargs['LR_max_core'] = 1e-5
-LR_min_core: kwargs['LR_min_core'] = 1e-7
-LR_epochs_TO_max_core: 2
-LR_epochs_AT_max_core: 99999
+LR_max_core: kwargs['LR_max_core'] = 5e-6
+LR_min_core: kwargs['LR_min_core'] = 5e-8
+LR_epochs_TO_max_core: 1
+LR_epochs_AT_max_core: 0
 manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
 manual_step_size_core: 99999
 
 # Transformer learning rate controls
-LR_max_transformer: kwargs['LR_max_transformer'] = 1e-5
-LR_min_transformer: kwargs['LR_min_transformer'] = 1e-7
+LR_max_transformer: kwargs['LR_max_transformer'] = 5e-6
+LR_min_transformer: kwargs['LR_min_transformer'] = 5e-8
 LR_epochs_TO_max_transformer: 2
-LR_epochs_AT_max_transformer: 99999
+LR_epochs_AT_max_transformer: 0
 manual_gamma_transformer: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
 manual_step_size_transformer: 99999
 
@@ -174,7 +172,6 @@ LR_val_vae: kwargs['LR_val_vae'] = 1e-7
 LR_val_transformer: kwargs['LR_val_transformer'] = 1e-8
 manual_step_size_val_core: 10
 manual_gamma_val_core: 0.5
-val_subsample_file_factor: 64 # Only iterates through file_lnegth/X
 
 
 delete_old_checkpoints: True   
