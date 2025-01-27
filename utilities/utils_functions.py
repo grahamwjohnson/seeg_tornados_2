@@ -209,15 +209,11 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         KL_max, KL_min, KL_epochs_TO_max, KL_epochs_AT_max, 
-        Transformer_max, Transformer_min, Transformer_epochs_TO_max, Transformer_epochs_AT_max, 
         Sparse_max, Sparse_min, Sparse_epochs_TO_max, Sparse_epochs_AT_max, 
         LR_max_core, LR_min_core, 
-        LR_max_transformer, LR_min_transformer, 
         LR_epochs_TO_max_core, LR_epochs_AT_max_core, 
-        LR_epochs_TO_max_transformer, LR_epochs_AT_max_transformer, 
         manual_gamma_core, manual_step_size_core,
-        manual_gamma_transformer, manual_step_size_transformer,
-        KL_rise_first=True, Transformer_rise_first=True, Sparse_rise_first=True, LR_rise_first=True, **kwargs):
+        KL_rise_first=True, Sparse_rise_first=True, LR_rise_first=True, **kwargs):
             
     
     # *** KL SCHEDULE ***
@@ -253,36 +249,6 @@ def LR_and_weight_schedules(
         #     KL_ceil = KL_max - ( KL_range * (KL_epoch_residual/KL_state_length) )
         #     KL_floor = KL_ceil - ( KL_range * (KL_epoch_residual + 1) /KL_state_length)
         #     KL_val = KL_ceil - iter/iters_per_epoch * (KL_ceil - KL_floor)   
-
-
-
-    # *** Transformer Weight ***
-
-    Transformer_epoch_period = Transformer_epochs_TO_max + Transformer_epochs_AT_max
-    Transformer_epoch_residual = epoch % Transformer_epoch_period
-
-    Transformer_range = 10**Transformer_max - 10**Transformer_min
-    # Transformer_range = Transformer_max - Transformer_min
-
-    # START with rise
-    # Logarithmic rise
-    if Transformer_rise_first: 
-        if Transformer_epoch_residual < Transformer_epochs_TO_max:
-            # Transformer_state_length = Transformer_epochs_AT_max
-            # Transformer_ceil = Transformer_max - ( Transformer_range * (Transformer_epoch_residual/Transformer_state_length) )
-            # Transformer_floor = Transformer_ceil - ( Transformer_range * (Transformer_epoch_residual + 1) /Transformer_state_length)
-            # Transformer_val = Transformer_ceil - iter_curr/iters_per_epoch * (Transformer_ceil - Transformer_floor) 
-
-            Transformer_state_length = Transformer_epochs_TO_max 
-            Transformer_floor = 10 ** Transformer_min + Transformer_range * (Transformer_epoch_residual/Transformer_state_length)
-            Transformer_ceil = Transformer_floor + Transformer_range * (1) /Transformer_state_length
-            Transformer_val = math.log10(Transformer_floor + iter_curr/iters_per_epoch * (Transformer_ceil - Transformer_floor))
-        else:
-            Transformer_val = Transformer_max
-
-    else:
-        raise Exception("ERROR: not coded up")
-
 
 
    # *** Sparse Weight ***
@@ -328,24 +294,8 @@ def LR_and_weight_schedules(
         iters_per_epoch=iters_per_epoch,
         LR_rise_first=LR_rise_first 
     )
-
-
-    # TRANSFORMER
-    LR_val_transformer = LR_subfunction(
-        iter_curr=iter_curr,
-        LR_min=LR_min_transformer,
-        LR_max=LR_max_transformer,
-        epoch=epoch, 
-        manual_gamma=manual_gamma_transformer, 
-        manual_step_size=manual_step_size_transformer, 
-        LR_epochs_TO_max=LR_epochs_TO_max_transformer, 
-        LR_epochs_AT_max=LR_epochs_AT_max_transformer, 
-        iters_per_epoch=iters_per_epoch,
-        LR_rise_first=LR_rise_first
-    )
-
             
-    return KL_val, LR_val_core, LR_val_transformer, Transformer_val, Sparse_val
+    return KL_val, LR_val_core, Sparse_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
@@ -593,11 +543,11 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier):
 
 # PLOTTING
 
-def print_latent_realtime(target_emb, predicted_emb, savedir, epoch, iter_curr, pat_id, num_realtime_dims, **kwargs):
+def print_latent_realtime(mu, logvar, savedir, epoch, iter_curr, pat_id, num_realtime_dims, **kwargs):
 
     dims_to_plot = np.arange(0,num_realtime_dims)
 
-    batchsize = target_emb.shape[0]
+    batchsize = mu.shape[0]
 
     for b in range(0, batchsize):
         
@@ -606,16 +556,16 @@ def print_latent_realtime(target_emb, predicted_emb, savedir, epoch, iter_curr, 
         fig = pl.figure(figsize=(20, 14))
 
         # Only print for one batch index at a time
-        target_emb_plot = target_emb[b, :, 0:len(dims_to_plot)]
-        predicted_emb_plot = predicted_emb[b, :, 0:len(dims_to_plot)]
+        mu_plot = mu[b, :, 0:len(dims_to_plot)]
+        logvar_plot = logvar[b, :, 0:len(dims_to_plot)]
 
         df = pd.DataFrame({
-            'dimension': np.tile(dims_to_plot, target_emb_plot.shape[0]),
-            'target_emb': target_emb_plot.flatten(),
-            'predicted_emb': predicted_emb_plot.flatten() 
+            'dimension': np.tile(dims_to_plot, mu_plot.shape[0]),
+            'mu': mu_plot.flatten(),
+            'logvar': logvar_plot.flatten() 
         })
 
-        sns.jointplot(data=df, x="target_emb", y="predicted_emb", hue="dimension")
+        sns.jointplot(data=df, x="mu", y="logvar", hue="dimension")
         fig.suptitle(f"{pat_id}, epoch: {epoch}, iter: {iter_curr}")
 
         if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
@@ -628,15 +578,15 @@ def print_latent_realtime(target_emb, predicted_emb, savedir, epoch, iter_curr, 
 
         pl.close('all') 
     
-def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat_id, num_realtime_channels_recon, num_recon_samples, **kwargs):
+def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, pat_id, num_realtime_channels_recon, num_recon_samples, **kwargs):
 
     x_hat = x_hat.detach().cpu().numpy()
-    x_decode_shifted = x_decode_shifted.detach().cpu().numpy()
+    x = x.detach().cpu().numpy()
 
     # Fuse the sequential decodes/predictions together
-    x_decode_shifted_fused = np.moveaxis(x_decode_shifted, 3, 2)
-    x_decode_shifted_fused = x_decode_shifted_fused.reshape(x_decode_shifted_fused.shape[0], x_decode_shifted_fused.shape[1] * x_decode_shifted_fused.shape[2], x_decode_shifted_fused.shape[3])
-    x_decode_shifted_fused = np.moveaxis(x_decode_shifted_fused, 1, 2)
+    x_fused = np.moveaxis(x, 3, 2)
+    x_fused = x_fused.reshape(x_fused.shape[0], x_fused.shape[1] * x_fused.shape[2], x_fused.shape[3])
+    x_fused = np.moveaxis(x_fused, 1, 2)
 
     x_hat_fused = np.moveaxis(x_hat, 3, 2)
     x_hat_fused = x_hat_fused.reshape(x_hat_fused.shape[0], x_hat_fused.shape[1] * x_hat_fused.shape[2], x_hat_fused.shape[3])
@@ -657,11 +607,11 @@ def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat
         for c in range(0,len(random_ch_idxs)):
             for seq in range(0,2):
                 if seq == 0:
-                    x_decode_plot = x_decode_shifted_fused[b, random_ch_idxs[c], :num_recon_samples]
+                    x_decode_plot = x_fused[b, random_ch_idxs[c], :num_recon_samples]
                     x_hat_plot = x_hat_fused[b, random_ch_idxs[c], :num_recon_samples]
                     title_str = 'StartOfTransSeq'
                 else:
-                    x_decode_plot = x_decode_shifted_fused[b, random_ch_idxs[c], -num_recon_samples:]
+                    x_decode_plot = x_fused[b, random_ch_idxs[c], -num_recon_samples:]
                     x_hat_plot = x_hat_fused[b, random_ch_idxs[c], -num_recon_samples:]   
                     title_str = 'EndOfTransSeq'             
 
@@ -684,44 +634,6 @@ def print_recon_realtime(x_decode_shifted, x_hat, savedir, epoch, iter_curr, pat
     pl.close(fig)   
 
     pl.close('all') 
-
-def print_autoreg_latent_predictions(gpu_id, epoch, pat_id, rand_file_count, latent_context, latent_predictions, latent_target, savedir, num_realtime_dims, **kwargs):
-    
-    latent_target=latent_target.detach().cpu().numpy()
-    latent_context=latent_context.detach().cpu().numpy() # NOT CURRENTLY USING
-    latent_predictions=latent_predictions.detach().cpu().numpy()
-
-    dims_to_plot = np.arange(0,num_realtime_dims)
-    batchsize = latent_context.shape[0]
-
-    for b in range(0, batchsize):
-        
-        # Make new grid/fig
-        gs = gridspec.GridSpec(1, 2)
-        fig = pl.figure(figsize=(20, 14))
-
-        # Only print for one batch index at a time
-        target_emb_plot = latent_target[b, :, 0:len(dims_to_plot)]
-        predicted_emb_plot = latent_predictions[b, :, 0:len(dims_to_plot)]
-
-        df = pd.DataFrame({
-            'dimension': np.tile(dims_to_plot, target_emb_plot.shape[0]),
-            'target_emb': target_emb_plot.flatten(),
-            'predicted_emb': predicted_emb_plot.flatten() 
-        })
-
-        sns.jointplot(data=df, x="target_emb", y="predicted_emb", hue="dimension")
-        fig.suptitle(f"{pat_id}, epoch: {epoch}, file: {rand_file_count}")
-        if gpu_id == 0: time.sleep(0.1)
-        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-        if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-        savename_jpg = f"{savedir}/JPEGs/AutoregressiveLatent_epoch{epoch}_{pat_id}_batch{b}_randfile{rand_file_count}_gpu{gpu_id}.jpg"
-        savename_svg = f"{savedir}/SVGs/AutoregressiveLatent_epoch{epoch}_{pat_id}_batch_{b}_randfile{rand_file_count}_gpu{gpu_id}.svg"
-        pl.savefig(savename_jpg)
-        pl.savefig(savename_svg)
-        pl.close(fig)    
-
-        pl.close('all') 
 
 def print_autoreg_raw_predictions(gpu_id, epoch, pat_id, rand_file_count, raw_context, raw_pred, raw_target, autoreg_channels, savedir, num_realtime_dims, **kwargs):
 
@@ -2564,8 +2476,6 @@ def initialize_directories(
         # Construct the proper file names to get CORE state dicts
         kwargs['vae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae.pt'
         kwargs['vae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_opt.pt'
-        kwargs['transformer_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/transformer_checkpoints/checkpoint_epoch{str(max_epoch)}_transformer.pt'
-        kwargs['opt_transformer_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/transformer_checkpoints/checkpoint_epoch{str(max_epoch)}_opt_transformer.pt'
 
         # Set the start epoch 1 greater than max trained
         kwargs['start_epoch'] = (max_epoch + 1) 
@@ -2608,7 +2518,7 @@ def run_setup(**kwargs):
     kwargs = initialize_directories(run_notes=run_notes, **kwargs)
 
     # Print the model forward pass sizes
-    fake_data = torch.rand(kwargs['wdecode_batch_size'], 199, kwargs['autoencode_samples']) # 199 is just an example of number of patient channels
+    fake_data = torch.rand(kwargs['wdecode_batch_size'], kwargs['transformer_seq_length'], 199, kwargs['autoencode_samples']) # 199 is just an example of number of patient channels
     print_models_flow(x=fake_data, **kwargs)
 
     # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)

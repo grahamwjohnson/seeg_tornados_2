@@ -20,7 +20,7 @@ from torch import nn
 class ModelArgs:
     def __init__(
         self, 
-        latent_dim: int = None,
+        dim: int = None,
         n_layers: int = 16,
         n_heads: int = 16,
         n_kv_heads: Optional[int] = None,
@@ -36,8 +36,7 @@ class ModelArgs:
         **kwargs):
 
         super().__init__()
-        self.dim = latent_dim
-        self.vae_dim= latent_dim
+        self.dim = dim
         self.n_layers = n_layers
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads
@@ -312,16 +311,6 @@ class Transformer(nn.Module):
         self.multiple_of = params.multiple_of
         self.device = params.device
 
-        # self.tok_embeddings = VocabParallelEmbedding(
-        #     params.vocab_size, params.dim, init_method=lambda x: x
-        # )
-
-        # self.input_mlp = nn.Sequential(
-        #     nn.Linear(params.vae_dim, int(params.vae_dim)),
-        #     nn.LeakyReLU(0.2),
-        #     nn.Linear(int(params.vae_dim), params.dim)
-        # )
-
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
             self.layers.append(TransformerBlock(layer_id, params))
@@ -329,12 +318,6 @@ class Transformer(nn.Module):
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
         # self.output = ColumnParallelLinear(
         #     params.dim, params.vocab_size, bias=False, init_method=lambda x: x
-        # )
-
-        # self.output_mlp = nn.Sequential(
-        #     nn.Linear(params.dim, int(params.vae_dim)),
-        #     nn.LeakyReLU(0.2),
-        #     nn.Linear(int(params.vae_dim), params.vae_dim)
         # )
 
         self.freqs_cis = precompute_freqs_cis(

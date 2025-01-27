@@ -36,22 +36,21 @@ autoencode_samples: 32 # 8
 
 # Cross atttention embedder
 padded_channels: 256 #input padded to allow for different number of channels, also the top level embed dim
-crattn_embed_dim: 512  # Was using 512 for autoencode 8 samples, with current architecture, must change assure: crattn_embed_dim * autoencode_samples == top_dims
+crattn_embed_dim: 1024  # Was using 512 for autoencode 8 samples, with current architecture, must change assure: crattn_embed_dim * autoencode_samples == top_dims
 crattn_num_highdim_heads: 16 # at padding dimension
 crattn_num_highdim_layers: 16 # at padding dimension
-crattn_num_lowdim_heads: 8 # at embed dim dimension
-crattn_num_lowdim_layers: 8 # at embed dim dimension
+crattn_num_lowdim_heads: 2 # at embed dim dimension
+crattn_num_lowdim_layers: 2 # at embed dim dimension
 crattn_max_seq_len: 32
 crattn_cnn_kernel_size: 3
 crattn_dropout: 0.1
 
 num_decode_layers: kwargs['num_decode_layers'] = int(math.log(kwargs['autoencode_samples'],2))
 time_dilate_kernel_sizes: [3,5,7,9,11,13,15,17]
-# TODO: consider dilated kernels as time gets bigger
 channel_shrink_kernel_sizes: [3,5,7,9,11,13,15,17]
 
 ### VAE Encoder
-top_dims: 512 
+top_dims: 1024 
 hidden_dims: 2048 # 4096
 latent_dim: 1024 # 2048
 
@@ -73,7 +72,6 @@ ffn_dim_multiplier: 1 # 0.2  # Default is 1 to make FF layers account for 2/3 of
 attention_dropout: 0.1          ###    0.8 is aggressive        #### IMPORTANT ####            ###
 
 core_weight_decay: 0.1
-transformer_weight_decay: 0.1
 adamW_beta1: 0.9
 adamW_beta2: 0.95 
 
@@ -102,17 +100,6 @@ num_recon_samples: 512 # this will limit how much is shown in recon plots, ERROR
 num_realtime_dims: 5
 recent_display_iters: 5 # How often to print to console when training & how often to log to WandB
 
-# Autoregressive Inference
-autoreg_every: 1
-autoreg_context_tokens: kwargs['autoreg_context_tokens'] = kwargs['transformer_seq_length'] - 1
-autoreg_tokens_to_gen: 32 # kwargs['autoreg_tokens_to_gen'] = kwargs['transformer_seq_length']
-autoreg_channels: 3
-autoreg_batchsize: 2
-autoreg_num_rand_pats: 2
-autoreg_num_rand_files: 2
-autoreg_attention_dropout: 0.0
-
-
 ### Dynamic Weights ###
 
 # Beta VAE controls
@@ -120,12 +107,6 @@ KL_max: kwargs['KL_max'] = 1e-4 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Che
 KL_min: kwargs['KL_min'] = 0
 KL_epochs_AT_max: 50
 KL_epochs_TO_max: 50
-
-# Transformer weight control
-Transformer_max: kwargs['Transformer_max'] = 0.1 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
-Transformer_min: kwargs['Transformer_min'] = 0
-Transformer_epochs_AT_max: 99999
-Transformer_epochs_TO_max: 100
 
 # Sparsity weight control
 Sparse_max: kwargs['Sparse_max'] = 1e-7 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
@@ -149,20 +130,11 @@ LR_epochs_AT_max_core: 0
 manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
 manual_step_size_core: 99999
 
-# Transformer learning rate controls
-LR_max_transformer: kwargs['LR_max_transformer'] = 1e-6
-LR_min_transformer: kwargs['LR_min_transformer'] = 1e-8
-LR_epochs_TO_max_transformer: 3
-LR_epochs_AT_max_transformer: 0
-manual_gamma_transformer: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
-manual_step_size_transformer: 99999
-
 # Val FineTune controls
 val_finetune_hour_dataset_range: kwargs['val_finetune_hour_dataset_range'] = [2, 50]
 val_unseen_hour_dataset_range: kwargs['val_unseen_hour_dataset_range'] = [50, -1]
 epochs_val_finetune: 1
 LR_val_vae: kwargs['LR_val_vae'] = 1e-7
-LR_val_transformer: kwargs['LR_val_transformer'] = 1e-8
 manual_step_size_val_core: 10
 manual_gamma_val_core: 0.5
 val_subsample_file_factor: 64 # Only iterates through file_lnegth/X

@@ -35,7 +35,6 @@ from utilities import latent_plotting
 from utilities import utils_functions
 from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
-from models.Transformer import ModelArgs, Transformer
 from models.VAE import VAE
 
 
@@ -70,7 +69,6 @@ def load_train_objs(
     
     # Optimizers
     core_weight_decay, 
-    transformer_weight_decay,
     adamW_beta1,
     adamW_beta2,
     **kwargs):
@@ -122,13 +120,7 @@ def load_train_objs(
     vae = vae.to(gpu_id) 
     opt_vae = torch.optim.AdamW(vae.parameters(), weight_decay=core_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_core'])
     
-    ### Transformer ###
-    transformer = Transformer(ModelArgs(device=gpu_id, **kwargs))
-    transformer = transformer.to(gpu_id)
-    opt_transformer = torch.optim.AdamW(transformer.parameters(), weight_decay=transformer_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_transformer'])
-    print(f"[GPU{gpu_id}] transformer loaded")
-
-    return train_dataset, valfinetune_dataset, valunseen_dataset, transformer, vae, opt_vae, opt_transformer 
+    return train_dataset, valfinetune_dataset, valunseen_dataset, vae, opt_vae 
 
 def main(  
     # Ordered variables
@@ -146,16 +138,12 @@ def main(
     valfinetune_runs_per_file: int,
     valunseen_runs_per_file: int,
     train_num_rand_hashes: int,
-    autoreg_num_rand_hashes: int,
     val_num_rand_hashes: int,
     LR_val_vae: float,
-    LR_val_transformer: float,
     finetune_pacmap: bool, 
     PaCMAP_model_to_infer = [],
     vae_state_dict_prev_path = [],
     vae_opt_state_dict_prev_path = [],
-    transformer_state_dict_prev_path = [],
-    opt_transformer_state_dict_prev_path = [],
     epochs_to_train: int = -1,
 
     **kwargs):
@@ -183,7 +171,7 @@ def main(
     ddp_setup(gpu_id, world_size)
 
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
-    train_dataset, valfinetune_dataset, valunseen_dataset, transformer, vae, opt_vae, opt_transformer = load_train_objs(gpu_id=gpu_id, **kwargs) 
+    train_dataset, valfinetune_dataset, valunseen_dataset, vae, opt_vae = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
     # Load the model/opt/sch states if not first epoch & if in training mode
     if (start_epoch > 0):
@@ -195,12 +183,6 @@ def main(
         vae_opt_state_dict_prev = torch.load(vae_opt_state_dict_prev_path, map_location=map_location)
         opt_vae.load_state_dict(vae_opt_state_dict_prev)
 
-        # Load in Transformer model weights and opt
-        transformer_state_dict_prev = torch.load(transformer_state_dict_prev_path, map_location=map_location)
-        transformer.load_state_dict(transformer_state_dict_prev)
-        opt_transformer_state_dict_prev = torch.load(opt_transformer_state_dict_prev_path, map_location=map_location)
-        opt_transformer.load_state_dict(opt_transformer_state_dict_prev)
-
         print("Weights and Opts loaded from checkpoints")
 
     # Create the training object
@@ -209,8 +191,6 @@ def main(
         gpu_id=gpu_id, 
         vae=vae, 
         opt_vae=opt_vae,
-        transformer=transformer,
-        opt_transformer=opt_transformer,
         start_epoch=start_epoch,
         train_dataset=train_dataset, 
         valfinetune_dataset=valfinetune_dataset,
@@ -233,14 +213,11 @@ def main(
             if finetune_pacmap:
                 vae_dict = trainer.vae.module.state_dict()
                 vae_opt_dict = trainer.opt_vae.state_dict()
-                transformer_dict = trainer.transformer.module.state_dict()
-                transformer_opt_dict = trainer.opt_transformer.state_dict()
 
                 # FINETUNE on beginning of validation patients (currently only one epoch)
                 # Set to train and change LR to validate settings
                 trainer._set_to_train()
                 trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
-                trainer.opt_transformer.param_groups[0]['lr'] = LR_val_transformer
                 trainer._run_epoch(
                     dataset_curr = trainer.valfinetune_dataset, 
                     dataset_string = "valfinetune",
@@ -288,24 +265,10 @@ def main(
             if finetune_pacmap:
                 trainer.vae.module.load_state_dict(vae_dict)
                 trainer.opt_vae.load_state_dict(vae_opt_dict)
-                trainer.transformer.module.load_state_dict(transformer_dict)
-                trainer.opt_transformer.load_state_dict(transformer_opt_dict)
 
             print(f"GPU{str(trainer.gpu_id)} at post PaCMAP barrier")
             barrier()
         
-        # AUTOREGRESSIVE INFERENCE 
-        # Training data
-        if (trainer.epoch + 1) % trainer.autoreg_every == 0:
-            trainer._set_to_eval()
-            print("RUNNING AUTOREGRESSION on random pats/files")
-            with torch.no_grad():
-                trainer._random_autoreg_plots(
-                    dataset_curr = trainer.train_dataset, 
-                    dataset_string = "train",
-                    num_rand_hashes = autoreg_num_rand_hashes,
-                    **kwargs)
-
         # TRAIN
         trainer._set_to_train()
         trainer._run_epoch(
@@ -332,14 +295,11 @@ def main(
             # Save pre-finetune model/opt weights
             vae_dict = trainer.vae.module.state_dict()
             vae_opt_dict = trainer.opt_vae.state_dict()
-            transformer_dict = trainer.transformer.module.state_dict()
-            transformer_opt_dict = trainer.opt_transformer.state_dict()
 
             # FINETUNE on beginning of validation patients (currently only one epoch)
             # Set to train and change LR to validate settings
             trainer._set_to_train()
             trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
-            trainer.opt_transformer.param_groups[0]['lr'] = LR_val_transformer
             trainer._run_epoch(
                 dataset_curr = trainer.valfinetune_dataset, 
                 dataset_string = "valfinetune",
@@ -370,8 +330,6 @@ def main(
             # Restore model/opt weights to pre-finetune
             trainer.vae.module.load_state_dict(vae_dict)
             trainer.opt_vae.load_state_dict(vae_opt_dict)
-            trainer.transformer.module.load_state_dict(transformer_dict)
-            trainer.opt_transformer.load_state_dict(transformer_opt_dict)
 
     # Kill the process after training loop completes
     print(f"[GPU{gpu_id}]: End of train loop, killing subprocess")
@@ -383,8 +341,6 @@ class Trainer:
         self,
         world_size: int,
         gpu_id: int,
-        transformer: torch.nn.Module,
-        opt_transformer: torch.optim.Optimizer,
         vae: torch.nn.Module,
         start_epoch: int,
         train_dataset: SEEG_Tornado_Dataset,
@@ -395,7 +351,6 @@ class Trainer:
         onlylatent_batch_size: int,
         wandb_run,
         model_dir: str,
-        autoreg_every: int,
         val_every: int,
         pacmap_every: int,
         finetune_pacmap: bool,
@@ -416,8 +371,6 @@ class Trainer:
     ) -> None:
         self.world_size = world_size
         self.gpu_id = gpu_id
-        self.transformer = transformer
-        self.opt_transformer = opt_transformer
         self.vae = vae
         self.start_epoch = start_epoch
         self.train_dataset = train_dataset
@@ -427,7 +380,6 @@ class Trainer:
         self.wdecode_batch_size = wdecode_batch_size
         self.onlylatent_batch_size = onlylatent_batch_size
         self.model_dir = model_dir
-        self.autoreg_every = autoreg_every
         self.val_every = val_every
         self.pacmap_every = pacmap_every
         self.finetune_pacmap = finetune_pacmap
@@ -438,7 +390,6 @@ class Trainer:
         self.FS = FS
         self.intrapatient_dataset_style = intrapatient_dataset_style
         self.curr_LR_core = -1
-        # self.transformer_weight = transformer_weight
         self.recon_weight = recon_weight
         self.atd_file = atd_file
         self.PaCMAP_model_to_infer = PaCMAP_model_to_infer
@@ -457,23 +408,18 @@ class Trainer:
 
         # Set up vae & transformer with DDP
         self.vae = DDP(vae, device_ids=[gpu_id])   # find_unused_parameters=True
-        self.transformer = DDP(transformer, device_ids=[gpu_id])   # find_unused_parameters=True
                     
         # Watch with WandB
         wandb.watch(self.vae)
-        wandb.watch(self.transformer)
         
     def _set_to_train(self):
         self.vae.train()
-        self.transformer.train()
 
     def _set_to_eval(self):
         self.vae.eval()
-        self.transformer.eval()
 
     def _zero_all_grads(self):
         self.opt_vae.zero_grad()
-        self.opt_transformer.zero_grad()
 
     def _save_checkpoint(self, epoch, delete_old_checkpoints, **kwargs):
             
@@ -499,22 +445,6 @@ class Trainer:
         opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_opt.pt"
         torch.save(opt_ckp, opt_path)
 
-        ### TRANSFORMER CHECKPOINT ###
-
-        print("Saving Transformer model weights")
-
-        # Save transformer model
-        check_transformer_dir = check_epoch_dir + "/transformer_checkpoints"
-        if not os.path.exists(check_transformer_dir): os.makedirs(check_transformer_dir)
-        ckp = self.transformer.module.state_dict()
-        check_path = check_transformer_dir + "/checkpoint_epoch" +str(epoch) + "_transformer.pt"
-        torch.save(ckp, check_path)
-        
-        # Save transformer optimizer
-        opt_ckp = self.opt_transformer.state_dict()
-        opt_path = check_transformer_dir + "/checkpoint_epoch" +str(epoch) + "_opt_transformer.pt"
-        torch.save(opt_ckp, opt_path)
-
         print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
 
         if delete_old_checkpoints:
@@ -531,135 +461,6 @@ class Trainer:
             start_idxs[i] = np.random.randint(0, last_possible_start_idx+1)
         
         return start_idxs
-
-    def _autoreg(self, context, target, autoreg_tokens_to_gen, n_layers, hash_pat_embedding, autoreg_attention_dropout, **kwargs):
-
-        real_batchsize = context.shape[0]
-        out_channels = context.shape[1]
-        context_token_len = int(context.shape[2]/self.autoencode_samples)
-        target_token_len = int(target.shape[2]/self.autoencode_samples)
-
-        # Pseudo-batch the context
-        context_batched = utils_functions.pseudobatch_raw_data(context, self.autoencode_samples)
-        target_batched = utils_functions.pseudobatch_raw_data(target, self.autoencode_samples)
-
-        ### VAE ENCODER
-        # Forward pass in stacked batch VAE encoder
-        _, _, autoreg_latent_context = self.vae(context_batched, reverse=False)
-        _, _, autoreg_latent_target = self.vae(target_batched, reverse=False)
-
-        # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
-        autoreg_latent_context = torch.split(autoreg_latent_context, context_token_len, dim=0)
-        autoreg_latent_context = torch.stack(autoreg_latent_context, dim=0)
-        autoreg_latent_target = torch.split(autoreg_latent_target, target_token_len, dim=0)
-        autoreg_latent_target = torch.stack(autoreg_latent_target, dim=0)
-
-        ### TRANSFORMER
-        # Greedy decoder
-        autoreg_latent_pred = torch.zeros(context.shape[0], context_token_len + autoreg_tokens_to_gen, self.latent_dim).to(self.gpu_id)
-        autoreg_latent_pred[:,:context_token_len, :] = autoreg_latent_context
-        scores_allSeq_firstLayer_meanHeads_lastRow = torch.zeros(context.shape[0], autoreg_tokens_to_gen, context_token_len)
-        for i in range(0, autoreg_tokens_to_gen):
-            # Run sequence through transformer and get transformer loss
-            predicted_embeddings, scores_allSeq_firstLayer_meanHeads_lastRow[:, i, :] = self.transformer(autoreg_latent_pred[:, i:i + context_token_len, :], attention_dropout=autoreg_attention_dropout, return_attW=True)
-            autoreg_latent_pred[:, context_token_len + i, :] = predicted_embeddings[:, -1, :]
-
-        # Prune the latent predictions to just the generated sequence
-        autoreg_latent_pred = autoreg_latent_pred[:, -autoreg_tokens_to_gen:, :]
-            
-        ### VAE DECODER
-        # Run the predicted embeddings through decoder
-        autoreg_latent_pred_batched = autoreg_latent_pred.reshape(autoreg_latent_pred.shape[0]*autoreg_latent_pred.shape[1], autoreg_latent_pred.shape[2])                        
-        x_hat_batched = self.vae(autoreg_latent_pred_batched, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=out_channels)  
-        x_hat = torch.split(x_hat_batched, autoreg_tokens_to_gen, dim=0)
-        x_hat = torch.stack(x_hat, dim=0)
-        x_hat = x_hat.transpose(3, 2)
-        x_hat = x_hat.reshape(x_hat.shape[0], x_hat.shape[1] * x_hat.shape[2], x_hat.shape[3])
-        x_hat = x_hat.transpose(1, 2)
-
-        return autoreg_latent_context, autoreg_latent_pred, autoreg_latent_target, x_hat, scores_allSeq_firstLayer_meanHeads_lastRow
-
-    def _random_autoreg_plots(self, dataset_curr, dataset_string, autoreg_num_rand_pats, autoreg_context_tokens, autoreg_tokens_to_gen, autoreg_batchsize, autoreg_num_rand_files, num_rand_hashes, num_dataloader_workers_SEQUENTIAL, **kwargs):
-
-        # Set up which pats will be selected for random autoreg
-        np.random.seed(seed=None) # should replace with Generator for newer code        
-        rand_pats_idxs = np.arange(0,len(dataset_curr.pat_ids))
-        np.random.shuffle(rand_pats_idxs)
-        rand_pats_idxs = rand_pats_idxs[0:autoreg_num_rand_pats]
-        for pat_idx in rand_pats_idxs:
-            dataset_curr.set_pat_curr(pat_idx)
-            _, pat_id, _, _ = dataset_curr.get_pat_curr()
-            dataloader_curr = utils_functions.prepare_dataloader(dataset_curr, batch_size=autoreg_batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
-            dataloader_curr.sampler.set_epoch(self.epoch)
-
-            # Iterate through 
-            rand_file_count = 0
-            for data_tensor, file_name in dataloader_curr:
-
-                # Get the random start idx in file
-                random_start_idx = np.arange(0, self.num_samples - (autoreg_context_tokens + autoreg_tokens_to_gen)*self.autoencode_samples - 1)
-                np.random.shuffle(random_start_idx)
-                random_start_idx = random_start_idx[0]
-
-                # HASHING: Get the patient channel order and patid_embedding for this channel order
-                np.random.seed(seed=None) 
-                rand_modifer = int(random.uniform(0, num_rand_hashes -1))
-                hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
-                    input_string=pat_id, 
-                    num_channels=data_tensor.shape[1], 
-                    latent_dim=self.latent_dim, 
-                    modifier=rand_modifer)
-
-                # Pull out context and target raw data and move to GPU
-                context_raw = data_tensor[:, hash_channel_order, random_start_idx: random_start_idx + autoreg_context_tokens * self.autoencode_samples]
-                target_raw = data_tensor[:, hash_channel_order, random_start_idx + autoreg_context_tokens * self.autoencode_samples : random_start_idx + autoreg_context_tokens * self.autoencode_samples + autoreg_tokens_to_gen * self.autoencode_samples]
-                context_raw = context_raw.to(self.gpu_id)
-                target_raw = target_raw.to(self.gpu_id)
-
-                # Conduct the autoregressive decoding
-                autoreg_latent_context, autoreg_latent_pred, autoreg_latent_target, autoreg_raw_pred, scores_allSeq_firstLayer_meanHeads_lastRow = self._autoreg(
-                    context=context_raw, 
-                    target=target_raw,
-                    autoreg_tokens_to_gen=autoreg_tokens_to_gen,
-                    hash_pat_embedding=hash_pat_embedding,
-                    **kwargs)
-
-                # Plot the latent predictions
-                utils_functions.print_autoreg_latent_predictions(
-                    gpu_id=self.gpu_id,
-                    epoch=self.epoch,
-                    pat_id=pat_id,
-                    rand_file_count=rand_file_count,
-                    latent_context=autoreg_latent_context,
-                    latent_predictions=autoreg_latent_pred, 
-                    latent_target=autoreg_latent_target,
-                    savedir = self.model_dir + f"/autoreg_plots/{dataset_string}/autoreg_latents",
-                    **kwargs)
-
-                # Plot the raw predictions
-                utils_functions.print_autoreg_raw_predictions(
-                    gpu_id=self.gpu_id,
-                    epoch=self.epoch,
-                    pat_id=pat_id,
-                    rand_file_count=rand_file_count,
-                    raw_context=context_raw,
-                    raw_pred=autoreg_raw_pred,
-                    raw_target=target_raw,
-                    savedir = self.model_dir + f"/autoreg_plots/{dataset_string}/autoreg_raw",
-                    **kwargs)
-
-                # Plot the Attention Scores along the generated sequence in First Transformer Layer (mean of heads)
-                utils_functions.print_autoreg_AttentionScores_AlongSeq(
-                    gpu_id=self.gpu_id,
-                    epoch=self.epoch,
-                    pat_id=pat_id,
-                    rand_file_count=rand_file_count,
-                    scores_allSeq_firstLayer_meanHeads_lastRow=scores_allSeq_firstLayer_meanHeads_lastRow, 
-                    savedir = self.model_dir + f"/autoreg_plots/{dataset_string}/autoreg_attention")
-
-                # Kill after number of random files is complete
-                rand_file_count = rand_file_count + 1
-                if rand_file_count >= autoreg_num_rand_files: break
 
     def _run_epoch(
         self, 
@@ -681,7 +482,7 @@ class Trainer:
 
         print(f"autoencode_samples: {self.autoencode_samples}")
 
-        ### ALL/FULL FILES - LATENT ONLY ### 
+        ### ALL/FULL FILES - LATENT ONLY - FULL TRANSFORMER CONTEXT ### 
         # This setting is used for inference
         # If wanting all files from every patient, need to run patients serially
         if all_files_latent_only: 
@@ -721,14 +522,17 @@ class Trainer:
                     file_latents = np.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim])
 
                     for w in range(num_pseudo_windows):
+
+                        raise Exception("Need to code this up to only take the last token for each run to maximize info in it from transformer")
+
                         # Pseudobatch and encode
                         x = data_tensor_split[:, w * pseudobatch_onlylatent:  w * pseudobatch_onlylatent + pseudobatch_onlylatent, :, :]
-                        x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
-                        x_batched = x_batched.to(self.gpu_id)
+                        # x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
+                        # x_batched = x_batched.to(self.gpu_id)
 
                          ### VAE ENCODER
                         # Forward pass in stacked batch through VAE encoder
-                        _, _, latent_batched = self.vae(x_batched, reverse=False)
+                        _, _, latent_batched = self.vae(x, reverse=False)
                         
                         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
                         latent_seq = torch.split(latent_batched, pseudobatch_onlylatent, dim=0)
@@ -784,24 +588,17 @@ class Trainer:
                 for start_idx in start_idxs: # Same start_idx for all patients (has no biological meaning)
 
                     # For Training: Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                    self.KL_multiplier, self.curr_LR_core, self.transformer_LR, self.transformer_weight, self.sparse_weight = utils_functions.LR_and_weight_schedules(
+                    self.KL_multiplier, self.curr_LR_core, self.sparse_weight = utils_functions.LR_and_weight_schedules(
                         epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
                     
                     # Update LR to schedule
                     if (not val_finetune) & (not val_unseen):
                         self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
-                        self.opt_transformer.param_groups[0]['lr'] = self.transformer_LR
 
                     # Reset the cumulative losses & zero gradients
                     kld_loss = 0
                     recon_loss = 0
-                    transformer_loss = 0
                     self._zero_all_grads()
-
-                    # # Save mean/logvar across all patients' transformer sequences so we can calculate KLD across patient cohort instead on individual transformer sequences
-                    # # [pat, batch, transformer seq idx, vals]
-                    # mean_allpats = torch.zeros(num_pats_curr, batchsize, self.transformer_seq_length, self.latent_dim).to(self.gpu_id)
-                    # logvar_allpats = torch.zeros(num_pats_curr, batchsize, self.transformer_seq_length, self.latent_dim).to(self.gpu_id)
 
                     # Iterate through all patients and accumulate losses before stepping optimizers
                     for pat_idx in np.arange(0,num_pats_curr): 
@@ -823,45 +620,21 @@ class Trainer:
 
                         # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
                         for embedding_idx in range(0, self.transformer_seq_length):
-
                             # Pull out data for this window
                             end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
                             x[:, embedding_idx, :, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
 
-                        # Stack the vars into batch dimension 
-                        x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
-
-                        # To remember how to split back to original:
-                        # a = torch.split(x_decode_shifted_batched, self.transformer_seq_length-1, dim=0)
-                        # b = torch.stack(a, dim=0)
-
                         ### VAE ENCODER
-                        # Forward pass in stacked batch through VAE encoder
-                        mean_batched, logvar_batched, latent_batched = self.vae(x_batched, reverse=False)
-
-                        # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
-                        latent_seq = torch.split(latent_batched, self.transformer_seq_length, dim=0)
-                        latent_seq = torch.stack(latent_seq, dim=0)
-  
-                        ### TRANSFORMER
-                        # Run sequence through transformer and get transformer loss
-                        predicted_embeddings = self.transformer(latent_seq[:, :-1, :], attention_dropout=attention_dropout)
+                        mean_batched, logvar_batched, latent_batched = self.vae(x, reverse=False)
                         
                         ### VAE DECODER
-                        # Run the predicted embeddings through decoder
-                        predicted_embeddings_batched = predicted_embeddings.reshape(predicted_embeddings.shape[0]*predicted_embeddings.shape[1], predicted_embeddings.shape[2])                        
-                        x_hat_batched = self.vae(predicted_embeddings_batched, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=x_batched.shape[1])  
-                        x_hat = torch.split(x_hat_batched, self.transformer_seq_length-1, dim=0)
+                        x_hat_batched = self.vae(latent_batched, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=x.shape[2])  
+                        x_hat = torch.split(x_hat_batched, self.transformer_seq_length, dim=0)
                         x_hat = torch.stack(x_hat, dim=0)
  
                         # LOSSES: Intra-Patient 
-                        transformer_loss = loss_functions.transformer_loss_function( 
-                            latent_seq[:, 1:, :],  
-                            predicted_embeddings, 
-                            transformer_weight=self.transformer_weight) 
-
                         recon_loss = loss_functions.recon_loss_function(
-                            x=x[:, 1:, :, :], # Shifted by 1 due to predictions having gone through transformer
+                            x=x, 
                             x_hat=x_hat,
                             recon_weight=self.recon_weight)
 
@@ -869,10 +642,6 @@ class Trainer:
                             mean=mean_batched, 
                             logvar=logvar_batched,
                             KL_multiplier=self.KL_multiplier)
-
-                        mean_loss = loss_functions.simple_mean_latent_loss(
-                            latent_seq, 
-                            **kwargs)
 
                         sparse_loss = loss_functions.sparse_l1_reg(
                             z=latent_batched, 
@@ -904,16 +673,12 @@ class Trainer:
                                 metrics = dict(
                                     train_attention_dropout=attention_dropout,
                                     train_loss=loss,
-                                    train_transformer_loss=transformer_loss,
                                     train_recon_loss=recon_loss, 
-                                    train_mean_loss=mean_loss,
                                     train_kld_loss=kld_loss, 
                                     train_sparse_loss=sparse_loss,
                                     train_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
-                                    train_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
                                     train_KL_Beta=self.KL_multiplier, 
                                     train_ReconWeight=self.recon_weight,
-                                    train_Transformer_weight=self.transformer_weight,
                                     train_Sparse_weight=self.sparse_weight,
                                     train_epoch=self.epoch)
 
@@ -921,16 +686,12 @@ class Trainer:
                                 metrics = dict(
                                     val_finetune_attention_dropout=attention_dropout,
                                     val_finetune_loss=loss, 
-                                    val_finetune_transformer_loss=transformer_loss,
                                     val_finetune_recon_loss=recon_loss, 
-                                    val_finetune_mean_loss=mean_loss,
                                     val_finetune_kld_loss=kld_loss, 
                                     val_finetune_sparse_loss=sparse_loss,
                                     val_finetune_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
-                                    val_finetune_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
                                     val_finetune_KL_Beta=self.KL_multiplier, 
                                     val_finetune_ReconWeight=self.recon_weight,
-                                    val_finetune_Transformer_weight=self.transformer_weight,
                                     val_finetune_Sparse_weight=self.sparse_weight,
                                     val_finetune_epoch=self.epoch)
 
@@ -938,16 +699,12 @@ class Trainer:
                                 metrics = dict(
                                     val_unseen_attention_dropout=attention_dropout,
                                     val_unseen_loss=loss, 
-                                    val_unseen_transformer_loss=transformer_loss,
                                     val_unseen_recon_loss=recon_loss, 
-                                    val_unseen_mean_loss=mean_loss,
                                     val_unseen_kld_loss=kld_loss, 
                                     val_unseen_sparse_loss=sparse_loss,
                                     val_unseen_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
-                                    val_unseen_LR_transformer=self.opt_transformer.param_groups[0]['lr'],
                                     val_unseen_KL_Beta=self.KL_multiplier, 
                                     val_unseen_ReconWeight=self.recon_weight,
-                                    val_unseen_Transformer_weight=self.transformer_weight,
                                     val_unseen_Sparse_weight=self.sparse_weight,
                                     val_unseen_epoch=self.epoch)
 
@@ -962,16 +719,20 @@ class Trainer:
                             # np.random.seed(seed=None)
                             # rand_gpu = int(random.uniform(0, torch.cuda.device_count()))
                             if self.gpu_id == 0:
+                                logvar = torch.split(logvar_batched, self.transformer_seq_length, dim=0)
+                                logvar = torch.stack(logvar, dim=0)
+                                mean = torch.split(mean_batched, self.transformer_seq_length, dim=0)
+                                mean = torch.stack(mean, dim=0)
                                 utils_functions.print_latent_realtime(
-                                    target_emb = latent_seq[:, 1:, :].cpu().detach().numpy(), 
-                                    predicted_emb = predicted_embeddings.cpu().detach().numpy(),
+                                    mu = mean.detach().numpy(), 
+                                    logvar = logvar.cpu().detach().numpy(),
                                     savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
                                     epoch = self.epoch,
                                     iter_curr = iter_curr,
                                     pat_id = dataset_curr.pat_ids[pat_idx],
                                     **kwargs)
                                 utils_functions.print_recon_realtime(
-                                    x_decode_shifted=x[:, 1:, :, :], 
+                                    x=x, 
                                     x_hat=x_hat, 
                                     savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_recon",
                                     epoch = self.epoch,
@@ -982,7 +743,6 @@ class Trainer:
             
                     ### AFTER PATIENT LOOP ###
                     # Step optimizers after all patients have been backpropgated
-                    self.opt_transformer.step()
                     self.opt_vae.step()
                         
         

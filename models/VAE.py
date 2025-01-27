@@ -205,7 +205,6 @@ class MultiTransKernelBlock(nn.Module):
            
         return y
 
-
 class TimeSeriesDecoder(nn.Module):
     def __init__(self, gpu_id, in_dim, padded_channels, seq_len, num_layers, time_dilate_kernel_sizes, channel_shrink_kernel_sizes):
         super(TimeSeriesDecoder, self).__init__()
@@ -299,8 +298,11 @@ class VAE(nn.Module):
         self.channel_shrink_kernel_sizes = channel_shrink_kernel_sizes
         self.time_dilate_kernel_sizes = time_dilate_kernel_sizes
 
-        # Encoder Head
+        # Raw CrossAttention Head
         self.encoder_head = Encoder_TimeSeriesCNNWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=self.crattn_embed_dim, **kwargs)
+
+        # Transformer
+        self.transformer_encoder = Transformer(ModelArgs(device=self.gpu_id, dim=self.latent_dim, **kwargs))
 
         # Core Encoder
         # self.head_to_top = nn.Linear(self.crattn_embed_dim * self.autoencode_samples, self.top_dims, bias=True)
@@ -340,19 +342,23 @@ class VAE(nn.Module):
 
         if reverse == False:
 
-            # FEATURE HEAD
-            y = self.encoder_head(x)
+            # RAW CROSS-ATTENTION HEAD
+            y = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
+            y = self.encoder_head(y)
+            y = torch.split(y, x.shape[1], dim=0)
+            y = torch.stack(y, dim=0)
+
+            # TRANSFORMER
+            y = self.transformer_encoder(y)
+            y = y.reshape([y.shape[0]*y.shape[1], y.shape[2]])
 
             # VAE CORE
-            # y = self.head_to_top(y)
-            # y = self.silu(y)
-            # y = self.norm_top(y)
             y = self.top_to_hidden(y)
             y = self.silu(y)
             y = self.norm_hidden(y)
-            mean, logvar = self.mean_fc_layer(y), self.logvar_fc_layer(y)
-            y = self.reparameterization(mean, logvar)
-            return mean, logvar, y
+            mean_batched, logvar_batched = self.mean_fc_layer(y), self.logvar_fc_layer(y)
+            y = self.reparameterization(mean_batched, logvar_batched)
+            return mean_batched, logvar_batched, y
 
         elif reverse == True:
 
@@ -371,21 +377,16 @@ class VAE(nn.Module):
             y = self.decoder_head(y, out_channels)
             return y
 
-def print_models_flow(x, transformer_seq_length, **kwargs):
+def print_models_flow(x, **kwargs):
     '''
     Builds models on CPU and prints sizes of forward passes
 
     '''
 
-    batch_size = x.shape[0]
-    pat_num_channels = x.shape[1] 
-    data_length = x.shape[2]
+    pat_num_channels = x.shape[2] 
 
     # Build the VAE
     vae = VAE(**kwargs) 
-
-    # Build the Transformer
-    transformer = Transformer(ModelArgs(**kwargs))
 
     # Run through Enc Head
     print(f"INPUT TO <ENC>\n"
@@ -397,15 +398,6 @@ def print_models_flow(x, transformer_seq_length, **kwargs):
     f"logvar:{logvar.shape}\n"
     f"latent:{latent.shape}\n")
 
-    # Run through Transformer
-    # Generate fake seuqential latents and shift the latent
-    latent_shifted = torch.rand(latent.shape[0], transformer_seq_length-1, latent.shape[1])
-    print(f"\n\n\nINPUT TO <Transformer>\n"
-    f"Multiple enoder passes to get sequential latents: latent_shifted:{latent_shifted.shape}\n")
-    trans_out = transformer(latent_shifted)  
-    summary(transformer, input_size=(latent_shifted.shape), depth=999, device="cpu")
-    print(f"trans_out:{trans_out.shape}\n")
-
     # Run through VAE decoder
     hash_pat_embedding = torch.rand(latent.shape[1])
     print(f"\n\n\nINPUT TO <VAE - Decoder Mode> \n"
@@ -414,7 +406,7 @@ def print_models_flow(x, transformer_seq_length, **kwargs):
     core_out = vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=pat_num_channels)  
     print(f"core_out:{core_out.shape}\n")
 
-    del vae, transformer
+    del vae
 
 if __name__ == "__main__":
 
