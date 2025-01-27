@@ -333,7 +333,7 @@ class Transformer(nn.Module):
     def forward(
         self, 
         h_in_vae: torch.Tensor, 
-        start_pos: int=0, 
+        start_pos: int=-9999, 
         return_attW: bool=False,
         attention_dropout: float=0.0
         ):

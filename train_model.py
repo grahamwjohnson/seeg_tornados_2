@@ -37,10 +37,8 @@ from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
 from models.VAE import VAE
 
-
 ######
 torch.autograd.set_detect_anomaly(False)
-
 
 def ddp_setup(gpu_id, world_size):
     """
@@ -358,6 +356,8 @@ class Trainer:
         autoencode_samples: int,
         num_samples: int,
         transformer_seq_length: int,
+        num_encode_concat_transformer_tokens: int,
+        transformer_start_pos: int,
         FS: int,
         intrapatient_dataset_style: list,
         # transformer_weight: float,
@@ -387,6 +387,8 @@ class Trainer:
         self.autoencode_samples = autoencode_samples
         self.num_samples = num_samples
         self.transformer_seq_length = transformer_seq_length
+        self.num_encode_concat_transformer_tokens = num_encode_concat_transformer_tokens
+        self.transformer_start_pos = transformer_start_pos
         self.FS = FS
         self.intrapatient_dataset_style = intrapatient_dataset_style
         self.curr_LR_core = -1
@@ -435,12 +437,12 @@ class Trainer:
         check_core_dir = check_epoch_dir + "/core_checkpoints"
         if not os.path.exists(check_core_dir): os.makedirs(check_core_dir)
 
-        # Save vae model
+        # Save model
         ckp = self.vae.module.state_dict()
         check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae.pt"
         torch.save(ckp, check_path)
 
-        # Save vae core
+        # Save optimizer
         opt_ckp = self.opt_vae.state_dict()
         opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_opt.pt"
         torch.save(opt_ckp, opt_path)
@@ -624,17 +626,17 @@ class Trainer:
                             end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
                             x[:, embedding_idx, :, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
 
-                        ### VAE ENCODER
-                        mean_batched, logvar_batched, latent_batched = self.vae(x, reverse=False)
+                        ### VAE ENCODER: 1-shifted
+                        mean_batched, logvar_batched, latent_batched = self.vae(x[:, :-1, :, :], reverse=False)
                         
-                        ### VAE DECODER
+                        ### VAE DECODER: 1-shifted & Transformer Encoder Concat Shifted 
                         x_hat_batched = self.vae(latent_batched, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=x.shape[2])  
-                        x_hat = torch.split(x_hat_batched, self.transformer_seq_length, dim=0)
+                        x_hat = torch.split(x_hat_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0)
                         x_hat = torch.stack(x_hat, dim=0)
  
                         # LOSSES: Intra-Patient 
                         recon_loss = loss_functions.recon_loss_function(
-                            x=x, 
+                            x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
                             x_hat=x_hat,
                             recon_weight=self.recon_weight)
 
@@ -649,7 +651,7 @@ class Trainer:
                             **kwargs)
 
                         # Intrapatient backprop
-                        loss = recon_loss # + transformer_loss # + sparse_loss + kld_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        loss = recon_loss + kld_loss # + sparse_loss + kld_loss                      ################ KLD LOSS INCLUDED ?????????? ##############
                         if backprop: loss.backward()
 
                         # Realtime terminal info and WandB 
@@ -715,16 +717,13 @@ class Trainer:
 
                         # Realtime latent visualizations
                         if realtime_latent_printing & ((iter_curr + 1) % realtime_printing_interval == 0):
-                            # # Regenerate random GPU idx each call
-                            # np.random.seed(seed=None)
-                            # rand_gpu = int(random.uniform(0, torch.cuda.device_count()))
                             if self.gpu_id == 0:
-                                logvar = torch.split(logvar_batched, self.transformer_seq_length, dim=0)
+                                logvar = torch.split(logvar_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0) # 1-shifted & Transformer Encoder Concat Shifted 
                                 logvar = torch.stack(logvar, dim=0)
-                                mean = torch.split(mean_batched, self.transformer_seq_length, dim=0)
+                                mean = torch.split(mean_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0) # 1-shifted & Transformer Encoder Concat Shifted 
                                 mean = torch.stack(mean, dim=0)
                                 utils_functions.print_latent_realtime(
-                                    mu = mean.detach().numpy(), 
+                                    mu = mean.cpu().detach().numpy(), 
                                     logvar = logvar.cpu().detach().numpy(),
                                     savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
                                     epoch = self.epoch,
@@ -732,7 +731,7 @@ class Trainer:
                                     pat_id = dataset_curr.pat_ids[pat_idx],
                                     **kwargs)
                                 utils_functions.print_recon_realtime(
-                                    x=x, 
+                                    x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], 
                                     x_hat=x_hat, 
                                     savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_recon",
                                     epoch = self.epoch,
@@ -741,11 +740,14 @@ class Trainer:
                                     **kwargs
                                 )
             
+                        # ### WITHIN PATIENT LOOP ###
+                        # # Step optimizers after single patient
+                        # self.opt_vae.step()
+                    
                     ### AFTER PATIENT LOOP ###
                     # Step optimizers after all patients have been backpropgated
                     self.opt_vae.step()
-                        
-        
+                         
 if __name__ == "__main__":
 
     # Set the hash seed 

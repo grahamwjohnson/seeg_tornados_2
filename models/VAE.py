@@ -271,6 +271,8 @@ class VAE(nn.Module):
         autoencode_samples,
         padded_channels,
         crattn_embed_dim,
+        num_encode_concat_transformer_tokens,
+        transformer_start_pos,
         top_dims,
         hidden_dims,
         latent_dim, 
@@ -288,6 +290,8 @@ class VAE(nn.Module):
         self.autoencode_samples = autoencode_samples
         self.padded_channels = padded_channels
         self.crattn_embed_dim = crattn_embed_dim
+        self.num_encode_concat_transformer_tokens = num_encode_concat_transformer_tokens
+        self.transformer_start_pos = transformer_start_pos
         self.top_dims = top_dims
         self.hidden_dims = hidden_dims
         self.latent_dim = latent_dim 
@@ -301,8 +305,8 @@ class VAE(nn.Module):
         # Raw CrossAttention Head
         self.encoder_head = Encoder_TimeSeriesCNNWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=self.crattn_embed_dim, **kwargs)
 
-        # Transformer
-        self.transformer_encoder = Transformer(ModelArgs(device=self.gpu_id, dim=self.latent_dim, **kwargs))
+        # Transformer - dimension is same as output of cross attention
+        self.transformer_encoder = Transformer(ModelArgs(device=self.gpu_id, dim=self.crattn_embed_dim, **kwargs))
 
         # Core Encoder
         # self.head_to_top = nn.Linear(self.crattn_embed_dim * self.autoencode_samples, self.top_dims, bias=True)
@@ -338,6 +342,16 @@ class VAE(nn.Module):
         z = mean + std * epsilon
         return z
 
+    def concat_past_tokens(self, x):
+        
+        num_pulls = x.shape[1] - self.num_encode_concat_transformer_tokens - self.transformer_start_pos
+        y = torch.zeros([x.shape[0], num_pulls, self.top_dims]).to(x)
+
+        for i in range(num_pulls):
+            y[:, i, :] = x[:, i:i+self.num_encode_concat_transformer_tokens, :].reshape(x.shape[0], self.num_encode_concat_transformer_tokens * x.shape[2])
+
+        return y
+
     def forward(self, x, reverse=False, hash_pat_embedding=-1, out_channels=-1):
 
         if reverse == False:
@@ -349,10 +363,11 @@ class VAE(nn.Module):
             y = torch.stack(y, dim=0)
 
             # TRANSFORMER
-            y = self.transformer_encoder(y)
-            y = y.reshape([y.shape[0]*y.shape[1], y.shape[2]])
+            y = self.transformer_encoder(y, start_pos=self.transformer_start_pos)
 
             # VAE CORE
+            y = self.concat_past_tokens(y)
+            y = y.reshape([y.shape[0]*y.shape[1], y.shape[2]])
             y = self.top_to_hidden(y)
             y = self.silu(y)
             y = self.norm_hidden(y)
