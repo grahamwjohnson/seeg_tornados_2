@@ -142,9 +142,9 @@ def main(
     start_epoch: int,
     wdecode_batch_size: int,
     onlylatent_batch_size: int,
-    train_subsample_file_factor: int,
-    valfinetune_subsample_file_factor: int,
-    valunseen_subsample_file_factor: int,
+    train_runs_per_file: int,
+    valfinetune_runs_per_file: int,
+    valunseen_runs_per_file: int,
     train_num_rand_hashes: int,
     autoreg_num_rand_hashes: int,
     val_num_rand_hashes: int,
@@ -157,6 +157,7 @@ def main(
     transformer_state_dict_prev_path = [],
     opt_transformer_state_dict_prev_path = [],
     epochs_to_train: int = -1,
+
     **kwargs):
 
     '''
@@ -206,14 +207,14 @@ def main(
     trainer = Trainer(
         world_size=world_size,
         gpu_id=gpu_id, 
+        vae=vae, 
+        opt_vae=opt_vae,
         transformer=transformer,
         opt_transformer=opt_transformer,
-        vae=vae, 
         start_epoch=start_epoch,
         train_dataset=train_dataset, 
         valfinetune_dataset=valfinetune_dataset,
         valunseen_dataset=valunseen_dataset,
-        opt_vae=opt_vae,
         wdecode_batch_size=wdecode_batch_size,
         onlylatent_batch_size=onlylatent_batch_size,
         PaCMAP_model_to_infer=PaCMAP_model_to_infer,
@@ -244,8 +245,7 @@ def main(
                     dataset_curr = trainer.valfinetune_dataset, 
                     dataset_string = "valfinetune",
                     batchsize=trainer.wdecode_batch_size,
-                    random_bool = True, # will subsample and randomize
-                    subsample_file_factor_curr = valfinetune_subsample_file_factor, # only valid if 'random_bool' is True
+                    runs_per_file = valfinetune_runs_per_file, 
                     all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
                     val_finetune = True,
                     val_unseen = False,
@@ -263,8 +263,7 @@ def main(
                         dataset_curr = dataset_list[d], 
                         dataset_string = dataset_strs[d],
                         batchsize=trainer.onlylatent_batch_size,
-                        random_bool = False, # will subsample and randomize
-                        subsample_file_factor_curr = -1, # only valid if 'random_bool' is True
+                        runs_per_file = -1, 
                         all_files_latent_only = True, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
                         val_finetune = False,
                         val_unseen = False,
@@ -313,8 +312,7 @@ def main(
             dataset_curr = trainer.train_dataset, 
             dataset_string = "train",
             batchsize=trainer.wdecode_batch_size,
-            random_bool = True, # will subsample and randomize
-            subsample_file_factor_curr = train_subsample_file_factor, # only valid if 'random_bool' is True
+            runs_per_file = train_runs_per_file, 
             all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
             val_finetune = False,
             val_unseen = False,
@@ -346,8 +344,7 @@ def main(
                 dataset_curr = trainer.valfinetune_dataset, 
                 dataset_string = "valfinetune",
                 batchsize=trainer.wdecode_batch_size,
-                random_bool = True, # will subsample and randomize
-                subsample_file_factor_curr = valfinetune_subsample_file_factor, # only valid if 'random_bool' is True
+                runs_per_file = valfinetune_runs_per_file, 
                 all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
                 val_finetune = True,
                 val_unseen = False,
@@ -362,8 +359,7 @@ def main(
                     dataset_curr = trainer.valunseen_dataset, 
                     dataset_string = "valunseen",
                     batchsize=trainer.wdecode_batch_size,
-                    random_bool = True, # will subsample and randomize
-                    subsample_file_factor_curr = valunseen_subsample_file_factor, # only valid if 'random_bool' is True
+                    runs_per_file = valunseen_runs_per_file, 
                     all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
                     val_finetune = False,
                     val_unseen = True,
@@ -525,17 +521,14 @@ class Trainer:
             utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch)
             print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
 
-    def _train_start_idxs(self, subsample_file_factor, random_bool):
+    def _train_start_idxs(self, runs_per_file):
 
-        np.random.seed(seed=None) # should replace with Generator for newer code
-        
-        if random_bool: frame_shift = int(random.uniform(0, self.autoencode_samples -1))
-        else: frame_shift = 0
-        
-        start_idxs = np.arange(0,self.num_windows - self.transformer_seq_length - 1) * self.autoencode_samples + frame_shift
-        if random_bool: np.random.shuffle(start_idxs)
+        last_possible_start_idx = self.num_samples - (self.transformer_seq_length + 1) * self.autoencode_samples 
 
-        if random_bool: start_idxs = start_idxs[0::subsample_file_factor]
+        start_idxs = np.zeros(runs_per_file, dtype=int)
+        for i in range(runs_per_file):
+            np.random.seed(seed=None) 
+            start_idxs[i] = np.random.randint(0, last_possible_start_idx+1)
         
         return start_idxs
 
@@ -674,8 +667,7 @@ class Trainer:
         dataset_string,
         batchsize,
         attention_dropout,
-        random_bool, # will subsample and randomize
-        subsample_file_factor_curr, # only valid if 'random' is True
+        runs_per_file, 
         all_files_latent_only,
         num_dataloader_workers_SEQUENTIAL,
         val_finetune,
@@ -695,8 +687,8 @@ class Trainer:
         if all_files_latent_only: 
 
             # Check for erroneous configs
-            if backprop or random_bool or val_finetune or val_unseen:
-                raise Exception("ERROR: innapropriate config: if running all files then backprop/random_bool/val_finetune/val_unseen must all be False")
+            if backprop or val_finetune or val_unseen:
+                raise Exception("ERROR: innapropriate config: if running all files then backprop/val_finetune/val_unseen must all be False")
 
             # Go through every subject in this dataset
             for pat_idx in range(0,len(dataset_curr.pat_ids)):
@@ -784,7 +776,7 @@ class Trainer:
             num_pats_curr = dataloader_curr.dataset.get_pat_count()
             
             # Get miniepoch start indexes. Same random indexes will be used for all patients' files.
-            start_idxs = self._train_start_idxs(random_bool=random_bool, subsample_file_factor=subsample_file_factor_curr)
+            start_idxs = self._train_start_idxs(runs_per_file=runs_per_file)
             total_train_iters = int(len(dataloader_curr) * len(start_idxs) * num_pats_curr) # 
             iter_curr = 0 # Iteration across all sequential trian files
 
@@ -888,7 +880,7 @@ class Trainer:
                             **kwargs)
 
                         # Intrapatient backprop
-                        loss = recon_loss + transformer_loss + sparse_loss + kld_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
+                        loss = recon_loss # + transformer_loss # + sparse_loss + kld_loss # + mean_loss # + kld_loss + transformer_loss             ################ direct TRANSFORMER LOSS INCLUDED ?????????? ##############
                         if backprop: loss.backward()
 
                         # Realtime terminal info and WandB 

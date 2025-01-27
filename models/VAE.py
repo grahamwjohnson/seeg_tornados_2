@@ -50,35 +50,6 @@ class TimeSeriesCrossAttentionLayer(nn.Module):
         
         return query
 
-# class TimeSeriesCrossAttentionLayer_ShapeDilationNoResidual(nn.Module):
-#     def __init__(self, in_dim, out_dim, dropout=0.1):
-#         super(TimeSeriesCrossAttentionLayer_ShapeDilationNoResidual, self).__init__()
-#         self.attn = nn.MultiheadAttention(in_dim, num_heads=1, dropout=dropout)
-#         self.norm1 = RMSNorm(in_dim)
-#         self.dropout1 = nn.Dropout(dropout)
-#         self.ffn = nn.Sequential(
-#             nn.Linear(in_dim, in_dim * 4),
-#             nn.SiLU(),
-#             nn.Linear(in_dim * 4, out_dim)
-#         )
-#         # self.norm2 = RMSNorm(out_dim)
-#         # self.dropout2 = nn.Dropout(dropout)
-
-#     def forward(self, query, key, value):
-#         # Cross-attention: query comes from the target, key and value come from the source
-#         # query: (seq_len, batch_size, embed_dim)
-#         # key, value: (seq_len, batch_size, embed_dim)
-
-#         # Cross-attention layer
-#         attn_output, _ = self.attn(query, key, value)  # q=query, k=key, v=value
-#         query = self.norm1(query + self.dropout1(attn_output))  # Residual connection
-
-#         # Feed-forward network, no residual
-#         ffn_output = self.ffn(query)
-#         # query = self.norm2(query + self.dropout2(ffn_output))  # Residual connection
-        
-#         return ffn_output
-
 class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
     def __init__(self, 
         # in_channels, 
@@ -116,7 +87,7 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
             for _ in range(self.num_highdim_layers)
         ])
 
-        # Convert to low dims
+        # Convert to embed dims
         self.high_to_low_dims = nn.Sequential(
             nn.Linear(self.padded_channels, self.padded_channels * 2),
             nn.SiLU(),
@@ -175,7 +146,7 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
         for layer in self.highdim_attention_layers:
             x = layer(x, x, x)  # Cross-attention (q=k=v)
 
-        # Step 6: Conver from high dims to low dims
+        # Step 6: Convert from padded channel dims to embed dims
         x = self.high_to_low_dims(x)
 
         # Step 7: Apply Embed-Dim Cross-Attention Layers
@@ -197,25 +168,25 @@ class MultiTransKernelBlock(nn.Module):
     
     Have not implemented dilated kernels yet
     '''
-    def __init__(self, in_channels, out_channels, kernel_sizes, stride, output_padding, final_layer):
+    def __init__(self, gpu_id, in_channels, out_channels, kernel_sizes, stride, output_padding, yes_norm):
         super(MultiTransKernelBlock, self).__init__()
 
+        self.gpu_id = gpu_id
         self.kernel_sizes = kernel_sizes
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.final_layer = final_layer
+        self.yes_norm = yes_norm
 
         self.units = [-1] * len(self.kernel_sizes)
-        self.norms = [-1] * len(self.kernel_sizes)
 
         for i in range(len(self.kernel_sizes)):
             k = self.kernel_sizes[i]
-            self.units[i] = (nn.ConvTranspose1d(in_channels=in_channels, out_channels=out_channels, kernel_size=k, stride=stride, padding=int((k-1)/2), output_padding=output_padding))
-            self.norms[i] = RMSNorm_Conv(out_channels)
-
-        self.silu = nn.SiLU()
-        self.hardtanh = nn.Hardtanh()
-        
+            self.units[i] = nn.ConvTranspose1d(in_channels=in_channels, out_channels=out_channels, kernel_size=k, stride=stride, padding=int((k-1)/2), output_padding=output_padding).to(self.gpu_id)
+            
+        self.norm = RMSNorm_Conv(out_channels).to(self.gpu_id)
+        # self.silu = nn.SiLU().to(self.gpu_id)
+        # self.tanh = nn.Tanh().to(self.gpu_id)
+        # self.hardtanh = nn.Hardtanh().to(self.gpu_id)
         
     def forward(self, x):
         for i in range(len(self.kernel_sizes)):
@@ -225,23 +196,21 @@ class MultiTransKernelBlock(nn.Module):
             if i == 0: y = unit(x)
             else: y = y + unit(x)
 
-            # Only hardtanh the final output, no norm
-            if self.final_layer:
-                y = self.hardtanh(y)
-            
-            # Output non-linearity and normalization
-            else:
-                norm = self.norms[i]
-                y = self.silu(y)
-                y = norm(y)
-
+        # Do not norm the final layers
+        if self.yes_norm:
+            y = F.silu(y)
+            y = self.norm(y)
+        else:
+            y = F.tanh(y)
+           
         return y
 
 
 class TimeSeriesDecoder(nn.Module):
-    def __init__(self, in_dim, padded_channels, seq_len, num_layers, time_dilate_kernel_sizes, channel_shrink_kernel_sizes):
+    def __init__(self, gpu_id, in_dim, padded_channels, seq_len, num_layers, time_dilate_kernel_sizes, channel_shrink_kernel_sizes):
         super(TimeSeriesDecoder, self).__init__()
 
+        self.gpu_id = gpu_id
         self.in_dim = in_dim
         self.padded_channels = padded_channels
         self.seq_len = seq_len
@@ -257,17 +226,17 @@ class TimeSeriesDecoder(nn.Module):
         # Decouple time dilation and channel shrinking for flexibility and convenience
 
         # First we will expand the time dimension to raw time step size with multi-kernel blocks
-        final_layer = False
+        yes_norm = True
         for i in range(self.num_time_dilation_layers):
             # Expand the time dimension with stride of 2 and output padding 1
-            self.time_dilate_layers[i] = MultiTransKernelBlock(in_channels=self.in_dim, out_channels=self.in_dim, kernel_sizes=time_dilate_kernel_sizes, stride=2, output_padding=1, final_layer=final_layer)
+            self.time_dilate_layers[i] = MultiTransKernelBlock(gpu_id=self.gpu_id, in_channels=self.in_dim, out_channels=self.in_dim, kernel_sizes=time_dilate_kernel_sizes, stride=2, output_padding=1, yes_norm=yes_norm)
 
         # Keep track of stepping down channel dimension
         in_channel_count_curr = self.in_dim
+        yes_norm = False
         for i in range(self.num_channel_reduction_layers):
             # Shrink channels down to padded channel dimension, with stride = 1 and 
-            if i == self.num_channel_reduction_layers - 1: final_layer = True
-            self.channel_reduction_layers[i] = MultiTransKernelBlock(in_channels=in_channel_count_curr, out_channels=int(in_channel_count_curr/2), kernel_sizes=channel_shrink_kernel_sizes, stride=1, output_padding=0, final_layer=final_layer)
+            self.channel_reduction_layers[i] = MultiTransKernelBlock(gpu_id=self.gpu_id, in_channels=in_channel_count_curr, out_channels=int(in_channel_count_curr/2), kernel_sizes=channel_shrink_kernel_sizes, stride=1, output_padding=0, yes_norm=yes_norm)
             in_channel_count_curr = int(in_channel_count_curr/2)
 
     def forward(self, x, out_channels):
@@ -331,7 +300,7 @@ class VAE(nn.Module):
         self.time_dilate_kernel_sizes = time_dilate_kernel_sizes
 
         # Encoder Head
-        self.encoder_head = Encoder_TimeSeriesCNNWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=crattn_embed_dim, **kwargs)
+        self.encoder_head = Encoder_TimeSeriesCNNWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=self.crattn_embed_dim, **kwargs)
 
         # Core Encoder
         # self.head_to_top = nn.Linear(self.crattn_embed_dim * self.autoencode_samples, self.top_dims, bias=True)
@@ -351,10 +320,11 @@ class VAE(nn.Module):
 
         # Deocder head
         self.decoder_head = TimeSeriesDecoder(
+            gpu_id=gpu_id,
             in_dim=self.decoder_top_dims, 
             padded_channels = self.padded_channels, 
-            seq_len=autoencode_samples, 
-            num_layers=num_decode_layers, 
+            seq_len=self.autoencode_samples, 
+            num_layers=self.num_decode_layers, 
             time_dilate_kernel_sizes=self.time_dilate_kernel_sizes, 
             channel_shrink_kernel_sizes=self.channel_shrink_kernel_sizes)
 
