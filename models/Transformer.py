@@ -335,7 +335,8 @@ class Transformer(nn.Module):
         h_in_vae: torch.Tensor, 
         start_pos: int=-9999, 
         return_attW: bool=False,
-        attention_dropout: float=0.0
+        attention_dropout: float=0.0,
+        causal_mask_bool: bool=True
         ):
         # _bsz, seqlen = tokens.shape
         # h = self.tok_embeddings(tokens)
@@ -349,7 +350,7 @@ class Transformer(nn.Module):
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
         mask = None
-        if seqlen > 1:
+        if (seqlen > 1) & causal_mask_bool:
             mask = torch.full((seqlen, seqlen), float("-inf"), device=self.device)
 
             mask = torch.triu(mask, diagonal=1)

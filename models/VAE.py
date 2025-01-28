@@ -50,7 +50,7 @@ class TimeSeriesCrossAttentionLayer(nn.Module):
         
         return query
 
-class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
+class Encoder_TimeSeriesWithCrossAttention(nn.Module):
     def __init__(self, 
         # in_channels, 
         padded_channels,
@@ -64,7 +64,7 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
         crattn_dropout, 
         **kwargs):
 
-        super(Encoder_TimeSeriesCNNWithCrossAttention, self).__init__()
+        super(Encoder_TimeSeriesWithCrossAttention, self).__init__()
         
         # self.in_channels = in_channels
         self.padded_channels = padded_channels
@@ -159,107 +159,67 @@ class Encoder_TimeSeriesCNNWithCrossAttention(nn.Module):
         return torch.mean(x, dim=1)
         # return x[:,-1,:] # Return last in sequence (should be embedded with meaning)
 
-class MultiTransKernelBlock(nn.Module):
-    '''
-    One Layer of Transposed Convolutions
+class HybridDecoder(nn.Module):
+    def __init__(self, gpu_id, latent_dim, hidden_dim, output_channels, seq_length, num_transformer_layers, num_heads, ffm, max_bs, max_seq_len, num_gru_layers):
+        super(HybridDecoder, self).__init__()
+        self.gpu_id = gpu_id
+        self.latent_dim = latent_dim
+        self.hidden_dim = hidden_dim
+        self.output_channels = output_channels
+        self.seq_length = seq_length
+        self.num_transformer_layers = num_transformer_layers
+        self.num_heads = num_heads
+        self.ffm = ffm
+        self.max_bs = max_bs
+        self.max_seq_len = max_seq_len
 
-    Can expand time with: stride=2, output_padding=1
-    Or keep time same with: stride=1, output_padding=0
+        self.num_gru_layers = num_gru_layers
+        
+        # Non-autoregressive decoder (rough sketch generator)
+        self.non_autoregressive_fc = nn.Linear(latent_dim, hidden_dim * seq_length)
+        self.non_autoregressive_transformer = Transformer(ModelArgs(
+            device=self.gpu_id, 
+            dim=self.hidden_dim, 
+            n_layers=self.num_transformer_layers,
+            n_heads=self.num_heads,
+            ffn_dim_multiplier=self.ffm,
+            max_batch_size=self.max_bs,
+            max_seq_len=self.max_seq_len))
+        
+        self.non_autoregressive_output = nn.Linear(hidden_dim, output_channels)
+        
+        # Autoregressive decoder (refinement)
+        self.autoregressive_rnn = nn.GRU(output_channels + hidden_dim, hidden_dim, num_gru_layers, batch_first=True)
+        self.autoregressive_output = nn.Linear(hidden_dim, output_channels)
     
-    Have not implemented dilated kernels yet
-    '''
-    def __init__(self, gpu_id, in_channels, out_channels, kernel_sizes, stride, output_padding, yes_norm):
-        super(MultiTransKernelBlock, self).__init__()
-
-        self.gpu_id = gpu_id
-        self.kernel_sizes = kernel_sizes
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.yes_norm = yes_norm
-
-        self.units = [-1] * len(self.kernel_sizes)
-
-        for i in range(len(self.kernel_sizes)):
-            k = self.kernel_sizes[i]
-            self.units[i] = nn.ConvTranspose1d(in_channels=in_channels, out_channels=out_channels, kernel_size=k, stride=stride, padding=int((k-1)/2), output_padding=output_padding).to(self.gpu_id)
+    def forward(self, z):
+        batch_size = z.size(0)
+        
+        # Step 1: Non-autoregressive generation (rough sketch)
+        h_na = self.non_autoregressive_fc(z).view(batch_size, self.seq_length, self.hidden_dim)
+        h_na = self.non_autoregressive_transformer(h_na, start_pos=0, causal_mask_bool=False)  # Self-attention with no causal mask
+        x_na = self.non_autoregressive_output(h_na)  # (batch_size, seq_length, output_channels)
+        
+        # Step 2: Autoregressive refinement
+        h_ar = torch.zeros(self.num_gru_layers, batch_size, self.hidden_dim).to(z.device)
+        x_ar = torch.zeros(batch_size, 1, self.output_channels).to(z.device)
+        
+        outputs = []
+        for t in range(self.seq_length):
+            # Concatenate non-autoregressive output and previous autoregressive output
+            input_ar = torch.cat([x_na[:, t:t+1, :], x_ar], dim=-1)
             
-        self.norm = RMSNorm_Conv(out_channels).to(self.gpu_id)
-        # self.silu = nn.SiLU().to(self.gpu_id)
-        # self.tanh = nn.Tanh().to(self.gpu_id)
-        # self.hardtanh = nn.Hardtanh().to(self.gpu_id)
+            # RNN step
+            out_ar, h_ar = self.autoregressive_rnn(input_ar, h_ar)
+            
+            # Predict next timestep
+            x_ar = self.autoregressive_output(out_ar)
+            outputs.append(x_ar)
         
-    def forward(self, x):
-        for i in range(len(self.kernel_sizes)):
-            unit = self.units[i]
-
-            # If the first conv, then create y, otherwise just add new stuff onto y
-            if i == 0: y = unit(x)
-            else: y = y + unit(x)
-
-        # Do not norm the final layers
-        if self.yes_norm:
-            y = F.silu(y)
-            y = self.norm(y)
-        else:
-            y = F.tanh(y)
-           
-        return y
-
-class TimeSeriesDecoder(nn.Module):
-    def __init__(self, gpu_id, in_dim, padded_channels, seq_len, num_layers, time_dilate_kernel_sizes, channel_shrink_kernel_sizes):
-        super(TimeSeriesDecoder, self).__init__()
-
-        self.gpu_id = gpu_id
-        self.in_dim = in_dim
-        self.padded_channels = padded_channels
-        self.seq_len = seq_len
-        self.num_time_dilation_layers = num_layers
-        self.num_channel_reduction_layers = int(math.sqrt(in_dim / padded_channels))
-        self.channel_shrink_kernel_sizes = channel_shrink_kernel_sizes
-
-        assert math.sqrt(in_dim/padded_channels) % 1 == 0
-
-        self.time_dilate_layers = [-1] * self.num_time_dilation_layers
-        self.channel_reduction_layers = [-1] * self.num_channel_reduction_layers
-
-        # Decouple time dilation and channel shrinking for flexibility and convenience
-
-        # First we will expand the time dimension to raw time step size with multi-kernel blocks
-        yes_norm = True
-        for i in range(self.num_time_dilation_layers):
-            # Expand the time dimension with stride of 2 and output padding 1
-            self.time_dilate_layers[i] = MultiTransKernelBlock(gpu_id=self.gpu_id, in_channels=self.in_dim, out_channels=self.in_dim, kernel_sizes=time_dilate_kernel_sizes, stride=2, output_padding=1, yes_norm=yes_norm)
-
-        # Keep track of stepping down channel dimension
-        in_channel_count_curr = self.in_dim
-        yes_norm = False
-        for i in range(self.num_channel_reduction_layers):
-            # Shrink channels down to padded channel dimension, with stride = 1 and 
-            self.channel_reduction_layers[i] = MultiTransKernelBlock(gpu_id=self.gpu_id, in_channels=in_channel_count_curr, out_channels=int(in_channel_count_curr/2), kernel_sizes=channel_shrink_kernel_sizes, stride=1, output_padding=0, yes_norm=yes_norm)
-            in_channel_count_curr = int(in_channel_count_curr/2)
-
-    def forward(self, x, out_channels):
-        # x: (batch_size, embed_dim)
+        # Stack outputs into a sequence
+        x_ar_final = torch.cat(outputs, dim=1)  # (batch_size, seq_length, output_channels)
         
-        # Unsqueeze to add the sequence dimension
-        x = x.unsqueeze(2)  # Shape: (batch_size, embed_dim, 1)
-        
-        # Pass through the time dilating convolutional layers
-        # Shape: (batch_size, num_channels, seq_len)
-        for i in range(self.num_time_dilation_layers):
-            unit = self.time_dilate_layers[i]
-            x = unit(x)
-
-        # Now through the channel reduction layers
-        # Shape: (batch_size, num_channels, seq_len)
-        for i in range(self.num_channel_reduction_layers):
-            unit = self.channel_reduction_layers[i]
-            x = unit(x)
-
-        # Index only desired output channels
-        x = x[:, :out_channels, :]
-        
-        return x
+        return x_ar_final
 
 class VAE(nn.Module):
     '''
@@ -277,10 +237,12 @@ class VAE(nn.Module):
         hidden_dims,
         latent_dim, 
         decoder_hidden_dims,
-        decoder_top_dims,
-        num_decode_layers,
-        time_dilate_kernel_sizes,
-        channel_shrink_kernel_sizes,
+        decoder_num_heads,
+        decoder_num_transformer_layers,
+        decoder_ffm,
+        decoder_max_batch_size,
+        decoder_max_seq_len,
+        decoder_num_gru_layers,
         gpu_id=None,  
         **kwargs):
 
@@ -297,13 +259,17 @@ class VAE(nn.Module):
         self.latent_dim = latent_dim 
 
         self.decoder_hidden_dims = decoder_hidden_dims
-        self.decoder_top_dims = decoder_top_dims
-        self.num_decode_layers = num_decode_layers
-        self.channel_shrink_kernel_sizes = channel_shrink_kernel_sizes
-        self.time_dilate_kernel_sizes = time_dilate_kernel_sizes
+        self.decoder_num_transformer_layers = decoder_num_transformer_layers
+        self.decoder_num_heads = decoder_num_heads
+        self.decoder_ffm = decoder_ffm
+        self.decoder_max_batch_size = decoder_max_batch_size
+        self.decoder_max_seq_len = decoder_max_seq_len
+
+        self.decoder_num_gru_layers = decoder_num_gru_layers
+
 
         # Raw CrossAttention Head
-        self.encoder_head = Encoder_TimeSeriesCNNWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=self.crattn_embed_dim, **kwargs)
+        self.encoder_head = Encoder_TimeSeriesWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=self.crattn_embed_dim, **kwargs)
 
         # Transformer - dimension is same as output of cross attention
         self.transformer_encoder = Transformer(ModelArgs(device=self.gpu_id, dim=self.crattn_embed_dim, **kwargs))
@@ -318,21 +284,19 @@ class VAE(nn.Module):
         self.mean_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
         self.logvar_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True) # bias=False
 
-        # Core Decoder
-        self.latent_to_hidden = nn.Linear(self.latent_dim, self.decoder_hidden_dims, bias=True) # bias=False
-        self.norm_hidden_rev = RMSNorm(dim=self.decoder_hidden_dims)
-        self.hidden_to_top = nn.Linear(self.decoder_hidden_dims,  self.decoder_top_dims, bias=True)
-        self.norm_top_rev = RMSNorm(dim=self.decoder_top_dims)
-
-        # Deocder head
-        self.decoder_head = TimeSeriesDecoder(
-            gpu_id=gpu_id,
-            in_dim=self.decoder_top_dims, 
-            padded_channels = self.padded_channels, 
-            seq_len=self.autoencode_samples, 
-            num_layers=self.num_decode_layers, 
-            time_dilate_kernel_sizes=self.time_dilate_kernel_sizes, 
-            channel_shrink_kernel_sizes=self.channel_shrink_kernel_sizes)
+        self.decoder = HybridDecoder(
+            gpu_id = self.gpu_id,
+            latent_dim = self.latent_dim,
+            hidden_dim = self.decoder_hidden_dims,
+            output_channels = self.padded_channels,
+            seq_length = self.autoencode_samples,
+            num_heads = self.decoder_num_heads,
+            num_transformer_layers = self.decoder_num_transformer_layers,
+            ffm = self.decoder_ffm,
+            max_bs = self.decoder_max_batch_size,
+            max_seq_len = self.decoder_max_seq_len,
+            num_gru_layers = self.decoder_num_gru_layers,
+            )
 
         self.silu = nn.SiLU()
 
@@ -380,16 +344,9 @@ class VAE(nn.Module):
             # Add the hash_pat_embedding to latent vector
             y = x + hash_pat_embedding
 
-            # VAE CORE
-            y = self.latent_to_hidden(y)
-            y = self.silu(y)
-            y = self.norm_hidden_rev(y)
-            y = self.hidden_to_top(y)
-            y = self.silu(y)
-            y = self.norm_top_rev(y)
+            y = self.decoder(y).transpose(1,2)
 
-            # FEATURE HEAD
-            y = self.decoder_head(y, out_channels)
+            y = y[:, 0:out_channels, :]
             return y
 
 def print_models_flow(x, **kwargs):

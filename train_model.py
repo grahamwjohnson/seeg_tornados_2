@@ -629,7 +629,7 @@ class Trainer:
                         ### VAE ENCODER: 1-shifted
                         mean_batched, logvar_batched, latent_batched = self.vae(x[:, :-1, :, :], reverse=False)
                         
-                        ### VAE DECODER: 1-shifted & Transformer Encoder Concat Shifted 
+                        ### VAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
                         x_hat_batched = self.vae(latent_batched, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=x.shape[2])  
                         x_hat = torch.split(x_hat_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0)
                         x_hat = torch.stack(x_hat, dim=0)
