@@ -27,8 +27,8 @@ periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if
 preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
 # Training settings
-continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/nijssenissdwarfchihlid_Mon_Jan_27_12_55_20_2025' 
+continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/spadefoot_Wed_Jan_29_04_53_53_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### VAE 
@@ -37,15 +37,15 @@ autoencode_samples: 32 # 8
 # Cross atttention embedder
 padded_channels: 256 #input padded to allow for different number of channels, also the top level embed dim
 crattn_embed_dim: 32  # This times autoencode_samples will be transformer dims e.g. 32*32 = 1024
-crattn_num_highdim_heads: 8 # at padding dimension
-crattn_num_highdim_layers: 8 # at padding dimension
-crattn_num_lowdim_heads: 16 # at embed dim dimension
-crattn_num_lowdim_layers: 16 # at embed dim dimension
+crattn_num_highdim_heads: 4 # at padding dimension
+crattn_num_highdim_layers: 4 # at padding dimension
+crattn_num_lowdim_heads: 8 # at embed dim dimension
+crattn_num_lowdim_layers: 8 # at embed dim dimension
 crattn_max_seq_len: 32
 crattn_cnn_kernel_size: 3
 crattn_dropout: 0.1
 
-### Transformer
+### Transformer Encoder
 transformer_dim: kwargs['transformer_dim'] = kwargs['crattn_embed_dim'] * kwargs['autoencode_samples']
 transformer_seq_length: 128
 max_seq_len: 128
@@ -57,7 +57,7 @@ ffn_dim_multiplier: 1 # 0.2  # Default is 1 to make FF layers account for 2/3 of
 attention_dropout: 0.1          ###    0.8 is aggressive        #### IMPORTANT ####            ###
 encoder_transformer_activation: "silu"
 
-### VAE Encoder
+### VAE-Layers Encoder
 num_encode_concat_transformer_tokens: 8
 transformer_start_pos: 0 # Not currently coded up to work if > 0
 top_dims: kwargs['top_dims'] = kwargs['num_encode_concat_transformer_tokens'] * kwargs['transformer_dim']
@@ -66,9 +66,9 @@ latent_dim: 1024 # 2048
 
 ### DECOCDER
 # Non-autoregressive transformer
-decoder_hidden_dims: 4096 # after this layer, it will be connected into FC to [batch, padded * seq_len]
-decoder_num_heads: 32
-decoder_num_transformer_layers: 32
+decoder_hidden_dims: 256 # after this layer, it will be connected into FC to [batch, padded)channels * seq_len] to prepare for decoder transformer input
+decoder_num_heads: 16
+decoder_num_transformer_layers: 16
 decoder_ffm: 1
 decoder_max_batch_size: kwargs['decoder_max_batch_size'] = kwargs['onlylatent_batch_size'] * kwargs['transformer_seq_length']
 decoder_max_seq_len: kwargs['decoder_max_seq_len'] = kwargs['autoencode_samples']

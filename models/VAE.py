@@ -187,9 +187,9 @@ class HybridDecoder(nn.Module):
         
         self.non_autoregressive_output = nn.Linear(hidden_dim, output_channels)
         
-        # Autoregressive decoder (refinement)
-        self.autoregressive_rnn = nn.GRU(output_channels + hidden_dim, hidden_dim, num_gru_layers, batch_first=True)
-        self.autoregressive_output = nn.Linear(hidden_dim, output_channels)
+        # # Autoregressive decoder (refinement)
+        # self.autoregressive_rnn = nn.GRU(output_channels + hidden_dim, hidden_dim, num_gru_layers, batch_first=True)
+        # self.autoregressive_output = nn.Linear(hidden_dim, output_channels)
     
     def forward(self, z):
         batch_size = z.size(0)
@@ -199,54 +199,56 @@ class HybridDecoder(nn.Module):
         h_na = self.non_autoregressive_transformer(h_na, start_pos=0, causal_mask_bool=False)  # Self-attention with no causal mask
         x_na = self.non_autoregressive_output(h_na)  # (batch_size, seq_length, output_channels)
         
-        # Step 2: Autoregressive refinement
-        h_ar = torch.zeros(self.num_gru_layers, batch_size, self.hidden_dim).to(z.device)
-        x_ar = torch.zeros(batch_size, 1, self.output_channels).to(z.device)
+        # # Step 2: Autoregressive refinement
+        # h_ar = torch.zeros(self.num_gru_layers, batch_size, self.hidden_dim).to(z.device)
+        # x_ar = torch.zeros(batch_size, 1, self.output_channels).to(z.device)
         
-        outputs = []
-        for t in range(self.seq_length):
-            # Concatenate non-autoregressive output and previous autoregressive output
-            input_ar = torch.cat([x_na[:, t:t+1, :], x_ar], dim=-1)
+        # outputs = []
+        # for t in range(self.seq_length):
+        #     # Concatenate non-autoregressive output and previous autoregressive output
+        #     input_ar = torch.cat([x_na[:, t:t+1, :], x_ar], dim=-1)
             
-            # RNN step
-            out_ar, h_ar = self.autoregressive_rnn(input_ar, h_ar)
+        #     # RNN step
+        #     out_ar, h_ar = self.autoregressive_rnn(input_ar, h_ar)
             
-            # Predict next timestep
-            x_ar = self.autoregressive_output(out_ar)
-            outputs.append(x_ar)
+        #     # Predict next timestep
+        #     x_ar = self.autoregressive_output(out_ar)
+        #     outputs.append(x_ar)
         
-        # Stack outputs into a sequence
-        x_ar_final = torch.cat(outputs, dim=1)  # (batch_size, seq_length, output_channels)
+        # # Stack outputs into a sequence
+        # x_ar_final = torch.cat(outputs, dim=1)  # (batch_size, seq_length, output_channels)
         
-        return x_ar_final
+        # return x_ar_final
+
+        return x_na
 
 
-class SimpleDecoder(nn.Module):
-    def __init__(self, gpu_id, latent_dim, hidden_dim, padded_channels, seq_length):
-        super(SimpleDecoder, self).__init__()
+# class SimpleDecoder(nn.Module):
+#     def __init__(self, gpu_id, latent_dim, hidden_dim, padded_channels, seq_length):
+#         super(SimpleDecoder, self).__init__()
 
-        self.gpu_id = gpu_id
-        self.latent_dim = latent_dim
-        self.hidden_dim = hidden_dim
-        self.padded_channels = padded_channels
-        self.seq_length = seq_length
+#         self.gpu_id = gpu_id
+#         self.latent_dim = latent_dim
+#         self.hidden_dim = hidden_dim
+#         self.padded_channels = padded_channels
+#         self.seq_length = seq_length
 
-        self.latent_to_out = nn.Sequential(
-            nn.Linear(latent_dim, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, padded_channels * seq_length),
-            nn.Tanh()
-        )
+#         self.latent_to_out = nn.Sequential(
+#             nn.Linear(latent_dim, hidden_dim),
+#             nn.Tanh(),
+#             nn.Linear(hidden_dim, hidden_dim),
+#             nn.Tanh(),
+#             nn.Linear(hidden_dim, hidden_dim),
+#             nn.Tanh(),
+#             nn.Linear(hidden_dim, padded_channels * seq_length),
+#             nn.Tanh()
+#         )
 
-    def forward(self, x):
-        x = self.latent_to_out(x)
-        x = x.view(x.shape[0], self.padded_channels, self.seq_length)
+#     def forward(self, x):
+#         x = self.latent_to_out(x)
+#         x = x.view(x.shape[0], self.padded_channels, self.seq_length)
 
-        return x
+#         return x
 
 
 class VAE(nn.Module):
@@ -318,28 +320,28 @@ class VAE(nn.Module):
         self.mean_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
         self.logvar_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True) # bias=False
 
-        self.decoder = SimpleDecoder(
-            gpu_id = self.gpu_id,
-            latent_dim = self.latent_dim,
-            hidden_dim = self.decoder_hidden_dims,
-            padded_channels = self.padded_channels,
-            seq_length = self.autoencode_samples
-        )
-
-        # self.decoder = HybridDecoder(
+        # self.decoder = SimpleDecoder(
         #     gpu_id = self.gpu_id,
         #     latent_dim = self.latent_dim,
         #     hidden_dim = self.decoder_hidden_dims,
-        #     output_channels = self.padded_channels,
-        #     seq_length = self.autoencode_samples,
-        #     num_heads = self.decoder_num_heads,
-        #     num_transformer_layers = self.decoder_num_transformer_layers,
-        #     ffm = self.decoder_ffm,
-        #     max_bs = self.decoder_max_batch_size,
-        #     max_seq_len = self.decoder_max_seq_len,
-        #     num_gru_layers = self.decoder_num_gru_layers,
-        #     activation=self.decoder_transformer_activation
-        #     )
+        #     padded_channels = self.padded_channels,
+        #     seq_length = self.autoencode_samples
+        # )
+
+        self.decoder = HybridDecoder(
+            gpu_id = self.gpu_id,
+            latent_dim = self.latent_dim,
+            hidden_dim = self.decoder_hidden_dims,
+            output_channels = self.padded_channels,
+            seq_length = self.autoencode_samples,
+            num_heads = self.decoder_num_heads,
+            num_transformer_layers = self.decoder_num_transformer_layers,
+            ffm = self.decoder_ffm,
+            max_bs = self.decoder_max_batch_size,
+            max_seq_len = self.decoder_max_seq_len,
+            num_gru_layers = self.decoder_num_gru_layers,
+            activation=self.decoder_transformer_activation
+            )
 
         self.silu = nn.SiLU()
 
@@ -387,8 +389,8 @@ class VAE(nn.Module):
             # Add the hash_pat_embedding to latent vector
             y = x + hash_pat_embedding
 
-            # y = self.decoder(y).transpose(1,2)
-            y = self.decoder(y)
+            y = self.decoder(y).transpose(1,2)
+            # y = self.decoder(y)
 
             y = y[:, 0:out_channels, :]
             return y
