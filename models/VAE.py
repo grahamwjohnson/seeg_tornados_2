@@ -77,10 +77,6 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         # self.cnn_kernel_size = crattn_cnn_kernel_size
         self.dropout = crattn_dropout
 
-        # Depthwise 1D CNN (groups=in_channels)
-        # self.cnn = nn.Conv1d(in_channels=self.in_channels, out_channels=self.in_channels, kernel_size=self.cnn_kernel_size, 
-                            #  padding=(self.cnn_kernel_size // 2), groups=self.in_channels)  # Depthwise convolution
-        
         # Input Cross-attention Layer 
         self.highdim_attention_layers = nn.ModuleList([
             TimeSeriesCrossAttentionLayer(self.padded_channels, self.num_highdim_heads, self.dropout)
@@ -105,7 +101,6 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         
         # Positional encoding
         self.positional_encoding = self._get_positional_encoding(self.max_seq_len, self.padded_channels)
-        # self.positional_encoding_embed_dim = self._get_positional_encoding(self.max_seq_len, self.embed_dim)
         
     def _get_positional_encoding(self, max_seq_len, dim):
         # Dummey even value to make code below work
@@ -121,26 +116,21 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         return pe[:, :, :dim]
 
     def forward(self, x):
-        # inputs: a single time series of shape (batch_size, num_channels, seq_len)
-        
-        # Step 1: Apply Depthwise CNN (all channels processed in parallel)
-        # Directly pass input to the CNN (input shape: batch_size, num_channels, seq_len)
-        # x = self.cnn(x)  # Shape: (batch_size, cnn_out_channels, seq_len)
-        
+        # inputs: a single time series of shape (batch_size, num_channels, seq_len)        
         in_channels = x.shape[1]
 
         # Step 1: pad the channel dimension
         padding = (0, 0, 0, self.padded_channels - in_channels, 0, 0) # (dim0 left padding, dim0 right padding... etc.)
         x = F.pad(x, padding, mode='constant', value=0)
 
-        # Step 2: Permute CNN output to (batch_size, seq_len, cnn_out_channels)
-        x = x.permute(0, 2, 1)  # Shape: (batch_size, seq_len, cnn_out_channels)
+        # Step 2: Permute to (batch_size, seq_len, padded_channels)
+        x = x.permute(0, 2, 1)  # Shape: (batch_size, seq_len, padded_channels)
         
         # Step 3: Add positional encoding
         x = x + self.positional_encoding[:, :x.size(1), :].to(x.device)
         
         # Step 4: Reshape for multi-head attention (seq_len, batch_size, high_dim)
-        x = x.permute(1, 0, 2)  # Shape: (seq_len, batch_size, cnn_out_channels)
+        x = x.permute(1, 0, 2)  # Shape: (seq_len, batch_size, padded_channels)
 
         # Step 5: Apply Input Cross-Attention at PADDED dimension 
         for layer in self.highdim_attention_layers:
@@ -155,12 +145,12 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
 
         x = x.permute(1, 0, 2)  # Return to shape (batch_size, seq_len, low_dim)
 
-        # return x.flatten(start_dim=1) # (batch, seq_len * low_dim)
-        return torch.mean(x, dim=1)
+        return x.flatten(start_dim=1) # (batch, seq_len * low_dim)
+        # return torch.mean(x, dim=1)
         # return x[:,-1,:] # Return last in sequence (should be embedded with meaning)
 
 class HybridDecoder(nn.Module):
-    def __init__(self, gpu_id, latent_dim, hidden_dim, output_channels, seq_length, num_transformer_layers, num_heads, ffm, max_bs, max_seq_len, num_gru_layers):
+    def __init__(self, gpu_id, latent_dim, hidden_dim, output_channels, seq_length, num_transformer_layers, num_heads, ffm, max_bs, max_seq_len, num_gru_layers, activation):
         super(HybridDecoder, self).__init__()
         self.gpu_id = gpu_id
         self.latent_dim = latent_dim
@@ -176,7 +166,15 @@ class HybridDecoder(nn.Module):
         self.num_gru_layers = num_gru_layers
         
         # Non-autoregressive decoder (rough sketch generator)
-        self.non_autoregressive_fc = nn.Linear(latent_dim, hidden_dim * seq_length)
+        self.non_autoregressive_fc = nn.Sequential(
+            nn.Linear(latent_dim, int(hidden_dim * seq_length/2)),
+            nn.Tanh(),
+            RMSNorm(int(hidden_dim * seq_length/2)),
+            nn.Linear(int(hidden_dim * seq_length/2), hidden_dim * seq_length),
+            nn.Tanh(),
+            RMSNorm(hidden_dim * seq_length)
+            )
+
         self.non_autoregressive_transformer = Transformer(ModelArgs(
             device=self.gpu_id, 
             dim=self.hidden_dim, 
@@ -184,7 +182,8 @@ class HybridDecoder(nn.Module):
             n_heads=self.num_heads,
             ffn_dim_multiplier=self.ffm,
             max_batch_size=self.max_bs,
-            max_seq_len=self.max_seq_len))
+            max_seq_len=self.max_seq_len,
+            activation=activation)) 
         
         self.non_autoregressive_output = nn.Linear(hidden_dim, output_channels)
         
@@ -221,6 +220,35 @@ class HybridDecoder(nn.Module):
         
         return x_ar_final
 
+
+class SimpleDecoder(nn.Module):
+    def __init__(self, gpu_id, latent_dim, hidden_dim, padded_channels, seq_length):
+        super(SimpleDecoder, self).__init__()
+
+        self.gpu_id = gpu_id
+        self.latent_dim = latent_dim
+        self.hidden_dim = hidden_dim
+        self.padded_channels = padded_channels
+        self.seq_length = seq_length
+
+        self.latent_to_out = nn.Sequential(
+            nn.Linear(latent_dim, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, padded_channels * seq_length),
+            nn.Tanh()
+        )
+
+    def forward(self, x):
+        x = self.latent_to_out(x)
+        x = x.view(x.shape[0], self.padded_channels, self.seq_length)
+
+        return x
+
+
 class VAE(nn.Module):
     '''
     The Reverseable Encoder/Decoder 
@@ -233,6 +261,8 @@ class VAE(nn.Module):
         crattn_embed_dim,
         num_encode_concat_transformer_tokens,
         transformer_start_pos,
+        transformer_dim,
+        encoder_transformer_activation,
         top_dims,
         hidden_dims,
         latent_dim, 
@@ -243,6 +273,7 @@ class VAE(nn.Module):
         decoder_max_batch_size,
         decoder_max_seq_len,
         decoder_num_gru_layers,
+        decoder_transformer_activation,
         gpu_id=None,  
         **kwargs):
 
@@ -254,6 +285,8 @@ class VAE(nn.Module):
         self.crattn_embed_dim = crattn_embed_dim
         self.num_encode_concat_transformer_tokens = num_encode_concat_transformer_tokens
         self.transformer_start_pos = transformer_start_pos
+        self.transformer_dim = transformer_dim
+        self.encoder_transformer_activation = encoder_transformer_activation
         self.top_dims = top_dims
         self.hidden_dims = hidden_dims
         self.latent_dim = latent_dim 
@@ -264,6 +297,7 @@ class VAE(nn.Module):
         self.decoder_ffm = decoder_ffm
         self.decoder_max_batch_size = decoder_max_batch_size
         self.decoder_max_seq_len = decoder_max_seq_len
+        self.decoder_transformer_activation = decoder_transformer_activation
 
         self.decoder_num_gru_layers = decoder_num_gru_layers
 
@@ -272,7 +306,7 @@ class VAE(nn.Module):
         self.encoder_head = Encoder_TimeSeriesWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=self.crattn_embed_dim, **kwargs)
 
         # Transformer - dimension is same as output of cross attention
-        self.transformer_encoder = Transformer(ModelArgs(device=self.gpu_id, dim=self.crattn_embed_dim, **kwargs))
+        self.transformer_encoder = Transformer(ModelArgs(device=self.gpu_id, dim=self.transformer_dim, activation=self.encoder_transformer_activation, **kwargs))
 
         # Core Encoder
         # self.head_to_top = nn.Linear(self.crattn_embed_dim * self.autoencode_samples, self.top_dims, bias=True)
@@ -284,19 +318,28 @@ class VAE(nn.Module):
         self.mean_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
         self.logvar_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True) # bias=False
 
-        self.decoder = HybridDecoder(
+        self.decoder = SimpleDecoder(
             gpu_id = self.gpu_id,
             latent_dim = self.latent_dim,
             hidden_dim = self.decoder_hidden_dims,
-            output_channels = self.padded_channels,
-            seq_length = self.autoencode_samples,
-            num_heads = self.decoder_num_heads,
-            num_transformer_layers = self.decoder_num_transformer_layers,
-            ffm = self.decoder_ffm,
-            max_bs = self.decoder_max_batch_size,
-            max_seq_len = self.decoder_max_seq_len,
-            num_gru_layers = self.decoder_num_gru_layers,
-            )
+            padded_channels = self.padded_channels,
+            seq_length = self.autoencode_samples
+        )
+
+        # self.decoder = HybridDecoder(
+        #     gpu_id = self.gpu_id,
+        #     latent_dim = self.latent_dim,
+        #     hidden_dim = self.decoder_hidden_dims,
+        #     output_channels = self.padded_channels,
+        #     seq_length = self.autoencode_samples,
+        #     num_heads = self.decoder_num_heads,
+        #     num_transformer_layers = self.decoder_num_transformer_layers,
+        #     ffm = self.decoder_ffm,
+        #     max_bs = self.decoder_max_batch_size,
+        #     max_seq_len = self.decoder_max_seq_len,
+        #     num_gru_layers = self.decoder_num_gru_layers,
+        #     activation=self.decoder_transformer_activation
+        #     )
 
         self.silu = nn.SiLU()
 
@@ -344,7 +387,8 @@ class VAE(nn.Module):
             # Add the hash_pat_embedding to latent vector
             y = x + hash_pat_embedding
 
-            y = self.decoder(y).transpose(1,2)
+            # y = self.decoder(y).transpose(1,2)
+            y = self.decoder(y)
 
             y = y[:, 0:out_channels, :]
             return y

@@ -36,16 +36,17 @@ autoencode_samples: 32 # 8
 
 # Cross atttention embedder
 padded_channels: 256 #input padded to allow for different number of channels, also the top level embed dim
-crattn_embed_dim: 512  # This wil be Transformer dims
-crattn_num_highdim_heads: 16 # at padding dimension
-crattn_num_highdim_layers: 16 # at padding dimension
-crattn_num_lowdim_heads: 8 # at embed dim dimension
-crattn_num_lowdim_layers: 8 # at embed dim dimension
+crattn_embed_dim: 32  # This times autoencode_samples will be transformer dims e.g. 32*32 = 1024
+crattn_num_highdim_heads: 8 # at padding dimension
+crattn_num_highdim_layers: 8 # at padding dimension
+crattn_num_lowdim_heads: 16 # at embed dim dimension
+crattn_num_lowdim_layers: 16 # at embed dim dimension
 crattn_max_seq_len: 32
 crattn_cnn_kernel_size: 3
 crattn_dropout: 0.1
 
 ### Transformer
+transformer_dim: kwargs['transformer_dim'] = kwargs['crattn_embed_dim'] * kwargs['autoencode_samples']
 transformer_seq_length: 128
 max_seq_len: 128
 max_batch_size: 4
@@ -54,22 +55,27 @@ n_heads: 32
 multiple_of: 256 
 ffn_dim_multiplier: 1 # 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
 attention_dropout: 0.1          ###    0.8 is aggressive        #### IMPORTANT ####            ###
+encoder_transformer_activation: "silu"
 
 ### VAE Encoder
 num_encode_concat_transformer_tokens: 8
 transformer_start_pos: 0 # Not currently coded up to work if > 0
-top_dims: kwargs['top_dims'] = kwargs['num_encode_concat_transformer_tokens'] * kwargs['crattn_embed_dim']
-hidden_dims: 2048 # 4096
+top_dims: kwargs['top_dims'] = kwargs['num_encode_concat_transformer_tokens'] * kwargs['transformer_dim']
+hidden_dims: 4096 # 4096
 latent_dim: 1024 # 2048
 
-### Decoder
-decoder_hidden_dims: 256
-decoder_num_heads: 4
-decoder_num_transformer_layers: 4
+### DECOCDER
+# Non-autoregressive transformer
+decoder_hidden_dims: 4096 # after this layer, it will be connected into FC to [batch, padded * seq_len]
+decoder_num_heads: 32
+decoder_num_transformer_layers: 32
 decoder_ffm: 1
 decoder_max_batch_size: kwargs['decoder_max_batch_size'] = kwargs['onlylatent_batch_size'] * kwargs['transformer_seq_length']
 decoder_max_seq_len: kwargs['decoder_max_seq_len'] = kwargs['autoencode_samples']
-decoder_num_gru_layers: 2
+decoder_transformer_activation: "tanh"
+
+# Autoregressive GRU
+decoder_num_gru_layers: 4
 
 
 # Optimizer hyperparameters
@@ -78,7 +84,7 @@ adamW_beta1: 0.9
 adamW_beta2: 0.95 
 
 # Patient hash embedding
-train_num_rand_hashes: 256  # Number of random channel orders, with deterministic hash embedding for each
+train_num_rand_hashes: 1  # Number of random channel orders, with deterministic hash embedding for each
 autoreg_num_rand_hashes: 1 # Need to be only one to work? in theory should work with many?
 val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
 

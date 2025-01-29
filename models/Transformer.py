@@ -33,6 +33,7 @@ class ModelArgs:
         max_batch_size: int = 32,
         max_seq_len: int = 2048,
         device: int = None,
+        activation: str = None, # "silu" or "tanh"
         **kwargs):
 
         super().__init__()
@@ -49,6 +50,7 @@ class ModelArgs:
         self.max_batch_size = max_batch_size
         self.max_seq_len = max_seq_len
         self.device = device
+        self.activation = activation
 
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -233,8 +235,12 @@ class FeedForward(nn.Module):
         hidden_dim: int,
         multiple_of: int,
         ffn_dim_multiplier: Optional[float],
+        activation: str = None
     ):
         super().__init__()
+
+        self.activation = activation
+
         hidden_dim = int(2 * hidden_dim / 3)
         # custom dim factor multiplier
         if ffn_dim_multiplier is not None:
@@ -259,9 +265,9 @@ class FeedForward(nn.Module):
         self.w3 = nn.Linear(dim, hidden_dim, bias=False)
 
     def forward(self, x):
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
-        # return self.w2(F.tanh(self.w1(x)) * self.w3(x))           ############################ SWITCHED TO TANH ######################
-
+        if self.activation == "silu": return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        elif self.activation == "tanh": return self.w2(F.tanh(self.w1(x)) * self.w3(x))           
+        else: raise Exception("incorrect activation selection")
 
 class TransformerBlock(nn.Module):
     def __init__(self, layer_id: int, args: ModelArgs):
@@ -276,6 +282,7 @@ class TransformerBlock(nn.Module):
             hidden_dim=4 * args.dim,
             multiple_of=self.multiple_of,
             ffn_dim_multiplier=args.ffn_dim_multiplier,
+            activation=args.activation
         )
         self.layer_id = layer_id
         self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
