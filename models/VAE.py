@@ -168,10 +168,12 @@ class HybridDecoder(nn.Module):
         # Non-autoregressive decoder (rough sketch generator)
         self.non_autoregressive_fc = nn.Sequential(
             nn.Linear(latent_dim, int(hidden_dim * seq_length/2)),
-            nn.Tanh(),
+            # nn.Tanh(),
+            nn.SiLU(),
             RMSNorm(int(hidden_dim * seq_length/2)),
             nn.Linear(int(hidden_dim * seq_length/2), hidden_dim * seq_length),
-            nn.Tanh(),
+            # nn.Tanh(),
+            nn.SiLU(),
             RMSNorm(hidden_dim * seq_length)
             )
 
@@ -185,7 +187,9 @@ class HybridDecoder(nn.Module):
             max_seq_len=self.max_seq_len,
             activation=activation)) 
         
-        self.non_autoregressive_output = nn.Linear(hidden_dim, output_channels)
+        self.non_autoregressive_output = nn.Sequential(
+            nn.Linear(hidden_dim, output_channels),
+            nn.Tanh())
         
         # # Autoregressive decoder (refinement)
         # self.autoregressive_rnn = nn.GRU(output_channels + hidden_dim, hidden_dim, num_gru_layers, batch_first=True)

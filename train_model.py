@@ -525,7 +525,8 @@ class Trainer:
 
                     for w in range(num_pseudo_windows):
 
-                        raise Exception("Need to code this up to only take the last token for each run to maximize info in it from transformer")
+                        raise Exception("Need to code this up to only take the last token for each run to maximize 'info' in it from transformer")
+                        raise Exception("Need to code up to only take mean") # TODO USe MEAN, not mean/logvar
 
                         # Pseudobatch and encode
                         x = data_tensor_split[:, w * pseudobatch_onlylatent:  w * pseudobatch_onlylatent + pseudobatch_onlylatent, :, :]
@@ -534,11 +535,11 @@ class Trainer:
 
                          ### VAE ENCODER
                         # Forward pass in stacked batch through VAE encoder
-                        _, _, latent_batched = self.vae(x, reverse=False)
+                        mean_batched, _, _ = self.vae(x, reverse=False)
                         
                         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
-                        latent_seq = torch.split(latent_batched, pseudobatch_onlylatent, dim=0)
-                        file_latents[:, w * pseudobatch_onlylatent:  w * pseudobatch_onlylatent + pseudobatch_onlylatent, :] = torch.stack(latent_seq, dim=0).cpu().numpy()
+                        mean_seq = torch.split(mean_batched, pseudobatch_onlylatent, dim=0)
+                        file_mean[:, w * pseudobatch_onlylatent:  w * pseudobatch_onlylatent + pseudobatch_onlylatent, :] = torch.stack(mean_seq, dim=0).cpu().numpy()
 
                     # After file complete, pacmap_window/stride the file and save each file from batch seperately
                     # Seperate directory for each win/stride combination
@@ -555,10 +556,10 @@ class Trainer:
                         num_latents_in_stride = int(num_latents_in_stride)
 
                         # May not go in evenly, that is ok
-                        num_strides_in_file = int((file_latents.shape[1] - num_latents_in_win) / num_latents_in_stride) 
+                        num_strides_in_file = int((file_mean.shape[1] - num_latents_in_win) / num_latents_in_stride) 
                         windowed_file_latent = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
                         for s in range(num_strides_in_file):
-                            windowed_file_latent[:, s, :] = np.mean(file_latents[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
+                            windowed_file_latent[:, s, :] = np.mean(file_mean[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
 
                         # Save each windowed latent in a pickle for each file
                         for b in range(data_tensor.shape[0]):
