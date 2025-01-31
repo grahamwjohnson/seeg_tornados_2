@@ -379,8 +379,8 @@ class VAE(nn.Module):
             y = self.transformer_encoder(y, start_pos=self.transformer_start_pos)
 
             # VAE CORE
-            y = self.concat_past_tokens(y)
-            y = y.reshape([y.shape[0]*y.shape[1], y.shape[2]])
+            y = self.concat_past_tokens(y) # Sliding window over transformer output
+            y = y.reshape([y.shape[0]*y.shape[1], y.shape[2]]) # Batch the sliding windows for efficient decoding
             y = self.top_to_hidden(y)
             y = self.silu(y)
             y = self.norm_hidden(y)
