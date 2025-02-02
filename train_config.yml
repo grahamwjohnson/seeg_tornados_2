@@ -27,7 +27,7 @@ periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if
 preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
 # Training settings
-continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
@@ -49,7 +49,7 @@ crattn_dropout: 0.1
 transformer_dim: kwargs['transformer_dim'] = kwargs['crattn_embed_dim'] * kwargs['autoencode_samples']
 transformer_seq_length: 256
 max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
-max_batch_size: 4
+max_batch_size: 4 # kwargs['max_batch_size'] = kwargs['wdecode_batch_size'] * kwargs['pseudobatch_onlylatent']
 n_layers: 16
 n_heads: 16
 multiple_of: 256 
@@ -94,8 +94,8 @@ valfinetune_runs_per_file: 16
 valunseen_runs_per_file: 8
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 4 # this is for when loss is not being calculated
-pseudobatch_onlylatent: 4096 # Maximum size to stack sequential parts of file into batch dimension during only latent inference
-pacmap_every: 99999 # Must be within a 'quick_recon_val_every' to be reached
+pseudobatch_onlylatent: 64 # Maximum size to stack sequential parts of file into batch dimension during only latent inference
+pacmap_every: 1 # Must be within a 'quick_recon_val_every' to be reached
 finetune_pacmap: True  
 val_every: 20
 num_rand_recon_plots: 4
@@ -112,7 +112,7 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 ### Dynamic Weights ###
 
 # Beta VAE controls
-KL_max: kwargs['KL_max'] = 1e-5 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
+KL_max: kwargs['KL_max'] = 1e-4 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
 KL_min: kwargs['KL_min'] = 0
 KL_epochs_AT_max: 5
 KL_epochs_TO_max: 5
@@ -169,7 +169,7 @@ tmp_file_dir: '/tmp_files'
   # w_neighbors = 1.
   # w_FP = 1.
 pre_PaCMAP_window_sec_list: [60, 1.0] # [60, 10]
-pre_PaCMAP_stride_sec_list: [30, 0.5] #[30, 5] 
+pre_PaCMAP_stride_sec_list: [30, 1.0] #[30, 5] 
 pacmap_build_strs: kwargs['pacmap_build_strs'] = ['train', "valfinetune"]
 pacmap_eval_strs: kwargs['pacmap_eval_strs'] = ["valunseen"]
 pacmap_LR: 1 # 0.5                                                                                              #################

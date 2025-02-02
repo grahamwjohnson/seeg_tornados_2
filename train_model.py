@@ -212,21 +212,21 @@ def main(
                 vae_dict = trainer.vae.module.state_dict()
                 vae_opt_dict = trainer.opt_vae.state_dict()
 
-                # # FINETUNE on beginning of validation patients (currently only one epoch)
-                # # Set to train and change LR to validate settings
-                # trainer._set_to_train()
-                # trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
-                # trainer._run_epoch(
-                #     dataset_curr = trainer.valfinetune_dataset, 
-                #     dataset_string = "valfinetune",
-                #     batchsize=trainer.wdecode_batch_size,
-                #     runs_per_file = valfinetune_runs_per_file, 
-                #     all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
-                #     val_finetune = True,
-                #     val_unseen = False,
-                #     backprop = True,
-                #     num_rand_hashes = val_num_rand_hashes,
-                #     **kwargs)
+                # FINETUNE on beginning of validation patients (currently only one epoch)
+                # Set to train and change LR to validate settings
+                trainer._set_to_train()
+                trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
+                trainer._run_epoch(
+                    dataset_curr = trainer.valfinetune_dataset, 
+                    dataset_string = "valfinetune",
+                    batchsize=trainer.wdecode_batch_size,
+                    runs_per_file = valfinetune_runs_per_file, 
+                    all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+                    val_finetune = True,
+                    val_unseen = False,
+                    backprop = True,
+                    num_rand_hashes = val_num_rand_hashes,
+                    **kwargs)
 
             # # INFERENCE on all datasets
             dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
@@ -502,27 +502,14 @@ class Trainer:
                 file_count = 0
                 for data_tensor, file_name in dataloader_curr:
 
-                    # Print status
                     file_count = file_count + len(file_name)
-                    if (self.gpu_id == 0):
-                        sys.stdout.write(f"\rPat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP)               ") 
-                        sys.stdout.flush() 
 
-                    # Pseudo batch the file to speed up processing - up to pseudobatch_onlylatent size each encode pass
-                    # Determine how many pseudo windows are in file based on pseudobatch_onlylatent
-                    num_pseudo_windows = data_tensor.shape[2] / pseudobatch_onlylatent
-                    assert num_pseudo_windows % 1 == 0
-                    num_pseudo_windows = int(num_pseudo_windows)
-                    
-                    # # Split the data by number of pseudo windows
-                    # data_tensor_split = torch.stack(torch.split(data_tensor, self.autoencode_samples, dim=2), dim=1)
-
-                    # Create the sequential latent sequence array for the file (not the pseudobatch size)
-                    num_windows_in_file = data_tensor.shape[2] / self.autoencode_samples - self.transformer_seq_length
+                    # Create the sequential latent sequence array for the file 
+                    num_samples_in_forward = self.transformer_seq_length * self.autoencode_samples
+                    num_windows_in_file = data_tensor.shape[2] / num_samples_in_forward
                     assert (num_windows_in_file % 1) == 0
                     num_windows_in_file = int(num_windows_in_file)
-                    num_windows_in_forward = int(num_windows_in_forward)
-                    num_samples_in_forward = self.transformer_seq_length * self.autoencode_samples
+                    num_samples_in_forward = int(num_samples_in_forward)
 
                     # Prep the output tensor and put on GPU
                     file_means = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
@@ -530,33 +517,30 @@ class Trainer:
                     # Put whole file on GPU
                     data_tensor = data_tensor.to(self.gpu_id)
 
-                    # for w in range(num_windows_in_file):
-                    for w in range(num_pseudo_windows):
-
-                        # Pseudobatch with parallell sliding windows over entire file
-                        x_sliced = data_tensor[:, :, w * self.autoencode_samples:]
-                        x_parallel_windows = x_sliced.unfold(2, num_samples_in_forward, num_pseudo_windows)
-                        x_batched = x_parallel_windows.transpose(1,2)
-                        x_batched = x_batched.reshape(x_batched.shape[0] * x_batched.shape[1], x_batched.shape[2], x_batched.shape[3])
-
-                        x = data_tensor.unfold(w, pseudobatch_onlylatent, self.autoencode_samples)
-                        x = data_tensor[:, :, w * pseudobatch_onlylatent::pseudobatch_onlylatent]
-                        x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
-                        x_batched = x_batched.to(self.gpu_id)
-
-                        # Pull out window data (whole file already on GPU)
-                        # NOTE: Each forward pass when getting latent values will need entire transformer sequence just for ONE latent
-                        # The latent value acheived will be for the autoencode samples immediately after the END of the transformer sequence 
-                        x = x = data_tensor_split[:, w * self.autoencode_samples:  w * self.autoencode_samples + num_windows_in_forward, :, :]
+                    for w in range(num_windows_in_file):
+                        
+                        # Print Status
+                        print_interval = 100
+                        if (self.gpu_id == 0) & (w % print_interval == 0):
+                            sys.stdout.write(f"\r{dataset_string}: Pat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP), Intrafile Iter {w}/{num_windows_in_file}          ") 
+                            sys.stdout.flush() 
+                        
+                        # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
+                        x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.autoencode_samples).to(self.gpu_id)
+                        start_idx = w * num_samples_in_forward
+                        for embedding_idx in range(0, self.transformer_seq_length):
+                            # Pull out data for this window - NOTE: no hashing
+                            end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
+                            x[:, embedding_idx, :, :] = data_tensor[:, :, end_idx-self.autoencode_samples : end_idx]
 
                          ### VAE ENCODER
                         # Forward pass in stacked batch through VAE encoder
-                        mean_doublebatched, _, _ = self.vae(x_batched, reverse=False)
+                        mean_batched, _, _ = self.vae(x, reverse=False)
 
                         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
                         # NOTE: you lose the priming tokens needed by transformer
-                        mean = torch.stack(torch.split(mean_batched, num_windows_in_forward - self.num_encode_concat_transformer_tokens, dim=0), dim=0)
-                        file_means[:, w, :] = mean[:, -1, :]
+                        mean = torch.stack(torch.split(mean_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens, dim=0), dim=0)
+                        file_means[:, w, :] = torch.mean(mean, dim=1)
                         
                         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
                         # mean_seq = torch.split(mean_batched, pseudobatch_onlylatent, dim=0)
@@ -568,24 +552,26 @@ class Trainer:
                     file_means = file_means.cpu().numpy()
                     for i in range(len(self.pre_PaCMAP_window_sec_list)):
 
-                        raise Exception("Need to code up to adjust start time for windowing AND embedding priming")
-
                         win_sec_curr = self.pre_PaCMAP_window_sec_list[i]
                         stride_sec_curr = self.pre_PaCMAP_stride_sec_list[i]
+                        sec_in_forward = num_samples_in_forward/self.FS
+
+                        if (win_sec_curr < sec_in_forward) or (stride_sec_curr < sec_in_forward):
+                            raise Exception("Window or stride is too small compared to input sequence to encoder")
                         
-                        num_latents_in_win = win_sec_curr / (self.autoencode_samples / self.FS) 
+                        num_latents_in_win = win_sec_curr / sec_in_forward
                         assert (num_latents_in_win % 1) == 0
                         num_latents_in_win = int(num_latents_in_win)
 
-                        num_latents_in_stride = stride_sec_curr / (self.autoencode_samples / self.FS) 
+                        num_latents_in_stride = stride_sec_curr / sec_in_forward
                         assert (num_latents_in_stride % 1) == 0
                         num_latents_in_stride = int(num_latents_in_stride)
 
                         # May not go in evenly, that is ok
-                        num_strides_in_file = int((file_mean.shape[1] - num_latents_in_win) / num_latents_in_stride) 
+                        num_strides_in_file = int((file_means.shape[1] - num_latents_in_win) / num_latents_in_stride) 
                         windowed_file_latent = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
                         for s in range(num_strides_in_file):
-                            windowed_file_latent[:, s, :] = np.mean(file_mean[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
+                            windowed_file_latent[:, s, :] = np.mean(file_means[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
 
                         # Save each windowed latent in a pickle for each file
                         for b in range(data_tensor.shape[0]):

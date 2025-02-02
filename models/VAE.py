@@ -370,6 +370,7 @@ class VAE(nn.Module):
         if reverse == False:
 
             # RAW CROSS-ATTENTION HEAD
+            # [batch, token, channel, waveform]
             y = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
             y = self.encoder_head(y)
             y = torch.split(y, x.shape[1], dim=0)
