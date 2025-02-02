@@ -524,6 +524,16 @@ class Trainer:
                         if (self.gpu_id == 0) & (w % print_interval == 0):
                             sys.stdout.write(f"\r{dataset_string}: Pat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP), Intrafile Iter {w}/{num_windows_in_file}          ") 
                             sys.stdout.flush() 
+
+                        # HASHING: Get the patient channel order and patid_embedding for this channel order
+                        np.random.seed(seed=None) 
+                        # rand_modifer = int(random.uniform(0, num_rand_hashes -1))
+                        rand_modifer = 0 # For Inference
+                        hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
+                            input_string=dataset_curr.pat_ids[pat_idx], 
+                            num_channels=data_tensor.shape[1], 
+                            latent_dim=self.latent_dim, 
+                            modifier=rand_modifer)
                         
                         # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
                         x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.autoencode_samples).to(self.gpu_id)
@@ -531,7 +541,7 @@ class Trainer:
                         for embedding_idx in range(0, self.transformer_seq_length):
                             # Pull out data for this window - NOTE: no hashing
                             end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
-                            x[:, embedding_idx, :, :] = data_tensor[:, :, end_idx-self.autoencode_samples : end_idx]
+                            x[:, embedding_idx, :, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
 
                          ### VAE ENCODER
                         # Forward pass in stacked batch through VAE encoder

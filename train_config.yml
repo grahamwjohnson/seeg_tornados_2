@@ -77,7 +77,6 @@ decoder_transformer_activation: "silu" # "tanh"
 # Autoregressive GRU
 decoder_num_gru_layers: 4
 
-
 # Optimizer hyperparameters
 core_weight_decay: 0.1
 adamW_beta1: 0.9
@@ -90,14 +89,14 @@ val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that mo
 
 # Training variables
 train_runs_per_file: 8 # randomly decreases training passes per file per epoch
-valfinetune_runs_per_file: 16
+valfinetune_runs_per_file: 32
 valunseen_runs_per_file: 8
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 4 # this is for when loss is not being calculated
-pseudobatch_onlylatent: 64 # Maximum size to stack sequential parts of file into batch dimension during only latent inference
-pacmap_every: 1 # Must be within a 'quick_recon_val_every' to be reached
+pseudobatch_onlylatent: 64 # NOT currently being used: Maximum size to stack sequential parts of file into batch dimension during only latent inference
+pacmap_every: 99999 
 finetune_pacmap: True  
-val_every: 20
+val_every: 40
 num_rand_recon_plots: 4
 epochs_to_train: 999999 
 
