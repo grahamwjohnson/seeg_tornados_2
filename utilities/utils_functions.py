@@ -50,6 +50,7 @@ import auraloss
 from tkinter import filedialog
 import re
 from functools import partial
+from matplotlib.colors import LinearSegmentedColormap
 
 from models.VAE import print_models_flow
 
@@ -1292,6 +1293,101 @@ def save_pacmap_objects(pacmap_dir, epoch, reducer, reducer_MedDim, hdb, pca, xy
     pickle.dump(xy_lims_PCA, output_obj9)
     output_obj9.close()
     print("Saved xy_lims PCA")
+
+def compute_histograms(data, min_val, max_val, B):
+    """
+    Compute histogram bin counts for each dimension of a 2D array.
+
+    Parameters:
+        data (np.ndarray): Input 2D array of shape (N, M).
+        min_val (float): Minimum value for the histogram range.
+        max_val (float): Maximum value for the histogram range.
+        B (int): Number of bins for the histogram.
+
+    Returns:
+        np.ndarray: A 2D array of shape (M, B) containing bin counts for each dimension.
+    """
+    # Initialize an array to store the histogram bin counts for each dimension
+    histograms = np.zeros((data.shape[1], B), dtype=int)
+
+    # Compute the bin edges
+    bin_edges = np.linspace(min_val, max_val, B + 1)
+
+    # Iterate over each dimension (column) of the input data
+    for i in range(data.shape[1]):
+        # Compute the histogram for the current dimension
+        hist, _ = np.histogram(data[:, i], bins=bin_edges)
+        histograms[i, :] = hist
+
+    return histograms
+
+def histogram_latent(
+    pat_ids_list,
+    latent_data_windowed, 
+    start_datetimes_epoch,  
+    stop_datetimes_epoch,
+    epoch, 
+    FS, 
+    win_sec, 
+    stride_sec, 
+    savedir,
+    bincount_perdim=200,
+    perc_max=99.99,
+    perc_min=0.01):
+
+    # Establish edge of histo bins
+    thresh_max = 0
+    thresh_min = 0
+    for i in range(len(latent_data_windowed)):
+        if np.percentile(latent_data_windowed[i], perc_max) > thresh_max: thresh_max = np.percentile(latent_data_windowed[i],perc_max)
+        if np.percentile(latent_data_windowed[i], perc_min) < thresh_min: thresh_min = np.percentile(latent_data_windowed[i], perc_min)
+
+    # Range stats
+    thresh_range = thresh_max - thresh_min
+    thresh_step = thresh_range / bincount_perdim
+    all_bin_values = [np.round(thresh_min + i*thresh_step, 2) for i in range(bincount_perdim)]
+    zero_bin = np.argmax(np.array(all_bin_values) > 0)
+
+    num_ticks = 10 # Manually set 10 x-ticks for bins
+    xtick_positions = np.linspace(0, bincount_perdim - 1, num_ticks).astype(int)  # Create 10 evenly spaced positions
+    xtick_labels = [np.round(thresh_min + i*thresh_step, 2) for i in xtick_positions]  # Create labels for these positions
+    
+    # Count up histo for each dim
+    histo_counts = np.zeros([latent_data_windowed[0].shape[1], bincount_perdim], dtype=int)
+    for i in range(len(latent_data_windowed)):
+        out = compute_histograms(latent_data_windowed[i], thresh_min, thresh_max, bincount_perdim)
+        histo_counts = histo_counts + out
+
+    # Log hist data
+    log_hist_data = np.log1p(histo_counts) 
+
+    fig = pl.figure(figsize=(10, 25))
+    gs = gridspec.GridSpec(2, 2, figure=fig)
+
+    # Create a custom colormap from pink to purple
+    white_to_darkpurple_cmap = LinearSegmentedColormap.from_list(
+        "white_to_darkpurple", ["white", "#2E004F"]  # White to dark purple (#2E004F)
+    )
+
+    sns.heatmap(log_hist_data, cmap=white_to_darkpurple_cmap, cbar=True, yticklabels=False, xticklabels=False)
+    pl.axvline(x=zero_bin, color='gray', linestyle='-', linewidth=2)  # Gray solid line at x = 0
+
+    pl.xticks(xtick_positions, xtick_labels, rotation=45)
+
+    # Customize the plot
+    pl.title('Heatmap of Histograms for all Dimensions', fontsize=16)
+    pl.ylabel('Dimensions', fontsize=14)
+    pl.xlabel('Bins', fontsize=14)
+
+    # **** Save entire figure *****
+    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+    savename_jpg = savedir + f"/JPEGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + f"_bincount{bincount_perdim}.jpg"
+    # savename_svg = savedir + f"/SVGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + ".svg"
+    pl.savefig(savename_jpg, dpi=300)
+    # pl.savefig(savename_svg)
+
+    pl.close(fig)
 
 def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, pre_ictal_taper_sec=120, post_ictal_taper_sec=120):
 

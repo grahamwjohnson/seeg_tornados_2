@@ -151,7 +151,7 @@ def main(
 
     '''
 
-    # Initialize new WandB here aand group GPUs together with DDP
+    # Initialize new WandB here and group GPUs together with DDP
     wandb.require("service")
     wandb_run = wandb.init(
         resume="allow",
@@ -171,7 +171,7 @@ def main(
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
     train_dataset, valfinetune_dataset, valunseen_dataset, vae, opt_vae = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
-    # Load the model/opt/sch states if not first epoch & if in training mode
+    # Load the model/opt states if not first epoch & if in training mode
     if (start_epoch > 0):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % gpu_id}
 

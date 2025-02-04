@@ -112,12 +112,36 @@ def cmap_map(function, cmap):
 
 
 def plot_latent(
-    ax, interCont_ax, seiztype_ax, time_ax, cluster_ax,  
-    latent_data, modified_samp_freq, start_datetimes, stop_datetimes, 
-    win_sec, stride_sec, seiz_start_dt, seiz_stop_dt, seiz_types,
-    preictal_dur, postictal_dur, seiz_type_list, seiz_plot_mult, hdb_labels, hdb_probabilities, hdb,
-    tab2_lighten=False, plot_alpha=0.5, plot_alpha_TIME=0.3, s_plot=15, SPES_colorbar=False, auto_scale_plot=True, xy_lims = [],
-    plot_ictal=True, **kwargs): 
+    ax, 
+    interCont_ax, 
+    seiztype_ax, 
+    time_ax, 
+    cluster_ax,  
+    latent_data, 
+    modified_samp_freq, 
+    start_datetimes, 
+    stop_datetimes, 
+    win_sec, 
+    stride_sec, 
+    seiz_start_dt, 
+    seiz_stop_dt, 
+    seiz_types,
+    preictal_dur, 
+    postictal_dur, 
+    seiz_type_list, 
+    seiz_plot_mult, 
+    hdb_labels, 
+    hdb_probabilities, 
+    hdb,
+    tab2_lighten=False, 
+    plot_alpha=0.5, 
+    plot_alpha_TIME=0.3, 
+    s_plot=15, 
+    SPES_colorbar=False, 
+    auto_scale_plot=True, 
+    xy_lims = [],
+    plot_ictal=True, 
+    **kwargs): 
     
     if len(latent_data.shape) != 3: raise Exception("Must pass 3D latent data [epoch, 2, timesample]")
 

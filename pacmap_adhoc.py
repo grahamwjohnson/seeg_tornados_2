@@ -14,12 +14,13 @@ if __name__ == "__main__":
 
     # Source data selection
     model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025'
+    # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/jackal'
     # pat_ids_list = ['Epat34']
     single_pat = 'Epat34'
-    epoch = 141 
+    epoch = 141 # 39 # 141 
     latent_subdir = f'latent_files/Epoch{epoch}'
-    win_sec = 60 
-    stride_sec = 30 
+    win_sec = 1.0 #60 
+    stride_sec = 1.0 #30 
 
     # pacmap_build_strs = ['train', 'valfinetune']
     # pacmap_eval_strs = ['valunseen']
@@ -29,24 +30,26 @@ if __name__ == "__main__":
     FS = 512 
 
     pacmap_MedDim_numdims = 10
-    pacmap_LR = 1
-    pacmap_NumIters = (150,150,300)
+    pacmap_LR = 0.05
+    pacmap_NumIters = (900,900,900)
+
     pacmap_NN = None
-    pacmap_MN_ratio = 30 #0.5
-    pacmap_FP_ratio = 30 #2.0
-    pacmap_MN_ratio_MedDim = 0.5
-    pacmap_FP_ratio_MedDim = 2.0
+    pacmap_MN_ratio = 10 #0.5
+    pacmap_FP_ratio = 10 #2.0
+
+    pacmap_MN_ratio_MedDim = pacmap_MN_ratio
+    pacmap_FP_ratio_MedDim = pacmap_FP_ratio
+
     HDBSCAN_min_cluster_size = 200
     HDBSCAN_min_samples = 100
     plot_preictal_color_sec = 60*60*4
-    plot_postictal_color_sec = 60*60*4
+    plot_postictal_color_sec = 60*10 #60*60*4
 
 
     # Create paths and create pacmap directory for saving pacmap models and outputs
     latent_dir = f"{model_dir}/{latent_subdir}/{win_sec}SecondWindow_{stride_sec}SecondStride" 
     pacmap_dir = f"{model_dir}/pacmap/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride/adhoc"
     if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir)
-
 
     ### PACMAP GENERATION ###
 
@@ -72,8 +75,38 @@ if __name__ == "__main__":
         with open(build_filepaths[i], "rb") as f: 
             latent_data_windowed[i] = pickle.load(f)
          
-    # Call the subfunction to create/use pacmap and plot
-    reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = utils_functions.pacmap_subfunction(
+    # # Call the subfunction to create/use pacmap and plot
+    # reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = utils_functions.pacmap_subfunction(
+    #     pat_ids_list=build_pat_ids_list,
+    #     latent_data_windowed=latent_data_windowed, 
+    #     start_datetimes_epoch=build_start_datetimes,  
+    #     stop_datetimes_epoch=build_stop_datetimes,
+    #     epoch=epoch, 
+    #     win_sec=win_sec, 
+    #     stride_sec=stride_sec, 
+    #     savedir=f"{pacmap_dir}/{single_pat}/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_generation",
+    #     FS = FS,
+    #     pacmap_MedDim_numdims = pacmap_MedDim_numdims,
+    #     pacmap_LR = pacmap_LR,
+    #     pacmap_NumIters = pacmap_NumIters,
+    #     pacmap_NN = pacmap_NN,
+    #     pacmap_MN_ratio = pacmap_MN_ratio,
+    #     pacmap_FP_ratio = pacmap_FP_ratio,
+    #     pacmap_MN_ratio_MedDim = pacmap_MN_ratio_MedDim,
+    #     pacmap_FP_ratio_MedDim = pacmap_FP_ratio_MedDim,
+    #     HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
+    #     HDBSCAN_min_samples = HDBSCAN_min_samples,
+    #     plot_preictal_color_sec = plot_preictal_color_sec,
+    #     plot_postictal_color_sec = plot_postictal_color_sec,
+    #     **kwargs)
+
+
+    ### HISTOGRAM LATENT ###
+
+    # Generation data
+    histo_dir = f"{model_dir}/histo_latent/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
+    if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir)
+    utils_functions.histogram_latent(
         pat_ids_list=build_pat_ids_list,
         latent_data_windowed=latent_data_windowed, 
         start_datetimes_epoch=build_start_datetimes,  
@@ -81,21 +114,16 @@ if __name__ == "__main__":
         epoch=epoch, 
         win_sec=win_sec, 
         stride_sec=stride_sec, 
-        savedir=f"{pacmap_dir}/{single_pat}/mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}/pacmap_generation",
-        FS = FS,
-        pacmap_MedDim_numdims = pacmap_MedDim_numdims,
-        pacmap_LR = pacmap_LR,
-        pacmap_NumIters = pacmap_NumIters,
-        pacmap_NN = pacmap_NN,
-        pacmap_MN_ratio = pacmap_MN_ratio,
-        pacmap_FP_ratio = pacmap_FP_ratio,
-        pacmap_MN_ratio_MedDim = pacmap_MN_ratio_MedDim,
-        pacmap_FP_ratio_MedDim = pacmap_FP_ratio_MedDim,
-        HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
-        HDBSCAN_min_samples = HDBSCAN_min_samples,
-        plot_preictal_color_sec = plot_preictal_color_sec,
-        plot_postictal_color_sec = plot_postictal_color_sec,
-        **kwargs)
+        savedir=f"{histo_dir}/{single_pat}/histo_generation",
+        FS = FS)
+
+
+
+
+
+
+
+
 
 
     # ### PACMAP EVAL ONLY ###
