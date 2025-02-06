@@ -83,7 +83,8 @@ class SEEG_Tornado_Dataset(Dataset):
                 data_dir = f"{pat_dirs[i]}{data_dir_subfolder}", 
                 intrapatient_dataset_style = intrapatient_dataset_style, 
                 hour_dataset_range = hour_dataset_range,
-                dataset_pic_dir = dataset_pic_dir)
+                dataset_pic_dir = dataset_pic_dir,
+                **kwargs)
 
             # Sort the filenames
             self.pat_fnames[i] = utils_functions.sort_filenames(self.pat_fnames[i])

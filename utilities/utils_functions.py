@@ -1389,7 +1389,7 @@ def histogram_latent(
 
     pl.close(fig)
 
-def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, pre_ictal_taper_sec=120, post_ictal_taper_sec=120):
+def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, atd_file, pre_ictal_taper_sec=120, post_ictal_taper_sec=120, **kwargs):
 
     # Get the end of the path (i.e. filename)
     potential_fnames = [x.split("/")[-1] for x in curr_fpaths]
@@ -1423,7 +1423,7 @@ def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir
     test_middle_seconds = [int((x - first_starttime).total_seconds() + file_seconds_nonoverlap/2) for x in test_datetimes[0]]
 
     # Get the seizure seconds from file start
-    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id)
+    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id, atd_file=atd_file, **kwargs)
     seiz_start_seconds = [(x - first_starttime).total_seconds() for x in seiz_start_dt]
     seiz_stop_seconds = [(x - first_starttime).total_seconds() for x in seiz_stop_dt]
 
@@ -2029,7 +2029,7 @@ def get_hours_inferred_str(intrapatient_dataset_style):
 
 def get_pat_seiz_datetimes(
     pat_id, 
-    atd_file='/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/all_time_data_01092023_112957.csv',
+    atd_file, 
     FBTC_bool=True, 
     FIAS_bool=True, 
     FAS_to_FIAS_bool=True,
@@ -2118,6 +2118,7 @@ def get_desired_fnames(
         intrapatient_dataset_style: list, 
         hour_dataset_range: list, 
         dataset_pic_dir: str,
+        **kwargs
         ):
     
     # This will have all of the desired file names before splitting into train/val/test
@@ -2185,7 +2186,7 @@ def get_desired_fnames(
         if not found_hours: raise Exception("Hours desired not found")
 
     if gpu_id == 0:
-        print_dataset_bargraphs(pat_id, curr_fnames, curr_fnames, dataset_pic_dir)
+        print_dataset_bargraphs(pat_id, curr_fnames, curr_fnames, dataset_pic_dir, atd_file=atd_file)
 
     return curr_fnames
 

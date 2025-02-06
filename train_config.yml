@@ -2,7 +2,7 @@
 # TODO
 # Sparse autoencoder: KLD on hidden activations to encourage interpretability. 
 
-pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats' #   2pats'     # 10pats' 
+pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple' #   2pats'     # 10pats' 
 # train_val_pat_perc: kwargs['train_val_pat_perc'] = [0.8, 0.2] #[0.5, 0.5] # [0.8, 0.2]
 train_val_pat_perc: kwargs['train_val_pat_perc'] = [1.0, 0.0]  
 num_freq_bands: 1
@@ -12,7 +12,7 @@ FS: 512
 
 # Dataset formation variables
 # atd_file: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/all_time_data_01092023_112957.csv'
-atd_file: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/spat113/trained_models/pangolin_spat113_finetune/all_time_data_01092023_112957.csv'
+atd_file: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple/trained_models/all_time_data_01092023_112957.csv'
 data_dir_subfolder: '/scaled_data_epochs'
 base_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results'
 scale_type: 'HistEqualScale'  # 'LinearScale', 'HyperTanScaling', 'CubeRootScale', 'HistEqualScale'
@@ -20,7 +20,7 @@ channel_scale_style: 'By_Channel_Scale' # 'Same_Scale_For_All_Channels' # By_Cha
 bipole_or_monopole: 'Bipole_datasets'
 scale_epoch_str: 'data_normalized_to_first_24_hours' # 'data_normalized_to_first_24_hours' # 'data_normalized_to_first_seizure_centered_24_hours' # , 'Dictated by preprocessing: Should probably decide to have duration match 'train_hours_desired', but do not HAVE to
 # duration_stride_str: 'DurStr_1024s896s_epoched_datasets' # 'DurStr_1024s896s_epoched_datasets', 'DurStr_512s480s_epoched_datasets', 'DurStr_10s2s_epoched_datasets', 'DurStr_60s10s_epoched_datasets'
-duration_stride_str: 'spat113'
+duration_stride_str: 'pangolin_ripple'
 freq_bands_str: 'wholeband' # 1to12Hz_12to59Hz_61to179Hz, wholeband
 intrapatient_dataset_style: 2 # 1 all data (no SPES), 2 all data (with SPES), 3 ONLY SPES
 train_hour_dataset_range: kwargs['train_hour_dataset_range'] = [-1, -1]  # [-1, -1] means all, [X, -1] means from X to end
@@ -31,7 +31,7 @@ preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 # Training settings
 continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 # cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025' 
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/spat113/trained_models/pangolin_spat113_finetune'
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple/trained_models/pangolin_spat113_finetune'
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### VAE 
@@ -97,9 +97,9 @@ valunseen_runs_per_file: 8
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 4 # this is for when loss is not being calculated
 pseudobatch_onlylatent: 64 # NOT currently being used: Maximum size to stack sequential parts of file into batch dimension during only latent inference
-pacmap_every: 99999 
+pacmap_every: 1 
 finetune_pacmap: True  
-val_every: 40
+val_every: 9999
 num_rand_recon_plots: 4
 epochs_to_train: 999999 
 

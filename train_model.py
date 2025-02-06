@@ -75,12 +75,42 @@ def load_train_objs(
     all_pats_dirs = glob.glob(f"{pat_dir}/*pat*")
     all_pats_list = [x.split('/')[-1] for x in all_pats_dirs]
 
-    val_pats_count = int(np.ceil(train_val_pat_perc[1] * len(all_pats_list)))
-    val_pats_dirs = all_pats_dirs[-val_pats_count:]
-    val_pats_list = all_pats_list[-val_pats_count:]
+    # If validation patients indicated
+    if train_val_pat_perc[1] > 0:
+        val_pats_count = int(np.ceil(train_val_pat_perc[1] * len(all_pats_list)))
+        val_pats_dirs = all_pats_dirs[-val_pats_count:]
+        val_pats_list = all_pats_list[-val_pats_count:]
 
-    train_pats_dirs = all_pats_dirs[:-val_pats_count]
-    train_pats_list = all_pats_list[:-val_pats_count]
+        train_pats_dirs = all_pats_dirs[:-val_pats_count]
+        train_pats_list = all_pats_list[:-val_pats_count]
+
+        print(f"[GPU{str(gpu_id)}] Generating VALIDATION FINETUNE dataset")
+        kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs/Val_Grouped_Finetune'
+        valfinetune_dataset = SEEG_Tornado_Dataset(
+            gpu_id=gpu_id, 
+            pat_list=val_pats_list,
+            pat_dirs=val_pats_dirs,
+            intrapatient_dataset_style=intrapatient_dataset_style, 
+            hour_dataset_range=val_finetune_hour_dataset_range,
+            **kwargs)
+
+        print(f"[GPU{str(gpu_id)}] Generating VALIDATION UNSEEN dataset")
+        kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs/Val_Grouped_Unseen'
+        valunseen_dataset = SEEG_Tornado_Dataset(
+            gpu_id=gpu_id, 
+            pat_list=val_pats_list,
+            pat_dirs=val_pats_dirs,
+            intrapatient_dataset_style=intrapatient_dataset_style, 
+            hour_dataset_range=val_unseen_hour_dataset_range,
+            **kwargs)
+
+    else: # If no val, just make a train dataset
+        train_pats_dirs = all_pats_dirs
+        train_pats_list = all_pats_list
+
+        # Dummy
+        valfinetune_dataset = []
+        valunseen_dataset = []
 
     # Sequential dataset used to run inference on train data and build PaCMAP projection
     print(f"[GPU{str(gpu_id)}] Generating TRAIN dataset")
@@ -92,27 +122,7 @@ def load_train_objs(
         intrapatient_dataset_style=intrapatient_dataset_style, 
         hour_dataset_range=train_hour_dataset_range,
         **kwargs)
-    
-    print(f"[GPU{str(gpu_id)}] Generating VALIDATION FINETUNE dataset")
-    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs/Val_Grouped_Finetune'
-    valfinetune_dataset = SEEG_Tornado_Dataset(
-        gpu_id=gpu_id, 
-        pat_list=val_pats_list,
-        pat_dirs=val_pats_dirs,
-        intrapatient_dataset_style=intrapatient_dataset_style, 
-        hour_dataset_range=val_finetune_hour_dataset_range,
-        **kwargs)
-
-    print(f"[GPU{str(gpu_id)}] Generating VALIDATION UNSEEN dataset")
-    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs/Val_Grouped_Unseen'
-    valunseen_dataset = SEEG_Tornado_Dataset(
-        gpu_id=gpu_id, 
-        pat_list=val_pats_list,
-        pat_dirs=val_pats_dirs,
-        intrapatient_dataset_style=intrapatient_dataset_style, 
-        hour_dataset_range=val_unseen_hour_dataset_range,
-        **kwargs)
-     
+         
     ### VAE ###
     vae = VAE(gpu_id=gpu_id, **kwargs) 
     vae = vae.to(gpu_id) 
@@ -175,7 +185,7 @@ def main(
     if (start_epoch > 0):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % gpu_id}
 
-        # Load in VAE Core weights and opts
+        # Load in VAE weights and opts
         vae_state_dict_prev = torch.load(vae_state_dict_prev_path, map_location=map_location)
         vae.load_state_dict(vae_state_dict_prev)
         vae_opt_state_dict_prev = torch.load(vae_opt_state_dict_prev_path, map_location=map_location)
@@ -207,26 +217,26 @@ def main(
         # PACMAP
         if (epoch > 0) & ((trainer.epoch + 1) % trainer.pacmap_every == 0):
 
-            # Save pre-finetune model/opt weights
-            if finetune_pacmap:
-                vae_dict = trainer.vae.module.state_dict()
-                vae_opt_dict = trainer.opt_vae.state_dict()
+            # # Save pre-finetune model/opt weights
+            # if finetune_pacmap:
+            #     vae_dict = trainer.vae.module.state_dict()
+            #     vae_opt_dict = trainer.opt_vae.state_dict()
 
-                # FINETUNE on beginning of validation patients (currently only one epoch)
-                # Set to train and change LR to validate settings
-                trainer._set_to_train()
-                trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
-                trainer._run_epoch(
-                    dataset_curr = trainer.valfinetune_dataset, 
-                    dataset_string = "valfinetune",
-                    batchsize=trainer.wdecode_batch_size,
-                    runs_per_file = valfinetune_runs_per_file, 
-                    all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
-                    val_finetune = True,
-                    val_unseen = False,
-                    backprop = True,
-                    num_rand_hashes = val_num_rand_hashes,
-                    **kwargs)
+            #     # FINETUNE on beginning of validation patients (currently only one epoch)
+            #     # Set to train and change LR to validate settings
+            #     trainer._set_to_train()
+            #     trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
+            #     trainer._run_epoch(
+            #         dataset_curr = trainer.valfinetune_dataset, 
+            #         dataset_string = "valfinetune",
+            #         batchsize=trainer.wdecode_batch_size,
+            #         runs_per_file = valfinetune_runs_per_file, 
+            #         all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+            #         val_finetune = True,
+            #         val_unseen = False,
+            #         backprop = True,
+            #         num_rand_hashes = val_num_rand_hashes,
+            #         **kwargs)
 
             # # INFERENCE on all datasets
             dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
@@ -259,10 +269,10 @@ def main(
                         latent_subdir=f"/latent_files/Epoch{epoch}", 
                         **kwargs)
 
-            # Restore model/opt weights to pre-finetune
-            if finetune_pacmap:
-                trainer.vae.module.load_state_dict(vae_dict)
-                trainer.opt_vae.load_state_dict(vae_opt_dict)
+            # # Restore model/opt weights to pre-finetune
+            # if finetune_pacmap:
+            #     trainer.vae.module.load_state_dict(vae_dict)
+            #     trainer.opt_vae.load_state_dict(vae_opt_dict)
 
             print(f"GPU{str(trainer.gpu_id)} at post PaCMAP barrier")
             barrier()
