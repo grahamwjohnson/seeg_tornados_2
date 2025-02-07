@@ -12,8 +12,12 @@ def recon_loss_function(x, x_hat, recon_weight):
 
 def kld_loss_function(mean, logvar, KL_multiplier):
 
+    # Batch the sequence dimension
+    mean_batched = mean.reshape(mean.shape[0] * mean.shape[1], mean.shape[2])
+    logvar_batched =  logvar.reshape(logvar.shape[0] * logvar.shape[1], logvar.shape[2])
+
     # VAE KL divergence
-    kld_loss = torch.mean(-0.5 * torch.sum(1 + logvar - mean**2 - logvar.exp(), dim=1))
+    kld_loss = torch.mean(-0.5 * torch.sum(1 + logvar_batched - mean_batched**2 - logvar_batched.exp(), dim=1))
     kld_loss = KL_multiplier * kld_loss
 
     return kld_loss  

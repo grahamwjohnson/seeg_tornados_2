@@ -29,9 +29,9 @@ periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if
 preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
 # Training settings
-continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 # cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025' 
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple/trained_models/pangolin_spat113_finetune'
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple/trained_models/pangolin2_spat113_finetune'
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### VAE 
@@ -53,8 +53,8 @@ transformer_dim: kwargs['transformer_dim'] = kwargs['crattn_embed_dim'] * kwargs
 transformer_seq_length: 256
 max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
 max_batch_size: 4 # kwargs['max_batch_size'] = kwargs['wdecode_batch_size'] * kwargs['pseudobatch_onlylatent']
-n_layers: 16
-n_heads: 16
+n_layers: 32
+n_heads: 32
 multiple_of: 256 
 ffn_dim_multiplier: 1 # 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
 attention_dropout: 0.1          ###    0.8 is aggressive        #### IMPORTANT ####            ###
@@ -69,7 +69,7 @@ latent_dim: 1024 # 2048
 
 ### DECOCDER
 # Non-autoregressive transformer
-decoder_hidden_dims: 1024 # after this layer, it will be connected into FC to [batch, padded_channels * seq_len] to prepare for decoder transformer input
+decoder_transformer_dims: 1024
 decoder_num_heads: 16
 decoder_num_transformer_layers: 16
 decoder_ffm: 1
@@ -91,14 +91,16 @@ autoreg_num_rand_hashes: 1 # Need to be only one to work? in theory should work 
 val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
 
 # Training variables
-train_runs_per_file: 16 # randomly decreases training passes per file per epoch
+num_pat_loops_per_epoch: 32
+num_batchfilepulls_per_pat: 32 # be mindful of where optimizer is stepped when configuring these variables
+train_runs_per_file: 32 # randomly decreases training passes per file per epoch
 valfinetune_runs_per_file: 32
 valunseen_runs_per_file: 8
 wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
 onlylatent_batch_size: 4 # this is for when loss is not being calculated
 pseudobatch_onlylatent: 64 # NOT currently being used: Maximum size to stack sequential parts of file into batch dimension during only latent inference
-pacmap_every: 99999 
-finetune_pacmap: True  
+pacmap_every: 20
+finetune_pacmap: False  
 val_every: 9999
 num_rand_recon_plots: 4
 epochs_to_train: 999999 
@@ -134,8 +136,8 @@ mean_loss_weight: 1
 ### Dynamic Learning Rates ###
 
 # VAE learning rate controls
-LR_max_core: kwargs['LR_max_core'] = 1e-6
-LR_min_core: kwargs['LR_min_core'] = 1e-6 
+LR_max_core: kwargs['LR_max_core'] = 1e-7
+LR_min_core: kwargs['LR_min_core'] = 1e-7 
 LR_epochs_TO_max_core: 2
 LR_epochs_AT_max_core: 0
 manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
