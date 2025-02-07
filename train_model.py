@@ -480,6 +480,8 @@ class Trainer:
         dataset_string,
         batchsize,
         attention_dropout,
+        num_pat_loops_per_epoch,
+        num_batchfilepulls_per_pat,
         runs_per_file, 
         all_files_latent_only,
         num_dataloader_workers_SEQUENTIAL,
@@ -606,41 +608,56 @@ class Trainer:
 
         ### RANDOM SUBSET OF FILES ###
         # This setting is used for regular training 
-        # Can run the patients in parallel with this setting
         else: 
-            dataset_curr.set_pat_curr(-1) # -1 enables all pat mode
+           
+            num_pats_curr = dataset_curr.get_pat_count()
 
-            # Build dataloader from dataset
-            dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
-            dataloader_curr.sampler.set_epoch(self.epoch) 
-            num_pats_curr = dataloader_curr.dataset.get_pat_count()
-            
             # Get miniepoch start indexes. Same random indexes will be used for all patients' files.
             start_idxs = self._train_start_idxs(runs_per_file=runs_per_file)
-            total_train_iters = int(len(dataloader_curr) * len(start_idxs) * num_pats_curr) # 
+            total_train_iters = int(num_pat_loops_per_epoch * len(start_idxs) * num_pats_curr) # 
             iter_curr = 0 # Iteration across all sequential trian files
 
-            for data_tensor_by_pat, file_name_by_pat in dataloader_curr: # Paralell random file pull accross patients
-                for start_idx in start_idxs: # Same start_idx for all patients (has no biological meaning)
+            # For Training: Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
+            self.KL_multiplier, self.curr_LR_core, self.sparse_weight = utils_functions.LR_and_weight_schedules(
+                epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
+            if (not val_finetune) & (not val_unseen): self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
 
-                    # For Training: Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                    self.KL_multiplier, self.curr_LR_core, self.sparse_weight = utils_functions.LR_and_weight_schedules(
-                        epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
+            # # Reset the cumulative losses & zero gradients
+            # # AFTER ALL PATS
+            # self._zero_all_grads()
+
+            # Iterate randomly through all patients and accumulate losses before stepping optimizers
+            rand_pat_idxs = np.arange(0,num_pats_curr)
+            np.random.shuffle(rand_pat_idxs)
+            pat_count = 0
+            for pat_idx in rand_pat_idxs: 
+                pat_count = pat_count + 1
+
+                # Reset the cumulative losses & zero gradients
+                # AFTER EACH PAT
+                self._zero_all_grads()
+
+                # Build dataloader from dataset for this patient
+                dataset_curr.set_pat_curr(pat_idx) 
+                dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
+                dataloader_curr.sampler.set_epoch(self.epoch) # Ensure new file order is pulled
+                
+                batch_idx = 0
+                for data_tensor, file_name in dataloader_curr: # Paralell random file pull accross patients
+
+                    # # Reset the cumulative losses & zero gradients
+                    # # AFTER EACH BATCH
+                    # self._zero_all_grads()
                     
-                    # Update LR to schedule
-                    if (not val_finetune) & (not val_unseen):
-                        self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
+                    # Break loop if number of batch pulls per patient have been met
+                    batch_idx = batch_idx + 1
+                    if batch_idx == num_batchfilepulls_per_pat: break
+                    
+                    for start_idx in start_idxs: # Same start_idx for all patients (has no biological meaning)
 
-                    # Reset the cumulative losses & zero gradients
-                    kld_loss = 0
-                    recon_loss = 0
-                    self._zero_all_grads()
-
-                    # Iterate through all patients and accumulate losses before stepping optimizers
-                    for pat_idx in np.arange(0,num_pats_curr): 
-
-                        # Pull patient's data
-                        data_tensor = data_tensor_by_pat[pat_idx]
+                        # # Reset the cumulative losses & zero gradients
+                        # # AFTER EACH FORWARD PASS
+                        # self._zero_all_grads()
 
                         # Reset the data vars for Transformer Sequence and put on GPU
                         x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.autoencode_samples).to(self.gpu_id)
@@ -696,9 +713,8 @@ class Trainer:
                             now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
                             if (self.gpu_id == 1):
                                 sys.stdout.write(
-                                    f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, EPOCH {self.epoch}, Iter [BatchSize:{batchsize}]: " + 
-                                    str(iter_curr) + "/" + str(total_train_iters) + 
-                                    ", MeanLoss: " + str(round(loss.detach().item(), 2))) 
+                                    f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, EPOCH {self.epoch}, PatCount[Idx: {pat_idx}] {pat_count}/{num_pats_curr}, BatchPull {batch_idx}/{num_batchfilepulls_per_pat}, Iter [BatchSize: {batchsize}] {iter_curr}/{total_train_iters}, " + 
+                                    f"MeanLoss: {round(loss.detach().item(), 2)}")
                                 sys.stdout.flush() 
 
                             # Log to WandB
@@ -774,13 +790,21 @@ class Trainer:
                                     **kwargs
                                 )
             
-                        # ### WITHIN PATIENT LOOP ###
+                        # ### WITHIN FILE LOOP ###
                         # # Step optimizers after single patient
                         # self.opt_vae.step()
+
+                    # ### WITHIN PATIENT LOOP ###
+                    # # Step optimizers after single patient
+                    # self.opt_vae.step()
+
+                ### AFTER EACH PATIENT ###
+                # Step optimizers after single patient
+                self.opt_vae.step()
                     
-                    ### AFTER PATIENT LOOP ###
-                    # Step optimizers after all patients have been backpropgated
-                    self.opt_vae.step()
+            # ### AFTER ALL PATIENTS ###
+            # # Step optimizers after all patients have been backpropgated
+            # self.opt_vae.step()
                          
 if __name__ == "__main__":
 

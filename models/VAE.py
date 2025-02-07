@@ -199,35 +199,6 @@ class HybridDecoder(nn.Module):
         
         return x_na
 
-
-# class SimpleDecoder(nn.Module):
-#     def __init__(self, gpu_id, latent_dim, hidden_dim, padded_channels, seq_length):
-#         super(SimpleDecoder, self).__init__()
-
-#         self.gpu_id = gpu_id
-#         self.latent_dim = latent_dim
-#         self.hidden_dim = hidden_dim
-#         self.padded_channels = padded_channels
-#         self.seq_length = seq_length
-
-#         self.latent_to_out = nn.Sequential(
-#             nn.Linear(latent_dim, hidden_dim),
-#             nn.Tanh(),
-#             nn.Linear(hidden_dim, hidden_dim),
-#             nn.Tanh(),
-#             nn.Linear(hidden_dim, hidden_dim),
-#             nn.Tanh(),
-#             nn.Linear(hidden_dim, padded_channels * seq_length),
-#             nn.Tanh()
-#         )
-
-#     def forward(self, x):
-#         x = self.latent_to_out(x)
-#         x = x.view(x.shape[0], self.padded_channels, self.seq_length)
-
-#         return x
-
-
 class VAE(nn.Module):
     '''
     The Reverseable Encoder/Decoder 

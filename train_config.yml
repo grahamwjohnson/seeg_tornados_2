@@ -49,7 +49,7 @@ n_layers: 16
 n_heads: 16
 multiple_of: 256 
 ffn_dim_multiplier: 1 # 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
-attention_dropout: 0.1          ###    0.8 is aggressive        #### IMPORTANT ####            ###
+attention_dropout: 0.1          # 0.8 is very aggressive     
 encoder_transformer_activation: "silu"
 
 ### VAE-Layers Encoder
@@ -80,6 +80,8 @@ autoreg_num_rand_hashes: 1 # Need to be only one to work? in theory should work 
 val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
 
 # Training variables
+num_pat_loops_per_epoch: 1
+num_batchfilepulls_per_pat: 2
 train_runs_per_file: 8 # randomly decreases training passes per file per epoch
 valfinetune_runs_per_file: 32
 valunseen_runs_per_file: 8
@@ -95,7 +97,7 @@ epochs_to_train: 999999
 # Realtime plotting
 realtime_latent_printing: True
 num_realtime_channels_recon: 1 # columns of random channel plots
-realtime_printing_interval: 100
+realtime_printing_interval: 25
 num_recon_samples: 512 # this will limit how much is shown in recon plots, ERROR if not enough samples, pulls from START and END of transformer sequence 
 num_realtime_dims: 5
 recent_display_iters: 5 # How often to print to console when training & how often to log to WandB
@@ -122,8 +124,8 @@ mean_loss_weight: 1
 ### Dynamic Learning Rates ###
 
 # VAE learning rate controls
-LR_max_core: kwargs['LR_max_core'] = 1e-6
-LR_min_core: kwargs['LR_min_core'] = 1e-6 
+LR_max_core: kwargs['LR_max_core'] = 1e-8
+LR_min_core: kwargs['LR_min_core'] = 1e-8 
 LR_epochs_TO_max_core: 2
 LR_epochs_AT_max_core: 0
 manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
