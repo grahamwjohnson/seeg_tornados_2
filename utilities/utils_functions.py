@@ -314,12 +314,12 @@ def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_se
 
     return out.astype('int')
                 
-def in_seizure(file_name, start_idx, end_idx, samp_freq):
+def in_seizure(file_name, start_idx, end_idx, samp_freq, atd_file):
 
     pat_id = file_name.split("_")[0]
     start_datetimes, stop_datetimes = filename_to_datetimes([file_name])
     start_datetime, stop_datetime = start_datetimes[0], stop_datetimes[0]
-    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id)
+    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id, atd_file=atd_file)
     sample_microsec = (1/samp_freq) * 1e6
 
     curr_datetime_start = start_datetime + start_idx * datetime.timedelta(microseconds=sample_microsec)
@@ -367,11 +367,11 @@ def is_ictal_subprocess(i, dict_in):
 
     return in_seizure
 
-def get_all_is_ictal(file_name, data_samples):
+def get_all_is_ictal(file_name, data_samples, atd_file):
     pat_id = file_name.split("_")[0]
     start_datetimes, stop_datetimes = filename_to_datetimes([file_name])
     start_datetime, stop_datetime = start_datetimes[0], stop_datetimes[0]
-    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id)
+    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id, atd_file=atd_file)
 
     inferred_FS = data_samples/(stop_datetime - start_datetime).total_seconds()
     inferred_sample_microsec = (1/inferred_FS) * 1e6
@@ -814,6 +814,7 @@ def plot_recon(x, x_hat, plot_dict, batch_file_names, epoch, savedir, gpu_id, pa
         pl.close(fig) 
         
 def pacmap_subfunction(  
+    atd_file,
     pat_ids_list,
     latent_data_windowed, 
     start_datetimes_epoch,  
@@ -988,7 +989,7 @@ def pacmap_subfunction(
     seiz_stop_dt_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
     seiz_types_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
     for i in range(len(latent_postPaCMAP_perfile_MEDdim)):
-        seiz_start_dt_perfile[i], seiz_stop_dt_perfile[i], seiz_types_perfile[i] = get_pat_seiz_datetimes(pat_ids_list[i])
+        seiz_start_dt_perfile[i], seiz_stop_dt_perfile[i], seiz_types_perfile[i] = get_pat_seiz_datetimes(pat_ids_list[i], atd_file=atd_file)
 
     # Intialize master figure 
     fig = pl.figure(figsize=(40, 25))
@@ -1143,9 +1144,9 @@ def pacmap_subfunction(
 
     # Bundle the save metrics together
     # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
-    return reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS # save_tuple
+    return ax20, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS # save_tuple
 
-def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_build_strs, pacmap_eval_strs, delete_latent_files=False, **kwargs):
+def run_pacmap(atd_file, epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_build_strs, pacmap_eval_strs, delete_latent_files=False, **kwargs):
     
     print(f"Running PaCMAP: {win_sec}SecondWindow_{stride_sec}SecondStride")
 
@@ -1180,7 +1181,8 @@ def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_buil
             latent_data_windowed[i] = pickle.load(f)
          
     # Call the subfunction to create/use pacmap and plot
-    reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = pacmap_subfunction(
+    axis, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = pacmap_subfunction(
+        atd_file=atd_file,
         pat_ids_list=build_pat_ids_list,
         latent_data_windowed=latent_data_windowed, 
         start_datetimes_epoch=build_start_datetimes,  
@@ -1219,6 +1221,7 @@ def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_buil
          
     # Call the subfunction to create/use pacmap and plot
     pacmap_subfunction(
+        atd_file=atd_file,
         pat_ids_list=eval_pat_ids_list,
         latent_data_windowed=latent_data_windowed, 
         start_datetimes_epoch=eval_start_datetimes,  
@@ -1240,6 +1243,7 @@ def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_buil
     save_pacmap_objects(
         pacmap_dir=pacmap_dir,
         epoch=epoch,
+        axis=axis,
         reducer=reducer, 
         reducer_MedDim=reducer_MedDim, 
         hdb=hdb, 
@@ -1252,7 +1256,7 @@ def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_buil
     if delete_latent_files:
         shutil.rmtree(latent_dir)
 
-def save_pacmap_objects(pacmap_dir, epoch, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS):
+def save_pacmap_objects(pacmap_dir, epoch, axis, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS):
 
     if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir) 
 
@@ -1293,6 +1297,12 @@ def save_pacmap_objects(pacmap_dir, epoch, reducer, reducer_MedDim, hdb, pca, xy
     pickle.dump(xy_lims_PCA, output_obj9)
     output_obj9.close()
     print("Saved xy_lims PCA")
+
+    axis_path = pacmap_dir + "/epoch" +str(epoch) + "_plotaxis.pkl"
+    output_obj10 = open(axis_path, 'wb')
+    pickle.dump(xy_lims_PCA, output_obj10)
+    output_obj10.close()
+    print("Saved plot axis")
 
 def compute_histograms(data, min_val, max_val, B):
     """

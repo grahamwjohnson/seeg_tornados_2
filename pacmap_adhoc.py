@@ -12,6 +12,8 @@ if __name__ == "__main__":
     kwargs['seiz_type_list'] = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Focal unknown awareness', 'Unknown', 'Subclinical', 'Non-electrographic'] # Leftward overwites rightward
     kwargs['seiz_plot_mult'] = [1,       3,     5,              7,    9,                           11,        13,            15] # Assuming increasing order, NOTE: base value of 3 is added in the code
 
+    atd_file = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple/trained_models/all_time_data_01092023_112957.csv'
+
     # Source data selection
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025'
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/jackal'
@@ -20,8 +22,8 @@ if __name__ == "__main__":
     single_pat = 'Spat113'
     epoch = 298 # 39 # 141 
     latent_subdir = f'latent_files/Epoch{epoch}'
-    win_sec = 1.0 # 60, 1.0
-    stride_sec = 1.0 # 30, 1.0 
+    win_sec = 60 # 60, 1.0
+    stride_sec = 30 # 30, 1.0 
 
     # pacmap_build_strs = ['train', 'valfinetune']
     # pacmap_eval_strs = ['valunseen']
@@ -31,19 +33,19 @@ if __name__ == "__main__":
     FS = 512 
 
     pacmap_MedDim_numdims = 10
-    pacmap_LR = 0.05
-    pacmap_NumIters = (900,900,900)
+    pacmap_LR = 0.1 #0.05
+    pacmap_NumIters = (500,500,500)
 
     pacmap_NN = None
-    pacmap_MN_ratio = 4 #0.5
-    pacmap_FP_ratio = 7 #2.0
+    pacmap_MN_ratio = 7 #0.5
+    pacmap_FP_ratio = 11 #2.0
 
     pacmap_MN_ratio_MedDim = pacmap_MN_ratio
     pacmap_FP_ratio_MedDim = pacmap_FP_ratio
 
     HDBSCAN_min_cluster_size = 200
     HDBSCAN_min_samples = 100
-    plot_preictal_color_sec = 60*60*4
+    plot_preictal_color_sec = 60*60*2
     plot_postictal_color_sec = 60*10 #60*60*4
 
 
@@ -77,7 +79,9 @@ if __name__ == "__main__":
             latent_data_windowed[i] = pickle.load(f)
          
     # Call the subfunction to create/use pacmap and plot
-    reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = utils_functions.pacmap_subfunction(
+    pacmap_savedir = f"{pacmap_dir}/{single_pat}/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_generation"
+    axis, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = utils_functions.pacmap_subfunction(
+        atd_file = atd_file,
         pat_ids_list=build_pat_ids_list,
         latent_data_windowed=latent_data_windowed, 
         start_datetimes_epoch=build_start_datetimes,  
@@ -85,7 +89,7 @@ if __name__ == "__main__":
         epoch=epoch, 
         win_sec=win_sec, 
         stride_sec=stride_sec, 
-        savedir=f"{pacmap_dir}/{single_pat}/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_generation",
+        savedir=pacmap_savedir,
         FS = FS,
         pacmap_MedDim_numdims = pacmap_MedDim_numdims,
         pacmap_LR = pacmap_LR,
@@ -100,6 +104,19 @@ if __name__ == "__main__":
         plot_preictal_color_sec = plot_preictal_color_sec,
         plot_postictal_color_sec = plot_postictal_color_sec,
         **kwargs)
+
+    # SAVE OBJECTS
+    utils_functions.save_pacmap_objects(
+        pacmap_dir=pacmap_savedir,
+        epoch=epoch,
+        axis=axis,
+        reducer=reducer, 
+        reducer_MedDim=reducer_MedDim, 
+        hdb=hdb, 
+        pca=pca, 
+        xy_lims=xy_lims, 
+        xy_lims_PCA=xy_lims_PCA, 
+        xy_lims_RAW_DIMS=xy_lims_RAW_DIMS)
 
 
     # ### HISTOGRAM LATENT ###

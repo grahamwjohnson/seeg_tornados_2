@@ -217,26 +217,26 @@ def main(
         # PACMAP
         if (epoch > 0) & ((trainer.epoch + 1) % trainer.pacmap_every == 0):
 
-            # # Save pre-finetune model/opt weights
-            # if finetune_pacmap:
-            #     vae_dict = trainer.vae.module.state_dict()
-            #     vae_opt_dict = trainer.opt_vae.state_dict()
+            # Save pre-finetune model/opt weights
+            if finetune_pacmap:
+                vae_dict = trainer.vae.module.state_dict()
+                vae_opt_dict = trainer.opt_vae.state_dict()
 
-            #     # FINETUNE on beginning of validation patients (currently only one epoch)
-            #     # Set to train and change LR to validate settings
-            #     trainer._set_to_train()
-            #     trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
-            #     trainer._run_epoch(
-            #         dataset_curr = trainer.valfinetune_dataset, 
-            #         dataset_string = "valfinetune",
-            #         batchsize=trainer.wdecode_batch_size,
-            #         runs_per_file = valfinetune_runs_per_file, 
-            #         all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
-            #         val_finetune = True,
-            #         val_unseen = False,
-            #         backprop = True,
-            #         num_rand_hashes = val_num_rand_hashes,
-            #         **kwargs)
+                # FINETUNE on beginning of validation patients (currently only one epoch)
+                # Set to train and change LR to validate settings
+                trainer._set_to_train()
+                trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
+                trainer._run_epoch(
+                    dataset_curr = trainer.valfinetune_dataset, 
+                    dataset_string = "valfinetune",
+                    batchsize=trainer.wdecode_batch_size,
+                    runs_per_file = valfinetune_runs_per_file, 
+                    all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+                    val_finetune = True,
+                    val_unseen = False,
+                    backprop = True,
+                    num_rand_hashes = val_num_rand_hashes,
+                    **kwargs)
 
             # # INFERENCE on all datasets
             dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
@@ -269,10 +269,10 @@ def main(
                         latent_subdir=f"/latent_files/Epoch{epoch}", 
                         **kwargs)
 
-            # # Restore model/opt weights to pre-finetune
-            # if finetune_pacmap:
-            #     trainer.vae.module.load_state_dict(vae_dict)
-            #     trainer.opt_vae.load_state_dict(vae_opt_dict)
+            # Restore model/opt weights to pre-finetune
+            if finetune_pacmap:
+                trainer.vae.module.load_state_dict(vae_dict)
+                trainer.opt_vae.load_state_dict(vae_opt_dict)
 
             print(f"GPU{str(trainer.gpu_id)} at post PaCMAP barrier")
             barrier()

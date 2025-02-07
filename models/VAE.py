@@ -150,7 +150,7 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         # return x[:,-1,:] # Return last in sequence (should be embedded with meaning)
 
 class HybridDecoder(nn.Module):
-    def __init__(self, gpu_id, latent_dim, hidden_dim, output_channels, seq_length, num_transformer_layers, num_heads, ffm, max_bs, max_seq_len, num_gru_layers, activation):
+    def __init__(self, gpu_id, latent_dim, hidden_dim, output_channels, seq_length, num_transformer_layers, num_heads, ffm, max_bs, max_seq_len, activation):
         super(HybridDecoder, self).__init__()
         self.gpu_id = gpu_id
         self.latent_dim = latent_dim
@@ -163,8 +163,6 @@ class HybridDecoder(nn.Module):
         self.max_bs = max_bs
         self.max_seq_len = max_seq_len
 
-        self.num_gru_layers = num_gru_layers
-        
         # Non-autoregressive decoder (rough sketch generator)
         self.non_autoregressive_fc = nn.Sequential(
             nn.Linear(latent_dim, int(hidden_dim * seq_length/2)),
@@ -190,11 +188,7 @@ class HybridDecoder(nn.Module):
         self.non_autoregressive_output = nn.Sequential(
             nn.Linear(hidden_dim, output_channels),
             nn.Tanh())
-        
-        # # Autoregressive decoder (refinement)
-        # self.autoregressive_rnn = nn.GRU(output_channels + hidden_dim, hidden_dim, num_gru_layers, batch_first=True)
-        # self.autoregressive_output = nn.Linear(hidden_dim, output_channels)
-    
+            
     def forward(self, z):
         batch_size = z.size(0)
         
@@ -203,27 +197,6 @@ class HybridDecoder(nn.Module):
         h_na = self.non_autoregressive_transformer(h_na, start_pos=0, causal_mask_bool=False)  # Self-attention with no causal mask
         x_na = self.non_autoregressive_output(h_na)  # (batch_size, seq_length, output_channels)
         
-        # # Step 2: Autoregressive refinement
-        # h_ar = torch.zeros(self.num_gru_layers, batch_size, self.hidden_dim).to(z.device)
-        # x_ar = torch.zeros(batch_size, 1, self.output_channels).to(z.device)
-        
-        # outputs = []
-        # for t in range(self.seq_length):
-        #     # Concatenate non-autoregressive output and previous autoregressive output
-        #     input_ar = torch.cat([x_na[:, t:t+1, :], x_ar], dim=-1)
-            
-        #     # RNN step
-        #     out_ar, h_ar = self.autoregressive_rnn(input_ar, h_ar)
-            
-        #     # Predict next timestep
-        #     x_ar = self.autoregressive_output(out_ar)
-        #     outputs.append(x_ar)
-        
-        # # Stack outputs into a sequence
-        # x_ar_final = torch.cat(outputs, dim=1)  # (batch_size, seq_length, output_channels)
-        
-        # return x_ar_final
-
         return x_na
 
 
@@ -278,7 +251,6 @@ class VAE(nn.Module):
         decoder_ffm,
         decoder_max_batch_size,
         decoder_max_seq_len,
-        decoder_num_gru_layers,
         decoder_transformer_activation,
         gpu_id=None,  
         **kwargs):
@@ -304,9 +276,6 @@ class VAE(nn.Module):
         self.decoder_max_batch_size = decoder_max_batch_size
         self.decoder_max_seq_len = decoder_max_seq_len
         self.decoder_transformer_activation = decoder_transformer_activation
-
-        self.decoder_num_gru_layers = decoder_num_gru_layers
-
 
         # Raw CrossAttention Head
         self.encoder_head = Encoder_TimeSeriesWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=self.crattn_embed_dim, **kwargs)
@@ -343,7 +312,6 @@ class VAE(nn.Module):
             ffm = self.decoder_ffm,
             max_bs = self.decoder_max_batch_size,
             max_seq_len = self.decoder_max_seq_len,
-            num_gru_layers = self.decoder_num_gru_layers,
             activation=self.decoder_transformer_activation
             )
 
