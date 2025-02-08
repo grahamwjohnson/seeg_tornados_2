@@ -165,19 +165,19 @@ class TransformerDecoder(nn.Module):
 
         # Non-autoregressive decoder (rough sketch generator)
         self.non_autoregressive_fc = nn.Sequential(
-            nn.Linear(latent_dim, latent_dim * 4),
+            nn.Linear(latent_dim, latent_dim * 2),
             nn.SiLU(),
-            RMSNorm(latent_dim * 4),
-            nn.Linear(latent_dim * 4, latent_dim * 4),
-            RMSNorm(latent_dim * 4),
+            RMSNorm(latent_dim * 2),
+            nn.Linear(latent_dim * 2, latent_dim * 2),
+            RMSNorm(latent_dim * 2),
             nn.SiLU(),
-            nn.Linear(latent_dim * 4, latent_dim * 4),
-            RMSNorm(latent_dim * 4),
+            nn.Linear(latent_dim * 2, latent_dim * 2),
+            RMSNorm(latent_dim * 2),
             nn.SiLU(),
-            nn.Linear(latent_dim * 4, latent_dim * 4),
-            RMSNorm(latent_dim * 4),
+            nn.Linear(latent_dim * 2, latent_dim * 2),
+            RMSNorm(latent_dim * 2),
             nn.SiLU(),
-            nn.Linear(latent_dim * 4, transformer_dim * seq_length),
+            nn.Linear(latent_dim * 2, transformer_dim * seq_length),
             nn.SiLU(),
             RMSNorm(transformer_dim * seq_length)
             )
@@ -194,10 +194,10 @@ class TransformerDecoder(nn.Module):
         
         self.non_autoregressive_output = nn.Sequential(
             nn.Linear(transformer_dim, transformer_dim * 4),
-            nn.Tanh(),
-            nn.Linear(transformer_dim * 4, transformer_dim),
-            nn.Tanh(),
-            nn.Linear(transformer_dim, output_channels),
+            nn.SiLU(),
+            nn.Linear(transformer_dim * 4, transformer_dim * 4),
+            nn.SiLU(),
+            nn.Linear(transformer_dim * 4, output_channels),
             nn.Tanh())
             
     def forward(self, z):
@@ -385,8 +385,9 @@ def print_models_flow(x, **kwargs):
     print(f"\n\n\nINPUT TO <VAE - Decoder Mode> \n"
     f"z:{latent.shape}\n"
     f"hash_pat_embedding:{hash_pat_embedding.shape}\n")
+    summary(vae, input_data=[latent, True], depth=999, device="cpu")
     core_out = vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=pat_num_channels)  
-    print(f"core_out:{core_out.shape}\n")
+    print(f"decoder_out:{core_out.shape}\n")
 
     del vae
 

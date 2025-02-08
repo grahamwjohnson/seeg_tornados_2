@@ -15,12 +15,12 @@ if __name__ == "__main__":
     atd_file = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple/trained_models/all_time_data_01092023_112957.csv'
 
     # Source data selection
-    # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025'
+    model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025'
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/jackal'
-    model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple/trained_models/pangolin_spat113_finetune'
+    # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple/trained_models/pangolin_spat113_finetune'
     # pat_ids_list = ['Epat34']
-    single_pat = 'Spat113'
-    epoch = 298 # 39 # 141 
+    # single_pat = 'Epat34'
+    epoch = 141 # 39 # 141 
     latent_subdir = f'latent_files/Epoch{epoch}'
     win_sec = 60 # 60, 1.0
     stride_sec = 30 # 30, 1.0 
@@ -34,20 +34,16 @@ if __name__ == "__main__":
 
     pacmap_MedDim_numdims = 10
     pacmap_LR = 0.1 #0.05
-    pacmap_NumIters = (500,500,500)
+    pacmap_NumIters = (1000,1000,1000)
 
     pacmap_NN = None
     pacmap_MN_ratio = 7 #0.5
     pacmap_FP_ratio = 11 #2.0
 
-    pacmap_MN_ratio_MedDim = pacmap_MN_ratio
-    pacmap_FP_ratio_MedDim = pacmap_FP_ratio
-
     HDBSCAN_min_cluster_size = 200
     HDBSCAN_min_samples = 100
     plot_preictal_color_sec = 60*60*2
     plot_postictal_color_sec = 60*10 #60*60*4
-
 
     # Create paths and create pacmap directory for saving pacmap models and outputs
     latent_dir = f"{model_dir}/{latent_subdir}/{win_sec}SecondWindow_{stride_sec}SecondStride" 
@@ -60,7 +56,7 @@ if __name__ == "__main__":
     build_filepaths = []
     for i in range(len(pacmap_build_strs)):
         dir_curr = f"{latent_dir}/{pacmap_build_strs[i]}"
-        build_filepaths = build_filepaths + glob.glob(dir_curr + f'/{single_pat}*.pkl')
+        build_filepaths = build_filepaths + glob.glob(dir_curr + f'/*.pkl')
 
     # Double check window and stride are correct based on file naming [HARDCODED]
     assert (build_filepaths[0].split("/")[-1].split("_")[-1] == f"{stride_sec}secStride.pkl") & (build_filepaths[0].split("/")[-1].split("_")[-2] == f"{win_sec}secWindow")
@@ -79,7 +75,7 @@ if __name__ == "__main__":
             latent_data_windowed[i] = pickle.load(f)
          
     # Call the subfunction to create/use pacmap and plot
-    pacmap_savedir = f"{pacmap_dir}/{single_pat}/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_generation"
+    pacmap_savedir = f"{pacmap_dir}/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_generation"
     axis, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = utils_functions.pacmap_subfunction(
         atd_file = atd_file,
         pat_ids_list=build_pat_ids_list,
@@ -97,8 +93,6 @@ if __name__ == "__main__":
         pacmap_NN = pacmap_NN,
         pacmap_MN_ratio = pacmap_MN_ratio,
         pacmap_FP_ratio = pacmap_FP_ratio,
-        pacmap_MN_ratio_MedDim = pacmap_MN_ratio_MedDim,
-        pacmap_FP_ratio_MedDim = pacmap_FP_ratio_MedDim,
         HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
         HDBSCAN_min_samples = HDBSCAN_min_samples,
         plot_preictal_color_sec = plot_preictal_color_sec,

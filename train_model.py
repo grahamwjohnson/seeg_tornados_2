@@ -632,9 +632,9 @@ class Trainer:
                 batch_idx = 0
                 for data_tensor, file_name in dataloader_curr: # Paralell random file pull accross patients
 
-                    # Reset the cumulative losses & zero gradients
-                    # AFTER EACH BATCH
-                    self._zero_all_grads()
+                    # # Reset the cumulative losses & zero gradients
+                    # # AFTER EACH BATCH
+                    # self._zero_all_grads()
                     
                     # Break loop if number of batch pulls per patient have been met
                     batch_idx = batch_idx + 1
@@ -647,9 +647,9 @@ class Trainer:
                             epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
                         if (not val_finetune) & (not val_unseen): self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
 
-                        # # Reset the cumulative losses & zero gradients
-                        # # AFTER EACH FORWARD PASS
-                        # self._zero_all_grads()
+                        # Reset the cumulative losses & zero gradients
+                        # AFTER EACH FORWARD PASS
+                        self._zero_all_grads()
 
                         # Reset the data vars for Transformer Sequence and put on GPU
                         x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.autoencode_samples).to(self.gpu_id)
@@ -677,7 +677,7 @@ class Trainer:
  
                         # LOSSES: Intra-Patient 
                         recon_loss = loss_functions.recon_loss_function(
-                            x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
+                            x=x[:, 1 + self.num_encode_concat_transformer_tokens :, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
                             x_hat=x_hat,
                             recon_weight=self.recon_weight)
 
@@ -779,20 +779,16 @@ class Trainer:
                                         **kwargs
                                 )
             
-                        # ### WITHIN FILE LOOP ###
-                        # # Step optimizers after single patient
-                        # self.opt_vae.step()
+                        # AFTER EACH FORWARD PASS
+                        self.opt_vae.step()
 
-                    ### AFTER EACH BATCH ###
-                    # Step optimizers after single patient
-                    self.opt_vae.step()
+                    # ### AFTER EACH BATCH ###
+                    # self.opt_vae.step()
 
                 # ### AFTER EACH PATIENT ###
-                # # Step optimizers after single patient
                 # self.opt_vae.step()
                     
             # ### AFTER ALL PATIENTS ###
-            # # Step optimizers after all patients have been backpropgated
             # self.opt_vae.step()
                          
 if __name__ == "__main__":

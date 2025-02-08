@@ -830,8 +830,6 @@ def pacmap_subfunction(
     pacmap_NN,
     pacmap_MN_ratio,
     pacmap_FP_ratio,
-    pacmap_MN_ratio_MedDim,
-    pacmap_FP_ratio_MedDim,
     HDBSCAN_min_cluster_size,
     HDBSCAN_min_samples,
     plot_preictal_color_sec,
@@ -874,6 +872,11 @@ def pacmap_subfunction(
     # Flatten data into [miniepoch, dim] to feed into PaCMAP, original data is [file, seq_miniepoch_in_file, latent_dim]
     latent_PaCMAP_input = np.concatenate(latent_data_windowed, axis=0)
 
+    # Generate numerical IDs for each unique patient, and give each datapoint an ID
+    unique_ids = list(set(pat_ids_list))
+    id_to_index = {id: idx for idx, id in enumerate(unique_ids)}  # Create mapping dictionary
+    pat_idxs = [id_to_index[id] for id in pat_ids_list]
+    pat_idxs_expanded = [item for item in pat_idxs for _ in range(latent_data_windowed[0].shape[0])]
 
     ### PaCMAP 2-Dim ###
 
@@ -883,6 +886,8 @@ def pacmap_subfunction(
         # initializing the pacmap instance
         # Setting n_neighbors to "None" leads to a default choice shown below in "parameter" section
         reducer = pacmap.PaCMAP(
+            exclude_self_pat=True, 
+            pat_idxs=pat_idxs_expanded,
             distance='angular',
             lr=pacmap_LR,
             num_iters=pacmap_NumIters, # will default ~27 if left as None
@@ -916,13 +921,19 @@ def pacmap_subfunction(
         # initializing the pacmap instance
         # Setting n_neighbors to "None" leads to a default choice shown below in "parameter" section
         reducer_MedDim = pacmap.PaCMAP(
+            exclude_self_pat=True, 
+            pat_idxs=pat_idxs_expanded,
+            tree=reducer.tree,
+            pair_neighbors=reducer.pair_neighbors, # Can use same pairs from 2D pacmap
+            pair_MN=reducer.pair_MN, # Can use same pairs from 2D pacmap
+            pair_FP=reducer.pair_FP, # Can use same pairs from 2D pacmap
             distance='angular',
             lr=pacmap_LR,
             num_iters=pacmap_NumIters, # will default ~27 if left as None
             n_components=pacmap_MedDim_numdims, 
             n_neighbors=pacmap_NN, # default None, 
-            MN_ratio=pacmap_MN_ratio_MedDim, # default 0.5, 
-            FP_ratio=pacmap_FP_ratio_MedDim, # default 2.0,
+            MN_ratio=pacmap_MN_ratio, # default 0.5, 
+            FP_ratio=pacmap_FP_ratio, # default 2.0,
             save_tree=True, 
             apply_pca=True, 
             verbose=verbose) # Save tree to enable 'transform" method?
