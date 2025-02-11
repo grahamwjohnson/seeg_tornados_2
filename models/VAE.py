@@ -163,21 +163,21 @@ class TransformerDecoder(nn.Module):
         self.max_bs = max_bs
         self.max_seq_len = max_seq_len
 
-        # Non-autoregressive decoder (rough sketch generator)
+        # Non-autoregressive decoder 
         self.non_autoregressive_fc = nn.Sequential(
-            nn.Linear(latent_dim, latent_dim * 2),
+            nn.Linear(latent_dim, latent_dim * 4),
             nn.SiLU(),
-            RMSNorm(latent_dim * 2),
-            nn.Linear(latent_dim * 2, latent_dim * 2),
-            RMSNorm(latent_dim * 2),
+            RMSNorm(latent_dim * 4),
+            nn.Linear(latent_dim * 4, latent_dim * 8),
+            RMSNorm(latent_dim * 8),
             nn.SiLU(),
-            nn.Linear(latent_dim * 2, latent_dim * 2),
-            RMSNorm(latent_dim * 2),
+            nn.Linear(latent_dim * 8, latent_dim * 8),
+            RMSNorm(latent_dim * 8),
             nn.SiLU(),
-            nn.Linear(latent_dim * 2, latent_dim * 2),
-            RMSNorm(latent_dim * 2),
+            nn.Linear(latent_dim * 8, latent_dim * 4),
+            RMSNorm(latent_dim * 4),
             nn.SiLU(),
-            nn.Linear(latent_dim * 2, transformer_dim * seq_length),
+            nn.Linear(latent_dim * 4, transformer_dim * seq_length),
             nn.SiLU(),
             RMSNorm(transformer_dim * seq_length)
             )
@@ -192,6 +192,7 @@ class TransformerDecoder(nn.Module):
         #     max_seq_len=self.max_seq_len,
         #     activation=activation)) 
         
+        # Now FC without norms
         self.non_autoregressive_output = nn.Sequential(
             nn.Linear(transformer_dim, transformer_dim * 4),
             nn.SiLU(),

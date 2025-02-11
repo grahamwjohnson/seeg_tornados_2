@@ -44,6 +44,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 import math
 import pacmap
+import phate
 from scipy.stats import norm
 import matplotlib.colors as colors
 import auraloss
@@ -51,6 +52,8 @@ from tkinter import filedialog
 import re
 from functools import partial
 from matplotlib.colors import LinearSegmentedColormap
+from annoy import AnnoyIndex
+from scipy.sparse import csr_matrix
 
 from models.VAE import print_models_flow
 
@@ -812,7 +815,294 @@ def plot_recon(x, x_hat, plot_dict, batch_file_names, epoch, savedir, gpu_id, pa
         pl.savefig(savename_jpg)
         pl.savefig(savename_svg)
         pl.close(fig) 
+
+
+def inter_patient_knn_annoy(data, patient_ids, k, n_trees=20, metric='angular'):
+    n_samples, n_features = data.shape
+
+    tree = AnnoyIndex(n_features, metric=metric)
+    if _RANDOM_STATE is not None:
+        tree.set_seed(_RANDOM_STATE)
+    for i in range(n_samples):
+        tree.add_item(i, data[i, :])
+    tree.build(20)
+
+    knn_indices = np.zeros((n_samples, k), dtype=int)
+    knn_distances = np.zeros((n_samples, k))
+    for i in range(n_samples):
+
+        if i % 100 == 0:
+            sys.stdout.write(f"\r{i}/{n}")
+            sys.stdout.flush() 
+
+        search_done = False
+        iter_buffer = 50
+        while not search_done:
+            nbrs_ = tree.get_nns_by_item(i, k + 1 + iter_buffer)
+
+            # Find and exclude self
+            self_idx = pat_idxs[i]
+            ids = [pat_idxs[ii] for ii in nbrs_]
+            self_idxs_bool = [x == self_idx for x in ids]
+            nbrs_pruned = [nbrs_[i] for i, value in enumerate(self_idxs_bool) if not value]
+
+            if len(nbrs_pruned) >= k: 
+                nbrs[i, :] = nbrs_pruned[:k]
+                search_done = True
+            else:
+                iter_buffer = iter_buffer * 2
+
+        for j in range(k):
+            knn_distances[i, j] = tree.get_distance(i, nbrs[i, j])
+
+
+    # Build a single Annoy index for the entire dataset
+    annoy_index = AnnoyIndex(n_features, 'euclidean')
+    for i in range(n_samples):
+        annoy_index.add_item(i, data[i])
+    annoy_index.build(n_trees)
+
+    # Find k nearest inter-patient neighbors
+    for i in range(n_samples):
+
+        if i%100 == 0:
+            sys.stdout.write(f"\rFinding NN: {i}/{n_samples}")
+            sys.stdout.flush() 
+
+        # Get all points from other patients
+        # TODO should place logic outside loop
+        mask = [patient_ids[j] != patient_ids[i] for j in range(len(patient_ids))]
+        candidate_indices = np.where(mask)[0]
+
+        expanded_count = 50
+        inter_patient_neighbors = []
+        inter_patient_distances = []
+        while len(inter_patient_neighbors) < k:
+
+            # Query the Annoy index for nearest neighbors
+            neighbor_indices, neighbor_distances = annoy_index.get_nns_by_item(i, k + expanded_count, include_distances=True)
+
+            # Filter to include only inter-patient neighbors
+            inter_patient_neighbors = [idx for idx in neighbor_indices if idx in candidate_indices]
+            inter_patient_distances = [dist for idx, dist in zip(neighbor_indices, neighbor_distances) if idx in candidate_indices]
+
+            expanded_count = expanded_count * 2
+
+        # Store the k results
+        knn_indices[i] = inter_patient_neighbors[:k]
+        knn_distances[i] = inter_patient_distances[:k]
+
+    return knn_indices, knn_distances
+
+def create_affinity_matrix(knn_indices, knn_distances, k, decay=15):
+    n_samples = knn_indices.shape[0]
+    rows = np.repeat(np.arange(n_samples), k)
+    cols = knn_indices.flatten()
+    values = np.exp(-knn_distances.flatten() / decay)
+
+    # Create sparse affinity matrix
+    affinity_matrix = csr_matrix((values, (rows, cols)), shape=(n_samples, n_samples))
+    return affinity_matrix
+
+def phate_subfunction(  
+    atd_file,
+    pat_ids_list,
+    latent_data_windowed, 
+    start_datetimes_epoch,  
+    stop_datetimes_epoch,
+    epoch, 
+    FS, 
+    win_sec, 
+    stride_sec, 
+    savedir,
+    HDBSCAN_min_cluster_size,
+    HDBSCAN_min_samples,
+    plot_preictal_color_sec,
+    plot_postictal_color_sec,
+    interictal_contour=False,
+    verbose=True,
+    knn=5,
+    decay=15,  # Decay parameter for PHATE
+    phate_metric='cosine',
+    xy_lims = [],
+    premade_PHATE = [],
+    premade_HDBSCAN = [],
+    **kwargs):
+
+    '''
+    Goal of function:
+    Run PHATE and plot
+
+    '''
+
+    # Metadata
+    latent_dim = latent_data_windowed[0].shape[1]
+    num_timepoints_in_windowed_file = latent_data_windowed[0].shape[0]
+    modified_FS = 1 / stride_sec
+
+    # Check for NaNs in files
+    delete_file_idxs = []
+    for i in range(len(latent_data_windowed)):
+        if np.sum(np.isnan(latent_data_windowed[i])) > 0:
+            delete_file_idxs = delete_file_idxs + [i]
+            print(f"WARNING: Deleted file {start_datetimes_epoch[i]} that had NaNs")
+
+    # Delete entries/files in lists where there is NaN in latent space for that file
+    latent_data_windowed = [item for i, item in enumerate(latent_data_windowed) if i not in delete_file_idxs]
+    start_datetimes_epoch = [item for i, item in enumerate(start_datetimes_epoch) if i not in delete_file_idxs]  
+    stop_datetimes_epoch = [item for i, item in enumerate(stop_datetimes_epoch) if i not in delete_file_idxs]
+    pat_ids_list = [item for i, item in enumerate(pat_ids_list) if i not in delete_file_idxs]
+
+    # Flatten data into [miniepoch, dim] to feed into PaCMAP, original data is [file, seq_miniepoch_in_file, latent_dim]
+    latent_PHATE_input = np.concatenate(latent_data_windowed, axis=0)
+
+    # Generate numerical IDs for each unique patient, and give each datapoint an ID
+    unique_ids = list(set(pat_ids_list))
+    id_to_index = {id: idx for idx, id in enumerate(unique_ids)}  # Create mapping dictionary
+    pat_idxs = [id_to_index[id] for id in pat_ids_list]
+    pat_idxs_expanded = [item for item in pat_idxs for _ in range(latent_data_windowed[0].shape[0])]
+
+    
+    ### PHATE ###
+
+    # Custom NN to exclude intra-patient points
+    # Compute inter-patient k-NN graph using Annoy
+    knn_indices, knn_distances = inter_patient_knn_annoy(latent_PHATE_input, pat_idxs_expanded, knn, metric=phate_metric)
+    affinity_matrix = create_affinity_matrix(knn_indices, knn_distances, knn, decay) # Create affinity matrix
+    phate_op = phate.PHATE(
+        # pat_idxs=pat_idxs_expanded, # must now match input data
+        knn_dist='precomputed', 
+        decay=decay,
+        # mds_solver='smacof',
+        # knn_dist=phate_metric,
+        # mds_dist=phate_metric,
+        # n_jobs= -2
+    )
+
+    # Fit and transform the data
+    phate_output = phate_op.fit_transform(affinity_matrix)
+
+    # Project data through reducer (i.e. PaCMAP) and split back into files
+    latent_postPHATE_perfile = np.stack(np.split(phate_output, len(latent_data_windowed), axis=0),axis=0)
+
+
+    ### HDBSCAN ###
+    # If training, create new cluster model, otherwise "approximate_predict()" if running on val data
+    if premade_HDBSCAN == []:
+        # Now do the clustering with HDBSCAN
+        print("Building new HDBSCAN model")
+        hdb = hdbscan.HDBSCAN(
+            min_cluster_size=HDBSCAN_min_cluster_size,
+            min_samples=HDBSCAN_min_samples,
+            max_cluster_size=0,
+            metric='euclidean',  # cosine, manhattan
+            # memory=Memory(None, verbose=1)
+            algorithm='best',
+            cluster_selection_method='eom',
+            prediction_data=True
+            )
         
+        hdb.fit(latent_postPHATE_perfile.reshape(latent_postPHATE_perfile.shape[0]*latent_postPHATE_perfile.shape[1], latent_postPHATE_perfile.shape[2]))  # []
+
+         #TODO Look into soft clustering
+        # soft_cluster_vecs = np.array(hdbscan.all_points_membership_vectors(hdb))
+        # soft_clusters = np.array([np.argmax(x) for x in soft_cluster_vecs], dtype=int)
+        # hdb_color_palette = sns.color_palette('Paired', int(np.max(soft_clusters) + 3))
+
+        hdb_labels_flat = hdb.labels_
+        # hdb_labels_flat = soft_clusters
+        hdb_probabilities_flat = hdb.probabilities_
+        # hdb_probabilities_flat = np.array([np.max(x) for x in soft_cluster_vecs])
+                
+    # If HDBSCAN is already made/provided, then predict cluster with built in HDBSCAN method
+    else:
+        print("Using pre-built HDBSCAN model")
+        hdb = premade_HDBSCAN
+        
+
+    #TODO Destaurate according to probability of being in cluster
+
+    # Per patient, Run data through model & Reshape the labels and probabilities for plotting
+    hdb_labels_flat_perfile = [-1] * latent_postPHATE_perfile.shape[0]
+    hdb_probabilities_flat_perfile = [-1] * latent_postPHATE_perfile.shape[0]
+    for i in range(len(latent_postPHATE_perfile)):
+        hdb_labels_flat_perfile[i], hdb_probabilities_flat_perfile[i] = hdbscan.prediction.approximate_predict(hdb, latent_postPHATE_perfile[i, :, :])
+
+
+    ###### START OF PLOTTING #####
+
+    # Get all of the seizure times and types
+    seiz_start_dt_perfile = [-1] * len(pat_ids_list)
+    seiz_stop_dt_perfile = [-1] * len(pat_ids_list)
+    seiz_types_perfile = [-1] * len(pat_ids_list)
+    for i in range(len(pat_ids_list)):
+        seiz_start_dt_perfile[i], seiz_stop_dt_perfile[i], seiz_types_perfile[i] = get_pat_seiz_datetimes(pat_ids_list[i], atd_file=atd_file)
+
+    # Intialize master figure 
+    fig = pl.figure(figsize=(40, 15))
+    gs = gridspec.GridSpec(1, 5, figure=fig)
+
+    # **** PHATE PLOTTING ****
+
+    print(f"PHATE Plotting")
+    ax20 = fig.add_subplot(gs[0, 0]) 
+    ax21 = fig.add_subplot(gs[0, 1]) 
+    ax22 = fig.add_subplot(gs[0, 2]) 
+    ax23 = fig.add_subplot(gs[0, 3]) 
+    ax24 = fig.add_subplot(gs[0, 4]) 
+    ax20, ax21, ax22, ax23, ax24, xy_lims = plot_latent(
+        ax=ax20, 
+        interCont_ax=ax21,
+        seiztype_ax=ax22,
+        time_ax=ax23,
+        cluster_ax=ax24,
+        latent_data=latent_postPHATE_perfile.swapaxes(1,2), # [epoch, 2, timesample]
+        modified_samp_freq=modified_FS,  # accounts for windowing/stride
+        start_datetimes=start_datetimes_epoch, 
+        stop_datetimes=stop_datetimes_epoch, 
+        win_sec=win_sec,
+        stride_sec=stride_sec, 
+        seiz_start_dt=seiz_start_dt_perfile, 
+        seiz_stop_dt=seiz_stop_dt_perfile, 
+        seiz_types=seiz_types_perfile,
+        preictal_dur=plot_preictal_color_sec,
+        postictal_dur=plot_postictal_color_sec,
+        plot_ictal=True,
+        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
+        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
+        hdb=hdb,
+        xy_lims=xy_lims,
+        **kwargs)        
+
+    ax20.title.set_text('PHATE Latent Space: ' + 
+        'Window mean, dur/str=' + str(win_sec) + 
+        '/' + str(stride_sec) +' seconds' 
+        # f'\nLR: {str(pacmap_LR)}, ' +
+        # f'NumIters: {str(pacmap_NumIters)}, ' +
+        # f'NN: {pacmap_NN}, MN_ratio: {str(pacmap_MN_ratio)}, FP_ratio: {str(pacmap_FP_ratio)}'
+        )
+    
+    if interictal_contour:
+        ax21.title.set_text('Interictal Contour (no peri-ictal data)')
+
+
+    # **** Save entire figure *****
+    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+    savename_jpg = savedir + f"/JPEGs/PHATE_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + f"_{phate_metric}_knn{knn}.jpg"
+    # savename_svg = savedir + f"/SVGs/PHATE_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + ".svg"
+    pl.savefig(savename_jpg, dpi=600)
+    # pl.savefig(savename_svg)
+
+    # TODO Upload to WandB
+
+    pl.close(fig)
+
+    # Bundle the save metrics together
+    # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
+    return ax20, phate_op, hdb, xy_lims # save_tuple
+
+
 def pacmap_subfunction(  
     atd_file,
     pat_ids_list,
@@ -834,6 +1124,8 @@ def pacmap_subfunction(
     HDBSCAN_min_samples,
     plot_preictal_color_sec,
     plot_postictal_color_sec,
+    apply_pca=True,
+    pca_comp=100,
     interictal_contour=False,
     verbose=True,
     xy_lims = [],
@@ -896,7 +1188,8 @@ def pacmap_subfunction(
             MN_ratio=pacmap_MN_ratio, # default 0.5, 
             FP_ratio=pacmap_FP_ratio, # default 2.0,
             save_tree=True, # Save tree to enable 'transform" method
-            apply_pca=True, 
+            apply_pca=apply_pca, 
+            pca_comp=pca_comp,
             verbose=verbose) 
 
         # fit the data (The index of transformed data corresponds to the index of the original data)
@@ -935,7 +1228,8 @@ def pacmap_subfunction(
             MN_ratio=pacmap_MN_ratio, # default 0.5, 
             FP_ratio=pacmap_FP_ratio, # default 2.0,
             save_tree=True, 
-            apply_pca=True, 
+            apply_pca=apply_pca, 
+            pca_comp=pca_comp,
             verbose=verbose) # Save tree to enable 'transform" method?
 
         # fit the data (The index of transformed data corresponds to the index of the original data)
@@ -1055,7 +1349,7 @@ def pacmap_subfunction(
         
     if premade_PCA == []:
         print("Calculating new PCA")
-        pca = PCA(n_components=2, svd_solver='full')
+        pca = PCA(n_components=2, svd_solver='full') # Different than PCA used for PaCMAP
         latent_PCA_flat_transformed = pca.fit_transform(latent_PaCMAP_input)
 
     else:
@@ -1144,9 +1438,9 @@ def pacmap_subfunction(
     # **** Save entire figure *****
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
     # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-    savename_jpg = savedir + f"/JPEGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + ".jpg"
+    savename_jpg = savedir + f"/JPEGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + f"PCA{apply_pca}Ncomp{pca_comp}.jpg"
     # savename_svg = savedir + f"/SVGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + ".svg"
-    pl.savefig(savename_jpg, dpi=300)
+    pl.savefig(savename_jpg, dpi=600)
     # pl.savefig(savename_svg)
 
     # TODO Upload to WandB
@@ -1157,7 +1451,7 @@ def pacmap_subfunction(
     # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
     return ax20, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS # save_tuple
 
-def run_pacmap(atd_file, epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_build_strs, pacmap_eval_strs, delete_latent_files=False, **kwargs):
+def run_pacmap(atd_file, epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_build_strs, pacmap_eval_strs, apply_pca, delete_latent_files=False, **kwargs):
     
     print(f"Running PaCMAP: {win_sec}SecondWindow_{stride_sec}SecondStride")
 
@@ -1201,6 +1495,7 @@ def run_pacmap(atd_file, epoch, win_sec, stride_sec, model_dir, latent_subdir, p
         epoch=epoch, 
         win_sec=win_sec, 
         stride_sec=stride_sec, 
+        apply_pca=apply_pca,
         savedir=f"{pacmap_dir}/pacmap_generation",
         **kwargs)
 
@@ -1241,6 +1536,7 @@ def run_pacmap(atd_file, epoch, win_sec, stride_sec, model_dir, latent_subdir, p
         win_sec=win_sec, 
         stride_sec=stride_sec, 
         savedir=f"{pacmap_dir}/pacmap_eval_only",
+        apply_pca=apply_pca,
         xy_lims = xy_lims,
         xy_lims_RAW_DIMS = xy_lims_RAW_DIMS,
         xy_lims_PCA = xy_lims_PCA,
@@ -2139,6 +2435,7 @@ def get_desired_fnames(
         intrapatient_dataset_style: list, 
         hour_dataset_range: list, 
         dataset_pic_dir: str,
+        print_dataset_bargraphs: bool,
         **kwargs
         ):
     
@@ -2206,7 +2503,7 @@ def get_desired_fnames(
                 break
         if not found_hours: raise Exception("Hours desired not found")
 
-    if gpu_id == 0:
+    if (gpu_id == 0) & print_dataset_bargraphs:
         print_dataset_bargraphs(pat_id, curr_fnames, curr_fnames, dataset_pic_dir, atd_file=atd_file)
 
     return curr_fnames

@@ -669,6 +669,10 @@ class Trainer:
                             end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
                             x[:, embedding_idx, :, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
 
+                        # Check for NaNs
+                        if torch.isnan(x).any():
+                            raise Exception(f"ERROR: found nans in one of these files: {file_name}")
+
                         ### VAE ENCODER: 1-shifted
                         mean, logvar, latent = self.vae(x[:, :-1, :, :], reverse=False)
                         
