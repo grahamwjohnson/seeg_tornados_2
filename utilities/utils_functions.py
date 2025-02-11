@@ -821,8 +821,8 @@ def inter_patient_knn_annoy(data, patient_ids, k, n_trees=20, metric='angular'):
     n_samples, n_features = data.shape
 
     tree = AnnoyIndex(n_features, metric=metric)
-    if _RANDOM_STATE is not None:
-        tree.set_seed(_RANDOM_STATE)
+    # if _RANDOM_STATE is not None:
+    #     tree.set_seed(_RANDOM_STATE)
     for i in range(n_samples):
         tree.add_item(i, data[i, :])
     tree.build(20)
@@ -832,7 +832,7 @@ def inter_patient_knn_annoy(data, patient_ids, k, n_trees=20, metric='angular'):
     for i in range(n_samples):
 
         if i % 100 == 0:
-            sys.stdout.write(f"\r{i}/{n}")
+            sys.stdout.write(f"\r{i}/{n_samples}")
             sys.stdout.flush() 
 
         search_done = False
@@ -841,56 +841,19 @@ def inter_patient_knn_annoy(data, patient_ids, k, n_trees=20, metric='angular'):
             nbrs_ = tree.get_nns_by_item(i, k + 1 + iter_buffer)
 
             # Find and exclude self
-            self_idx = pat_idxs[i]
-            ids = [pat_idxs[ii] for ii in nbrs_]
+            self_idx = patient_ids[i]
+            ids = [patient_ids[ii] for ii in nbrs_]
             self_idxs_bool = [x == self_idx for x in ids]
             nbrs_pruned = [nbrs_[i] for i, value in enumerate(self_idxs_bool) if not value]
 
             if len(nbrs_pruned) >= k: 
-                nbrs[i, :] = nbrs_pruned[:k]
+                knn_indices[i, :] = nbrs_pruned[:k]
                 search_done = True
             else:
                 iter_buffer = iter_buffer * 2
 
         for j in range(k):
-            knn_distances[i, j] = tree.get_distance(i, nbrs[i, j])
-
-
-    # Build a single Annoy index for the entire dataset
-    annoy_index = AnnoyIndex(n_features, 'euclidean')
-    for i in range(n_samples):
-        annoy_index.add_item(i, data[i])
-    annoy_index.build(n_trees)
-
-    # Find k nearest inter-patient neighbors
-    for i in range(n_samples):
-
-        if i%100 == 0:
-            sys.stdout.write(f"\rFinding NN: {i}/{n_samples}")
-            sys.stdout.flush() 
-
-        # Get all points from other patients
-        # TODO should place logic outside loop
-        mask = [patient_ids[j] != patient_ids[i] for j in range(len(patient_ids))]
-        candidate_indices = np.where(mask)[0]
-
-        expanded_count = 50
-        inter_patient_neighbors = []
-        inter_patient_distances = []
-        while len(inter_patient_neighbors) < k:
-
-            # Query the Annoy index for nearest neighbors
-            neighbor_indices, neighbor_distances = annoy_index.get_nns_by_item(i, k + expanded_count, include_distances=True)
-
-            # Filter to include only inter-patient neighbors
-            inter_patient_neighbors = [idx for idx in neighbor_indices if idx in candidate_indices]
-            inter_patient_distances = [dist for idx, dist in zip(neighbor_indices, neighbor_distances) if idx in candidate_indices]
-
-            expanded_count = expanded_count * 2
-
-        # Store the k results
-        knn_indices[i] = inter_patient_neighbors[:k]
-        knn_distances[i] = inter_patient_distances[:k]
+            knn_distances[i, j] = tree.get_distance(i, knn_indices[i, j])
 
     return knn_indices, knn_distances
 

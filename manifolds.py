@@ -1,5 +1,5 @@
 '''
-Ad-hoc script to run PaCMAP on latent files
+Ad-hoc script to run PaCMAP/PHATE/Histograms on latent files
 '''
 
 import os, glob
@@ -28,18 +28,16 @@ if __name__ == "__main__":
     # pacmap_build_strs = ['train', 'valfinetune']
     # pacmap_eval_strs = ['valunseen']
     pacmap_build_strs = ['train']
-    pacmap_eval_strs = ['valfinetune', 'valunseen']
+    pacmap_eval_strs = ['valfinetune', 'valunseen'] # Typically will use valfinetune in build...?
     
     FS = 512 
 
     # PaCMAP Settings
     apply_pca = True # Before PaCMAP
     pca_comp = 100
-
     pacmap_MedDim_numdims = 10
     pacmap_LR = 1 #0.05
     pacmap_NumIters = (1000,1000,1000)
-
     pacmap_NN = None
     pacmap_MN_ratio = 7 #0.5
     pacmap_FP_ratio = 11 #2.0
@@ -47,7 +45,7 @@ if __name__ == "__main__":
     # PHATE Settings
     knn = 20
     decay = 40
-    phate_metric = 'angular' # 'angular', 'euclidean'
+    phate_metric = 'angular' # 'angular', 'euclidean' # Used by custom ANNOY function, angular=cosine for ANNOY
 
     # HDBSCAN Settings
     HDBSCAN_min_cluster_size = 200
@@ -63,7 +61,6 @@ if __name__ == "__main__":
     phate_dir = f"{model_dir}/phate/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride/adhoc"
     if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir)
     if not os.path.exists(phate_dir): os.makedirs(phate_dir)
-
 
     ### GENERATION DATA ###
     build_filepaths = [] # Collect pacmap build files - i.e. what data is being used to construct data manifold approximator
@@ -81,13 +78,12 @@ if __name__ == "__main__":
             latent_data_windowed_generation[i] = pickle.load(f)
 
     ### EVAL DATA ###
-    eval_filepaths = []
+    eval_filepaths = [] # these data are not used to build the manifold projections, but are just run through them after construction
     for i in range(len(pacmap_eval_strs)):
         dir_curr = f"{latent_dir}/{pacmap_eval_strs[i]}"
         if single_pat == []: eval_filepaths = eval_filepaths + glob.glob(dir_curr + f'/*.pkl')
         else: eval_filepaths = eval_filepaths + glob.glob(dir_curr + f'/{single_pat}*.pkl')
-
-    if eval_filepaths != []:
+    if eval_filepaths != []: # May not have any eval data available depending on selections
         assert (eval_filepaths[0].split("/")[-1].split("_")[-1] == f"{stride_sec}secStride.pkl") & (eval_filepaths[0].split("/")[-1].split("_")[-2] == f"{win_sec}secWindow") # Double check window and stride are correct based on file naming [HARDCODED]
         eval_start_datetimes, eval_stop_datetimes = utils_functions.filename_to_datetimes([s.split("/")[-1] for s in eval_filepaths]) # Get start/stop datetimes
         eval_pat_ids_list = [s.split("/")[-1].split("_")[0] for s in eval_filepaths] # Get the eval pat_ids
@@ -96,8 +92,7 @@ if __name__ == "__main__":
         for i in range(len(eval_filepaths)):
             with open(eval_filepaths[i], "rb") as f: 
                 latent_data_windowed_eval[i] = pickle.load(f)
-    else:
-        print(f"WARNING: no evaluation data for {single_pat} in these categories: {pacmap_eval_strs}")
+    else: print(f"WARNING: no evaluation data for {single_pat} in these categories: {pacmap_eval_strs}")
 
 
     ### PACMAP GENERATION ###
@@ -207,8 +202,11 @@ if __name__ == "__main__":
         xy_lims = [],
         premade_PHATE = [],
         premade_HDBSCAN = [], 
-        **kwargs
-    )
+        **kwargs)
+
+
+    ### PHATE EVAL ###
+    # TODO
 
     ### HISTOGRAM LATENT ###
 
