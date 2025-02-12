@@ -20,7 +20,7 @@ if __name__ == "__main__":
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple/trained_models/pangolin_spat113_finetune'
     # pat_ids_list = ['Epat34']
     single_pat = [] #'Epat35'  # if [] will do all pats
-    epoch = 141 # 39 # 141 
+    epoch = 999 # 39 # 141 , 999 to debug
     latent_subdir = f'latent_files/Epoch{epoch}'
     win_sec = 60 # 60, 1.0
     stride_sec = 30 # 30, 1.0 
@@ -43,9 +43,10 @@ if __name__ == "__main__":
     pacmap_FP_ratio = 11 #2.0
 
     # PHATE Settings
-    knn = 20
-    decay = 40
+    phate_knn = 5
+    phate_decay = 40
     phate_metric = 'angular' # 'angular', 'euclidean' # Used by custom ANNOY function, angular=cosine for ANNOY
+    phate_solver = 'smacof'  # 'smacof', 'sgd'
 
     # HDBSCAN Settings
     HDBSCAN_min_cluster_size = 200
@@ -57,8 +58,8 @@ if __name__ == "__main__":
 
     # Create paths and create pacmap directory for saving dim reduction models and outputs
     latent_dir = f"{model_dir}/{latent_subdir}/{win_sec}SecondWindow_{stride_sec}SecondStride" 
-    pacmap_dir = f"{model_dir}/pacmap/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride/adhoc"
-    phate_dir = f"{model_dir}/phate/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride/adhoc"
+    pacmap_dir = f"{model_dir}/pacmap/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
+    phate_dir = f"{model_dir}/phate/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
     if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir)
     if not os.path.exists(phate_dir): os.makedirs(phate_dir)
 
@@ -195,9 +196,10 @@ if __name__ == "__main__":
         plot_preictal_color_sec = plot_preictal_color_sec,
         plot_postictal_color_sec = plot_postictal_color_sec,  
         interictal_contour=False,
-        knn=knn,
-        decay=decay,
+        knn=phate_knn,
+        decay=phate_decay,
         phate_metric=phate_metric,
+        phate_solver=phate_solver,
         verbose=True,
         xy_lims = [],
         premade_PHATE = [],

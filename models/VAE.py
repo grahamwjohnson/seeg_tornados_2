@@ -165,19 +165,25 @@ class TransformerDecoder(nn.Module):
 
         # Non-autoregressive decoder 
         self.non_autoregressive_fc = nn.Sequential(
-            nn.Linear(latent_dim, latent_dim * 4),
+            # nn.Linear(latent_dim, transformer_dim * seq_length),
+            # nn.Linear(latent_dim, latent_dim * 4),
+            # nn.SiLU(),
+            # RMSNorm(latent_dim * 4),
+            # nn.Linear(latent_dim * 4, latent_dim * 8),
+            # RMSNorm(latent_dim * 8),
+            # nn.SiLU(),
+            # nn.Linear(latent_dim * 8, latent_dim * 8),
+            # RMSNorm(latent_dim * 8),
+            # nn.SiLU(),
+            # nn.Linear(latent_dim * 8, latent_dim * 4),
+            # RMSNorm(latent_dim * 4),
+            # nn.SiLU(),
+            # nn.Linear(latent_dim * 4, transformer_dim * seq_length),
+
+            nn.Linear(latent_dim, transformer_dim * seq_length * 4),
             nn.SiLU(),
-            RMSNorm(latent_dim * 4),
-            nn.Linear(latent_dim * 4, latent_dim * 8),
-            RMSNorm(latent_dim * 8),
-            nn.SiLU(),
-            nn.Linear(latent_dim * 8, latent_dim * 8),
-            RMSNorm(latent_dim * 8),
-            nn.SiLU(),
-            nn.Linear(latent_dim * 8, latent_dim * 4),
-            RMSNorm(latent_dim * 4),
-            nn.SiLU(),
-            nn.Linear(latent_dim * 4, transformer_dim * seq_length),
+            RMSNorm(transformer_dim * seq_length * 4),
+            nn.Linear(transformer_dim * seq_length * 4, transformer_dim * seq_length),
             nn.SiLU(),
             RMSNorm(transformer_dim * seq_length)
             )
@@ -192,13 +198,13 @@ class TransformerDecoder(nn.Module):
         #     max_seq_len=self.max_seq_len,
         #     activation=activation)) 
         
-        # Now FC without norms
+        # Now FC without norms, after reshaping so that each token is seperated
         self.non_autoregressive_output = nn.Sequential(
-            nn.Linear(transformer_dim, transformer_dim * 4),
-            nn.SiLU(),
-            nn.Linear(transformer_dim * 4, transformer_dim * 4),
-            nn.SiLU(),
-            nn.Linear(transformer_dim * 4, output_channels),
+            # nn.Linear(transformer_dim, transformer_dim * 4),
+            # nn.SiLU(),
+            # nn.Linear(transformer_dim * 4, transformer_dim * 4),
+            # nn.SiLU(),
+            nn.Linear(transformer_dim, output_channels),
             nn.Tanh())
             
     def forward(self, z):

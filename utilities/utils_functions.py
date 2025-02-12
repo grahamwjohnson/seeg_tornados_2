@@ -573,11 +573,11 @@ def print_latent_realtime(mu, logvar, savedir, epoch, iter_curr, pat_id, num_rea
         fig.suptitle(f"{pat_id}, epoch: {epoch}, iter: {iter_curr}")
 
         if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-        if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+        # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
         savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}_batch{b}.jpg"
-        savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}_batch_{b}.svg"
+        # savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}_batch_{b}.svg"
         pl.savefig(savename_jpg)
-        pl.savefig(savename_svg)
+        # pl.savefig(savename_svg)
         pl.close(fig)    
 
         pl.close('all') 
@@ -630,11 +630,11 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, pat_id, num_realti
             
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-    if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+    # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
     savename_jpg = f"{savedir}/JPEGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{pat_id}_allbatch.jpg"
-    savename_svg = f"{savedir}/SVGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{pat_id}_allbatch.svg"
+    # savename_svg = f"{savedir}/SVGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{pat_id}_allbatch.svg"
     pl.savefig(savename_jpg)
-    pl.savefig(savename_svg)
+    # pl.savefig(savename_svg)
     pl.close(fig)   
 
     pl.close('all') 
@@ -887,6 +887,9 @@ def phate_subfunction(
     knn=5,
     decay=15,  # Decay parameter for PHATE
     phate_metric='cosine',
+    phate_solver='smacof',
+    apply_pca_phate=True,
+    pca_comp_phate = 100,
     xy_lims = [],
     premade_PHATE = [],
     premade_HDBSCAN = [],
@@ -916,14 +919,23 @@ def phate_subfunction(
     stop_datetimes_epoch = [item for i, item in enumerate(stop_datetimes_epoch) if i not in delete_file_idxs]
     pat_ids_list = [item for i, item in enumerate(pat_ids_list) if i not in delete_file_idxs]
 
-    # Flatten data into [miniepoch, dim] to feed into PaCMAP, original data is [file, seq_miniepoch_in_file, latent_dim]
-    latent_PHATE_input = np.concatenate(latent_data_windowed, axis=0)
-
     # Generate numerical IDs for each unique patient, and give each datapoint an ID
     unique_ids = list(set(pat_ids_list))
     id_to_index = {id: idx for idx, id in enumerate(unique_ids)}  # Create mapping dictionary
     pat_idxs = [id_to_index[id] for id in pat_ids_list]
     pat_idxs_expanded = [item for item in pat_idxs for _ in range(latent_data_windowed[0].shape[0])]
+
+
+    # PCA
+    if apply_pca_phate:
+        print(f"Applying PCA, new dimension of data is {pca_comp_phate}")
+        pca = PCA(n_components=pca_comp_phate, svd_solver='full') # Different than PCA used for PaCMAP
+        pca_input = np.concatenate(latent_data_windowed, axis=0)
+        latent_PHATE_input = pca.fit_transform(pca_input)
+
+    else:
+        # Flatten data into [miniepoch, dim] to feed into PHATE, original data is [file, seq_miniepoch_in_file, latent_dim]
+        latent_PHATE_input = np.concatenate(latent_data_windowed, axis=0)
 
     
     ### PHATE ###
@@ -936,7 +948,7 @@ def phate_subfunction(
         # pat_idxs=pat_idxs_expanded, # must now match input data
         knn_dist='precomputed', 
         decay=decay,
-        # mds_solver='smacof',
+        mds_solver=phate_solver,
         # knn_dist=phate_metric,
         # mds_dist=phate_metric,
         # n_jobs= -2
