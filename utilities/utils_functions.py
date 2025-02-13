@@ -212,7 +212,7 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
-        KL_max, KL_min, KL_epochs_TO_max, KL_epochs_AT_max, 
+        KL_max, KL_min, KL_epochs_TO_max, KL_epochs_AT_max, KL_stall_epochs,
         Sparse_max, Sparse_min, Sparse_epochs_TO_max, Sparse_epochs_AT_max, 
         LR_max_core, LR_min_core, 
         LR_epochs_TO_max_core, LR_epochs_AT_max_core, 
@@ -222,37 +222,48 @@ def LR_and_weight_schedules(
     
     # *** KL SCHEDULE ***
     
-    KL_epoch_period = KL_epochs_TO_max + KL_epochs_AT_max
-    KL_epoch_residual = epoch % KL_epoch_period
+    # If within the stall, send out KL_min
+    if epoch < KL_stall_epochs:
+        KL_val = KL_min
 
-    KL_range = 10**KL_max - 10**KL_min
-    # KL_range = KL_max - KL_min
-
-    # START with rise
-    # Logarithmic rise
-    if KL_rise_first: 
-        if KL_epoch_residual < KL_epochs_TO_max:
-            # KL_state_length = KL_epochs_AT_max
-            # KL_ceil = KL_max - ( KL_range * (KL_epoch_residual/KL_state_length) )
-            # KL_floor = KL_ceil - ( KL_range * (KL_epoch_residual + 1) /KL_state_length)
-            # KL_val = KL_ceil - iter_curr/iters_per_epoch * (KL_ceil - KL_floor) 
-
-            KL_state_length = KL_epochs_TO_max 
-            KL_floor = 10 ** KL_min + KL_range * (KL_epoch_residual/KL_state_length)
-            KL_ceil = KL_floor + KL_range * (1) /KL_state_length
-            KL_val = math.log10(KL_floor + iter_curr/iters_per_epoch * (KL_ceil - KL_floor))
-        else:
-            KL_val = KL_max
-
+    # After stall
     else:
-        raise Exception("ERROR: not coded up")
-        # if KL_epoch_residual < KL_epochs_AT_max:
-        #     KL_val = KL_max
-        # else:
-        #     KL_state_length = KL_epochs_AT_max
-        #     KL_ceil = KL_max - ( KL_range * (KL_epoch_residual/KL_state_length) )
-        #     KL_floor = KL_ceil - ( KL_range * (KL_epoch_residual + 1) /KL_state_length)
-        #     KL_val = KL_ceil - iter/iters_per_epoch * (KL_ceil - KL_floor)   
+        KL_epoch_period = KL_epochs_TO_max + KL_epochs_AT_max
+        KL_epoch_residual = (epoch - KL_stall_epochs) % KL_epoch_period # Shift for the stall epochs
+
+        # KL_range = 10**KL_max - 10**KL_min
+        KL_range = KL_max - KL_min
+
+        # START with rise
+        # Logarithmic rise
+        if KL_rise_first: 
+            if KL_epoch_residual < KL_epochs_TO_max:
+                # KL_state_length = KL_epochs_AT_max
+                # KL_ceil = KL_max - ( KL_range * (KL_epoch_residual/KL_state_length) )
+                # KL_floor = KL_ceil - ( KL_range * (KL_epoch_residual + 1) /KL_state_length)
+                # KL_val = KL_ceil - iter_curr/iters_per_epoch * (KL_ceil - KL_floor) 
+
+                # KL_state_length = KL_epochs_TO_max 
+                # KL_floor = 10 ** KL_min + KL_range * (KL_epoch_residual/KL_state_length)
+                # KL_ceil = KL_floor + KL_range * (1) /KL_state_length
+                # KL_val = math.log10(KL_floor + iter_curr/iters_per_epoch * (KL_ceil - KL_floor))
+
+                KL_state_length = KL_epochs_TO_max 
+                KL_floor = KL_min + KL_range * (KL_epoch_residual/KL_state_length)
+                KL_ceil = KL_floor + KL_range * (1) /KL_state_length
+                KL_val = KL_floor + (iter_curr/iters_per_epoch) * (KL_ceil - KL_floor)
+            else:
+                KL_val = KL_max
+
+        else:
+            raise Exception("ERROR: not coded up")
+            # if KL_epoch_residual < KL_epochs_AT_max:
+            #     KL_val = KL_max
+            # else:
+            #     KL_state_length = KL_epochs_AT_max
+            #     KL_ceil = KL_max - ( KL_range * (KL_epoch_residual/KL_state_length) )
+            #     KL_floor = KL_ceil - ( KL_range * (KL_epoch_residual + 1) /KL_state_length)
+            #     KL_val = KL_ceil - iter/iters_per_epoch * (KL_ceil - KL_floor)   
 
 
    # *** Sparse Weight ***
@@ -817,7 +828,7 @@ def plot_recon(x, x_hat, plot_dict, batch_file_names, epoch, savedir, gpu_id, pa
         pl.close(fig) 
 
 
-def inter_patient_knn_annoy(data, patient_ids, k, n_trees=20, metric='angular'):
+def inter_patient_knn_annoy(data, phate_annoy_tree_size, patient_ids, k, n_trees=20, metric='angular'):
     n_samples, n_features = data.shape
 
     tree = AnnoyIndex(n_features, metric=metric)
@@ -825,7 +836,7 @@ def inter_patient_knn_annoy(data, patient_ids, k, n_trees=20, metric='angular'):
     #     tree.set_seed(_RANDOM_STATE)
     for i in range(n_samples):
         tree.add_item(i, data[i, :])
-    tree.build(20)
+    tree.build(phate_annoy_tree_size)
 
     knn_indices = np.zeros((n_samples, k), dtype=int)
     knn_distances = np.zeros((n_samples, k))
@@ -891,8 +902,12 @@ def phate_subfunction(
     apply_pca_phate=True,
     pca_comp_phate = 100,
     xy_lims = [],
+    phate_annoy_tree_size = 20,
+    knn_indices = [],
+    knn_distances = [],
     premade_PHATE = [],
     premade_HDBSCAN = [],
+    store_nn = True,
     **kwargs):
 
     '''
@@ -940,24 +955,46 @@ def phate_subfunction(
     
     ### PHATE ###
 
-    # Custom NN to exclude intra-patient points
-    # Compute inter-patient k-NN graph using Annoy
-    knn_indices, knn_distances = inter_patient_knn_annoy(latent_PHATE_input, pat_idxs_expanded, knn, metric=phate_metric)
-    affinity_matrix = create_affinity_matrix(knn_indices, knn_distances, knn, decay) # Create affinity matrix
-    phate_op = phate.PHATE(
-        # pat_idxs=pat_idxs_expanded, # must now match input data
-        knn_dist='precomputed', 
-        decay=decay,
-        mds_solver=phate_solver,
-        # knn_dist=phate_metric,
-        # mds_dist=phate_metric,
-        # n_jobs= -2
-    )
+    if premade_PHATE == []:
+        # Custom NN to exclude intra-patient points
+        # Compute inter-patient k-NN graph using Annoy
+        if len(knn_indices) == 0 or len(knn_distances) == 0: # if either is epmty, then need to compute
+            print("Computing new NN, no precomputed values given")
+            knn_indices, knn_distances = inter_patient_knn_annoy(latent_PHATE_input, phate_annoy_tree_size, pat_idxs_expanded, knn, metric=phate_metric)
 
-    # Fit and transform the data
-    phate_output = phate_op.fit_transform(affinity_matrix)
+            # Save the NN indices and dists  
+            if store_nn:
+                if not os.path.exists(savedir + '/nn_pickles'): os.makedirs(savedir + '/nn_pickles')
+                savename_root = savedir + f"/nn_pickles/Window{win_sec}_Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}"
+                savename_ind = savename_root + "_KNN_INDICES.pkl"
+                with open(savename_ind, 'wb') as handle: pickle.dump(knn_indices, handle)
+                savename_dist = savename_root + "_KNN_DISTANCES.pkl"
+                with open(savename_dist, 'wb') as handle: pickle.dump(knn_distances, handle)
+                print("\nSaved ANNOY outputs")
 
-    # Project data through reducer (i.e. PaCMAP) and split back into files
+        else: print("Using precomputed NN")
+
+        # Compute affinity matrixaffinity_matrix
+        affinity_matrix = create_affinity_matrix(knn_indices, knn_distances, knn, decay).astype(np.float32) # Create affinity matrix
+
+        # Build and fit PHATE object
+        phate_op = phate.PHATE(
+            # pat_idxs=pat_idxs_expanded, # must now match input data
+            knn_dist='precomputed', 
+            affinity_matrix=affinity_matrix,
+            decay=decay,
+            mds_solver=phate_solver,
+            n_jobs= -2
+        )
+
+        # Fit and transform the data
+        phate_output = phate_op.fit_transform()
+
+    else:
+        phate_op = premade_PHATE
+        phate_output = phate_op.transform(latent_PHATE_input)
+
+    # Split reduced output back into files
     latent_postPHATE_perfile = np.stack(np.split(phate_output, len(latent_data_windowed), axis=0),axis=0)
 
 
@@ -994,7 +1031,6 @@ def phate_subfunction(
         print("Using pre-built HDBSCAN model")
         hdb = premade_HDBSCAN
         
-
     #TODO Destaurate according to probability of being in cluster
 
     # Per patient, Run data through model & Reshape the labels and probabilities for plotting
@@ -1538,6 +1574,35 @@ def run_pacmap(atd_file, epoch, win_sec, stride_sec, model_dir, latent_subdir, p
     if delete_latent_files:
         shutil.rmtree(latent_dir)
 
+def save_phate_objects(savedir, epoch, axis, phate, hdb, xy_lims):
+    
+    if not os.path.exists(savedir): os.makedirs(savedir) 
+
+    # Save the PHATE model for use in inference
+    phate_path = savedir + "/epoch" +str(epoch) + "_phate.pkl"
+    output_obj = open(phate_path, 'wb')
+    pickle.dump(phate, output_obj)
+    output_obj.close()
+    print("Saved PHATE object")
+
+    hdbscan_path = savedir + "/epoch" +str(epoch) + "_hdbscan.pkl"
+    output_obj = open(hdbscan_path, 'wb')
+    pickle.dump(hdb, output_obj)
+    output_obj.close()
+    print("Saved PHATE HDBSCAN")
+
+    xylim_path = savedir + "/epoch" +str(epoch) + "_xy_lims.pkl"
+    output_obj = open(xylim_path, 'wb')
+    pickle.dump(xy_lims, output_obj)
+    output_obj.close()
+    print("Saved PHATE xy_lims for PaCMAP")
+
+    axis_path = savedir + "/epoch" +str(epoch) + "_plotaxis.pkl"
+    output_obj = open(axis_path, 'wb')
+    pickle.dump(axis, output_obj)
+    output_obj.close()
+    print("Saved PHATE plot axis object")
+
 def save_pacmap_objects(pacmap_dir, epoch, axis, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS):
 
     if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir) 
@@ -1582,7 +1647,7 @@ def save_pacmap_objects(pacmap_dir, epoch, axis, reducer, reducer_MedDim, hdb, p
 
     axis_path = pacmap_dir + "/epoch" +str(epoch) + "_plotaxis.pkl"
     output_obj10 = open(axis_path, 'wb')
-    pickle.dump(xy_lims_PCA, output_obj10)
+    pickle.dump(axis, output_obj10)
     output_obj10.close()
     print("Saved plot axis")
 
