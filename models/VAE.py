@@ -180,12 +180,21 @@ class TransformerDecoder(nn.Module):
             # nn.SiLU(),
             # nn.Linear(latent_dim * 4, transformer_dim * seq_length),
 
-            nn.Linear(latent_dim, transformer_dim * seq_length * 4),
+            nn.Linear(latent_dim, transformer_dim * seq_length),
+            nn.SiLU(),
+            RMSNorm(transformer_dim * seq_length),
+            nn.Linear(transformer_dim * seq_length, transformer_dim * seq_length * 2),
+            nn.SiLU(),
+            RMSNorm(transformer_dim * seq_length * 2),
+            nn.Linear(transformer_dim * seq_length * 2, transformer_dim * seq_length * 4),
             nn.SiLU(),
             RMSNorm(transformer_dim * seq_length * 4),
-            nn.Linear(transformer_dim * seq_length * 4, transformer_dim * seq_length),
+            nn.Linear(transformer_dim * seq_length * 4, transformer_dim * seq_length * 4),
             nn.SiLU(),
-            RMSNorm(transformer_dim * seq_length)
+            RMSNorm(transformer_dim * seq_length * 4),
+            nn.Linear(transformer_dim * seq_length * 4, transformer_dim * seq_length * 4),
+            nn.SiLU(),
+            RMSNorm(transformer_dim * seq_length * 4)
             )
 
         # self.non_autoregressive_transformer = Transformer(ModelArgs(
@@ -204,14 +213,14 @@ class TransformerDecoder(nn.Module):
             # nn.SiLU(),
             # nn.Linear(transformer_dim * 4, transformer_dim * 4),
             # nn.SiLU(),
-            nn.Linear(transformer_dim, output_channels),
+            nn.Linear(transformer_dim * 4, output_channels),
             nn.Tanh())
             
     def forward(self, z):
         batch_size = z.size(0)
         
         # Step 1: Non-autoregressive generation 
-        h_na = self.non_autoregressive_fc(z).view(batch_size, self.seq_length, self.transformer_dim)
+        h_na = self.non_autoregressive_fc(z).view(batch_size, self.seq_length, self.transformer_dim * 4)
         # h_na = self.non_autoregressive_transformer(h_na, start_pos=0, causal_mask_bool=False)  # Self-attention with no causal mask
         x_na = self.non_autoregressive_output(h_na)  # (batch_size, seq_length, output_channels)
         

@@ -108,8 +108,8 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 # Beta VAE controls
 KL_max: kwargs['KL_max'] = 1e-3 # Pangolin 1e-4 ############# Check if loss is actually used!!! May be commented out in training script ###############
 KL_min: kwargs['KL_min'] = 1e-8
-KL_epochs_AT_max: 5
-KL_epochs_TO_max: 5
+KL_epochs_AT_max: 40
+KL_epochs_TO_max: 40
 
 # Sparsity weight control
 Sparse_max: kwargs['Sparse_max'] = 1e-7 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############

@@ -857,7 +857,7 @@ def inter_patient_knn_annoy(data, patient_ids, k, n_trees=20, metric='angular'):
 
     return knn_indices, knn_distances
 
-def create_affinity_matrix(knn_indices, knn_distances, k, decay=15):
+def create_affinity_matrix(knn_indices, knn_distances, k, decay):
     n_samples = knn_indices.shape[0]
     rows = np.repeat(np.arange(n_samples), k)
     cols = knn_indices.flatten()
