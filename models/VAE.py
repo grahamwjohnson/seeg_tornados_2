@@ -7,6 +7,7 @@ from torchinfo import summary
 
 # Local imports
 from .Transformer import ModelArgs, Transformer, RMSNorm
+from utilities.loss_functions import adversarial_loss_function
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -226,6 +227,45 @@ class TransformerDecoder(nn.Module):
         
         return x_na
 
+# Gradient Reversal Layer
+class GradientReversalLayer(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, alpha):
+        ctx.alpha = alpha
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return -ctx.alpha * grad_output, None
+
+# Wrapper for Gradient Reversal
+class GradientReversal(nn.Module):
+    def __init__(self, alpha=1.0):
+        super(GradientReversal, self).__init__()
+        self.alpha = alpha
+
+    def forward(self, x):
+        return GradientReversalLayer.apply(x, self.alpha)
+
+# Define the Adversarial Classifier with Gradient Reversal
+class AdversarialClassifier(nn.Module):
+    def __init__(self, latent_dim, classifier_hidden_dim_1, classifier_hidden_dim_2, classifier_num_pats, classifier_alpha, **kwargs):
+        super(AdversarialClassifier, self).__init__()
+        self.gradient_reversal = GradientReversal(classifier_alpha)
+        self.mlp = nn.Sequential(
+            nn.Linear(latent_dim, classifier_hidden_dim_1),
+            nn.SiLU(),
+            nn.Linear(classifier_hidden_dim_1, classifier_hidden_dim_2),
+            nn.SiLU(),
+            nn.Linear(classifier_hidden_dim_2, classifier_num_pats),
+        )
+        self.softmax = nn.Softmax(dim=1)
+
+    def forward(self, z):
+        z = self.gradient_reversal(z)
+        logits = self.mlp(z)
+        return self.softmax(logits)
+
 class VAE(nn.Module):
     '''
     The Reverseable Encoder/Decoder 
@@ -305,6 +345,10 @@ class VAE(nn.Module):
             activation=self.decoder_transformer_activation
             )
 
+        # Adversarial Classifier
+        self.classifier = AdversarialClassifier(latent_dim=self.latent_dim, **kwargs)
+
+        # Non-linearity as needed
         self.silu = nn.SiLU()
 
     def reparameterization(self, mean, logvar):
@@ -347,13 +391,17 @@ class VAE(nn.Module):
             mean_batched, logvar_batched = self.mean_fc_layer(y), self.logvar_fc_layer(y)
             latent_batched = self.reparameterization(mean_batched, logvar_batched)
 
+            # CLASSIFIER
+            class_probs_batched = self.classifier(latent_batched)
+
             # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
             # NOTE: you lose the priming tokens needed by transformer
             mean = torch.stack(torch.split(mean_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
             logvar = torch.stack(torch.split(logvar_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
             latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
+            class_probs = torch.stack(torch.split(class_probs_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
 
-            return mean, logvar, latent
+            return mean, logvar, latent, class_probs
 
         elif reverse == True:
 
@@ -382,6 +430,7 @@ def print_models_flow(x, **kwargs):
     '''
 
     pat_num_channels = x.shape[2] 
+    file_class_label = torch.tensor([0]*x.shape[0]) # dummy
 
     # Build the VAE
     vae = VAE(**kwargs) 
@@ -389,12 +438,17 @@ def print_models_flow(x, **kwargs):
     # Run through Enc Head
     print(f"INPUT TO <ENC>\n"
     f"x:{x.shape}")
-    mean, logvar, latent = vae(x, reverse=False)  
+    mean, logvar, latent, class_probs = vae(x, reverse=False)  
     summary(vae, input_size=(x.shape), depth=999, device="cpu")
     print(
     f"mean:{mean.shape}\n"
     f"logvar:{logvar.shape}\n"
-    f"latent:{latent.shape}\n")
+    f"latent:{latent.shape}\n"
+    f"class_probs:{class_probs.shape}\n")
+
+    # Adversarial loss
+    adversarial_loss = adversarial_loss_function(class_probs, file_class_label, classifier_weight = 1)
+    print(f"Adversarial Loss: {adversarial_loss}")
 
     # Run through VAE decoder
     hash_pat_embedding = torch.rand(latent.shape[2])

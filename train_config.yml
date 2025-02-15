@@ -70,6 +70,13 @@ decoder_max_batch_size: kwargs['decoder_max_batch_size'] = kwargs['onlylatent_ba
 decoder_max_seq_len: kwargs['decoder_max_seq_len'] = kwargs['autoencode_samples']
 decoder_transformer_activation: "silu" # "tanh"
 
+### Classifier
+classifier_hidden_dim_1: 512
+classifier_hidden_dim_2: 256
+classifier_num_pats: 40 # Hardcoded
+classifier_alpha: 1.0 # of reverse gradient layer, dictates gain of reverse gradient effect on encoder
+classifier_weight: 1.0 # of cross entropy loss
+
 # Optimizer hyperparameters
 core_weight_decay: 0.1
 adamW_beta1: 0.9

@@ -512,7 +512,7 @@ class Trainer:
                 
                 # Go through every file in dataset
                 file_count = 0
-                for data_tensor, file_name in dataloader_curr:
+                for data_tensor, file_name, file_class_label in dataloader_curr:
 
                     file_count = file_count + len(file_name)
 
@@ -557,7 +557,7 @@ class Trainer:
 
                          ### VAE ENCODER
                         # Forward pass in stacked batch through VAE encoder
-                        mean, _, _ = self.vae(x, reverse=False)
+                        mean, _, _, _ = self.vae(x, reverse=False)
                         files_means[:, w, :] = torch.mean(mean, dim=1)
 
                     # After file complete, pacmap_window/stride the file and save each file from batch seperately
@@ -599,6 +599,10 @@ class Trainer:
 
 
         ### RANDOM SUBSET OF FILES ###
+
+
+        # TODO no reason we should NOT be pulling across patients for the batch 
+
         # This setting is used for regular training 
         else: 
            
@@ -630,7 +634,10 @@ class Trainer:
                 dataloader_curr.sampler.set_epoch(self.epoch) # Ensure new file order is pulled
                 
                 batch_idx = 0
-                for data_tensor, file_name in dataloader_curr: # Paralell random file pull accross patients
+                for data_tensor, file_name, file_class_label in dataloader_curr: 
+
+                    # Put the labels on GPU
+                    file_class_label = file_class_label.to(self.gpu_id)
 
                     # # Reset the cumulative losses & zero gradients
                     # # AFTER EACH BATCH
@@ -643,7 +650,7 @@ class Trainer:
                     for start_idx in start_idxs: # Same start_idx for all patients (has no biological meaning)
 
                         # For Training: Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                        self.KL_multiplier, self.curr_LR_core, self.sparse_weight = utils_functions.LR_and_weight_schedules(
+                        self.KL_multiplier, self.curr_LR_core, self.sparse_weight, self.classifier_weight = utils_functions.LR_and_weight_schedules(
                             epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
                         if (not val_finetune) & (not val_unseen): self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
 
@@ -674,7 +681,7 @@ class Trainer:
                             raise Exception(f"ERROR: found nans in one of these files: {file_name}")
 
                         ### VAE ENCODER: 1-shifted
-                        mean, logvar, latent = self.vae(x[:, :-1, :, :], reverse=False)
+                        mean, logvar, latent, class_probs = self.vae(x[:, :-1, :, :], reverse=False)
                         
                         ### VAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
                         x_hat = self.vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=x.shape[2])  
@@ -690,13 +697,18 @@ class Trainer:
                             logvar=logvar,
                             KL_multiplier=self.KL_multiplier)
 
+                        adversarial_loss = loss_functions.adversarial_loss_function(
+                            class_probs=class_probs,
+                            file_class_label=file_class_label,
+                            classifier_weight=self.classifier_weight)
+
                         sparse_loss = loss_functions.sparse_l1_reg(
                             z=latent, 
                             sparse_weight=self.sparse_weight, 
                             **kwargs)
 
                         # Intrapatient backprop
-                        loss = recon_loss + kld_loss # + sparse_loss + kld_loss                      ################ KLD LOSS INCLUDED ?????????? ##############
+                        loss = recon_loss + kld_loss + adversarial_loss # + sparse_loss + kld_loss                      ################ KLD LOSS INCLUDED ?????????? ##############
                         if backprop: loss.backward()
 
                         # Realtime terminal info and WandB 
@@ -721,6 +733,7 @@ class Trainer:
                                     train_loss=loss,
                                     train_recon_loss=recon_loss, 
                                     train_kld_loss=kld_loss, 
+                                    train_adversarial_loss=adversarial_loss,
                                     train_sparse_loss=sparse_loss,
                                     train_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     train_KL_Beta=self.KL_multiplier, 
@@ -734,6 +747,7 @@ class Trainer:
                                     val_finetune_loss=loss, 
                                     val_finetune_recon_loss=recon_loss, 
                                     val_finetune_kld_loss=kld_loss, 
+                                    val_finetune_adversarial_loss=adversarial_loss,
                                     val_finetune_sparse_loss=sparse_loss,
                                     val_finetune_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     val_finetune_KL_Beta=self.KL_multiplier, 
@@ -747,6 +761,7 @@ class Trainer:
                                     val_unseen_loss=loss, 
                                     val_unseen_recon_loss=recon_loss, 
                                     val_unseen_kld_loss=kld_loss, 
+                                    val_unseen_adversarial_loss=adversarial_loss,
                                     val_unseen_sparse_loss=sparse_loss,
                                     val_unseen_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     val_unseen_KL_Beta=self.KL_multiplier, 

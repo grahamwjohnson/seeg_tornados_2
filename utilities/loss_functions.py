@@ -40,3 +40,16 @@ def sparse_l1_reg(z, sparse_weight, **kwargs):
 
     return sparse_weight * l1_penalty
     
+def adversarial_loss_function(class_probs, file_class_label, classifier_weight):
+
+    # Class probs comes in as [batch, seq, num_classes] softmax
+    # Change to [batch * seq, num_classes] softmax
+    class_probs_batched = class_probs.reshape(class_probs.shape[0] * class_probs.shape[1], -1)
+
+    # Must repeat the file labels for entire sequence
+    labels_repeated = file_class_label.unsqueeze(1).repeat(1, class_probs.shape[1])
+    labels_batched = torch.squeeze(labels_repeated.reshape(labels_repeated.shape[0] * labels_repeated.shape[1], -1))
+
+    adversarial_loss = nn.functional.cross_entropy(class_probs_batched, labels_batched)
+
+    return classifier_weight * adversarial_loss

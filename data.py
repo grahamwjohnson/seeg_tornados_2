@@ -119,7 +119,6 @@ class SEEG_Tornado_Dataset(Dataset):
     
     def __getitem__(self, idx): 
         
-
         if self.single_pat_seq:
             
             file = open(self.pat_fnames[self.pat_curr][idx],'rb')
@@ -127,34 +126,37 @@ class SEEG_Tornado_Dataset(Dataset):
             file.close()
             data_tensor = torch.FloatTensor(data)
 
-            file_name = self.pat_fnames[self.pat_curr][idx].split("/")[-1].split(".")[0]         
+            file_name = self.pat_fnames[self.pat_curr][idx].split("/")[-1].split(".")[0]      
 
-            return data_tensor, file_name
+            file_class_label = torch.tensor(self.pat_curr) 
 
+            return data_tensor, file_name, file_class_label
 
         else:
-            file_name_by_pat = [-1]*len(self.pat_ids)
-            data_tensor_by_pat = [-1]*len(self.pat_ids)
-            for pat_idx in range(0, len(self.pat_ids)):
+            raise Exception("Vestigial code")
+        # else:
+        #     file_name_by_pat = [-1]*len(self.pat_ids)
+        #     data_tensor_by_pat = [-1]*len(self.pat_ids)
+        #     for pat_idx in range(0, len(self.pat_ids)):
 
-                # Regenerate random file idxs each call
-                np.random.seed(seed=None)
-                rand_idx = int(random.uniform(0, len(self.pat_fnames[pat_idx]) -1))
-
-
-                # TODO this is probably the better place to implement random peri-ictal augmentation
-
+        #         # Regenerate random file idxs each call
+        #         np.random.seed(seed=None)
+        #         rand_idx = int(random.uniform(0, len(self.pat_fnames[pat_idx]) -1))
 
 
-                # Load the epoch's pickle
-                file = open(self.pat_fnames[pat_idx][rand_idx],'rb')
-                data = pickle.load(file) 
-                file.close()
-                data_tensor_by_pat[pat_idx] = torch.FloatTensor(data)
+        #         # TODO this is probably the better place to implement random peri-ictal augmentation
+
+
+
+        #         # Load the epoch's pickle
+        #         file = open(self.pat_fnames[pat_idx][rand_idx],'rb')
+        #         data = pickle.load(file) 
+        #         file.close()
+        #         data_tensor_by_pat[pat_idx] = torch.FloatTensor(data)
                 
-                file_name_by_pat[pat_idx] = self.pat_fnames[pat_idx][rand_idx].split("/")[-1].split(".")[0]
+        #         file_name_by_pat[pat_idx] = self.pat_fnames[pat_idx][rand_idx].split("/")[-1].split(".")[0]
 
-            return data_tensor_by_pat, file_name_by_pat
+        #     return data_tensor_by_pat, file_name_by_pat
         
 
 
