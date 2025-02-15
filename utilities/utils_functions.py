@@ -891,11 +891,13 @@ def phate_subfunction(
     apply_pca_phate=True,
     pca_comp_phate = 100,
     xy_lims = [],
+    custom_nn_bool = False,
     phate_annoy_tree_size = 20,
     knn_indices = [],
     knn_distances = [],
     premade_PHATE = [],
     premade_HDBSCAN = [],
+    plot_pat_ids = [],
     store_nn = True,
     **kwargs):
 
@@ -938,52 +940,68 @@ def phate_subfunction(
     # No PHATE object passed in, make new one
     if premade_PHATE == []:
 
-        # Custom NN to exclude intra-patient points
-        # Compute inter-patient k-NN graph using Annoy
-        if len(knn_indices) == 0 or len(knn_distances) == 0: # if either is epmty, then need to compute
-            print("Computing new NN, no precomputed values given")
+        # Custom NN search
+        if custom_nn_bool:
+            print("*** Custom *** PHATE NN Search")
 
-            # PCA
-            if apply_pca_phate:
-                print(f"Applying PCA, new dimension of data is {pca_comp_phate}")
-                pca = PCA(n_components=pca_comp_phate, svd_solver='full') # Different than PCA used for PaCMAP
-                latent_PHATE_input = pca.fit_transform(latent_PHATE_input) # Overwrite the data with PCA version
+            # Custom NN to exclude intra-patient points
+            # Compute inter-patient k-NN graph using Annoy
+            if len(knn_indices) == 0 or len(knn_distances) == 0: # if either is epmty, then need to compute
+                print("Computing new NN, no precomputed values given")
 
-            # Now find NN indices and distances 
-            knn_indices, knn_distances = inter_patient_knn_annoy(latent_PHATE_input, phate_annoy_tree_size, pat_idxs_expanded, knn, metric=phate_metric)
+                # PCA
+                if apply_pca_phate:
+                    print(f"Applying PCA, new dimension of data is {pca_comp_phate}")
+                    pca = PCA(n_components=pca_comp_phate, svd_solver='full') # Different than PCA used for PaCMAP
+                    latent_PHATE_input = pca.fit_transform(latent_PHATE_input) # Overwrite the data with PCA version
 
-            # Save the NN indices and dists  
-            if store_nn:
-                if not os.path.exists(savedir + '/nn_pickles'): os.makedirs(savedir + '/nn_pickles')
-                savename_root = savedir + f"/nn_pickles/Window{win_sec}_Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}"
-                savename_ind = savename_root + "_KNN_INDICES.pkl"
-                with open(savename_ind, 'wb') as handle: pickle.dump(knn_indices, handle)
-                savename_dist = savename_root + "_KNN_DISTANCES.pkl"
-                with open(savename_dist, 'wb') as handle: pickle.dump(knn_distances, handle)
-                print("\nSaved ANNOY outputs")
+                # Now find NN indices and distances 
+                knn_indices, knn_distances = inter_patient_knn_annoy(latent_PHATE_input, phate_annoy_tree_size, pat_idxs_expanded, knn, metric=phate_metric)
 
-        else: print("Using precomputed NN")
+                # Save the NN indices and dists  
+                if store_nn:
+                    if not os.path.exists(savedir + '/nn_pickles'): os.makedirs(savedir + '/nn_pickles')
+                    savename_root = savedir + f"/nn_pickles/Window{win_sec}_Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}"
+                    savename_ind = savename_root + "_KNN_INDICES.pkl"
+                    with open(savename_ind, 'wb') as handle: pickle.dump(knn_indices, handle)
+                    savename_dist = savename_root + "_KNN_DISTANCES.pkl"
+                    with open(savename_dist, 'wb') as handle: pickle.dump(knn_distances, handle)
+                    print("\nSaved ANNOY outputs")
 
-        # Create a sparse matrix for the KNN distances (only store nearest neighbors)
-        # Convert the KNN distances to a sparse CSR matrix (Compressed Sparse Row format)
-        rows = np.repeat(np.arange(latent_PHATE_input.shape[0]), knn)
-        cols = knn_indices.flatten()
-        values = knn_distances.flatten()
-        sparse_knn_distances = csr_matrix((values, (rows, cols)), shape=(latent_PHATE_input.shape[0], latent_PHATE_input.shape[0]))
+            else: print("Using precomputed NN")
 
-        # Build and fit PHATE object
-        phate_op = phate.PHATE(
-            # pat_idxs=pat_idxs_expanded, # must now match input data
-            knn_dist='precomputed_distance', # override the default method of detecting 
-            knn=knn,
-            decay=decay,
-            mds_solver=phate_solver,
-            n_jobs= -2
-        )
+            # Create a sparse matrix for the KNN distances (only store nearest neighbors)
+            # Convert the KNN distances to a sparse CSR matrix (Compressed Sparse Row format)
+            rows = np.repeat(np.arange(latent_PHATE_input.shape[0]), knn)
+            cols = knn_indices.flatten()
+            values = knn_distances.flatten()
+            sparse_knn_distances = csr_matrix((values, (rows, cols)), shape=(latent_PHATE_input.shape[0], latent_PHATE_input.shape[0]))
 
-        # Fit and transform the data using distance matrix
-        phate_output = phate_op.fit_transform(sparse_knn_distances)
+            # Build and fit PHATE object
+            phate_op = phate.PHATE(
+                # pat_idxs=pat_idxs_expanded, # must now match input data
+                knn_dist='precomputed_distance', # override the default method of detecting 
+                knn=knn,
+                decay=decay,
+                mds_solver=phate_solver,
+                n_jobs= -2
+            )
 
+            # Fit and transform the data using distance matrix
+            phate_output = phate_op.fit_transform(sparse_knn_distances) # pass distance matrix
+
+        # Default PHATE NN search
+        else:
+            print("DEFAULT PHATE NN Search")
+            # Build and fit default PHATE object
+            phate_op = phate.PHATE(
+                knn=knn,
+                decay=decay,
+                mds_solver=phate_solver,
+                n_jobs= -2)
+            phate_output = phate_op.fit_transform(latent_PHATE_input) # Pass raw data
+
+    # Premade PHATE object has been passed in 
     else:
         phate_op = premade_PHATE
         phate_output = phate_op.transform(latent_PHATE_input)
@@ -1044,23 +1062,24 @@ def phate_subfunction(
         seiz_start_dt_perfile[i], seiz_stop_dt_perfile[i], seiz_types_perfile[i] = get_pat_seiz_datetimes(pat_ids_list[i], atd_file=atd_file)
 
     # Intialize master figure 
-    fig = pl.figure(figsize=(40, 15))
-    gs = gridspec.GridSpec(1, 5, figure=fig)
+    fig_height = 15 + 5 * len(plot_pat_ids)
+    fig = pl.figure(figsize=(40, fig_height))
+    gs = gridspec.GridSpec(1 + len(plot_pat_ids), 5, figure=fig)
 
     # **** PHATE PLOTTING ****
 
     print(f"PHATE Plotting")
-    ax20 = fig.add_subplot(gs[0, 0]) 
-    ax21 = fig.add_subplot(gs[0, 1]) 
-    ax22 = fig.add_subplot(gs[0, 2]) 
-    ax23 = fig.add_subplot(gs[0, 3]) 
-    ax24 = fig.add_subplot(gs[0, 4]) 
-    ax20, ax21, ax22, ax23, ax24, xy_lims = plot_latent(
-        ax=ax20, 
-        interCont_ax=ax21,
-        seiztype_ax=ax22,
-        time_ax=ax23,
-        cluster_ax=ax24,
+    ax00 = fig.add_subplot(gs[0, 0]) 
+    ax01 = fig.add_subplot(gs[0, 1]) 
+    ax02 = fig.add_subplot(gs[0, 2]) 
+    ax03 = fig.add_subplot(gs[0, 3]) 
+    ax04 = fig.add_subplot(gs[0, 4]) 
+    ax00, ax01, ax02, ax03, ax04, xy_lims = plot_latent(
+        ax=ax00, 
+        interCont_ax=ax01,
+        seiztype_ax=ax02,
+        time_ax=ax03,
+        cluster_ax=ax04,
         latent_data=latent_postPHATE_perfile.swapaxes(1,2), # [epoch, 2, timesample]
         modified_samp_freq=modified_FS,  # accounts for windowing/stride
         start_datetimes=start_datetimes_epoch, 
@@ -1079,23 +1098,70 @@ def phate_subfunction(
         xy_lims=xy_lims,
         **kwargs)        
 
-    ax20.title.set_text('PHATE Latent Space: ' + 
+    ax00.title.set_text('PHATE Latent Space: ' + 
         'Window mean, dur/str=' + str(win_sec) + 
-        '/' + str(stride_sec) +' seconds' 
-        # f'\nLR: {str(pacmap_LR)}, ' +
-        # f'NumIters: {str(pacmap_NumIters)}, ' +
-        # f'NN: {pacmap_NN}, MN_ratio: {str(pacmap_MN_ratio)}, FP_ratio: {str(pacmap_FP_ratio)}'
-        )
+        '/' + str(stride_sec) +' seconds' )
     
     if interictal_contour:
-        ax21.title.set_text('Interictal Contour (no peri-ictal data)')
+        ax01.title.set_text('Interictal Contour (no peri-ictal data)')
+
+
+    #### Plot the individual patient IDs defined in 'plot_pat_ids'
+    for i in range(len(plot_pat_ids)):
+        print(f"Patient Specific PHATE Plotting")
+        pat_id_curr = plot_pat_ids[i]
+        
+        # Subindex the patient's data
+        found_file_ids = [index for index, value in enumerate(pat_ids_list) if value == pat_id_curr]
+        pat_data = latent_postPHATE_perfile[found_file_ids] 
+        pat_start_datetimes_epoch = [start_datetimes_epoch[x] for x in found_file_ids]
+        pat_stop_datetimes_epoch = [stop_datetimes_epoch[x] for x in found_file_ids]
+        pat_seiz_start_dt_perfile = [seiz_start_dt_perfile[x] for x in found_file_ids]
+        pat_seiz_stop_dt_perfile = [seiz_stop_dt_perfile[x] for x in found_file_ids]
+        pat_seiz_types_perfile = [seiz_types_perfile[x] for x in found_file_ids]
+        pat_hdb_labels_flat_perfile = [hdb_labels_flat_perfile[x] for x in found_file_ids]
+        pat_hdb_probabilities_flat_perfile = [hdb_probabilities_flat_perfile[x] for x in found_file_ids]
+
+        # Make the patient's subplots
+        axi0 = fig.add_subplot(gs[1 + i, 0]) 
+        axi1 = fig.add_subplot(gs[1 + i, 1]) 
+        axi2 = fig.add_subplot(gs[1 + i, 2]) 
+        axi3 = fig.add_subplot(gs[1 + i, 3]) 
+        axi4 = fig.add_subplot(gs[1 + i, 4]) 
+
+        plot_latent(
+            ax=axi0, 
+            interCont_ax=axi1,
+            seiztype_ax=axi2,
+            time_ax=axi3,
+            cluster_ax=axi4,
+            latent_data=pat_data.swapaxes(1,2), # [epoch, 2, timesample]
+            modified_samp_freq=modified_FS,  # accounts for windowing/stride
+            start_datetimes=pat_start_datetimes_epoch, 
+            stop_datetimes=pat_stop_datetimes_epoch, 
+            win_sec=win_sec,
+            stride_sec=stride_sec, 
+            seiz_start_dt=pat_seiz_start_dt_perfile, 
+            seiz_stop_dt=pat_seiz_stop_dt_perfile, 
+            seiz_types=pat_seiz_types_perfile,
+            preictal_dur=plot_preictal_color_sec,
+            postictal_dur=plot_postictal_color_sec,
+            plot_ictal=True,
+            hdb_labels=np.expand_dims(np.stack(pat_hdb_labels_flat_perfile, axis=0),axis=1),
+            hdb_probabilities=np.expand_dims(np.stack(pat_hdb_probabilities_flat_perfile, axis=0),axis=1),
+            hdb=hdb,
+            xy_lims=xy_lims, # passed from above
+            **kwargs)     
+
+        axi0.title.set_text(f"Only {pat_id_curr}")
+
 
     # **** Save entire figure *****
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
     # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
     savename_jpg = savedir + f"/JPEGs/PHATE_latent_smoothsec{win_sec}Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}_decay{decay}.jpg"
     # savename_svg = savedir + f"/JPEGs/PHATE_latent_smoothsec{win_sec}Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}_decay{decay}.svg"
-    pl.savefig(savename_jpg, dpi=600)
+    pl.savefig(savename_jpg, dpi=1200)
     # pl.savefig(savename_svg)
 
     # TODO Upload to WandB
@@ -1104,7 +1170,7 @@ def phate_subfunction(
 
     # Bundle the save metrics together
     # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
-    return ax20, phate_op, hdb, xy_lims # save_tuple
+    return ax00, phate_op, hdb, xy_lims # save_tuple
 
 
 def pacmap_subfunction(  
@@ -2177,7 +2243,7 @@ def filename_to_datetimes(list_file_names):
             stop_datetimes[i] = datetime.datetime(int(bD[4:8]), int(bD[0:2]), int(bD[2:4]), int(bT[0:2]), int(bT[2:4]), int(bT[4:6]), int(int(bT[6:8])*1e4))
         return start_datetimes, stop_datetimes
 
-def delete_old_checkpoints(dir: str, curr_epoch: int):
+def delete_old_checkpoints(dir: str, curr_epoch: int, KL_stall_epochs, KL_epochs_AT_max, KL_epochs_TO_max, **kwargs):
 
     SAVE_KEYWORDS = ["hdbscan", "pacmap"]
 
@@ -2187,12 +2253,20 @@ def delete_old_checkpoints(dir: str, curr_epoch: int):
 
     # Add current epoch to save files
     save_epochs = [curr_epoch]
-    for i in range(len(all_dir_names)):
-        subepoch_dirs = [f.split("/")[-1] for f in glob.glob(all_dir_names[i] + "/*")]
-        for f in subepoch_dirs:
-            if any(substr in f for substr in SAVE_KEYWORDS):
-                save_epochs.append(epoch_nums[i])
-                break
+
+    # KEYWORD Save
+    # for i in range(len(all_dir_names)):
+    #     subepoch_dirs = [f.split("/")[-1] for f in glob.glob(all_dir_names[i] + "/*")]
+    #     for f in subepoch_dirs:
+    #         if any(substr in f for substr in SAVE_KEYWORDS):
+    #             save_epochs.append(epoch_nums[i])
+    #             break
+
+    # KL Epoch cycle save - save the last epoch in a KL annealing cycle
+    mod_val = KL_stall_epochs + KL_epochs_AT_max + KL_epochs_TO_max - 1
+    for x in epoch_nums:
+        if x % mod_val == 0:
+            save_epochs.append(x)
 
     [shutil.rmtree(all_dir_names[i]) if epoch_nums[i] not in save_epochs else print(f"saved: {all_dir_names[i].split('/')[-1]}") for i in range(len(epoch_nums))]
 

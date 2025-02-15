@@ -460,7 +460,7 @@ class Trainer:
         print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
 
         if delete_old_checkpoints:
-            utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch)
+            utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch, **kwargs)
             print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
 
     def _train_start_idxs(self, runs_per_file):

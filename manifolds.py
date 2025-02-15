@@ -5,6 +5,7 @@ Ad-hoc script to run PaCMAP/PHATE/Histograms on latent files
 import os, glob
 import pickle
 from  utilities import utils_functions
+import numpy as np
 
 if __name__ == "__main__":
 
@@ -20,7 +21,7 @@ if __name__ == "__main__":
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple/trained_models/pangolin_spat113_finetune'
     # pat_ids_list = ['Epat34']
     single_pat = [] #'Epat35'  # if [] will do all pats
-    epoch = 141 # 39 # 141 , 999 to debug
+    epoch = 999 # 39 # 141 , 999 to debug
     latent_subdir = f'latent_files/Epoch{epoch}'
     win_sec = 60 # 60, 1.0
     stride_sec = 30 # 30, 1.0 
@@ -43,8 +44,9 @@ if __name__ == "__main__":
     pacmap_FP_ratio = 11 #2.0
 
     # PHATE Settings
-    precomputed_nn_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025/phate/Epoch141/60SecondWindow_30SecondStride/all_pats/phate_gen/nn_pickles/Window60_Stride30_epoch141_angular_knn5_KNN_INDICES.pkl' # []
-    precomputed_dist_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025/phate/Epoch141/60SecondWindow_30SecondStride/all_pats/phate_gen/nn_pickles/Window60_Stride30_epoch141_angular_knn5_KNN_DISTANCES.pkl' #[]
+    custom_nn_bool = False
+    precomputed_nn_path = [] #'/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025/phate/Epoch141/60SecondWindow_30SecondStride/all_pats/phate_gen/nn_pickles/Window60_Stride30_epoch141_angular_knn5_KNN_INDICES.pkl' # []
+    precomputed_dist_path = [] #'/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025/phate/Epoch141/60SecondWindow_30SecondStride/all_pats/phate_gen/nn_pickles/Window60_Stride30_epoch141_angular_knn5_KNN_DISTANCES.pkl' #[]
     precomputed_nn = [] # dummy
     precomputed_dist = [] # dummy
     phate_annoy_tree_size = 20
@@ -52,6 +54,8 @@ if __name__ == "__main__":
     phate_decay = 15
     phate_metric = 'angular' # 'angular', 'euclidean' # Used by custom ANNOY function, angular=cosine for ANNOY
     phate_solver = 'smacof'  # 'smacof', 'sgd' # I think SGD uses less RAM because it's stochastic
+    rand_subset_pat_bool = False # False plots all pats in their own row of plots
+    num_rand_pats_plot = 4 # Only applicable if 'rand_subset_pat_bool' is True
 
     # HDBSCAN Settings
     HDBSCAN_min_cluster_size = 200
@@ -191,6 +195,15 @@ if __name__ == "__main__":
         with open(precomputed_nn_path, "rb") as f: precomputed_nn = pickle.load(f)
         with open(precomputed_dist_path, "rb") as f: precomputed_dist = pickle.load(f)
 
+    # Generate random idxs to plot
+    unique_pats = list(set(build_pat_ids_list))
+    if rand_subset_pat_bool:
+        np.random.seed(seed=None) 
+        plot_pat_ids = [unique_pats[np.random.randint(0, len(unique_pats))] for i in range(num_rand_pats_plot)]
+    else:
+        plot_pat_ids = unique_pats
+
+    # Run the PHATE subfunction on generate data - plots are made/saved within this function
     phate_ax20, phate, phate_hdb, phate_xy_lims = utils_functions.phate_subfunction(
         atd_file = atd_file,
         pat_ids_list=build_pat_ids_list,
@@ -213,11 +226,13 @@ if __name__ == "__main__":
         phate_solver=phate_solver,
         verbose=True,
         xy_lims = [],
+        custom_nn_bool = custom_nn_bool,
         phate_annoy_tree_size = phate_annoy_tree_size,
         knn_indices = precomputed_nn,
         knn_distances = precomputed_dist,
         premade_PHATE = [],
         premade_HDBSCAN = [], 
+        plot_pat_ids = plot_pat_ids,
         **kwargs)
 
 

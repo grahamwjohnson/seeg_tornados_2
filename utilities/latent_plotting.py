@@ -340,7 +340,7 @@ def plot_latent(
         y_plot_time = lat_data_windowed_toplot[1,:]  
         s_time = time_ax.scatter(
             x_plot_time, y_plot_time, c=np.linspace(0, 1, len(x_plot_time)).tolist(), 
-            alpha=plot_alpha_TIME, s=s_plot, cmap=cmap_time, edgecolors='none', vmin=0, vmax=1) 
+            alpha=plot_alpha_TIME, s=s_plot, cmap=cmap_time, edgecolors='none', vmin=0, vmax=1)
         
         # Colorbar: Find the number of midnights and set as x-axis ticks at each midnight's percentage of total EMU time
         midnights_perc_list = []

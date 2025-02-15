@@ -106,9 +106,9 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 ### Dynamic Weights ###
 
 # Beta VAE controls
-KL_stall_epochs: 5 # No KL weight rise until stall is complete
 KL_max: kwargs['KL_max'] = 3e-4 # Pangolin 1e-4 ############# Check if loss is actually used!!! May be commented out in training script ###############
 KL_min: kwargs['KL_min'] = 1e-12
+KL_stall_epochs: 5 # No KL weight rise until stall is complete
 KL_epochs_AT_max: 40
 KL_epochs_TO_max: 20
 
