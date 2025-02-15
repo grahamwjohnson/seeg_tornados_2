@@ -38,7 +38,7 @@ if __name__ == "__main__":
     apply_pca = True # Before PaCMAP
     pca_comp = 100
     pacmap_MedDim_numdims = 10
-    pacmap_LR = 1 #0.05
+    pacmap_LR = 0.05 #0.05
     pacmap_NumIters = (1000,1000,1000)
     pacmap_NN = None
     pacmap_MN_ratio = 7 #0.5
@@ -52,7 +52,7 @@ if __name__ == "__main__":
     precomputed_dist = [] # dummy
     phate_annoy_tree_size = 20
     phate_knn = 5
-    phate_decay = 40
+    phate_decay = 25
     phate_metric = 'euclidean' # 'angular', 'euclidean' # Used by custom ANNOY function, angular=cosine for ANNOY
     phate_solver = 'smacof'  # 'smacof', 'sgd' 
     rand_subset_pat_bool = False # False plots all pats in their own row of plots
