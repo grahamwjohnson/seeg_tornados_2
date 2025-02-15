@@ -49,9 +49,9 @@ if __name__ == "__main__":
     precomputed_dist = [] # dummy
     phate_annoy_tree_size = 20
     phate_knn = 5
-    phate_decay = 40
+    phate_decay = 15
     phate_metric = 'angular' # 'angular', 'euclidean' # Used by custom ANNOY function, angular=cosine for ANNOY
-    phate_solver = 'sgd'  # 'smacof', 'sgd' # I think SGD uses less RAM because it's stochastic
+    phate_solver = 'smacof'  # 'smacof', 'sgd' # I think SGD uses less RAM because it's stochastic
 
     # HDBSCAN Settings
     HDBSCAN_min_cluster_size = 200

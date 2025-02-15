@@ -827,7 +827,6 @@ def plot_recon(x, x_hat, plot_dict, batch_file_names, epoch, savedir, gpu_id, pa
         pl.savefig(savename_svg)
         pl.close(fig) 
 
-
 def inter_patient_knn_annoy(data, phate_annoy_tree_size, patient_ids, k, n_trees=20, metric='angular'):
     n_samples, n_features = data.shape
 
@@ -868,16 +867,6 @@ def inter_patient_knn_annoy(data, phate_annoy_tree_size, patient_ids, k, n_trees
 
     return knn_indices, knn_distances
 
-def create_affinity_matrix(knn_indices, knn_distances, k, decay):
-    n_samples = knn_indices.shape[0]
-    rows = np.repeat(np.arange(n_samples), k)
-    cols = knn_indices.flatten()
-    values = np.exp(-knn_distances.flatten() / decay)
-
-    # Create sparse affinity matrix
-    affinity_matrix = csr_matrix((values, (rows, cols)), shape=(n_samples, n_samples))
-    return affinity_matrix
-
 def phate_subfunction(  
     atd_file,
     pat_ids_list,
@@ -896,7 +885,7 @@ def phate_subfunction(
     interictal_contour=False,
     verbose=True,
     knn=5,
-    decay=15,  # Decay parameter for PHATE
+    decay=15,  
     phate_metric='cosine',
     phate_solver='smacof',
     apply_pca_phate=True,
@@ -940,26 +929,27 @@ def phate_subfunction(
     pat_idxs = [id_to_index[id] for id in pat_ids_list]
     pat_idxs_expanded = [item for item in pat_idxs for _ in range(latent_data_windowed[0].shape[0])]
 
-
-    # PCA
-    if apply_pca_phate:
-        print(f"Applying PCA, new dimension of data is {pca_comp_phate}")
-        pca = PCA(n_components=pca_comp_phate, svd_solver='full') # Different than PCA used for PaCMAP
-        pca_input = np.concatenate(latent_data_windowed, axis=0)
-        latent_PHATE_input = pca.fit_transform(pca_input)
-
-    else:
-        # Flatten data into [miniepoch, dim] to feed into PHATE, original data is [file, seq_miniepoch_in_file, latent_dim]
-        latent_PHATE_input = np.concatenate(latent_data_windowed, axis=0)
-
     
     ### PHATE ###
 
+    # Flatten data into [miniepoch, dim] to feed into PHATE, original data is [file, seq_miniepoch_in_file, latent_dim]
+    latent_PHATE_input = np.concatenate(latent_data_windowed, axis=0)
+
+    # No PHATE object passed in, make new one
     if premade_PHATE == []:
+
         # Custom NN to exclude intra-patient points
         # Compute inter-patient k-NN graph using Annoy
         if len(knn_indices) == 0 or len(knn_distances) == 0: # if either is epmty, then need to compute
             print("Computing new NN, no precomputed values given")
+
+            # PCA
+            if apply_pca_phate:
+                print(f"Applying PCA, new dimension of data is {pca_comp_phate}")
+                pca = PCA(n_components=pca_comp_phate, svd_solver='full') # Different than PCA used for PaCMAP
+                latent_PHATE_input = pca.fit_transform(latent_PHATE_input) # Overwrite the data with PCA version
+
+            # Now find NN indices and distances 
             knn_indices, knn_distances = inter_patient_knn_annoy(latent_PHATE_input, phate_annoy_tree_size, pat_idxs_expanded, knn, metric=phate_metric)
 
             # Save the NN indices and dists  
@@ -974,21 +964,25 @@ def phate_subfunction(
 
         else: print("Using precomputed NN")
 
-        # Compute affinity matrixaffinity_matrix
-        affinity_matrix = create_affinity_matrix(knn_indices, knn_distances, knn, decay).astype(np.float32) # Create affinity matrix
+        # Create a sparse matrix for the KNN distances (only store nearest neighbors)
+        # Convert the KNN distances to a sparse CSR matrix (Compressed Sparse Row format)
+        rows = np.repeat(np.arange(latent_PHATE_input.shape[0]), knn)
+        cols = knn_indices.flatten()
+        values = knn_distances.flatten()
+        sparse_knn_distances = csr_matrix((values, (rows, cols)), shape=(latent_PHATE_input.shape[0], latent_PHATE_input.shape[0]))
 
         # Build and fit PHATE object
         phate_op = phate.PHATE(
             # pat_idxs=pat_idxs_expanded, # must now match input data
-            knn_dist='precomputed', 
-            affinity_matrix=affinity_matrix,
+            knn_dist='precomputed_distance', # override the default method of detecting 
+            knn=knn,
             decay=decay,
             mds_solver=phate_solver,
             n_jobs= -2
         )
 
-        # Fit and transform the data
-        phate_output = phate_op.fit_transform()
+        # Fit and transform the data using distance matrix
+        phate_output = phate_op.fit_transform(sparse_knn_distances)
 
     else:
         phate_op = premade_PHATE
@@ -1096,12 +1090,11 @@ def phate_subfunction(
     if interictal_contour:
         ax21.title.set_text('Interictal Contour (no peri-ictal data)')
 
-
     # **** Save entire figure *****
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
     # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-    savename_jpg = savedir + f"/JPEGs/PHATE_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + f"_{phate_metric}_knn{knn}.jpg"
-    # savename_svg = savedir + f"/SVGs/PHATE_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + ".svg"
+    savename_jpg = savedir + f"/JPEGs/PHATE_latent_smoothsec{win_sec}Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}_decay{decay}.jpg"
+    # savename_svg = savedir + f"/JPEGs/PHATE_latent_smoothsec{win_sec}Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}_decay{decay}.svg"
     pl.savefig(savename_jpg, dpi=600)
     # pl.savefig(savename_svg)
 
