@@ -21,7 +21,7 @@ if __name__ == "__main__":
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple/trained_models/pangolin_spat113_finetune'
     # pat_ids_list = ['Epat34']
     single_pat = [] #'Epat35'  # if [] will do all pats
-    epoch = 999 # 39 # 141 , 999 to debug
+    epoch = 141 # 39 # 141 , 999 to debug
     latent_subdir = f'latent_files/Epoch{epoch}'
     win_sec = 60 # 60, 1.0
     stride_sec = 30 # 30, 1.0 

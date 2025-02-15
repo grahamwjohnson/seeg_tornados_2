@@ -1158,11 +1158,11 @@ def phate_subfunction(
 
     # **** Save entire figure *****
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-    # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+    if not os.path.exists(savedir + '/PDFs'): os.makedirs(savedir + '/PDFs')
     savename_jpg = savedir + f"/JPEGs/PHATE_latent_smoothsec{win_sec}Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}_decay{decay}.jpg"
-    # savename_svg = savedir + f"/JPEGs/PHATE_latent_smoothsec{win_sec}Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}_decay{decay}.svg"
-    pl.savefig(savename_jpg, dpi=1200)
-    # pl.savefig(savename_svg)
+    savename_pdf = savedir + f"/PDFs/PHATE_latent_smoothsec{win_sec}Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}_decay{decay}.pdf"
+    pl.savefig(savename_jpg, dpi=600)
+    pl.savefig(savename_pdf, dpi=600)
 
     # TODO Upload to WandB
 

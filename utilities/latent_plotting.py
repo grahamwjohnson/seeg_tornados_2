@@ -81,6 +81,11 @@ def plot_latent(
     sort_idxs = sorted(range(len(start_datetimes)), key=lambda k: start_datetimes[k])
     start_datetimes_sorted = [start_datetimes[sort_idx] for sort_idx in sort_idxs]
     stop_datetimes_sorted = [stop_datetimes[sort_idx] for sort_idx in sort_idxs]
+
+    seiz_start_dt_sorted = [seiz_start_dt[sort_idx] for sort_idx in sort_idxs]
+    seiz_stop_dt_sorted = [seiz_stop_dt[sort_idx] for sort_idx in sort_idxs]
+    seiz_types_sorted = [seiz_types[sort_idx] for sort_idx in sort_idxs]
+
     latent_data_sorted = latent_data[sort_idxs, :, :]  # can use direct indexing because it's a numpy array
     hdb_labels_sorted = hdb_labels[sort_idxs, :, :]
     hdb_probabilities = hdb_probabilities[sort_idxs, :, :]
@@ -128,17 +133,17 @@ def plot_latent(
         c_ST = np.ones(len(x_datetimes)) * c_interictal_val_MIN
 
         # Calculate colors for each subplot type
-        for i in range(0, len(seiz_start_dt[iii])):
+        for i in range(0, len(seiz_start_dt_sorted[iii])):
             # THIS WILL BE POSITIVE IF ANY PART OF AVERAGING WINDOW IS ICTAL
-            x_win_ictal_bool_curr = [(d >= seiz_start_dt[iii][i]) & (d - datetime.timedelta(seconds=win_sec) <= seiz_stop_dt[iii][i]) for d in x_datetimes] 
+            x_win_ictal_bool_curr = [(d >= seiz_start_dt_sorted[iii][i]) & (d - datetime.timedelta(seconds=win_sec) <= seiz_stop_dt_sorted[iii][i]) for d in x_datetimes] 
             
             # WILL BE POSITIVE IF leading edge of sliding window hits preictal period, but has not entered ictal period AT ALL
             # Add a 2 second buffer to account for coloring gap (any ictal encroaching will be overwtitten by ictal later)
-            x_win_preictal_bool_curr = [(d > (seiz_start_dt[iii][i] - datetime.timedelta(seconds=preictal_sec))) & (d < seiz_start_dt[iii][i] + datetime.timedelta(seconds=2)) for d in x_datetimes]
+            x_win_preictal_bool_curr = [(d > (seiz_start_dt_sorted[iii][i] - datetime.timedelta(seconds=preictal_sec))) & (d < seiz_start_dt_sorted[iii][i] + datetime.timedelta(seconds=2)) for d in x_datetimes]
             x_win_preictal_IDXs = [i for i, x in enumerate(x_win_preictal_bool_curr) if x]
             
             # WIll be Positive if TRAILING edge of window is out of ictal period and TRAILING edge is within postictal seconds desired
-            x_win_postictal_bool_curr = [(d - datetime.timedelta(seconds=win_sec) > seiz_stop_dt[iii][i]) & (d - datetime.timedelta(seconds=win_sec) < seiz_stop_dt[iii][i] + datetime.timedelta(seconds=postictal_sec)) for d in x_datetimes]
+            x_win_postictal_bool_curr = [(d - datetime.timedelta(seconds=win_sec) > seiz_stop_dt_sorted[iii][i]) & (d - datetime.timedelta(seconds=win_sec) < seiz_stop_dt_sorted[iii][i] + datetime.timedelta(seconds=postictal_sec)) for d in x_datetimes]
             x_win_postictal_IDXs = [i for i, x in enumerate(x_win_postictal_bool_curr) if x] 
 
             # Update colors if this seizure is in plot's time range.
@@ -146,7 +151,7 @@ def plot_latent(
             # Prioritize color override as ictal > preictyal > postictal
 
             # Seiztype colorvals, cyclical surrounding CHANGES based on seiz_type
-            curr_seiz_type = seiz_types[iii][i]
+            curr_seiz_type = seiz_types_sorted[iii][i]
             seiz_type_shiftval = seiz_plot_mult[seiz_type_list.index(curr_seiz_type)]
             c_ST_interictal_val_MIN = 0 + seiz_type_shiftval
             c_ST_preictal_max_val = 0.25 + seiz_type_shiftval
@@ -187,14 +192,14 @@ def plot_latent(
                 c[x_win_ictal_bool_curr] = c_ictal_val
                 c_ST[x_win_ictal_bool_curr] = c_ST_ictal_val
 
-        # DELETE SEIZURES (if selected)
-        title_ictal_included = " with Seizures Plotted"
-        if not plot_ictal:
-            x_datetimes = np.array(x_datetimes)[c != 0].tolist()
-            lat_data_windowed = lat_data_windowed[:, c != 0]
-            c = c[c != 0]
-            c_ST = c_ST[c != 0]
-            title_ictal_included = " without Seizures Plotted"
+        # # DELETE SEIZURES (if selected)
+        # title_ictal_included = " with Seizures Plotted"
+        # if not plot_ictal:
+        #     x_datetimes = np.array(x_datetimes)[c != 0].tolist()
+        #     lat_data_windowed = lat_data_windowed[:, c != 0]
+        #     c = c[c != 0]
+        #     c_ST = c_ST[c != 0]
+        #     title_ictal_included = " without Seizures Plotted"
 
         # Collect each epochs data and color scheme
         if lat_data_windowed.shape[1] != c.shape[0]: raise Exception("Arrays have different number of time samples")
@@ -239,7 +244,7 @@ def plot_latent(
         # cbar.ax.set_title('Peri-Ictal Labels')
 
         # Scale the plot
-        ax.set_title('Latent Space' + title_ictal_included)
+        ax.set_title('Latent Space')
         ax.set_ylabel("Latent Var 1")
         ax.set_xlabel("Latent Var 0")
         ax.set_aspect('equal')
@@ -369,7 +374,6 @@ def plot_latent(
         time_ax.set_aspect('equal')
 
 
-
         # **** HDBSCAN CLUSTER PLOTTING ****
 
         plot_order_CLUSTER = np.argsort(c_CLUSTER_toplot)
@@ -408,33 +412,33 @@ def plot_latent(
         # interCont_ax = fig.add_subplot(gs[0, 1]) 
         # seiztype_ax = fig.add_subplot(gs[1, 0]) 
 
-    # Special SPES colorbar
-    else:
-        # Cut the Gray colormap
-        spes_cmin = 0.2 # 0.4 for Greys
-        spes_cmax = 1
-        # cmap = plt.get_cmap('Greys')
-        cmap = plt.get_cmap('YlOrBr')
-        norm = matplotlib.colors.Normalize(vmin=spes_cmin, vmax =spes_cmax)
-        #generate colors from original colormap in the range equivalent to [vmin, vamx] 
-        colors = cmap(np.linspace(1.-(spes_cmax-spes_cmin)/float(spes_cmax), 1, cmap.N))
-        # Create a new colormap from those colors
-        color_map = matplotlib.colors.LinearSegmentedColormap.from_list('cut_Greys', colors)
+    # # Special SPES colorbar
+    # else:
+    #     # Cut the Gray colormap
+    #     spes_cmin = 0.2 # 0.4 for Greys
+    #     spes_cmax = 1
+    #     # cmap = plt.get_cmap('Greys')
+    #     cmap = plt.get_cmap('YlOrBr')
+    #     norm = matplotlib.colors.Normalize(vmin=spes_cmin, vmax =spes_cmax)
+    #     #generate colors from original colormap in the range equivalent to [vmin, vamx] 
+    #     colors = cmap(np.linspace(1.-(spes_cmax-spes_cmin)/float(spes_cmax), 1, cmap.N))
+    #     # Create a new colormap from those colors
+    #     color_map = matplotlib.colors.LinearSegmentedColormap.from_list('cut_Greys', colors)
 
 
-        c_toplot=np.linspace(spes_cmin, spes_cmax,  c_toplot.shape[0])
-        spes_sc = ax.scatter(lat_data_windowed_toplot[0,:], lat_data_windowed_toplot[1,:], c=c_toplot, alpha=plot_alpha, s=s_plot, cmap=color_map, norm=norm, edgecolors='none')
-        ax.set_title('Latent Space' + title_ictal_included)
+    #     c_toplot=np.linspace(spes_cmin, spes_cmax,  c_toplot.shape[0])
+    #     spes_sc = ax.scatter(lat_data_windowed_toplot[0,:], lat_data_windowed_toplot[1,:], c=c_toplot, alpha=plot_alpha, s=s_plot, cmap=color_map, norm=norm, edgecolors='none')
+    #     ax.set_title('Latent Space')
 
-        cbar_spes = plt.colorbar(spes_sc, ax=ax, ticks=[spes_cmin, spes_cmax], orientation='vertical')
-        cbar_spes.ax.set_yticklabels(['Start\nSPES', 'Stop\nSPES'])
+    #     cbar_spes = plt.colorbar(spes_sc, ax=ax, ticks=[spes_cmin, spes_cmax], orientation='vertical')
+    #     cbar_spes.ax.set_yticklabels(['Start\nSPES', 'Stop\nSPES'])
 
-        ax.set_ylabel("Latent Var 1")
-        ax.set_xlabel("Latent Var 0")
-        ax.set_aspect('equal')
-        if not auto_scale_plot:
-            ax.set_xlim(-1, 1)
-            ax.set_ylim(-1, 1)
+    #     ax.set_ylabel("Latent Var 1")
+    #     ax.set_xlabel("Latent Var 0")
+    #     ax.set_aspect('equal')
+    #     if not auto_scale_plot:
+    #         ax.set_xlim(-1, 1)
+    #         ax.set_ylim(-1, 1)
 
     # Return all axes    
     xy_lims = [ax.get_xlim(), ax.get_ylim()]
