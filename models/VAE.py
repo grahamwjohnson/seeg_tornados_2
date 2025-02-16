@@ -240,7 +240,7 @@ class GradientReversalLayer(torch.autograd.Function):
 
 # Wrapper for Gradient Reversal
 class GradientReversal(nn.Module):
-    def __init__(self, alpha=1.0):
+    def __init__(self, alpha):
         super(GradientReversal, self).__init__()
         self.alpha = alpha
 
@@ -255,8 +255,10 @@ class AdversarialClassifier(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(latent_dim, classifier_hidden_dim_1),
             nn.SiLU(),
+            RMSNorm(classifier_hidden_dim_1),
             nn.Linear(classifier_hidden_dim_1, classifier_hidden_dim_2),
             nn.SiLU(),
+            RMSNorm(classifier_hidden_dim_2),
             nn.Linear(classifier_hidden_dim_2, classifier_num_pats),
         )
         self.softmax = nn.Softmax(dim=1)

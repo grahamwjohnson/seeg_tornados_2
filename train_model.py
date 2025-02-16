@@ -738,6 +738,8 @@ class Trainer:
                                     train_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     train_KL_Beta=self.KL_multiplier, 
                                     train_ReconWeight=self.recon_weight,
+                                    train_AdversarialWeight=self.classifier_weight,
+                                    train_AdversarialAlpha=kwargs['classifier_alpha'],
                                     train_Sparse_weight=self.sparse_weight,
                                     train_epoch=self.epoch)
 
@@ -752,6 +754,8 @@ class Trainer:
                                     val_finetune_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     val_finetune_KL_Beta=self.KL_multiplier, 
                                     val_finetune_ReconWeight=self.recon_weight,
+                                    val_finetune_AdversarialWeight=self.classifier_weight,
+                                    val_finetune_AdversarialAlpha=kwargs['classifier_alpha'],
                                     val_finetune_Sparse_weight=self.sparse_weight,
                                     val_finetune_epoch=self.epoch)
 
@@ -766,6 +770,8 @@ class Trainer:
                                     val_unseen_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
                                     val_unseen_KL_Beta=self.KL_multiplier, 
                                     val_unseen_ReconWeight=self.recon_weight,
+                                    val_unseen_AdversarialWeight=self.classifier_weight,
+                                    val_unseen_AdversarialAlpha=kwargs['classifier_alpha'],
                                     val_unseen_Sparse_weight=self.sparse_weight,
                                     val_unseen_epoch=self.epoch)
 
@@ -795,8 +801,14 @@ class Trainer:
                                         epoch = self.epoch,
                                         iter_curr = iter_curr,
                                         pat_id = dataset_curr.pat_ids[pat_idx],
-                                        **kwargs
-                                )
+                                        **kwargs)
+                                    utils_functions.print_classprobs_realtime(
+                                        class_probs = class_probs,
+                                        savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_classprob",
+                                        epoch = self.epoch,
+                                        iter_curr = iter_curr,
+                                        pat_id = dataset_curr.pat_ids[pat_idx],
+                                        **kwargs)
             
                         # AFTER EACH FORWARD PASS
                         self.opt_vae.step()

@@ -6,9 +6,9 @@ def recon_loss_function(x, x_hat, recon_weight):
 
     # recon_loss = LogCosh_weight * LogCosh_loss_fn(x, x_hat) 
     loss_fn = nn.MSELoss(reduction='mean')
-    recon_loss = recon_weight * loss_fn(x, x_hat) 
+    recon_loss = loss_fn(x, x_hat) 
 
-    return recon_loss
+    return recon_weight * recon_loss
 
 def kld_loss_function(mean, logvar, KL_multiplier):
 
@@ -18,9 +18,8 @@ def kld_loss_function(mean, logvar, KL_multiplier):
 
     # VAE KL divergence
     kld_loss = torch.mean(-0.5 * torch.sum(1 + logvar_batched - mean_batched**2 - logvar_batched.exp(), dim=1))
-    kld_loss = KL_multiplier * kld_loss
 
-    return kld_loss  
+    return KL_multiplier * kld_loss  
 
 def transformer_loss_function(target_embeddings, out_embeddings, transformer_weight):
     

@@ -654,6 +654,54 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, pat_id, num_realti
 
     pl.close('all') 
 
+def print_classprobs_realtime(class_probs, savedir, epoch, iter_curr, pat_id, classifier_num_pats, **kwargs):
+    batchsize = class_probs.shape[0]
+
+    class_probs_cpu = class_probs.detach().cpu().numpy()
+
+    for b in range(0, batchsize):
+        
+        # Make new grid/fig
+        gs = gridspec.GridSpec(1, 2)
+        fig = pl.figure(figsize=(20, 14))
+
+        # Only print for one batch index at a time
+        class_probs_plot = class_probs_cpu[b, :, :]
+
+        # Compute mean and 95% confidence intervals for each class
+        mean_probs = np.mean(class_probs_plot, axis=0)  # Mean probability for each class
+        std_probs = np.std(class_probs_plot, axis=0)  # Standard deviation for each class
+        n = class_probs_plot.shape[0]  # Number of samples
+        confidence_intervals = 1.96 * (std_probs / np.sqrt(n))  # 95% CI
+
+        # Create a DataFrame for Seaborn
+        data = pd.DataFrame({
+            'Class': np.arange(classifier_num_pats),  # Class indices
+            'Mean Probability': mean_probs,  # Mean probabilities
+            'CI': confidence_intervals})  # Confidence intervals
+
+        # Plot using Seaborn
+        pl.figure(figsize=(12, 6))
+        sns.barplot(x='Class', y='Mean Probability', data=data, yerr=data['CI'], capsize=0.1, color='skyblue')
+
+        # Add labels and title
+        pl.xlabel('Class')
+        pl.ylabel('Mean Probability')
+        pl.title('Mean Class Probabilities with 95% Confidence Intervals')
+        pl.xticks(rotation=90)  # Rotate x-axis labels for better readability
+        pl.tight_layout()
+        pl.ylim(0, 1) # Set y-axis limit to 1
+
+        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+        # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+        savename_jpg = f"{savedir}/JPEGs/RealtimeClassProb_epoch{epoch}_iter{iter_curr}_{pat_id}_batch{b}.jpg"
+        # savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}_batch_{b}.svg"
+        pl.savefig(savename_jpg)
+        # pl.savefig(savename_svg)
+        pl.close(fig)    
+
+        pl.close('all') 
+
 def print_autoreg_raw_predictions(gpu_id, epoch, pat_id, rand_file_count, raw_context, raw_pred, raw_target, autoreg_channels, savedir, num_realtime_dims, **kwargs):
 
     raw_context = raw_context.detach().cpu().numpy()

@@ -71,11 +71,13 @@ decoder_max_seq_len: kwargs['decoder_max_seq_len'] = kwargs['autoencode_samples'
 decoder_transformer_activation: "silu" # "tanh"
 
 ### Classifier
-classifier_hidden_dim_1: 512
-classifier_hidden_dim_2: 256
-classifier_num_pats: 40 # Hardcoded
-classifier_alpha: 1.0 # of reverse gradient layer, dictates gain of reverse gradient effect on encoder
-classifier_weight: 1.0 # of cross entropy loss
+classifier_hidden_dim_1: 1024
+classifier_hidden_dim_2: 1024
+classifier_num_pats: 40 # Hardcoded  ########
+classifier_alpha: 1.0 # Default 1.0 # BALANCE of ADVERSARIAL effect between VAE encoder and classifier. Not a ratio, just a float value >0
+classifier_weight: 0.3 # OVERALL effect ADVERSARIAL training: i.e. reverse gradient (VAE) AND classifier power. # Should probably get into same ballpark as recon and KLD
+
+# TODO: schedule alpha AND classifier weight
 
 # Optimizer hyperparameters
 core_weight_decay: 0.1
