@@ -55,6 +55,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from annoy import AnnoyIndex
 from scipy.sparse import csr_matrix
 
+# Local imports
 from models.VAE import print_models_flow
 
 def fill_hist_by_channel(data_in: np.ndarray, histo_bin_edges: np.ndarray, zero_island_delete_idxs: list):
@@ -1224,7 +1225,6 @@ def phate_subfunction(
     # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
     return ax00, phate_op, hdb, xy_lims # save_tuple
 
-
 def pacmap_subfunction(  
     atd_file,
     pat_ids_list,
@@ -2097,167 +2097,12 @@ def get_PaCMAP_model(model_common_prefix, pre_PaCMAP_window_sec_path, pre_PaCMAP
 
     return PaCMAP, pre_PaCMAP_window_sec, pre_PaCMAP_stride_sec
 
-# def load_inferred_pkl(file):
-#     # Assumes the .pkl files have the following order for their save tuple:
-#     # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
-   
-#     # Each array expected to have shape of [batch, latent dim/label dim, time elements]
-
-#     # Import the window/smooth seconds and stride seconds from filename
-#     splitties = file.split("/")[-1].split("_")
-#     str_of_interest = splitties[8]
-#     if ('window' not in str_of_interest) | ('stride' not in str_of_interest): raise Exception(f"Expected string to have 'window' and 'stride' parsed from filename, but got {str_of_interest}")
-#     str_of_interest = str_of_interest.split("seconds")[0]
-#     window_sec = float(str_of_interest.split('window')[-1].split('stride')[0])
-#     stride_sec = float(str_of_interest.split('window')[-1].split('stride')[1])
-
-#     expected_len = 6
-#     with open(file, "rb") as f: S = pickle.load(f)
-#     if len(S) != expected_len: raise Exception(f"ERROR: expected tuple to have {expected_len} elements, but it has {len(S)}")
-#     latent_data_windowed = S[0]                                         
-#     latent_PCA_allFiles = S[1]
-#     latent_topPaCMAP_allFiles = S[2]
-#     latent_topPaCMAP_MedDim_allFiles = S[3]
-#     hdb_labels_allFiles = S[4]
-#     hdb_probabilities_allFiles = S[5]
-
-#     return window_sec, stride_sec, latent_data_windowed, latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles
-
 def load_data_tensor(filename):
     file = open(filename,'rb')
     data = pickle.load(file) 
     file.close()
     # data_channel_subset = data[0:self.num_channels,:]   
     return torch.FloatTensor(data)
-
-# def collect_latent_tmp_files(path, keyword, expected_GPU_count, approx_file_count, win_sec, stride_sec, decode_samples, FS):
-#     # Determine how many GPUs have saved tmp files
-#     potential_paths = glob.glob(f"{path}/*{keyword}*")
-
-#     print("WARNING: expected file count check suspended")
-#     # file_buffer = 2 # files should be spread evenly over GPUs by DDP, so buffer of 1 is even probably sufficient
-#     # if (len(potential_paths) < (approx_file_count * expected_GPU_count - file_buffer)) or (len(potential_paths) > (approx_file_count * expected_GPU_count + file_buffer)):
-#     #     raise Exception (f"ERROR: expected approximately {str(approx_file_count)} files across {str(expected_GPU_count)} GPUs, but found {str(len(potential_paths))} in {path}")
-
-#     for f in range(len(potential_paths)):
-#         with open(potential_paths[f], 'rb') as file: 
-#             latent_tuple = pickle.load(file)
-        
-#         latent_raw = latent_tuple[0].detach().numpy()
-#         # Average the data temporally according to smoothing seconds, before feeding into PaCMAP
-#         num_iters = int((latent_raw.shape[2]*decode_samples - win_sec * FS)/(stride_sec * FS)+ 1)
-#         if num_iters == 0: raise Exception("ERROR: num_iters = 0 somehow. It should be > 0")
-#         window_subsamps = int((win_sec * FS) / decode_samples)
-#         stride_subsamps = int((stride_sec * FS) / decode_samples)
-#         latent_windowed = [np.zeros([latent_raw.shape[1], num_iters], dtype=np.float16)] * latent_raw.shape[0]
-#         for j in range(0, latent_raw.shape[0]):
-#             latent_windowed[j] = np.array([np.mean(latent_raw[j, :, i*stride_subsamps: i*stride_subsamps + window_subsamps], axis=1) for i in range(0,num_iters)], dtype=np.float32).transpose()
-
-#         if f == 0:            
-#             latent_windowed_ALL = latent_windowed
-#             start_ALL = latent_tuple[1] # ensure it is a list 
-#             stop_ALL = latent_tuple[2] # ensure it is a list 
-
-#         else: 
-#             latent_windowed_ALL = latent_windowed_ALL + latent_windowed
-#             start_ALL = start_ALL + latent_tuple[1]
-#             stop_ALL = stop_ALL + latent_tuple[2]
-
-#     return latent_windowed_ALL, start_ALL, stop_ALL
-
-# def collate_latent_tmps(save_dir: str, samp_freq: int, patid: str, epoch_used: int, hours_inferred_str: str, save_dimension_style: str, stride: int):
-#     print("\nCollating tmp files")
-#     # Pull in all the tmp files across all tmp directories (assumes directory is named 'tmp<#>')
-#     dirs = glob.glob(save_dir + '/tmp*')
-#     file_count = len(glob.glob(save_dir + "/tmp*/*.pkl"))
-#     all_filenames = ["NaN"]*(file_count)
-
-#     # Pull in one latent file to get the sample size in latent variable
-#     f1 = glob.glob(dirs[0] + "/*.pkl")[0]
-#     with open(f1, 'rb') as file: 
-#         latent_sample_data = pickle.load(file)
-#     latent_dims = latent_sample_data[1].shape[1]
-#     latent_samples_in_epoch = latent_sample_data[1].shape[2]
-#     del latent_sample_data
-
-#     all_latent = np.zeros([file_count, latent_dims, latent_samples_in_epoch], dtype=np.float16)
-#     d_count = 0
-#     ff_count = 0
-#     individual_count = 0
-#     for d in dirs:
-#         d_count= d_count + 1
-#         files = glob.glob(d + "/*.pkl")
-#         for ff in files:
-#             ff_count = ff_count + 1
-#             if ff_count%10 == 0: print("GPUDir " + str(d_count) + "/" + str(len(dirs)) + ": File " + str(ff_count) + "/" + str(file_count))
-#             with open(ff, 'rb') as file:
-#                 file_data = pickle.load(file)
-
-#                 # Check to see the actual count of data within the batch
-#                 batch_count = len(file_data[0])
-#                 if batch_count != 1: raise Exception("Batch size not equal to one, batch size must be one")
-                
-#                 all_filenames[individual_count : individual_count + batch_count] = file_data[0]
-
-#                 # Get the start and end datetime objects. IMPORTANT: base the start datetime on the end datetime working backwards,
-#                 # because there may have been time shrinkage due to NO PADDING in the time dimension
-
-#                 # Append the data together batchwise (mandated batch of 1)
-#                 all_latent[individual_count : individual_count + batch_count, :, :] = file_data[1][0, :, :].astype(np.float16)
-               
-#                 individual_count = individual_count + batch_count
-
-#     # sort the filenames to find the last file and the first file to get a total number of samples to initialize in final variable
-#     sort_idxs = np.argsort(all_filenames)
-
-#     # Get all of end objects to prepare for iterating through batches and placing 
-#     file_end_objects = [filename_to_dateobj(f, start_or_end=1) for f in all_filenames]
-#     first_end_datetime = file_end_objects[sort_idxs[0]]
-
-#     # Get the length of the latent variable (will be shorter than input data if NO PADDING)
-#     # TODO Get the total EMU time utilized in seconds and sample
-#     # VERY IMPORTANT, define the start time based off the end time and samples in latent space  
-#     dur_latentVar_seconds = all_latent.shape[2] / samp_freq
-#     file_start_objects = [fend - datetime.timedelta(seconds=dur_latentVar_seconds) for fend in file_end_objects] # All of the start times for the files (NOT the same as filename start times if there is latent time shrinking)
-    
-#     first_start_dateobj = first_end_datetime - datetime.timedelta(seconds=dur_latentVar_seconds) # Only the first file
-#     last_end_dateobj = file_end_objects[sort_idxs[-1]]
-
-#     # Total samples of latent space (may not all get filled)
-#     master_latent_samples = round(((last_end_dateobj - first_start_dateobj).total_seconds() * samp_freq)) 
-
-#     # Initialize the final output variable
-#     master_latent = np.zeros([latent_dims, master_latent_samples], dtype=np.float16)
-#     num_files_avgd_at_sample = np.zeros([master_latent.shape[1]], dtype=np.uint8) # WIll use this for weighting the new data as it comes in
-
-#     # Fill the master latent variables using the filename timestamps
-#     # Average latent variables for any time overlap due to sliding window of training data (weighted average as new overlaps are discovered)
-#     for i in range(0,len(sort_idxs)):
-#         curr_idx = sort_idxs[i]
-#         latent_data = all_latent[curr_idx, :, :]
-#         dt = file_start_objects[sort_idxs[i]]
-#         ai = round((dt - first_start_dateobj).total_seconds() * samp_freq) # insert start sample index
-#         bi = ai + latent_data.shape[1] # insert end sample index
-
-#         # Insert each latent channel as a weighted average of what is already there
-#         master_latent[:, ai:bi] = master_latent[:, ai:bi] * (num_files_avgd_at_sample[ai:bi]/(num_files_avgd_at_sample[ai:bi] + 1)) + latent_data * (1/(num_files_avgd_at_sample[ai:bi] + 1))
-
-#         # Increment the number of files used at these sample points                                                              
-#         num_files_avgd_at_sample[ai:bi] = num_files_avgd_at_sample[ai:bi] + 1                                                                           
-
-#     # Change wherever there are zero files contributing to latent data into np.nan
-#     zero_files_used_idxs = np.where(num_files_avgd_at_sample == 0)[0]
-#     master_latent[:,zero_files_used_idxs] = np.nan
-
-#     # Pickle the master_latent variable
-#     s_start = all_filenames[sort_idxs[0]].split("_")
-#     s_end = all_filenames[sort_idxs[-1]].split("_")
-#     master_filename = save_dir + "/" + patid + "_" + save_dimension_style + "_master_latent_" + hours_inferred_str + "_trainedepoch" + str(epoch_used) + "_" + s_start[1] + "_" + s_start[2] + "_to_" + s_end[4] + "_" + s_end[5] + ".pkl"
-#     with open(master_filename, 'wb') as file: pickle.dump(master_latent, file)
-
-#     # # Delete tmp directories
-#     # for d in dirs:
-#     #     shutil.rmtree(d)
 
 def filename_to_dateobj(f: str, start_or_end: int):
     # if start_or_end is '0' the beginning of file timestamp is used, if '1' the end
@@ -3003,7 +2848,6 @@ def montage_filter_pickle_edfs(pat_id: str, dir_edf: str, save_dir: str, desired
             with open(save_name, "wb") as f:
                 pickle.dump(filt_data_banded, f)
             print("Big pickle saved")
-
 
 
 

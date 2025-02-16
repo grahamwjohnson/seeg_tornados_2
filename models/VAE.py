@@ -150,71 +150,35 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         # return torch.mean(x, dim=1)
         # return x[:,-1,:] # Return last in sequence (should be embedded with meaning)
 
-class TransformerDecoder(nn.Module):
-    def __init__(self, gpu_id, latent_dim, transformer_dim, output_channels, seq_length, num_transformer_layers, num_heads, ffm, max_bs, max_seq_len, activation):
-        super(TransformerDecoder, self).__init__()
+class MLPDecoder(nn.Module):
+    def __init__(self, gpu_id, latent_dim, decoder_base_dims, output_channels):
+        super(MLPDecoder, self).__init__()
         self.gpu_id = gpu_id
         self.latent_dim = latent_dim
-        self.transformer_dim = transformer_dim
+        self.decoder_base_dims = decoder_base_dims
         self.output_channels = output_channels
-        self.seq_length = seq_length
-        self.num_transformer_layers = num_transformer_layers
-        self.num_heads = num_heads
-        self.ffm = ffm
-        self.max_bs = max_bs
-        self.max_seq_len = max_seq_len
 
         # Non-autoregressive decoder 
         self.non_autoregressive_fc = nn.Sequential(
-            # nn.Linear(latent_dim, transformer_dim * seq_length),
-            # nn.Linear(latent_dim, latent_dim * 4),
-            # nn.SiLU(),
-            # RMSNorm(latent_dim * 4),
-            # nn.Linear(latent_dim * 4, latent_dim * 8),
-            # RMSNorm(latent_dim * 8),
-            # nn.SiLU(),
-            # nn.Linear(latent_dim * 8, latent_dim * 8),
-            # RMSNorm(latent_dim * 8),
-            # nn.SiLU(),
-            # nn.Linear(latent_dim * 8, latent_dim * 4),
-            # RMSNorm(latent_dim * 4),
-            # nn.SiLU(),
-            # nn.Linear(latent_dim * 4, transformer_dim * seq_length),
-
-            nn.Linear(latent_dim, transformer_dim * seq_length),
+            nn.Linear(latent_dim, decoder_base_dims * seq_length),
             nn.SiLU(),
-            RMSNorm(transformer_dim * seq_length),
-            nn.Linear(transformer_dim * seq_length, transformer_dim * seq_length * 2),
+            RMSNorm(decoder_base_dims * seq_length),
+            nn.Linear(decoder_base_dims * seq_length, decoder_base_dims * seq_length * 2),
             nn.SiLU(),
-            RMSNorm(transformer_dim * seq_length * 2),
-            nn.Linear(transformer_dim * seq_length * 2, transformer_dim * seq_length * 4),
+            RMSNorm(decoder_base_dims * seq_length * 2),
+            nn.Linear(decoder_base_dims * seq_length * 2, decoder_base_dims * seq_length * 4),
             nn.SiLU(),
-            RMSNorm(transformer_dim * seq_length * 4),
-            nn.Linear(transformer_dim * seq_length * 4, transformer_dim * seq_length * 4),
+            RMSNorm(decoder_base_dims * seq_length * 4),
+            nn.Linear(decoder_base_dims * seq_length * 4, decoder_base_dims * seq_length * 4),
             nn.SiLU(),
-            RMSNorm(transformer_dim * seq_length * 4),
-            nn.Linear(transformer_dim * seq_length * 4, transformer_dim * seq_length * 4),
+            RMSNorm(decoder_base_dims * seq_length * 4),
+            nn.Linear(decoder_base_dims * seq_length * 4, decoder_base_dims * seq_length * 4),
             nn.SiLU(),
-            RMSNorm(transformer_dim * seq_length * 4)
-            )
-
-        # self.non_autoregressive_transformer = Transformer(ModelArgs(
-        #     device=self.gpu_id, 
-        #     dim=self.transformer_dim, 
-        #     n_layers=self.num_transformer_layers,
-        #     n_heads=self.num_heads,
-        #     ffn_dim_multiplier=self.ffm,
-        #     max_batch_size=self.max_bs,
-        #     max_seq_len=self.max_seq_len,
-        #     activation=activation)) 
-        
+            RMSNorm(decoder_base_dims * seq_length * 4)
+            )        
         # Now FC without norms, after reshaping so that each token is seperated
         self.non_autoregressive_output = nn.Sequential(
-            # nn.Linear(transformer_dim, transformer_dim * 4),
-            # nn.SiLU(),
-            # nn.Linear(transformer_dim * 4, transformer_dim * 4),
-            # nn.SiLU(),
-            nn.Linear(transformer_dim * 4, output_channels),
+            nn.Linear(decoder_base_dims * 4, output_channels),
             nn.Tanh())
             
     def forward(self, z):
@@ -222,7 +186,6 @@ class TransformerDecoder(nn.Module):
         
         # Step 1: Non-autoregressive generation 
         h_na = self.non_autoregressive_fc(z).view(batch_size, self.seq_length, self.transformer_dim * 4)
-        # h_na = self.non_autoregressive_transformer(h_na, start_pos=0, causal_mask_bool=False)  # Self-attention with no causal mask
         x_na = self.non_autoregressive_output(h_na)  # (batch_size, seq_length, output_channels)
         
         return x_na
@@ -286,13 +249,7 @@ class VAE(nn.Module):
         top_dims,
         hidden_dims,
         latent_dim, 
-        decoder_transformer_dims,
-        decoder_num_heads,
-        decoder_num_transformer_layers,
-        decoder_ffm,
-        decoder_max_batch_size,
-        decoder_max_seq_len,
-        decoder_transformer_activation,
+        decoder_base_dims,
         gpu_id=None,  
         **kwargs):
 
@@ -310,20 +267,20 @@ class VAE(nn.Module):
         self.top_dims = top_dims
         self.hidden_dims = hidden_dims
         self.latent_dim = latent_dim 
-
-        self.decoder_transformer_dims = decoder_transformer_dims
-        self.decoder_num_transformer_layers = decoder_num_transformer_layers
-        self.decoder_num_heads = decoder_num_heads
-        self.decoder_ffm = decoder_ffm
-        self.decoder_max_batch_size = decoder_max_batch_size
-        self.decoder_max_seq_len = decoder_max_seq_len
-        self.decoder_transformer_activation = decoder_transformer_activation
+        self.decoder_base_dims = decoder_base_dims
 
         # Raw CrossAttention Head
-        self.encoder_head = Encoder_TimeSeriesWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=self.crattn_embed_dim, **kwargs)
+        self.encoder_head = Encoder_TimeSeriesWithCrossAttention(
+            padded_channels=self.padded_channels, 
+            crattn_embed_dim=self.crattn_embed_dim, 
+            **kwargs)
 
         # Transformer - dimension is same as output of cross attention
-        self.transformer_encoder = Transformer(ModelArgs(device=self.gpu_id, dim=self.transformer_dim, activation=self.encoder_transformer_activation, **kwargs))
+        self.transformer_encoder = Transformer(ModelArgs(
+            device=self.gpu_id, 
+            dim=self.transformer_dim, 
+            activation=self.encoder_transformer_activation, 
+            **kwargs))
 
         # Core Encoder
         self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=True)
@@ -336,16 +293,8 @@ class VAE(nn.Module):
         self.decoder = TransformerDecoder(
             gpu_id = self.gpu_id,
             latent_dim = self.latent_dim,
-            transformer_dim = self.decoder_transformer_dims,
-            output_channels = self.padded_channels,
-            seq_length = self.autoencode_samples,
-            num_heads = self.decoder_num_heads,
-            num_transformer_layers = self.decoder_num_transformer_layers,
-            ffm = self.decoder_ffm,
-            max_bs = self.decoder_max_batch_size,
-            max_seq_len = self.decoder_max_seq_len,
-            activation=self.decoder_transformer_activation
-            )
+            decoder_base_dims = self.decoder_base_dims,
+            output_channels = self.padded_channels)
 
         # Adversarial Classifier
         self.classifier = AdversarialClassifier(latent_dim=self.latent_dim, **kwargs)

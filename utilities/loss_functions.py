@@ -30,9 +30,6 @@ def transformer_loss_function(target_embeddings, out_embeddings, transformer_wei
 
     return transformer_weight * transformer_loss #/ in_embeddings.shape[0] / in_embeddings.shape[1] # normalize by batch size and seq length
 
-def simple_mean_latent_loss(latent, mean_loss_weight, **kwargs):
-    return mean_loss_weight * torch.sum(torch.abs(torch.mean(latent, dim=1))) / latent.shape[2]
-
 def sparse_l1_reg(z, sparse_weight, **kwargs):
     
     l1_penalty = torch.sum(torch.abs(z))  # L1 norm
