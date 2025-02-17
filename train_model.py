@@ -65,10 +65,16 @@ def load_train_objs(
     val_unseen_hour_dataset_range, 
     inference_selection, 
     
-    # Optimizers
+    # VAE Optimizers
     core_weight_decay, 
     adamW_beta1,
     adamW_beta2,
+
+    # Classifier Optimizer
+    classifier_weight_decay,
+    classifier_adamW_beta1,
+    classifier_adamW_beta2,
+
     **kwargs):
 
     # Split pats into train and test
@@ -126,9 +132,26 @@ def load_train_objs(
     ### VAE ###
     vae = VAE(gpu_id=gpu_id, **kwargs) 
     vae = vae.to(gpu_id) 
-    opt_vae = torch.optim.AdamW(vae.parameters(), weight_decay=core_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_core'])
+
+    # Separate the parameters into two groups
+    classifier_params = []
+    vae_params = []
+
+    # Iterate through the model parameters
+    for name, param in vae.named_parameters():
+        # Check if the parameter is part of the encoder submodule
+        if 'adversarial_classifier' in name:
+            classifier_params.append(param)
+        else:
+            vae_params.append(param)
     
-    return train_dataset, valfinetune_dataset, valunseen_dataset, vae, opt_vae 
+    # opt_vae = torch.optim.AdamW(vae.parameters(), weight_decay=core_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_core'])
+    # opt_cls = torch.optim.AdamW(vae.classifier.parameters(), weight_decay=classifier_weight_decay, betas=(classifier_adamW_beta1, classifier_adamW_beta2), lr=kwargs['LR_min_classifier'])
+    
+    opt_vae = torch.optim.AdamW(vae_params, weight_decay=core_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_core'])
+    opt_cls = torch.optim.AdamW(classifier_params, weight_decay=classifier_weight_decay, betas=(classifier_adamW_beta1, classifier_adamW_beta2), lr=kwargs['LR_min_classifier'])
+
+    return train_dataset, valfinetune_dataset, valunseen_dataset, vae, opt_vae, opt_cls
 
 def main(  
     # Ordered variables
@@ -152,6 +175,7 @@ def main(
     PaCMAP_model_to_infer = [],
     vae_state_dict_prev_path = [],
     vae_opt_state_dict_prev_path = [],
+    cls_opt_state_dict_prev_path = [],
     epochs_to_train: int = -1,
 
     **kwargs):
@@ -179,7 +203,7 @@ def main(
     ddp_setup(gpu_id, world_size)
 
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
-    train_dataset, valfinetune_dataset, valunseen_dataset, vae, opt_vae = load_train_objs(gpu_id=gpu_id, **kwargs) 
+    train_dataset, valfinetune_dataset, valunseen_dataset, vae, opt_vae, opt_cls = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
     # Load the model/opt states if not first epoch & if in training mode
     if (start_epoch > 0):
@@ -190,6 +214,8 @@ def main(
         vae.load_state_dict(vae_state_dict_prev)
         vae_opt_state_dict_prev = torch.load(vae_opt_state_dict_prev_path, map_location=map_location)
         opt_vae.load_state_dict(vae_opt_state_dict_prev)
+        cls_opt_state_dict_prev = torch.load(cls_opt_state_dict_prev_path, map_location=map_location)
+        opt_cls.load_state_dict(cls_opt_state_dict_prev)
 
         print("Model and Opt weights loaded from checkpoints")
 
@@ -199,6 +225,7 @@ def main(
         gpu_id=gpu_id, 
         vae=vae, 
         opt_vae=opt_vae,
+        opt_cls=opt_cls,
         start_epoch=start_epoch,
         train_dataset=train_dataset, 
         valfinetune_dataset=valfinetune_dataset,
@@ -221,11 +248,13 @@ def main(
             if finetune_pacmap:
                 vae_dict = trainer.vae.module.state_dict()
                 vae_opt_dict = trainer.opt_vae.state_dict()
+                cls_opt_dict = trainer.opt_cls.state_dict()
 
                 # FINETUNE on beginning of validation patients (currently only one epoch)
                 # Set to train and change LR to validate settings
                 trainer._set_to_train()
                 trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
+                trainer.opt_cls.param_groups[0]['lr'] = LR_val_cls
                 trainer._run_epoch(
                     dataset_curr = trainer.valfinetune_dataset, 
                     dataset_string = "valfinetune",
@@ -273,6 +302,7 @@ def main(
             if finetune_pacmap:
                 trainer.vae.module.load_state_dict(vae_dict)
                 trainer.opt_vae.load_state_dict(vae_opt_dict)
+                trainer.opt_cls.load_state_dict(cls_opt_dict)
 
             print(f"GPU{str(trainer.gpu_id)} at post PaCMAP barrier")
             barrier()
@@ -303,11 +333,13 @@ def main(
             # Save pre-finetune model/opt weights
             vae_dict = trainer.vae.module.state_dict()
             vae_opt_dict = trainer.opt_vae.state_dict()
+            cls_opt_dict = trainer.opt_cls.state_dict()
 
             # FINETUNE on beginning of validation patients (currently only one epoch)
             # Set to train and change LR to validate settings
             trainer._set_to_train()
             trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
+            trainer.opt_cls.param_groups[0]['lr'] = LR_val_cls
             trainer._run_epoch(
                 dataset_curr = trainer.valfinetune_dataset, 
                 dataset_string = "valfinetune",
@@ -338,6 +370,7 @@ def main(
             # Restore model/opt weights to pre-finetune
             trainer.vae.module.load_state_dict(vae_dict)
             trainer.opt_vae.load_state_dict(vae_opt_dict)
+            trainer.opt_cls.load_state_dict(cls_opt_dict)
 
     # Kill the process after training loop completes
     print(f"[GPU{gpu_id}]: End of train loop, killing subprocess")
@@ -355,6 +388,7 @@ class Trainer:
         valfinetune_dataset: SEEG_Tornado_Dataset,
         valunseen_dataset: SEEG_Tornado_Dataset,
         opt_vae: torch.optim.Optimizer,
+        opt_cls: torch.optim.Optimizer,
         wdecode_batch_size: int,
         onlylatent_batch_size: int,
         wandb_run,
@@ -387,6 +421,7 @@ class Trainer:
         self.valfinetune_dataset = valfinetune_dataset
         self.valunseen_dataset = valunseen_dataset
         self.opt_vae = opt_vae
+        self.opt_cls = opt_cls
         self.wdecode_batch_size = wdecode_batch_size
         self.onlylatent_batch_size = onlylatent_batch_size
         self.model_dir = model_dir
@@ -432,6 +467,7 @@ class Trainer:
 
     def _zero_all_grads(self):
         self.opt_vae.zero_grad()
+        self.opt_cls.zero_grad()
 
     def _save_checkpoint(self, epoch, delete_old_checkpoints, **kwargs):
             
@@ -452,10 +488,14 @@ class Trainer:
         check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae.pt"
         torch.save(ckp, check_path)
 
-        # Save optimizer
+        # Save optimizers
         opt_ckp = self.opt_vae.state_dict()
         opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_opt.pt"
         torch.save(opt_ckp, opt_path)
+
+        opt_ckp_cls = self.opt_cls.state_dict()
+        opt_path_cls = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_cls_opt.pt"
+        torch.save(opt_ckp_cls, opt_path_cls)
 
         print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
 
@@ -650,9 +690,11 @@ class Trainer:
                     for start_idx in start_idxs: # Same start_idx for all patients (has no biological meaning)
 
                         # For Training: Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                        self.KL_multiplier, self.curr_LR_core, self.sparse_weight, self.classifier_weight = utils_functions.LR_and_weight_schedules(
+                        self.KL_multiplier, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight = utils_functions.LR_and_weight_schedules(
                             epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
-                        if (not val_finetune) & (not val_unseen): self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
+                        if (not val_finetune) & (not val_unseen): 
+                            self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
+                            self.opt_cls.param_groups[0]['lr'] = self.curr_LR_cls
 
                         # Reset the cumulative losses & zero gradients
                         # AFTER EACH FORWARD PASS
@@ -681,7 +723,7 @@ class Trainer:
                             raise Exception(f"ERROR: found nans in one of these files: {file_name}")
 
                         ### VAE ENCODER: 1-shifted
-                        mean, logvar, latent, class_probs = self.vae(x[:, :-1, :, :], reverse=False)
+                        mean, logvar, latent, class_probs_mean_of_means = self.vae(x[:, :-1, :, :], reverse=False)
                         
                         ### VAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
                         x_hat = self.vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=x.shape[2])  
@@ -698,7 +740,7 @@ class Trainer:
                             KL_multiplier=self.KL_multiplier)
 
                         adversarial_loss = loss_functions.adversarial_loss_function(
-                            class_probs=class_probs,
+                            class_probs=class_probs_mean_of_means, 
                             file_class_label=file_class_label,
                             classifier_weight=self.classifier_weight)
 
@@ -735,7 +777,8 @@ class Trainer:
                                     train_kld_loss=kld_loss, 
                                     train_adversarial_loss=adversarial_loss,
                                     train_sparse_loss=sparse_loss,
-                                    train_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
+                                    train_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                                    train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                                     train_KL_Beta=self.KL_multiplier, 
                                     train_ReconWeight=self.recon_weight,
                                     train_AdversarialWeight=self.classifier_weight,
@@ -751,7 +794,8 @@ class Trainer:
                                     val_finetune_kld_loss=kld_loss, 
                                     val_finetune_adversarial_loss=adversarial_loss,
                                     val_finetune_sparse_loss=sparse_loss,
-                                    val_finetune_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
+                                    val_finetune_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                                    val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                                     val_finetune_KL_Beta=self.KL_multiplier, 
                                     val_finetune_ReconWeight=self.recon_weight,
                                     val_finetune_AdversarialWeight=self.classifier_weight,
@@ -767,7 +811,8 @@ class Trainer:
                                     val_unseen_kld_loss=kld_loss, 
                                     val_unseen_adversarial_loss=adversarial_loss,
                                     val_unseen_sparse_loss=sparse_loss,
-                                    val_unseen_LR_encoder=self.opt_vae.param_groups[0]['lr'], 
+                                    val_unseen_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                                    val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                                     val_unseen_KL_Beta=self.KL_multiplier, 
                                     val_unseen_ReconWeight=self.recon_weight,
                                     val_unseen_AdversarialWeight=self.classifier_weight,
@@ -803,7 +848,8 @@ class Trainer:
                                         pat_id = dataset_curr.pat_ids[pat_idx],
                                         **kwargs)
                                     utils_functions.print_classprobs_realtime(
-                                        class_probs = class_probs,
+                                        class_probs = class_probs_mean_of_means,
+                                        class_labels = file_class_label,
                                         savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_classprob",
                                         epoch = self.epoch,
                                         iter_curr = iter_curr,
@@ -812,15 +858,19 @@ class Trainer:
             
                         # AFTER EACH FORWARD PASS
                         self.opt_vae.step()
+                        self.opt_cls.step()
 
                     # ### AFTER EACH BATCH ###
                     # self.opt_vae.step()
+                    # self.opt_cls.step()
 
                 # ### AFTER EACH PATIENT ###
                 # self.opt_vae.step()
+                # self.opt_cls.step()
                     
             # ### AFTER ALL PATIENTS ###
             # self.opt_vae.step()
+            # self.opt_cls.step()
                          
 if __name__ == "__main__":
 

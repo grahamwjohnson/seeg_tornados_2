@@ -150,31 +150,32 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         # return torch.mean(x, dim=1)
         # return x[:,-1,:] # Return last in sequence (should be embedded with meaning)
 
-class MLPDecoder(nn.Module):
-    def __init__(self, gpu_id, latent_dim, decoder_base_dims, output_channels):
-        super(MLPDecoder, self).__init__()
+class Decoder_MLP(nn.Module):
+    def __init__(self, gpu_id, latent_dim, decoder_base_dims, output_channels, decode_samples):
+        super(Decoder_MLP, self).__init__()
         self.gpu_id = gpu_id
         self.latent_dim = latent_dim
         self.decoder_base_dims = decoder_base_dims
         self.output_channels = output_channels
+        self.decode_samples = decode_samples
 
         # Non-autoregressive decoder 
         self.non_autoregressive_fc = nn.Sequential(
-            nn.Linear(latent_dim, decoder_base_dims * seq_length),
+            nn.Linear(latent_dim, decoder_base_dims * decode_samples),
             nn.SiLU(),
-            RMSNorm(decoder_base_dims * seq_length),
-            nn.Linear(decoder_base_dims * seq_length, decoder_base_dims * seq_length * 2),
+            RMSNorm(decoder_base_dims * decode_samples),
+            nn.Linear(decoder_base_dims * decode_samples, decoder_base_dims * decode_samples * 2),
             nn.SiLU(),
-            RMSNorm(decoder_base_dims * seq_length * 2),
-            nn.Linear(decoder_base_dims * seq_length * 2, decoder_base_dims * seq_length * 4),
+            RMSNorm(decoder_base_dims * decode_samples * 2),
+            nn.Linear(decoder_base_dims * decode_samples * 2, decoder_base_dims * decode_samples * 4),
             nn.SiLU(),
-            RMSNorm(decoder_base_dims * seq_length * 4),
-            nn.Linear(decoder_base_dims * seq_length * 4, decoder_base_dims * seq_length * 4),
+            RMSNorm(decoder_base_dims * decode_samples * 4),
+            nn.Linear(decoder_base_dims * decode_samples * 4, decoder_base_dims * decode_samples * 4),
             nn.SiLU(),
-            RMSNorm(decoder_base_dims * seq_length * 4),
-            nn.Linear(decoder_base_dims * seq_length * 4, decoder_base_dims * seq_length * 4),
+            RMSNorm(decoder_base_dims * decode_samples * 4),
+            nn.Linear(decoder_base_dims * decode_samples * 4, decoder_base_dims * decode_samples * 4),
             nn.SiLU(),
-            RMSNorm(decoder_base_dims * seq_length * 4)
+            RMSNorm(decoder_base_dims * decode_samples * 4)
             )        
         # Now FC without norms, after reshaping so that each token is seperated
         self.non_autoregressive_output = nn.Sequential(
@@ -185,7 +186,7 @@ class MLPDecoder(nn.Module):
         batch_size = z.size(0)
         
         # Step 1: Non-autoregressive generation 
-        h_na = self.non_autoregressive_fc(z).view(batch_size, self.seq_length, self.transformer_dim * 4)
+        h_na = self.non_autoregressive_fc(z).view(batch_size, self.decode_samples, self.decoder_base_dims * 4)
         x_na = self.non_autoregressive_output(h_na)  # (batch_size, seq_length, output_channels)
         
         return x_na
@@ -212,24 +213,34 @@ class GradientReversal(nn.Module):
 
 # Define the Adversarial Classifier with Gradient Reversal
 class AdversarialClassifier(nn.Module):
-    def __init__(self, latent_dim, classifier_hidden_dim_1, classifier_hidden_dim_2, classifier_num_pats, classifier_alpha, **kwargs):
+    def __init__(self, latent_dim, classifier_hidden_dims, classifier_num_pats, classifier_alpha, **kwargs):
         super(AdversarialClassifier, self).__init__()
         self.gradient_reversal = GradientReversal(classifier_alpha)
-        self.mlp = nn.Sequential(
-            nn.Linear(latent_dim, classifier_hidden_dim_1),
-            nn.SiLU(),
-            RMSNorm(classifier_hidden_dim_1),
-            nn.Linear(classifier_hidden_dim_1, classifier_hidden_dim_2),
-            nn.SiLU(),
-            RMSNorm(classifier_hidden_dim_2),
-            nn.Linear(classifier_hidden_dim_2, classifier_num_pats),
-        )
+        
+        self.mlp_layers = nn.ModuleList()
+
+        # Input layer
+        self.mlp_layers.append(nn.Linear(latent_dim, classifier_hidden_dims[0]))
+        self.mlp_layers.append(nn.SiLU())
+        self.mlp_layers.append(RMSNorm(classifier_hidden_dims[0]))
+
+        # Hidden layers
+        for i in range(len(classifier_hidden_dims) - 1):
+            self.mlp_layers.append(nn.Linear(classifier_hidden_dims[i], classifier_hidden_dims[i + 1]))
+            self.mlp_layers.append(nn.SiLU())
+            self.mlp_layers.append(RMSNorm(classifier_hidden_dims[i + 1]))
+
+        # Output layer
+        self.mlp_layers.append(nn.Linear(classifier_hidden_dims[-1], classifier_num_pats)) # No activation and no norm
+
+        # Softmax the output
         self.softmax = nn.Softmax(dim=1)
 
     def forward(self, z):
         z = self.gradient_reversal(z)
-        logits = self.mlp(z)
-        return self.softmax(logits)
+        for layer in self.mlp_layers:
+            z = layer(z)
+        return self.softmax(z)
 
 class VAE(nn.Module):
     '''
@@ -290,14 +301,15 @@ class VAE(nn.Module):
         self.mean_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
         self.logvar_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True) # bias=False
 
-        self.decoder = TransformerDecoder(
+        self.decoder = Decoder_MLP(
             gpu_id = self.gpu_id,
             latent_dim = self.latent_dim,
             decoder_base_dims = self.decoder_base_dims,
-            output_channels = self.padded_channels)
+            output_channels = self.padded_channels,
+            decode_samples = self.autoencode_samples)
 
         # Adversarial Classifier
-        self.classifier = AdversarialClassifier(latent_dim=self.latent_dim, **kwargs)
+        self.adversarial_classifier = AdversarialClassifier(latent_dim=self.latent_dim, **kwargs) # the name 'adversarial_classifier' is tied to model parameter search to create seperate optimizer for classifier
 
         # Non-linearity as needed
         self.silu = nn.SiLU()
@@ -342,17 +354,17 @@ class VAE(nn.Module):
             mean_batched, logvar_batched = self.mean_fc_layer(y), self.logvar_fc_layer(y)
             latent_batched = self.reparameterization(mean_batched, logvar_batched)
 
-            # CLASSIFIER
-            class_probs_batched = self.classifier(latent_batched)
-
             # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
             # NOTE: you lose the priming tokens needed by transformer
             mean = torch.stack(torch.split(mean_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
             logvar = torch.stack(torch.split(logvar_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
             latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
-            class_probs = torch.stack(torch.split(class_probs_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
 
-            return mean, logvar, latent, class_probs
+            # CLASSIFIER - on the mean of the means
+            mean_of_means = torch.mean(mean, dim=1)
+            class_probs_mean_of_means = self.adversarial_classifier(mean_of_means)
+            
+            return mean, logvar, latent, class_probs_mean_of_means
 
         elif reverse == True:
 

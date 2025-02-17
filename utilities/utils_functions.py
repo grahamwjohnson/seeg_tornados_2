@@ -215,6 +215,7 @@ def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         KL_max, KL_min, KL_epochs_TO_max, KL_epochs_AT_max, KL_stall_epochs,
         classifier_weight,
+        LR_min_classifier,
         Sparse_max, Sparse_min, Sparse_epochs_TO_max, Sparse_epochs_AT_max, 
         LR_max_core, LR_min_core, 
         LR_epochs_TO_max_core, LR_epochs_AT_max_core, 
@@ -223,6 +224,7 @@ def LR_and_weight_schedules(
             
     # *** Classifier Alpha Weight ###
     classifier_weight = classifier_weight # Dummy pass
+    LR_val_cls = LR_min_classifier
 
 
     # *** KL SCHEDULE ***
@@ -315,7 +317,7 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first 
     )
             
-    return KL_val, LR_val_core, Sparse_val, classifier_weight
+    return KL_val, LR_val_core, LR_val_cls, Sparse_val, classifier_weight
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
@@ -655,10 +657,11 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, pat_id, num_realti
 
     pl.close('all') 
 
-def print_classprobs_realtime(class_probs, savedir, epoch, iter_curr, pat_id, classifier_num_pats, **kwargs):
+def print_classprobs_realtime(class_probs, class_labels, savedir, epoch, iter_curr, pat_id, classifier_num_pats, **kwargs):
     batchsize = class_probs.shape[0]
 
     class_probs_cpu = class_probs.detach().cpu().numpy()
+    class_labels_cpu = class_labels.detach().cpu().numpy()
 
     for b in range(0, batchsize):
         
@@ -667,28 +670,37 @@ def print_classprobs_realtime(class_probs, savedir, epoch, iter_curr, pat_id, cl
         fig = pl.figure(figsize=(20, 14))
 
         # Only print for one batch index at a time
-        class_probs_plot = class_probs_cpu[b, :, :]
+        # class_probs_plot = class_probs_cpu[b, :, :]
+        class_probs_plot = class_probs_cpu[b, :]
+        class_labels_plot = class_labels_cpu[b]
 
         # Compute mean and 95% confidence intervals for each class
-        mean_probs = np.mean(class_probs_plot, axis=0)  # Mean probability for each class
-        std_probs = np.std(class_probs_plot, axis=0)  # Standard deviation for each class
-        n = class_probs_plot.shape[0]  # Number of samples
-        confidence_intervals = 1.96 * (std_probs / np.sqrt(n))  # 95% CI
+        # mean_probs = np.mean(class_probs_plot, axis=0)  # Mean probability for each class
+        # std_probs = np.std(class_probs_plot, axis=0)  # Standard deviation for each class
+        # n = class_probs_plot.shape[0]  # Number of samples
+        # confidence_intervals = 1.96 * (std_probs / np.sqrt(n))  # 95% CI
 
         # Create a DataFrame for Seaborn
         data = pd.DataFrame({
             'Class': np.arange(classifier_num_pats),  # Class indices
-            'Mean Probability': mean_probs,  # Mean probabilities
-            'CI': confidence_intervals})  # Confidence intervals
+            'Mean Probability': class_probs_plot,  # Mean probabilities
+            # 'CI': confidence_intervals
+            })  # Confidence intervals
 
         # Plot using Seaborn
         pl.figure(figsize=(12, 6))
-        sns.barplot(x='Class', y='Mean Probability', data=data, yerr=data['CI'], capsize=0.1, color='skyblue')
+        # sns.barplot(x='Class', y='Mean Probability', data=data, yerr=data['CI'], capsize=0.1, color='skyblue')
+        bar_plot = sns.barplot(x='Class', y='Mean Probability', data=data, capsize=0.1, color='skyblue')
+
+        # Change the color of the nth bar to orange
+        for i, bar in enumerate(bar_plot.patches):
+            if i == class_labels_plot:
+                bar.set_facecolor('orange')
 
         # Add labels and title
         pl.xlabel('Class')
         pl.ylabel('Mean Probability')
-        pl.title('Mean Class Probabilities with 95% Confidence Intervals')
+        pl.title(f'Mean Class Probabilities\nTrue Class: {class_labels_plot}')
         pl.xticks(rotation=90)  # Rotate x-axis labels for better readability
         pl.tight_layout()
         pl.ylim(0, 1) # Set y-axis limit to 1
@@ -2894,6 +2906,7 @@ def initialize_directories(
         # Construct the proper file names to get CORE state dicts
         kwargs['vae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae.pt'
         kwargs['vae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_opt.pt'
+        kwargs['cls_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_cls_opt.pt'
 
         # Set the start epoch 1 greater than max trained
         kwargs['start_epoch'] = (max_epoch + 1) 
