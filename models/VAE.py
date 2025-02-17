@@ -222,13 +222,13 @@ class AdversarialClassifier(nn.Module):
         # Input layer
         self.mlp_layers.append(nn.Linear(latent_dim, classifier_hidden_dims[0]))
         self.mlp_layers.append(nn.SiLU())
-        self.mlp_layers.append(RMSNorm(classifier_hidden_dims[0]))
+        # self.mlp_layers.append(RMSNorm(classifier_hidden_dims[0]))
 
         # Hidden layers
         for i in range(len(classifier_hidden_dims) - 1):
             self.mlp_layers.append(nn.Linear(classifier_hidden_dims[i], classifier_hidden_dims[i + 1]))
             self.mlp_layers.append(nn.SiLU())
-            self.mlp_layers.append(RMSNorm(classifier_hidden_dims[i + 1]))
+            # self.mlp_layers.append(RMSNorm(classifier_hidden_dims[i + 1]))
 
         # Output layer
         self.mlp_layers.append(nn.Linear(classifier_hidden_dims[-1], classifier_num_pats)) # No activation and no norm

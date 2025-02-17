@@ -139,7 +139,7 @@ manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_s
 manual_step_size_core: 99999
 
 # Classifier LR Controls
-LR_min_classifier: kwargs['LR_min_classifier'] = 1e-5
+LR_min_classifier: kwargs['LR_min_classifier'] = 1e-6
 # TODO implement scheduler 
 
 # Val FineTune controls
