@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+import numpy as np
 from torch import Tensor
 from torchinfo import summary
 
@@ -118,11 +119,11 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
 
     def forward(self, x):
         # inputs: a single time series of shape (batch_size, num_channels, seq_len)        
-        in_channels = x.shape[1]
+        # in_channels = x.shape[1]
 
-        # Step 1: pad the channel dimension
-        padding = (0, 0, 0, self.padded_channels - in_channels, 0, 0) # (dim0 left padding, dim0 right padding... etc.)
-        x = F.pad(x, padding, mode='constant', value=0)
+        # # Step 1: pad the channel dimension
+        # padding = (0, 0, 0, self.padded_channels - in_channels, 0, 0) # (dim0 left padding, dim0 right padding... etc.)
+        # x = F.pad(x, padding, mode='constant', value=0)
 
         # Step 2: Permute to (batch_size, seq_len, padded_channels)
         x = x.permute(0, 2, 1)  # Shape: (batch_size, seq_len, padded_channels)
@@ -332,7 +333,7 @@ class VAE(nn.Module):
 
         return y
 
-    def forward(self, x, reverse=False, hash_pat_embedding=-1, out_channels=-1):
+    def forward(self, x, reverse=False, hash_pat_embedding=-1, hash_channel_order=-1):
 
         if reverse == False:
 
@@ -368,23 +369,21 @@ class VAE(nn.Module):
 
         elif reverse == True:
 
-            # Stack the sequences into batch dimension for faster decoding
-            y = x.reshape([x.shape[0]*x.shape[1], x.shape[2]]) # [batch, token, latent_dim] --> [batch x token, latent_dim]
-
             # Add the hash_pat_embedding to latent vector
-            y = y + hash_pat_embedding
+            y = x + hash_pat_embedding.unsqueeze(dim=1).repeat(1, x.shape[1], 1)
+
+            # Stack the sequences into batch dimension for faster decoding
+            y = y.reshape([y.shape[0]*y.shape[1], y.shape[2]]) # [batch, token, latent_dim] --> [batch x token, latent_dim]
 
             # Transformer Decoder
             # Goes in as [batch * seq, ]
             y = self.decoder(y).transpose(1,2)  # Comes out as [batch, waveform, num_channels] --> [batch, num_channels, waveform]
 
-            # Selct number of channels for this patient 
-            y = y[:, 0:out_channels, :]
+            # Index the correct output channels for each batch index
+            y = torch.split(y, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0)
+            y = torch.stack(y, dim=0)
 
-            x_hat = torch.split(y, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0)
-            x_hat = torch.stack(x_hat, dim=0)
-
-            return x_hat
+            return y
 
 def print_models_flow(x, **kwargs):
     '''
@@ -414,12 +413,13 @@ def print_models_flow(x, **kwargs):
     print(f"Adversarial Loss: {adversarial_loss}")
 
     # Run through VAE decoder
-    hash_pat_embedding = torch.rand(latent.shape[2])
+    hash_pat_embedding = torch.rand(x.shape[0], latent.shape[2])
+    hash_channel_order = np.arange(0, 199).tolist()
     print(f"\n\n\nINPUT TO <VAE - Decoder Mode> \n"
     f"z:{latent.shape}\n"
     f"hash_pat_embedding:{hash_pat_embedding.shape}\n")
-    summary(vae, input_data=[latent, True], depth=999, device="cpu")
-    core_out = vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=pat_num_channels)  
+    summary(vae, input_data=[latent, True, hash_pat_embedding, hash_channel_order], depth=999, device="cpu")
+    core_out = vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, hash_channel_order=hash_channel_order)  
     print(f"decoder_out:{core_out.shape}\n")
 
     del vae

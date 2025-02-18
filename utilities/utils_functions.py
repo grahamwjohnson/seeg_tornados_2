@@ -565,7 +565,7 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier):
 
 # PLOTTING
 
-def print_latent_realtime(mu, logvar, savedir, epoch, iter_curr, pat_id, num_realtime_dims, **kwargs):
+def print_latent_realtime(mu, logvar, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
 
     dims_to_plot = np.arange(0,num_realtime_dims)
 
@@ -588,19 +588,19 @@ def print_latent_realtime(mu, logvar, savedir, epoch, iter_curr, pat_id, num_rea
         })
 
         sns.jointplot(data=df, x="mu", y="logvar", hue="dimension")
-        fig.suptitle(f"{pat_id}, epoch: {epoch}, iter: {iter_curr}")
+        fig.suptitle(f"{file_name[b]}, epoch: {epoch}, iter: {iter_curr}")
 
         if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
         # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-        savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}_batch{b}.jpg"
-        # savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}_batch_{b}.svg"
+        savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch{b}.jpg"
+        # savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch_{b}.svg"
         pl.savefig(savename_jpg)
         # pl.savefig(savename_svg)
         pl.close(fig)    
 
         pl.close('all') 
     
-def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, pat_id, num_realtime_channels_recon, num_recon_samples, **kwargs):
+def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_realtime_channels_recon, num_recon_samples, **kwargs):
 
     x_hat = x_hat.detach().cpu().numpy()
     x = x.detach().cpu().numpy()
@@ -649,7 +649,7 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, pat_id, num_realti
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
     # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-    savename_jpg = f"{savedir}/JPEGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{pat_id}_allbatch.jpg"
+    savename_jpg = f"{savedir}/JPEGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{file_name[b]}_allbatch.jpg"
     # savename_svg = f"{savedir}/SVGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{pat_id}_allbatch.svg"
     pl.savefig(savename_jpg)
     # pl.savefig(savename_svg)
@@ -657,7 +657,7 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, pat_id, num_realti
 
     pl.close('all') 
 
-def print_classprobs_realtime(class_probs, class_labels, savedir, epoch, iter_curr, pat_id, classifier_num_pats, **kwargs):
+def print_classprobs_realtime(class_probs, class_labels, savedir, epoch, iter_curr, file_name, classifier_num_pats, **kwargs):
     batchsize = class_probs.shape[0]
 
     class_probs_cpu = class_probs.detach().cpu().numpy()
@@ -707,8 +707,8 @@ def print_classprobs_realtime(class_probs, class_labels, savedir, epoch, iter_cu
 
         if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
         # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-        savename_jpg = f"{savedir}/JPEGs/RealtimeClassProb_epoch{epoch}_iter{iter_curr}_{pat_id}_batch{b}.jpg"
-        # savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}_batch_{b}.svg"
+        savename_jpg = f"{savedir}/JPEGs/RealtimeClassProb_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch{b}.jpg"
+        # savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch_{b}.svg"
         pl.savefig(savename_jpg)
         # pl.savefig(savename_svg)
         pl.close(fig)    
@@ -2865,7 +2865,7 @@ def montage_filter_pickle_edfs(pat_id: str, dir_edf: str, save_dir: str, desired
 
 # INITIALIZATIONS
 
-def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=True, num_workers=0):
+def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_workers=0):
 
     if num_workers > 0:
         print("WARNING: num workers >0, have experienced odd errors...")
@@ -2949,7 +2949,7 @@ def run_setup(**kwargs):
     kwargs = initialize_directories(run_notes=run_notes, **kwargs)
 
     # Print the model forward pass sizes
-    fake_data = torch.rand(kwargs['wdecode_batch_size'], kwargs['transformer_seq_length'] - 1, 199, kwargs['autoencode_samples']) # 199 is just an example of number of patient channels
+    fake_data = torch.rand(kwargs['max_batch_size'], kwargs['transformer_seq_length'] - 1, kwargs['padded_channels'], kwargs['autoencode_samples']) # 199 is just an example of number of patient channels
     print_models_flow(x=fake_data, **kwargs)
 
     # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)

@@ -75,6 +75,13 @@ def load_train_objs(
     classifier_adamW_beta1,
     classifier_adamW_beta2,
 
+    train_num_rand_hashes,
+    val_num_rand_hashes,
+
+    train_forward_passes,
+    valfinetune_forward_passes,
+    valunseen_forward_passes,
+
     **kwargs):
 
     # Split pats into train and test
@@ -98,6 +105,8 @@ def load_train_objs(
             pat_dirs=val_pats_dirs,
             intrapatient_dataset_style=intrapatient_dataset_style, 
             hour_dataset_range=val_finetune_hour_dataset_range,
+            num_rand_hashes=val_num_rand_hashes,
+            num_forward_passes=valfinetune_forward_passes,
             **kwargs)
 
         print(f"[GPU{str(gpu_id)}] Generating VALIDATION UNSEEN dataset")
@@ -108,6 +117,8 @@ def load_train_objs(
             pat_dirs=val_pats_dirs,
             intrapatient_dataset_style=intrapatient_dataset_style, 
             hour_dataset_range=val_unseen_hour_dataset_range,
+            num_rand_hashes=val_num_rand_hashes,
+            num_forward_passes=valunseen_forward_passes,
             **kwargs)
 
     else: # If no val, just make a train dataset
@@ -127,6 +138,8 @@ def load_train_objs(
         pat_dirs=train_pats_dirs,
         intrapatient_dataset_style=intrapatient_dataset_style, 
         hour_dataset_range=train_hour_dataset_range,
+        num_rand_hashes=train_num_rand_hashes,
+        num_forward_passes=train_forward_passes,
         **kwargs)
          
     ### VAE ###
@@ -163,13 +176,6 @@ def main(
     run_name: str,
     timestamp_id: int,
     start_epoch: int,
-    wdecode_batch_size: int,
-    onlylatent_batch_size: int,
-    train_runs_per_file: int,
-    valfinetune_runs_per_file: int,
-    valunseen_runs_per_file: int,
-    train_num_rand_hashes: int,
-    val_num_rand_hashes: int,
     LR_val_vae: float,
     finetune_pacmap: bool, 
     PaCMAP_model_to_infer = [],
@@ -230,8 +236,6 @@ def main(
         train_dataset=train_dataset, 
         valfinetune_dataset=valfinetune_dataset,
         valunseen_dataset=valunseen_dataset,
-        wdecode_batch_size=wdecode_batch_size,
-        onlylatent_batch_size=onlylatent_batch_size,
         PaCMAP_model_to_infer=PaCMAP_model_to_infer,
         wandb_run=wandb_run,
         finetune_pacmap=finetune_pacmap,
@@ -258,12 +262,9 @@ def main(
                 trainer._run_epoch(
                     dataset_curr = trainer.valfinetune_dataset, 
                     dataset_string = "valfinetune",
-                    batchsize=trainer.wdecode_batch_size,
-                    runs_per_file = valfinetune_runs_per_file, 
                     all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
                     val_finetune = True,
                     val_unseen = False,
-                    backprop = True,
                     num_rand_hashes = val_num_rand_hashes,
                     **kwargs)
 
@@ -276,12 +277,9 @@ def main(
                     trainer._run_epoch(
                         dataset_curr = dataset_list[d], 
                         dataset_string = dataset_strs[d],
-                        batchsize=trainer.onlylatent_batch_size,
-                        runs_per_file = -1, 
                         all_files_latent_only = True, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
                         val_finetune = False,
                         val_unseen = False,
-                        backprop = False,
                         num_rand_hashes = -1,
                         **kwargs)
 
@@ -312,13 +310,9 @@ def main(
         trainer._run_epoch(
             dataset_curr = trainer.train_dataset, 
             dataset_string = "train",
-            batchsize=trainer.wdecode_batch_size,
-            runs_per_file = train_runs_per_file, 
             all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
             val_finetune = False,
             val_unseen = False,
-            backprop = True,
-            num_rand_hashes = train_num_rand_hashes,
             **kwargs)
         
         # CHECKPOINT
@@ -343,13 +337,9 @@ def main(
             trainer._run_epoch(
                 dataset_curr = trainer.valfinetune_dataset, 
                 dataset_string = "valfinetune",
-                batchsize=trainer.wdecode_batch_size,
-                runs_per_file = valfinetune_runs_per_file, 
                 all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
                 val_finetune = True,
                 val_unseen = False,
-                backprop = True,
-                num_rand_hashes = val_num_rand_hashes,
                 **kwargs)
 
             # Inference on UNSEEN portion of validation patients 
@@ -358,13 +348,9 @@ def main(
                 trainer._run_epoch(
                     dataset_curr = trainer.valunseen_dataset, 
                     dataset_string = "valunseen",
-                    batchsize=trainer.wdecode_batch_size,
-                    runs_per_file = valunseen_runs_per_file, 
                     all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
                     val_finetune = False,
                     val_unseen = True,
-                    backprop = False,
-                    num_rand_hashes = val_num_rand_hashes,
                     **kwargs)
 
             # Restore model/opt weights to pre-finetune
@@ -389,8 +375,6 @@ class Trainer:
         valunseen_dataset: SEEG_Tornado_Dataset,
         opt_vae: torch.optim.Optimizer,
         opt_cls: torch.optim.Optimizer,
-        wdecode_batch_size: int,
-        onlylatent_batch_size: int,
         wandb_run,
         model_dir: str,
         val_every: int,
@@ -422,8 +406,6 @@ class Trainer:
         self.valunseen_dataset = valunseen_dataset
         self.opt_vae = opt_vae
         self.opt_cls = opt_cls
-        self.wdecode_batch_size = wdecode_batch_size
-        self.onlylatent_batch_size = onlylatent_batch_size
         self.model_dir = model_dir
         self.val_every = val_every
         self.pacmap_every = pacmap_every
@@ -503,35 +485,18 @@ class Trainer:
             utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch, **kwargs)
             print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
 
-    def _train_start_idxs(self, runs_per_file):
-
-        last_possible_start_idx = self.num_samples - (self.transformer_seq_length + 1) * self.autoencode_samples 
-
-        start_idxs = np.zeros(runs_per_file, dtype=int)
-        for i in range(runs_per_file):
-            np.random.seed(seed=None) 
-            start_idxs[i] = np.random.randint(0, last_possible_start_idx+1)
-        
-        return start_idxs
-
     def _run_epoch(
         self, 
         dataset_curr, 
         dataset_string,
-        batchsize,
         attention_dropout,
-        num_pat_loops_per_epoch,
-        num_batchfilepulls_per_pat,
-        runs_per_file, 
         all_files_latent_only,
         num_dataloader_workers_SEQUENTIAL,
+        max_batch_size,
         val_finetune,
         val_unseen,
-        backprop,
         realtime_latent_printing,
         realtime_printing_interval,
-        num_rand_hashes,
-        pseudobatch_onlylatent,
         **kwargs):
 
         print(f"autoencode_samples: {self.autoencode_samples}")
@@ -542,14 +507,14 @@ class Trainer:
         if all_files_latent_only: 
 
             # Check for erroneous configs
-            if backprop or val_finetune or val_unseen:
-                raise Exception("ERROR: innapropriate config: if running all files then backprop/val_finetune/val_unseen must all be False")
+            if val_finetune or val_unseen:
+                raise Exception("ERROR: innapropriate config: if running all files then val_finetune/val_unseen must all be False")
 
             # Go through every subject in this dataset
             for pat_idx in range(0,len(dataset_curr.pat_ids)):
                 dataset_curr.set_pat_curr(pat_idx)
                 dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
-                
+
                 # Go through every file in dataset
                 file_count = 0
                 for data_tensor, file_name, file_class_label in dataloader_curr:
@@ -637,240 +602,175 @@ class Trainer:
                             pickle.dump(windowed_file_latent[b, :, :], output_obj)
                             output_obj.close()
 
-
         ### RANDOM SUBSET OF FILES ###
-
-
-        # TODO no reason we should NOT be pulling across patients for the batch 
-
         # This setting is used for regular training 
         else: 
-           
+            dataset_curr.set_pat_curr(-1) # -1 sets to random generation
             num_pats_curr = dataset_curr.get_pat_count()
+            dataloader_curr = utils_functions.prepare_dataloader(dataset_curr, batch_size=None, num_workers=num_dataloader_workers_SEQUENTIAL)
+            dataloader_curr.sampler.set_epoch(self.epoch) # Ensure new file order is pulled
 
-            # Get miniepoch start indexes. Same random indexes will be used for all patients' files.
-            start_idxs = self._train_start_idxs(runs_per_file=runs_per_file)
-            total_train_iters = int(num_pat_loops_per_epoch * len(start_idxs) * num_pats_curr) # 
-            iter_curr = 0 # Iteration across all sequential trian files
+            iter_curr = 0
+            total_iters = len(dataloader_curr)
+            for x, file_name, file_class_label, hash_channel_order, hash_pat_embedding in dataloader_curr: 
 
-            # # Reset the cumulative losses & zero gradients
-            # # AFTER ALL PATS
-            # self._zero_all_grads()
-
-            # Iterate randomly through all patients and accumulate losses before stepping optimizers
-            rand_pat_idxs = np.arange(0,num_pats_curr)
-            np.random.shuffle(rand_pat_idxs)
-            pat_count = 0
-            for pat_idx in rand_pat_idxs: 
-                pat_count = pat_count + 1
-
-                # # Reset the cumulative losses & zero gradients
-                # # AFTER EACH PAT
-                # self._zero_all_grads()
-
-                # Build dataloader from dataset for this patient
-                dataset_curr.set_pat_curr(pat_idx) 
-                dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
-                dataloader_curr.sampler.set_epoch(self.epoch) # Ensure new file order is pulled
-                
-                batch_idx = 0
-                for data_tensor, file_name, file_class_label in dataloader_curr: 
-
-                    # Put the labels on GPU
-                    file_class_label = file_class_label.to(self.gpu_id)
-
-                    # # Reset the cumulative losses & zero gradients
-                    # # AFTER EACH BATCH
-                    # self._zero_all_grads()
-                    
-                    # Break loop if number of batch pulls per patient have been met
-                    batch_idx = batch_idx + 1
-                    if batch_idx == num_batchfilepulls_per_pat: break
-                    
-                    for start_idx in start_idxs: # Same start_idx for all patients (has no biological meaning)
-
-                        # For Training: Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                        self.KL_multiplier, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight = utils_functions.LR_and_weight_schedules(
-                            epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
-                        if (not val_finetune) & (not val_unseen): 
-                            self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
-                            self.opt_cls.param_groups[0]['lr'] = self.curr_LR_cls
-
-                        # Reset the cumulative losses & zero gradients
-                        # AFTER EACH FORWARD PASS
-                        self._zero_all_grads()
-
-                        # Reset the data vars for Transformer Sequence and put on GPU
-                        x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.autoencode_samples).to(self.gpu_id)
-
-                        # HASHING: Get the patient channel order and patid_embedding for this channel order
-                        np.random.seed(seed=None) 
-                        rand_modifer = int(random.uniform(0, num_rand_hashes -1))
-                        hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
-                            input_string=dataset_curr.pat_ids[pat_idx], 
-                            num_channels=data_tensor.shape[1], 
-                            latent_dim=self.latent_dim, 
-                            modifier=rand_modifer)
-
-                        # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
-                        for embedding_idx in range(0, self.transformer_seq_length):
-                            # Pull out data for this window
-                            end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
-                            x[:, embedding_idx, :, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
-
-                        # Check for NaNs
-                        if torch.isnan(x).any():
-                            raise Exception(f"ERROR: found nans in one of these files: {file_name}")
-
-                        ### VAE ENCODER: 1-shifted
-                        mean, logvar, latent, class_probs_mean_of_means = self.vae(x[:, :-1, :, :], reverse=False)
-                        
-                        ### VAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
-                        x_hat = self.vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=x.shape[2])  
- 
-                        # LOSSES: Intra-Patient 
-                        recon_loss = loss_functions.recon_loss_function(
-                            x=x[:, 1 + self.num_encode_concat_transformer_tokens :, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
-                            x_hat=x_hat,
-                            recon_weight=self.recon_weight)
-
-                        kld_loss = loss_functions.kld_loss_function(
-                            mean=mean, 
-                            logvar=logvar,
-                            KL_multiplier=self.KL_multiplier)
-
-                        adversarial_loss = loss_functions.adversarial_loss_function(
-                            class_probs=class_probs_mean_of_means, 
-                            file_class_label=file_class_label,
-                            classifier_weight=self.classifier_weight)
-
-                        sparse_loss = loss_functions.sparse_l1_reg(
-                            z=latent, 
-                            sparse_weight=self.sparse_weight, 
-                            **kwargs)
-
-                        # Intrapatient backprop
-                        loss = recon_loss + kld_loss + adversarial_loss # + sparse_loss + kld_loss                      ################ KLD LOSS INCLUDED ?????????? ##############
-                        if backprop: loss.backward()
-
-                        # Realtime terminal info and WandB 
-                        if (iter_curr%self.recent_display_iters==0):
-                            if val_finetune: state_str = "VAL FINETUNE"
-                            elif val_unseen: state_str = "VAL UNSEEN"
-                            else: state_str = "TRAIN"
-                            now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
-                            if (self.gpu_id == 1):
-                                sys.stdout.write(
-                                    f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, EPOCH {self.epoch}, PatCount[Idx: {pat_idx}, ID: {dataset_curr.pat_ids[pat_idx]}] {pat_count}/{num_pats_curr}, BatchPull {batch_idx}/{num_batchfilepulls_per_pat}, Iter [BatchSize: {batchsize}] {iter_curr}/{total_train_iters}, " + 
-                                    f"MeanLoss: {round(loss.detach().item(), 2)}                 ")
-                                sys.stdout.flush() 
-
-                            # Log to WandB
-                            wandb.define_metric('Steps')
-                            wandb.define_metric("*", step_metric="Steps")
-                            train_step = self.epoch * int(total_train_iters) + iter_curr
-                            if (not val_finetune) & (not val_unseen):
-                                metrics = dict(
-                                    train_attention_dropout=attention_dropout,
-                                    train_loss=loss,
-                                    train_recon_loss=recon_loss, 
-                                    train_kld_loss=kld_loss, 
-                                    train_adversarial_loss=adversarial_loss,
-                                    train_sparse_loss=sparse_loss,
-                                    train_LR_vae=self.opt_vae.param_groups[0]['lr'], 
-                                    train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                    train_KL_Beta=self.KL_multiplier, 
-                                    train_ReconWeight=self.recon_weight,
-                                    train_AdversarialWeight=self.classifier_weight,
-                                    train_AdversarialAlpha=kwargs['classifier_alpha'],
-                                    train_Sparse_weight=self.sparse_weight,
-                                    train_epoch=self.epoch)
-
-                            elif val_finetune:
-                                metrics = dict(
-                                    val_finetune_attention_dropout=attention_dropout,
-                                    val_finetune_loss=loss, 
-                                    val_finetune_recon_loss=recon_loss, 
-                                    val_finetune_kld_loss=kld_loss, 
-                                    val_finetune_adversarial_loss=adversarial_loss,
-                                    val_finetune_sparse_loss=sparse_loss,
-                                    val_finetune_LR_vae=self.opt_vae.param_groups[0]['lr'], 
-                                    val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                    val_finetune_KL_Beta=self.KL_multiplier, 
-                                    val_finetune_ReconWeight=self.recon_weight,
-                                    val_finetune_AdversarialWeight=self.classifier_weight,
-                                    val_finetune_AdversarialAlpha=kwargs['classifier_alpha'],
-                                    val_finetune_Sparse_weight=self.sparse_weight,
-                                    val_finetune_epoch=self.epoch)
-
-                            elif val_unseen:
-                                metrics = dict(
-                                    val_unseen_attention_dropout=attention_dropout,
-                                    val_unseen_loss=loss, 
-                                    val_unseen_recon_loss=recon_loss, 
-                                    val_unseen_kld_loss=kld_loss, 
-                                    val_unseen_adversarial_loss=adversarial_loss,
-                                    val_unseen_sparse_loss=sparse_loss,
-                                    val_unseen_LR_vae=self.opt_vae.param_groups[0]['lr'], 
-                                    val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                    val_unseen_KL_Beta=self.KL_multiplier, 
-                                    val_unseen_ReconWeight=self.recon_weight,
-                                    val_unseen_AdversarialWeight=self.classifier_weight,
-                                    val_unseen_AdversarialAlpha=kwargs['classifier_alpha'],
-                                    val_unseen_Sparse_weight=self.sparse_weight,
-                                    val_unseen_epoch=self.epoch)
-
-                            wandb.log({**metrics, 'Steps': train_step})
-
-                        # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
-                        iter_curr = iter_curr + 1
-
-                        # Realtime latent visualizations
-                        if realtime_latent_printing & ((iter_curr + 1) % realtime_printing_interval == 0):
-                            if self.gpu_id == 0:
-                                if torch.isnan(loss).any():
-                                    print("WARNING: Loss is nan, no plots can be made")
-                                else:
-                                    utils_functions.print_latent_realtime(
-                                        mu = mean.cpu().detach().numpy(), 
-                                        logvar = logvar.cpu().detach().numpy(),
-                                        savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
-                                        epoch = self.epoch,
-                                        iter_curr = iter_curr,
-                                        pat_id = dataset_curr.pat_ids[pat_idx],
-                                        **kwargs)
-                                    utils_functions.print_recon_realtime(
-                                        x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], 
-                                        x_hat=x_hat, 
-                                        savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_recon",
-                                        epoch = self.epoch,
-                                        iter_curr = iter_curr,
-                                        pat_id = dataset_curr.pat_ids[pat_idx],
-                                        **kwargs)
-                                    utils_functions.print_classprobs_realtime(
-                                        class_probs = class_probs_mean_of_means,
-                                        class_labels = file_class_label,
-                                        savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_classprob",
-                                        epoch = self.epoch,
-                                        iter_curr = iter_curr,
-                                        pat_id = dataset_curr.pat_ids[pat_idx],
-                                        **kwargs)
+                # Put the data and labels on GPU
+                x = x.to(self.gpu_id)
+                file_class_label = file_class_label.to(self.gpu_id)
+                hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
             
-                        # AFTER EACH FORWARD PASS
-                        self.opt_vae.step()
-                        self.opt_cls.step()
+                # For Training: Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
+                self.KL_multiplier, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight = utils_functions.LR_and_weight_schedules(
+                    epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
+                if (not val_finetune) & (not val_unseen): 
+                    self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
+                    self.opt_cls.param_groups[0]['lr'] = self.curr_LR_cls
 
-                    # ### AFTER EACH BATCH ###
-                    # self.opt_vae.step()
-                    # self.opt_cls.step()
+                # Reset the cumulative losses & zero gradients
+                # AFTER EACH FORWARD PASS
+                self._zero_all_grads()
 
-                # ### AFTER EACH PATIENT ###
-                # self.opt_vae.step()
-                # self.opt_cls.step()
-                    
-            # ### AFTER ALL PATIENTS ###
-            # self.opt_vae.step()
-            # self.opt_cls.step()
+                # Check for NaNs
+                if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
+
+                ### VAE ENCODER: 1-shifted
+                mean, logvar, latent, class_probs_mean_of_means = self.vae(x[:, :-1, :, :], reverse=False)
+                
+                ### VAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
+                x_hat = self.vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, hash_channel_order=hash_channel_order)  
+
+                # LOSSES: Intra-Patient 
+                recon_loss = loss_functions.recon_loss_function(
+                    x=x[:, 1 + self.num_encode_concat_transformer_tokens :, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
+                    x_hat=x_hat,
+                    recon_weight=self.recon_weight)
+
+                kld_loss = loss_functions.kld_loss_function(
+                    mean=mean, 
+                    logvar=logvar,
+                    KL_multiplier=self.KL_multiplier)
+
+                adversarial_loss = loss_functions.adversarial_loss_function(
+                    class_probs=class_probs_mean_of_means, 
+                    file_class_label=file_class_label,
+                    classifier_weight=self.classifier_weight)
+
+                sparse_loss = loss_functions.sparse_l1_reg(
+                    z=latent, 
+                    sparse_weight=self.sparse_weight, 
+                    **kwargs)
+
+                # Intrapatient backprop
+                loss = recon_loss + kld_loss + adversarial_loss # + sparse_loss + kld_loss                      ################ KLD LOSS INCLUDED ?????????? ##############
+                loss.backward()
+
+                # Realtime terminal info and WandB 
+                if (iter_curr%self.recent_display_iters==0):
+                    if val_finetune: state_str = "VAL FINETUNE"
+                    elif val_unseen: state_str = "VAL UNSEEN"
+                    else: state_str = "TRAIN"
+                    now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
+                    if (self.gpu_id == 1):
+                        sys.stdout.write(
+                            f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, EPOCH {self.epoch}, Iter [BatchSize: {x.shape[0]}] {iter_curr}/{total_iters}, " + 
+                            f"MeanLoss: {round(loss.detach().item(), 2)}                 ")
+                        sys.stdout.flush() 
+
+                    # Log to WandB
+                    wandb.define_metric('Steps')
+                    wandb.define_metric("*", step_metric="Steps")
+                    train_step = self.epoch * int(total_iters) + iter_curr
+                    if (not val_finetune) & (not val_unseen):
+                        metrics = dict(
+                            train_attention_dropout=attention_dropout,
+                            train_loss=loss,
+                            train_recon_loss=recon_loss, 
+                            train_kld_loss=kld_loss, 
+                            train_adversarial_loss=adversarial_loss,
+                            train_sparse_loss=sparse_loss,
+                            train_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                            train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                            train_KL_Beta=self.KL_multiplier, 
+                            train_ReconWeight=self.recon_weight,
+                            train_AdversarialWeight=self.classifier_weight,
+                            train_AdversarialAlpha=kwargs['classifier_alpha'],
+                            train_Sparse_weight=self.sparse_weight,
+                            train_epoch=self.epoch)
+
+                    elif val_finetune:
+                        metrics = dict(
+                            val_finetune_attention_dropout=attention_dropout,
+                            val_finetune_loss=loss, 
+                            val_finetune_recon_loss=recon_loss, 
+                            val_finetune_kld_loss=kld_loss, 
+                            val_finetune_adversarial_loss=adversarial_loss,
+                            val_finetune_sparse_loss=sparse_loss,
+                            val_finetune_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                            val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                            val_finetune_KL_Beta=self.KL_multiplier, 
+                            val_finetune_ReconWeight=self.recon_weight,
+                            val_finetune_AdversarialWeight=self.classifier_weight,
+                            val_finetune_AdversarialAlpha=kwargs['classifier_alpha'],
+                            val_finetune_Sparse_weight=self.sparse_weight,
+                            val_finetune_epoch=self.epoch)
+
+                    elif val_unseen:
+                        metrics = dict(
+                            val_unseen_attention_dropout=attention_dropout,
+                            val_unseen_loss=loss, 
+                            val_unseen_recon_loss=recon_loss, 
+                            val_unseen_kld_loss=kld_loss, 
+                            val_unseen_adversarial_loss=adversarial_loss,
+                            val_unseen_sparse_loss=sparse_loss,
+                            val_unseen_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                            val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                            val_unseen_KL_Beta=self.KL_multiplier, 
+                            val_unseen_ReconWeight=self.recon_weight,
+                            val_unseen_AdversarialWeight=self.classifier_weight,
+                            val_unseen_AdversarialAlpha=kwargs['classifier_alpha'],
+                            val_unseen_Sparse_weight=self.sparse_weight,
+                            val_unseen_epoch=self.epoch)
+
+                wandb.log({**metrics, 'Steps': train_step})
+
+                # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
+                iter_curr = iter_curr + 1
+
+                # Realtime latent visualizations
+                if realtime_latent_printing & ((iter_curr + 1) % realtime_printing_interval == 0):
+                    if self.gpu_id == 0:
+                        if torch.isnan(loss).any():
+                            print("WARNING: Loss is nan, no plots can be made")
+                        else:
+                            utils_functions.print_latent_realtime(
+                                mu = mean.cpu().detach().numpy(), 
+                                logvar = logvar.cpu().detach().numpy(),
+                                savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
+                                epoch = self.epoch,
+                                iter_curr = iter_curr,
+                                file_name = file_name,
+                                **kwargs)
+                            utils_functions.print_recon_realtime(
+                                x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], 
+                                x_hat=x_hat, 
+                                savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_recon",
+                                epoch = self.epoch,
+                                iter_curr = iter_curr,
+                                file_name = file_name,
+                                **kwargs)
+                            utils_functions.print_classprobs_realtime(
+                                class_probs = class_probs_mean_of_means,
+                                class_labels = file_class_label,
+                                savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_classprob",
+                                epoch = self.epoch,
+                                iter_curr = iter_curr,
+                                file_name = file_name,
+                                **kwargs)
+    
+                # AFTER EACH FORWARD PASS
+                self.opt_vae.step()
+                self.opt_cls.step()
+
                          
 if __name__ == "__main__":
 

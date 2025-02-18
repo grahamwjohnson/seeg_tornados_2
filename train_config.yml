@@ -33,8 +33,8 @@ autoencode_samples: 2 # 8
 # Cross atttention embedder
 padded_channels: 256 #input padded to allow for different number of channels, also the top level embed dim
 crattn_embed_dim: 512  # This times autoencode_samples will be transformer dims e.g. 32*32 = 1024
-crattn_num_highdim_heads: 16 # at padding dimension
-crattn_num_highdim_layers: 16 # at padding dimension
+crattn_num_highdim_heads: 8 # at padding dimension
+crattn_num_highdim_layers: 8 # at padding dimension
 crattn_num_lowdim_heads: 4 # at embed dim dimension
 crattn_num_lowdim_layers: 4 # at embed dim dimension
 crattn_max_seq_len: kwargs['crattn_max_seq_len'] = kwargs['autoencode_samples']
@@ -45,8 +45,8 @@ crattn_dropout: 0.1
 transformer_dim: kwargs['transformer_dim'] = kwargs['crattn_embed_dim'] * kwargs['autoencode_samples']
 transformer_seq_length: 256
 max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
-max_batch_size: kwargs['max_batch_size'] = kwargs['wdecode_batch_size'] # * kwargs['pseudobatch_onlylatent']
-n_layers: 32
+max_batch_size: kwargs['max_batch_size'] = kwargs['random_pats_in_batch'] * kwargs['random_files_per_pat'] * kwargs['random_epochs_per_file']
+n_layers: 16
 n_heads: 128
 multiple_of: 256 
 ffn_dim_multiplier: 1 # 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
@@ -88,14 +88,14 @@ autoreg_num_rand_hashes: 1 # Need to be only one to work? in theory should work 
 val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
 
 # Training variables
-num_pat_loops_per_epoch: 1
-num_batchfilepulls_per_pat: 2 # be mindful of where optimizer is stepped when configuring these variables
-train_runs_per_file: 32 # randomly decreases training passes per file per epoch
-valfinetune_runs_per_file: 32
-valunseen_runs_per_file: 8
-wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
-onlylatent_batch_size: 16 # this is for when loss is not being calculated
-pseudobatch_onlylatent: 64 # NOT currently being used: Maximum size to stack sequential parts of file into batch dimension during only latent inference
+random_pats_in_batch: 8 # Random data pull when pat_curr = -1
+random_files_per_pat: 1 # Random data pull when pat_curr = -1
+random_epochs_per_file: 1 # Random data pull when pat_curr = -1
+
+train_forward_passes: 1000
+valfinetune_forward_passes: 500
+valunseen_forward_passes: 500
+
 pacmap_every: 99999 
 finetune_pacmap: True  
 val_every: 99999
@@ -105,7 +105,7 @@ epochs_to_train: 999999
 # Realtime plotting
 realtime_latent_printing: True
 num_realtime_channels_recon: 1 # columns of random channel plots
-realtime_printing_interval: 250
+realtime_printing_interval: 50
 num_recon_samples: 512 # this will limit how much is shown in recon plots, ERROR if not enough samples, pulls from START and END of transformer sequence 
 num_realtime_dims: 5
 recent_display_iters: 5 # How often to print to console when training & how often to log to WandB
@@ -139,7 +139,7 @@ manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_s
 manual_step_size_core: 99999
 
 # Classifier LR Controls
-LR_min_classifier: kwargs['LR_min_classifier'] = 1e-6
+LR_min_classifier: kwargs['LR_min_classifier'] = 1e-5
 # TODO implement scheduler 
 
 # Val FineTune controls
@@ -191,8 +191,8 @@ delete_latent_files: False # If false, will not delete the latent files after bu
 
 # Multiprocessing 
 subprocess_num_threads: 1
-num_dataloader_workers_RANDOM: 0
-num_dataloader_workers_SEQUENTIAL: 0
+num_dataloader_workers_RANDOM: 8 # 0
+num_dataloader_workers_SEQUENTIAL: 8 # 0
 
 # Plotting variables
 plot_alpha: 0.5
