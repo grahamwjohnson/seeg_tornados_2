@@ -197,11 +197,11 @@ class GradientReversalLayer(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, alpha):
         ctx.alpha = alpha
-        return x.view_as(x)
+        return x
 
     @staticmethod
     def backward(ctx, grad_output):
-        return -ctx.alpha * grad_output, None
+        return -ctx.alpha * grad_output, None # None is for alpha 
 
 # Wrapper for Gradient Reversal
 class GradientReversal(nn.Module):
@@ -237,11 +237,11 @@ class AdversarialClassifier(nn.Module):
         # Softmax the output
         self.softmax = nn.Softmax(dim=1)
 
-    def forward(self, z):
-        z = self.gradient_reversal(z)
+    def forward(self, mu):
+        mu = self.gradient_reversal(mu)
         for layer in self.mlp_layers:
-            z = layer(z)
-        return self.softmax(z)
+            mu = layer(mu)
+        return self.softmax(mu)
 
 class VAE(nn.Module):
     '''

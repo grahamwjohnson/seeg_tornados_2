@@ -626,10 +626,6 @@ class Trainer:
                     self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
                     self.opt_cls.param_groups[0]['lr'] = self.curr_LR_cls
 
-                # Reset the cumulative losses & zero gradients
-                # AFTER EACH FORWARD PASS
-                self._zero_all_grads()
-
                 # Check for NaNs
                 if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
 
@@ -655,14 +651,18 @@ class Trainer:
                     file_class_label=file_class_label,
                     classifier_weight=self.classifier_weight)
 
+                # Not currently used
                 sparse_loss = loss_functions.sparse_l1_reg(
                     z=latent, 
                     sparse_weight=self.sparse_weight, 
                     **kwargs)
 
-                # Intrapatient backprop
-                loss = recon_loss + kld_loss + adversarial_loss # + sparse_loss + kld_loss                      ################ KLD LOSS INCLUDED ?????????? ##############
-                loss.backward()
+                # AFTER EACH FORWARD PASS
+                self._zero_all_grads()
+                loss = recon_loss + kld_loss + adversarial_loss 
+                loss.backward()         
+                self.opt_vae.step()
+                self.opt_cls.step()
 
                 # Realtime terminal info and WandB 
                 if (iter_curr%self.recent_display_iters==0):
@@ -767,11 +767,7 @@ class Trainer:
                                 file_name = file_name,
                                 **kwargs)
     
-                # AFTER EACH FORWARD PASS
-                self.opt_vae.step()
-                self.opt_cls.step()
-
-                         
+        
 if __name__ == "__main__":
 
     # Set the hash seed 
