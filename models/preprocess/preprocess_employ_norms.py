@@ -6,6 +6,7 @@ import matplotlib.pylab as pl
 import numpy as np
 import os
 import datetime
+from scipy.signal import resample
 
 # Ghassan's paralell imports
 from pathos.multiprocessing import Pool
@@ -102,10 +103,12 @@ def employ_norm(
 
         # Clip after scaling
         scaled_filt_data = scaled_filt_data.clip(-1,1)
+        
 
         # Save output histograms for this file: 
-        minISH_file_filtered = np.percentile(filt_data, 0.01, axis=1)
-        maxISH_file_filtered = np.percentile(filt_data, 99.99, axis=1)
+        resamp_data= resample(filt_data, num=int(filt_data.shape[1]/64), axis=1)
+        minISH_file_filtered = np.percentile(resamp_data, 0.01, axis=1)
+        maxISH_file_filtered = np.percentile(resamp_data, 99.99, axis=1)
         
         hist_save_dir = save_dir + '/metadata/normalization_histograms/' + file.split('/')[-1].split('.')[0]
         if not os.path.exists(hist_save_dir): os.makedirs(hist_save_dir)
@@ -154,7 +157,7 @@ def employ_norm(
             ax2.title.set_text(scale_type + ' - Channel ID:' + str(ch))
             ax2.legend()
             if not os.path.exists(f"{hist_save_dir}/JPEGs"): os.makedirs(f"{hist_save_dir}/JPEGs")
-            if not os.path.exists(f"{hist_save_dir}/SVGs"): os.makedirs(f"{hist_save_dir}/SVGs")
+            
             savename_jpg = hist_save_dir + '/JPEGs/' + 'ch' + str(ch) + '.jpg'
             savename_svg = hist_save_dir + '/SVGs/' + 'ch' + str(ch) + '.svg'
             pl.savefig(savename_jpg, dpi=400)

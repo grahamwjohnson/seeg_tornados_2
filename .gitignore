@@ -1,0 +1,7 @@
+*.pyc
+*.csv
+*.pt
+*.pkl
+*._*
+*.DS*
+*.joblib

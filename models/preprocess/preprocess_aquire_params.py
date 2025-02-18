@@ -2,7 +2,7 @@ import os
 import shutil
 import glob
 import datetime
-import tools.utils_functions as utils_functions
+from utilities import utils_functions
 import pandas as pd
 import numpy as np
 import pickle
@@ -74,15 +74,16 @@ def aquire_scale_params(pat_id: str,
     elif scale_epoch_type == 'data_normalized_to_first_seizure_centered':
         print("data_normalized_to_first_seizure_centered")
         # Get the seizure datetimes for this patient
-        seiz_start_datetimes, seiz_stop_datetimes, seiz_types = utils_functions.get_pat_seiz_datetimes(pat_id=pat_id, 
-                                                                                            atd_file=atd_file,                           
-                                                                                            FBTC_bool=True, 
-                                                                                            FIAS_bool=True, 
-                                                                                            FAS_to_FIAS_bool=True,
-                                                                                            FAS_bool=True, 
-                                                                                            subclinical_bool=False, 
-                                                                                            unknown_bool=False,  ################################
-                                                                                            non_electro_bool=False)
+        seiz_start_datetimes, seiz_stop_datetimes, seiz_types = utils_functions.get_pat_seiz_datetimes(
+            pat_id=pat_id, 
+            atd_file=atd_file,                           
+            FBTC_bool=True, 
+            FIAS_bool=True, 
+            FAS_to_FIAS_bool=True,
+            FAS_bool=True, 
+            subclinical_bool=False, 
+            unknown_bool=False,  ################################
+            non_electro_bool=False)
 
         # If seizure is too close to beginning, then start normalizatiomn at beginning of EMU stay
         seiz_1_start = seiz_start_datetimes[0]

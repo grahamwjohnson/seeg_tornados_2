@@ -1,0 +1,22 @@
+
+Files will be processed with following selections:
+data_normalized_to_first X hours
+By_Channel_Scale
+HistEqualScale
+
+Following files COULD contain normalization range of 2.0-26.0 hours from start of EMU stay:
+[2/5]: /home/ghassanmakhoul/Documents/data/Resamp_512_Hz/bipole_filtered_wholeband_unscaled_big_pickles/Spat113/Spat113_01292025_23091606_clabel_resampled_512.0_Hz_bipole_filtered_[].pkl
+Computing histogram for channel ID: 0/128Computing histogram for channel ID: 1/128Computing histogram for channel ID: 2/128Computing histogram for channel ID: 3/128Computing histogram for channel ID: 4/128Computing histogram for channel ID: 5/128Computing histogram for channel ID: 6/128Computing histogram for channel ID: 7/128Computing histogram for channel ID: 8/128Computing histogram for channel ID: 9/128Computing histogram for channel ID: 10/128Computing histogram for channel ID: 11/128Computing histogram for channel ID: 12/128Computing histogram for channel ID: 13/128Computing histogram for channel ID: 14/128Computing histogram for channel ID: 15/128Computing histogram for channel ID: 16/128Computing histogram for channel ID: 17/128Computing histogram for channel ID: 18/128Computing histogram for channel ID: 19/128Computing histogram for channel ID: 20/128Computing histogram for channel ID: 21/128Computing histogram for channel ID: 22/128Computing histogram for channel ID: 23/128Computing histogram for channel ID: 24/128Computing histogram for channel ID: 25/128Computing histogram for channel ID: 26/128Computing histogram for channel ID: 27/128Computing histogram for channel ID: 28/128Computing histogram for channel ID: 29/128Computing histogram for channel ID: 30/128Traceback (most recent call last):
+  File "preprocess.py", line 140, in <module>
+    scale_factors, linear_interp_by_ch = preprocess_aquire_params.aquire_scale_params(
+  File "/home/ghassanmakhoul/Documents/Tornadoes_v1/preprocess/preprocess_aquire_params.py", line 206, in aquire_scale_params
+    histo_bin_counts = histo_bin_counts + utils_functions.fill_hist_by_channel(data_in=filt_data_norm, histo_bin_edges=histo_bin_edges, zero_island_delete_idxs=zero_island_delete_idxs)
+  File "/home/ghassanmakhoul/Documents/Tornadoes_v1/utilities/utils_functions.py", line 79, in fill_hist_by_channel
+    histo_bin_counts[ch_idx, :] = np.histogram(data_ch, histo_bin_edges)[0][:]
+  File "<__array_function__ internals>", line 200, in histogram
+  File "/home/ghassanmakhoul/miniconda3/envs/ripple/lib/python3.8/site-packages/numpy/lib/histograms.py", line 865, in histogram
+    sa = np.sort(a[i:i+BLOCK])
+  File "<__array_function__ internals>", line 200, in sort
+  File "/home/ghassanmakhoul/miniconda3/envs/ripple/lib/python3.8/site-packages/numpy/core/fromnumeric.py", line 1030, in sort
+    a.sort(axis=axis, kind=kind, order=order)
+KeyboardInterrupt

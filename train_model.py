@@ -1,3 +1,4 @@
+#TODO - may need to strip out ddp (distributed data paralell) detects # gpus automatically
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -36,7 +37,8 @@ from utilities import utils_functions
 from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
 from models.VAE import VAE
-
+from loguru import logger
+import ipdb 
 ######
 torch.autograd.set_detect_anomaly(False)
 
@@ -152,59 +154,66 @@ def main(
     '''
 
     # Initialize new WandB here aand group GPUs together with DDP
-    wandb.require("service")
-    wandb_run = wandb.init(
-        resume="allow",
-        id=f"{timestamp_id}_GPU{gpu_id}",
-        name=f"{run_name}_GPU{gpu_id}",
-        project="Tornados",
-        dir=kwargs['model_dir'], 
-        group='DDP', 
-        config=config)
+    # will likely have to block out at Vandy
+    # wandb.require("service")
+    # wandb_run = wandb.init(
+    #     resume="allow",
+    #     id=f"{timestamp_id}_GPU{gpu_id}",
+    #     name=f"{run_name}_GPU{gpu_id}",
+    #     project="Tornados",
+    #     dir=kwargs['model_dir'], 
+    #     group='DDP', 
+    #     config=config)
 
     # Set the number of threads for this MP subprocess
     torch.set_num_threads(kwargs['subprocess_num_threads'])
 
     # Initialize DDP 
+    # TODO check on tomo
     ddp_setup(gpu_id, world_size)
 
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
     train_dataset, valfinetune_dataset, valunseen_dataset, vae, opt_vae = load_train_objs(gpu_id=gpu_id, **kwargs) 
-    
+    logger.info(f"Loaded Data training_dataset {train_dataset}")
+    ipdb.set_trace()
     # Load the model/opt/sch states if not first epoch & if in training mode
     if (start_epoch > 0):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % gpu_id}
 
         # Load in VAE Core weights and opts
+        # low learning rate, TODO make sure weights from optizmier and model are properly loaded
+
         vae_state_dict_prev = torch.load(vae_state_dict_prev_path, map_location=map_location)
         vae.load_state_dict(vae_state_dict_prev)
         vae_opt_state_dict_prev = torch.load(vae_opt_state_dict_prev_path, map_location=map_location)
         opt_vae.load_state_dict(vae_opt_state_dict_prev)
 
-        print("Weights and Opts loaded from checkpoints")
+        print("Model and Opt weights loaded from checkpoints")
 
     # Create the training object
     trainer = Trainer(
-        world_size=world_size,
+        world_size=world_size, #GPUs
         gpu_id=gpu_id, 
-        vae=vae, 
-        opt_vae=opt_vae,
-        start_epoch=start_epoch,
+        vae=vae, #model
+        opt_vae=opt_vae, #ADAM optimizer
+        start_epoch=start_epoch, 
         train_dataset=train_dataset, 
-        valfinetune_dataset=valfinetune_dataset,
-        valunseen_dataset=valunseen_dataset,
+        valfinetune_dataset=valfinetune_dataset, #TODO make null
+        valunseen_dataset=valunseen_dataset, #TODO make null,
         wdecode_batch_size=wdecode_batch_size,
         onlylatent_batch_size=onlylatent_batch_size,
         PaCMAP_model_to_infer=PaCMAP_model_to_infer,
-        wandb_run=wandb_run,
+        wandb_run=[],
         finetune_pacmap=finetune_pacmap,
         **kwargs)
-    
+
     # Run through all epochs
     for epoch in range(start_epoch, epochs_to_train):
         trainer.epoch = epoch
 
         # PACMAP
+        # also possible to fine tune in the context of PACMAP
+        # runs its own finetune.
         if (epoch > 0) & ((trainer.epoch + 1) % trainer.pacmap_every == 0):
 
             # Save pre-finetune model/opt weights
@@ -245,6 +254,9 @@ def main(
                         backprop = False,
                         num_rand_hashes = -1,
                         **kwargs)
+                    
+                #NOTE: save pickle files of latent space here
+                # then run pacmap on latent spaces
 
             # After inferenece, run the PACMAP
             # Only initiate for one GPU process - but calculations are done on CPU
@@ -268,18 +280,18 @@ def main(
             barrier()
         
         # TRAIN
-        trainer._set_to_train()
-        trainer._run_epoch(
-            dataset_curr = trainer.train_dataset, 
-            dataset_string = "train",
-            batchsize=trainer.wdecode_batch_size,
-            runs_per_file = train_runs_per_file, 
-            all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
-            val_finetune = False,
-            val_unseen = False,
-            backprop = True,
-            num_rand_hashes = train_num_rand_hashes,
-            **kwargs)
+        # trainer._set_to_train()
+        # trainer._run_epoch(
+        #     dataset_curr = trainer.train_dataset, 
+        #     dataset_string = "train",
+        #     batchsize=trainer.wdecode_batch_size,
+        #     runs_per_file = train_runs_per_file, 
+        #     all_files_latent_only = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
+        #     val_finetune = False,
+        #     val_unseen = False,
+        #     backprop = True,
+        #     num_rand_hashes = train_num_rand_hashes,
+        #     **kwargs)
         
         # CHECKPOINT
         # After every train epoch, optionally delete old checkpoints
@@ -326,12 +338,13 @@ def main(
                     **kwargs)
 
             # Restore model/opt weights to pre-finetune
-            trainer.vae.module.load_state_dict(vae_dict)
-            trainer.opt_vae.load_state_dict(vae_opt_dict)
+            #NOTE: do not want to restore after fine tuning on a patient's data
+            # trainer.vae.module.load_state_dict(vae_dict)
+            # trainer.opt_vae.load_state_dict(vae_opt_dict)
 
     # Kill the process after training loop completes
     print(f"[GPU{gpu_id}]: End of train loop, killing subprocess")
-    wandb.finish()
+    # wandb.finish()
     destroy_process_group() 
 
 class Trainer:
@@ -412,7 +425,7 @@ class Trainer:
         self.vae = DDP(vae, device_ids=[gpu_id])   # find_unused_parameters=True
                     
         # Watch with WandB
-        wandb.watch(self.vae)
+        # wandb.watch(self.vae)
         
     def _set_to_train(self):
         self.vae.train()
@@ -502,66 +515,97 @@ class Trainer:
                 file_count = 0
                 for data_tensor, file_name in dataloader_curr:
 
-                    # Print status
                     file_count = file_count + len(file_name)
-                    if (self.gpu_id == 0):
-                        sys.stdout.write(f"\rPat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP)               ") 
-                        sys.stdout.flush() 
 
-                    # Pseudo batch the file to speed up processing - up to pseudobatch_onlylatent size each encode pass
-                    # Determine how many pseudo windows are in file based on pseudobatch_onlylatent
-                    num_pseudo_windows = data_tensor.shape[2] / self.autoencode_samples / pseudobatch_onlylatent
-                    assert num_pseudo_windows % 1 == 0
-                    num_pseudo_windows = int(num_pseudo_windows)
-                    
-                    # Split the data by number of pseudo windows
-                    data_tensor_split = torch.stack(torch.split(data_tensor, self.autoencode_samples, dim=2), dim=1)
-
-                    # Create the sequential latent sequence array for the file
-                    num_windows_in_file = data_tensor.shape[2] / self.autoencode_samples
+                    # Create the sequential latent sequence array for the file 
+                    num_samples_in_forward = self.transformer_seq_length * self.autoencode_samples
+                    num_windows_in_file = data_tensor.shape[2] / num_samples_in_forward
                     assert (num_windows_in_file % 1) == 0
                     num_windows_in_file = int(num_windows_in_file)
-                    file_latents = np.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim])
+                    num_samples_in_forward = int(num_samples_in_forward)
 
-                    for w in range(num_pseudo_windows):
+                    # Prep the output tensor and put on GPU
+                    file_means = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
 
-                        raise Exception("Need to code this up to only take the last token for each run to maximize info in it from transformer")
+                    # Put whole file on GPU
+                    data_tensor = data_tensor.to(self.gpu_id)
 
-                        # Pseudobatch and encode
-                        x = data_tensor_split[:, w * pseudobatch_onlylatent:  w * pseudobatch_onlylatent + pseudobatch_onlylatent, :, :]
-                        # x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
-                        # x_batched = x_batched.to(self.gpu_id)
+                    for w in range(num_windows_in_file):
+                        
+                        # Print Status
+                        print_interval = 100
+                        if (self.gpu_id == 0) & (w % print_interval == 0):
+                            sys.stdout.write(f"\r{dataset_string}: Pat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP), Intrafile Iter {w}/{num_windows_in_file}          ") 
+                            sys.stdout.flush() 
+
+                        # HASHING: Get the patient channel order and patid_embedding for this channel order
+                        np.random.seed(seed=None) 
+                        # rand_modifer = int(random.uniform(0, num_rand_hashes -1))
+                        rand_modifer = 0 # For Inference
+                        hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
+                            input_string=dataset_curr.pat_ids[pat_idx], 
+                            num_channels=data_tensor.shape[1], 
+                            latent_dim=self.latent_dim, 
+                            modifier=rand_modifer)
+                        
+                        # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
+                        x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.autoencode_samples).to(self.gpu_id)
+                        start_idx = w * num_samples_in_forward
+                        for embedding_idx in range(0, self.transformer_seq_length):
+                            # Pull out data for this window - NOTE: no hashing
+                            end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
+                            x[:, embedding_idx, :, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
 
                          ### VAE ENCODER
                         # Forward pass in stacked batch through VAE encoder
-                        _, _, latent_batched = self.vae(x, reverse=False)
+                        mean_batched, _, _ = self.vae(x, reverse=False)
+
+                        # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
+                        # NOTE: you lose the priming tokens needed by transformer
+                        mean = torch.stack(torch.split(mean_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens, dim=0), dim=0)
+                        file_means[:, w, :] = torch.mean(mean, dim=1)
                         
                         # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
-                        latent_seq = torch.split(latent_batched, pseudobatch_onlylatent, dim=0)
-                        file_latents[:, w * pseudobatch_onlylatent:  w * pseudobatch_onlylatent + pseudobatch_onlylatent, :] = torch.stack(latent_seq, dim=0).cpu().numpy()
+                        # mean_seq = torch.split(mean_batched, pseudobatch_onlylatent, dim=0)
+                        # file_mean[:, w * pseudobatch_onlylatent:  w * pseudobatch_onlylatent + pseudobatch_onlylatent, :] = torch.stack(mean_seq, dim=0).cpu().numpy()
 
                     # After file complete, pacmap_window/stride the file and save each file from batch seperately
                     # Seperate directory for each win/stride combination
+                    # First pull off GPU and convert to numpy
+                    file_means = file_means.cpu().numpy()
                     for i in range(len(self.pre_PaCMAP_window_sec_list)):
+
                         win_sec_curr = self.pre_PaCMAP_window_sec_list[i]
                         stride_sec_curr = self.pre_PaCMAP_stride_sec_list[i]
+                        sec_in_forward = num_samples_in_forward/self.FS
+
+                        if (win_sec_curr < sec_in_forward) or (stride_sec_curr < sec_in_forward):
+                            raise Exception("Window or stride is too small compared to input sequence to encoder")
                         
-                        num_latents_in_win = win_sec_curr / (self.autoencode_samples / self.FS) 
+                        num_latents_in_win = win_sec_curr / sec_in_forward
                         assert (num_latents_in_win % 1) == 0
                         num_latents_in_win = int(num_latents_in_win)
 
-                        num_latents_in_stride = stride_sec_curr / (self.autoencode_samples / self.FS) 
+                        num_latents_in_stride = stride_sec_curr / sec_in_forward
                         assert (num_latents_in_stride % 1) == 0
                         num_latents_in_stride = int(num_latents_in_stride)
 
                         # May not go in evenly, that is ok
-                        num_strides_in_file = int((file_latents.shape[1] - num_latents_in_win) / num_latents_in_stride) 
+                        num_strides_in_file = int((file_means.shape[1] - num_latents_in_win) / num_latents_in_stride) 
                         windowed_file_latent = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
                         for s in range(num_strides_in_file):
-                            windowed_file_latent[:, s, :] = np.mean(file_latents[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
+                            windowed_file_latent[:, s, :] = np.mean(file_means[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
 
-                        # Save each windowed latent in a pickle for each file
+                        # Save each windowed latent in a pickle for each file 
+                        # NOTE: generates 1 embedding per second
+                        # take on 60 of these embeddings into a buffer and then feed the average of the 60 second embeddings into 
+                        #pacmap
+
+                        #TODO run reducer on pacmap model, use pacmap_model.transform(inp_data)
+                        #latent_postPaCMAP_perfile = reducer.transform(latent_PaCMAP_input)
+   # latent_postPaCMAP_perfile = np.stack(np.split(latent_postPaCMAP_perfile, len(latent_data_windowed), axis=0),axis=0)
                         for b in range(data_tensor.shape[0]):
+
                             filename_curr = file_name[b]
                             save_dir = f"{self.model_dir}/latent_files/Epoch{self.epoch}/{win_sec_curr}SecondWindow_{stride_sec_curr}SecondStride/{dataset_string}"
                             if not os.path.exists(save_dir): os.makedirs(save_dir)
@@ -760,14 +804,18 @@ if __name__ == "__main__":
     world_size, kwargs = utils_functions.run_setup(**kwargs)
 
     # Spawn subprocesses with start/join (mp.spawn causes memory sigdev errors??)
-    ctx = mp.get_context('spawn') # necessary to use context if have set_start_method anove?
-    children = []
-    for i in range(world_size):
-        subproc = ctx.Process(target=main, args=(i, world_size, kwargs), kwargs=kwargs)
-        children.append(subproc)
-        subproc.start()
+    # may be a point of failure with 1 GPU 
+    # each spawn will spawn instance of main fn above
+    main(0, world_size, kwargs, **kwargs)
+    #Disregard below if on single GPU
+    # ctx = mp.get_context('spawn') # necessary to use context if have set_start_method anove?
+    # children = []
+    # for i in range(world_size):
+    #     subproc = ctx.Process(target=main, args=(i, world_size, kwargs), kwargs=kwargs)
+    #     children.append(subproc)
+    #     subproc.start()
 
-    for i in range(world_size):
-        children[i].join()
+    # for i in range(world_size):
+    #     children[i].join()
 
     print("End of script")

@@ -11,11 +11,14 @@ from datetime import datetime, timedelta
 import sys
 from utilities import utils_functions
 import random
- 
+import ipdb
+from loguru import logger 
 pd.set_option('display.max_rows', None)
 
 # Seizure based datset curation
+
 class SEEG_Tornado_Dataset(Dataset):
+    @logger.catch
     def __init__(
             self,
             gpu_id,
@@ -73,9 +76,10 @@ class SEEG_Tornado_Dataset(Dataset):
             # 3 return ALL files
         
         for i in range(0, len(pat_list)):
-            
-            self.pat_num_channels[i] = utils_functions.get_num_channels(pat_list[i], pat_num_channels_LUT)
-
+            logger.info(f"Loading {i}th patient, {pat_list[i]}")
+            self.pat_num_channels[i] = 129# Hard code
+            # Hardcode as utils_functions.get_num_channels(pat_list[i], pat_num_channels_LUT)
+            logger.info(f"Loading from {pat_dirs[i]}{data_dir_subfolder} for the following range: {hour_dataset_range}")
             self.pat_fnames[i] = utils_functions.get_desired_fnames(
                 gpu_id = self.gpu_id,
                 pat_id = pat_list[i], 
@@ -113,7 +117,6 @@ class SEEG_Tornado_Dataset(Dataset):
             file_counts = [-1] * len(self.pat_fnames)
             for i in range(0, len(self.pat_fnames)):
                 file_counts[i] = len(self.pat_fnames[i])
-
             return min(file_counts)
     
     def __getitem__(self, idx): 
