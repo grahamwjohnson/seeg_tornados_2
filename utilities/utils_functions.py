@@ -645,6 +645,8 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_rea
                 ax = fig.add_subplot(gs[b, c*2 + seq]) 
                 sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
                 ax.set_title(f"B:{file_name[b]}, Ch:{random_ch_idxs[c]}, {title_str}")
+
+                pl.ylim(-1, 1) # Set y-axis limit -1 to 1
             
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
@@ -2865,7 +2867,7 @@ def montage_filter_pickle_edfs(pat_id: str, dir_edf: str, save_dir: str, desired
 
 # INITIALIZATIONS
 
-def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_workers=0):
+def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, persistent_workers=False, num_workers=0):
 
     if num_workers > 0:
         print("WARNING: num workers >0, have experienced odd errors...")
@@ -2878,7 +2880,7 @@ def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_wo
         shuffle=False,
         sampler=DistributedSampler(dataset),
         drop_last=droplast,
-        persistent_workers=True
+        persistent_workers=persistent_workers
     )
 
 def initialize_directories(

@@ -139,7 +139,7 @@ manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_s
 manual_step_size_core: 99999
 
 # Classifier LR Controls
-LR_min_classifier: kwargs['LR_min_classifier'] = 1e-6 # 5e-7
+LR_min_classifier: kwargs['LR_min_classifier'] = 1e-4 # 5e-7
 # TODO implement scheduler 
 
 # Val FineTune controls
@@ -190,8 +190,9 @@ HDBSCAN_min_samples: 100 # Closer to min_cluster_size --> more conservative
 delete_latent_files: False # If false, will not delete the latent files after building pacmap (takes up lots of disk space)
 
 # Multiprocessing 
-subprocess_num_threads: 1
-num_dataloader_workers: 8
+subprocess_num_threads: 1 
+num_dataloader_workers: 4
+persistent_workers: True # num workers must be > 0
 
 # Plotting variables
 plot_alpha: 0.5

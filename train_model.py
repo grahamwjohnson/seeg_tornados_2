@@ -772,8 +772,8 @@ class Trainer:
         finally:
             del dataloader_curr
             # shared_memory_cleanup()
-            gc.collect()
-            torch.cuda.empty_cache()
+            # gc.collect()
+            # torch.cuda.empty_cache()
             
 if __name__ == "__main__":
 
