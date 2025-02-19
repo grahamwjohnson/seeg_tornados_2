@@ -644,12 +644,12 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_rea
 
                 ax = fig.add_subplot(gs[b, c*2 + seq]) 
                 sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
-                ax.set_title(f"B:{b}, Ch:{random_ch_idxs[c]}, {title_str}")
+                ax.set_title(f"B:{file_name[b]}, Ch:{random_ch_idxs[c]}, {title_str}")
             
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
     # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-    savename_jpg = f"{savedir}/JPEGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{file_name[b]}_allbatch.jpg"
+    savename_jpg = f"{savedir}/JPEGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_allbatch.jpg"
     # savename_svg = f"{savedir}/SVGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{pat_id}_allbatch.svg"
     pl.savefig(savename_jpg)
     # pl.savefig(savename_svg)
@@ -2877,7 +2877,8 @@ def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_wo
         pin_memory=True,
         shuffle=False,
         sampler=DistributedSampler(dataset),
-        drop_last=droplast
+        drop_last=droplast,
+        persistent_workers=True
     )
 
 def initialize_directories(

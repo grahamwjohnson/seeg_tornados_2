@@ -29,6 +29,7 @@ import yaml
 import auraloss
 import wandb
 import math
+# from torch.utils.data._utils import shared_memory_cleanup
 
 # Local Imports
 from utilities import latent_plotting
@@ -491,7 +492,7 @@ class Trainer:
         dataset_string,
         attention_dropout,
         all_files_latent_only,
-        num_dataloader_workers_SEQUENTIAL,
+        num_dataloader_workers,
         max_batch_size,
         val_finetune,
         val_unseen,
@@ -501,273 +502,279 @@ class Trainer:
 
         print(f"autoencode_samples: {self.autoencode_samples}")
 
-        ### ALL/FULL FILES - LATENT ONLY - FULL TRANSFORMER CONTEXT ### 
-        # This setting is used for inference
-        # If wanting all files from every patient, need to run patients serially
-        if all_files_latent_only: 
+        try:
+            ### ALL/FULL FILES - LATENT ONLY - FULL TRANSFORMER CONTEXT ### 
+            # This setting is used for inference
+            # If wanting all files from every patient, need to run patients serially
+            if all_files_latent_only: 
 
-            # Check for erroneous configs
-            if val_finetune or val_unseen:
-                raise Exception("ERROR: innapropriate config: if running all files then val_finetune/val_unseen must all be False")
+                # Check for erroneous configs
+                if val_finetune or val_unseen:
+                    raise Exception("ERROR: innapropriate config: if running all files then val_finetune/val_unseen must all be False")
 
-            # Go through every subject in this dataset
-            for pat_idx in range(0,len(dataset_curr.pat_ids)):
-                dataset_curr.set_pat_curr(pat_idx)
-                dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
+                # Go through every subject in this dataset
+                for pat_idx in range(0,len(dataset_curr.pat_ids)):
+                    dataset_curr.set_pat_curr(pat_idx)
+                    dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=num_dataloader_workers)
 
-                # Go through every file in dataset
-                file_count = 0
-                for data_tensor, file_name, file_class_label in dataloader_curr:
+                    # Go through every file in dataset
+                    file_count = 0
+                    for data_tensor, file_name, file_class_label in dataloader_curr:
 
-                    file_count = file_count + len(file_name)
+                        file_count = file_count + len(file_name)
 
-                    # Create the sequential latent sequence array for the file 
-                    num_samples_in_forward = self.transformer_seq_length * self.autoencode_samples
-                    num_windows_in_file = data_tensor.shape[2] / num_samples_in_forward
-                    assert (num_windows_in_file % 1) == 0
-                    num_windows_in_file = int(num_windows_in_file)
-                    num_samples_in_forward = int(num_samples_in_forward)
+                        # Create the sequential latent sequence array for the file 
+                        num_samples_in_forward = self.transformer_seq_length * self.autoencode_samples
+                        num_windows_in_file = data_tensor.shape[2] / num_samples_in_forward
+                        assert (num_windows_in_file % 1) == 0
+                        num_windows_in_file = int(num_windows_in_file)
+                        num_samples_in_forward = int(num_samples_in_forward)
 
-                    # Prep the output tensor and put on GPU
-                    files_means = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
+                        # Prep the output tensor and put on GPU
+                        files_means = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
 
-                    # Put whole file on GPU
-                    data_tensor = data_tensor.to(self.gpu_id)
+                        # Put whole file on GPU
+                        data_tensor = data_tensor.to(self.gpu_id)
 
-                    for w in range(num_windows_in_file):
-                        
-                        # Print Status
-                        print_interval = 100
-                        if (self.gpu_id == 0) & (w % print_interval == 0):
-                            sys.stdout.write(f"\r{dataset_string}: Pat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP), Intrafile Iter {w}/{num_windows_in_file}          ") 
+                        for w in range(num_windows_in_file):
+                            
+                            # Print Status
+                            print_interval = 100
+                            if (self.gpu_id == 0) & (w % print_interval == 0):
+                                sys.stdout.write(f"\r{dataset_string}: Pat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP), Intrafile Iter {w}/{num_windows_in_file}          ") 
+                                sys.stdout.flush() 
+
+                            # HASHING: Get the patient channel order and patid_embedding for this channel order
+                            np.random.seed(seed=None) 
+                            # rand_modifer = int(random.uniform(0, num_rand_hashes -1))
+                            rand_modifer = 0 # For Inference
+                            hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
+                                input_string=dataset_curr.pat_ids[pat_idx], 
+                                num_channels=data_tensor.shape[1], 
+                                latent_dim=self.latent_dim, 
+                                modifier=rand_modifer)
+                            
+                            # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
+                            x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.autoencode_samples).to(self.gpu_id)
+                            start_idx = w * num_samples_in_forward
+                            for embedding_idx in range(0, self.transformer_seq_length):
+                                # Pull out data for this window - NOTE: no hashing
+                                end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
+                                x[:, embedding_idx, :, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
+
+                            ### VAE ENCODER
+                            # Forward pass in stacked batch through VAE encoder
+                            mean, _, _, _ = self.vae(x, reverse=False)
+                            files_means[:, w, :] = torch.mean(mean, dim=1)
+
+                        # After file complete, pacmap_window/stride the file and save each file from batch seperately
+                        # Seperate directory for each win/stride combination
+                        # First pull off GPU and convert to numpy
+                        files_means = files_means.cpu().numpy()
+                        for i in range(len(self.pre_PaCMAP_window_sec_list)):
+
+                            win_sec_curr = self.pre_PaCMAP_window_sec_list[i]
+                            stride_sec_curr = self.pre_PaCMAP_stride_sec_list[i]
+                            sec_in_forward = num_samples_in_forward/self.FS
+
+                            if (win_sec_curr < sec_in_forward) or (stride_sec_curr < sec_in_forward):
+                                raise Exception("Window or stride is too small compared to input sequence to encoder")
+                            
+                            num_latents_in_win = win_sec_curr / sec_in_forward
+                            assert (num_latents_in_win % 1) == 0
+                            num_latents_in_win = int(num_latents_in_win)
+
+                            num_latents_in_stride = stride_sec_curr / sec_in_forward
+                            assert (num_latents_in_stride % 1) == 0
+                            num_latents_in_stride = int(num_latents_in_stride)
+
+                            # May not go in evenly, that is ok
+                            num_strides_in_file = int((files_means.shape[1] - num_latents_in_win) / num_latents_in_stride) 
+                            windowed_file_latent = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
+                            for s in range(num_strides_in_file):
+                                windowed_file_latent[:, s, :] = np.mean(files_means[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
+
+                            # Save each windowed latent in a pickle for each file
+                            for b in range(data_tensor.shape[0]):
+
+                                filename_curr = file_name[b]
+                                save_dir = f"{self.model_dir}/latent_files/Epoch{self.epoch}/{win_sec_curr}SecondWindow_{stride_sec_curr}SecondStride/{dataset_string}"
+                                if not os.path.exists(save_dir): os.makedirs(save_dir)
+                                output_obj = open(f"{save_dir}/{filename_curr}_latent_{win_sec_curr}secWindow_{stride_sec_curr}secStride.pkl", 'wb')
+                                pickle.dump(windowed_file_latent[b, :, :], output_obj)
+                                output_obj.close()
+
+            ### RANDOM SUBSET OF FILES ###
+            # This setting is used for regular training 
+            else: 
+                dataset_curr.set_pat_curr(-1) # -1 sets to random generation
+                num_pats_curr = dataset_curr.get_pat_count()
+                dataloader_curr = utils_functions.prepare_dataloader(dataset_curr, batch_size=None, num_workers=num_dataloader_workers)
+                dataloader_curr.sampler.set_epoch(self.epoch) # Ensure new file order is pulled
+
+                iter_curr = 0
+                total_iters = len(dataloader_curr)
+                for x, file_name, file_class_label, hash_channel_order, hash_pat_embedding in dataloader_curr: 
+
+                    # Put the data and labels on GPU
+                    x = x.to(self.gpu_id)
+                    file_class_label = file_class_label.to(self.gpu_id)
+                    hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
+                
+                    # For Training: Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
+                    self.KL_multiplier, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight = utils_functions.LR_and_weight_schedules(
+                        epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
+                    if (not val_finetune) & (not val_unseen): 
+                        self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
+                        self.opt_cls.param_groups[0]['lr'] = self.curr_LR_cls
+
+                    # Check for NaNs
+                    if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
+
+                    ### VAE ENCODER: 1-shifted
+                    mean, logvar, latent, class_probs_mean_of_means = self.vae(x[:, :-1, :, :], reverse=False)
+                    
+                    ### VAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
+                    x_hat = self.vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, hash_channel_order=hash_channel_order)  
+
+                    # LOSSES: Intra-Patient 
+                    recon_loss = loss_functions.recon_loss_function(
+                        x=x[:, 1 + self.num_encode_concat_transformer_tokens :, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
+                        x_hat=x_hat,
+                        recon_weight=self.recon_weight)
+
+                    kld_loss = loss_functions.kld_loss_function(
+                        mean=mean, 
+                        logvar=logvar,
+                        KL_multiplier=self.KL_multiplier)
+
+                    adversarial_loss = loss_functions.adversarial_loss_function(
+                        class_probs=class_probs_mean_of_means, 
+                        file_class_label=file_class_label,
+                        classifier_weight=self.classifier_weight)
+
+                    # Not currently used
+                    sparse_loss = loss_functions.sparse_l1_reg(
+                        z=latent, 
+                        sparse_weight=self.sparse_weight, 
+                        **kwargs)
+
+                    # AFTER EACH FORWARD PASS
+                    self._zero_all_grads()
+                    loss = recon_loss + kld_loss + adversarial_loss 
+                    loss.backward()         
+                    self.opt_vae.step()
+                    self.opt_cls.step()
+
+                    # Realtime terminal info and WandB 
+                    if (iter_curr%self.recent_display_iters==0):
+                        if val_finetune: state_str = "VAL FINETUNE"
+                        elif val_unseen: state_str = "VAL UNSEEN"
+                        else: state_str = "TRAIN"
+                        now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
+                        if (self.gpu_id == 1):
+                            sys.stdout.write(
+                                f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, EPOCH {self.epoch}, Iter [BatchSize: {x.shape[0]}] {iter_curr}/{total_iters}, " + 
+                                f"MeanLoss: {round(loss.detach().item(), 2)}                 ")
                             sys.stdout.flush() 
 
-                        # HASHING: Get the patient channel order and patid_embedding for this channel order
-                        np.random.seed(seed=None) 
-                        # rand_modifer = int(random.uniform(0, num_rand_hashes -1))
-                        rand_modifer = 0 # For Inference
-                        hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
-                            input_string=dataset_curr.pat_ids[pat_idx], 
-                            num_channels=data_tensor.shape[1], 
-                            latent_dim=self.latent_dim, 
-                            modifier=rand_modifer)
-                        
-                        # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
-                        x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.autoencode_samples).to(self.gpu_id)
-                        start_idx = w * num_samples_in_forward
-                        for embedding_idx in range(0, self.transformer_seq_length):
-                            # Pull out data for this window - NOTE: no hashing
-                            end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
-                            x[:, embedding_idx, :, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
+                        # Log to WandB
+                        wandb.define_metric('Steps')
+                        wandb.define_metric("*", step_metric="Steps")
+                        train_step = self.epoch * int(total_iters) + iter_curr
+                        if (not val_finetune) & (not val_unseen):
+                            metrics = dict(
+                                train_attention_dropout=attention_dropout,
+                                train_loss=loss,
+                                train_recon_loss=recon_loss, 
+                                train_kld_loss=kld_loss, 
+                                train_adversarial_loss=adversarial_loss,
+                                train_sparse_loss=sparse_loss,
+                                train_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                                train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                                train_KL_Beta=self.KL_multiplier, 
+                                train_ReconWeight=self.recon_weight,
+                                train_AdversarialWeight=self.classifier_weight,
+                                train_AdversarialAlpha=kwargs['classifier_alpha'],
+                                train_Sparse_weight=self.sparse_weight,
+                                train_epoch=self.epoch)
 
-                         ### VAE ENCODER
-                        # Forward pass in stacked batch through VAE encoder
-                        mean, _, _, _ = self.vae(x, reverse=False)
-                        files_means[:, w, :] = torch.mean(mean, dim=1)
+                        elif val_finetune:
+                            metrics = dict(
+                                val_finetune_attention_dropout=attention_dropout,
+                                val_finetune_loss=loss, 
+                                val_finetune_recon_loss=recon_loss, 
+                                val_finetune_kld_loss=kld_loss, 
+                                val_finetune_adversarial_loss=adversarial_loss,
+                                val_finetune_sparse_loss=sparse_loss,
+                                val_finetune_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                                val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                                val_finetune_KL_Beta=self.KL_multiplier, 
+                                val_finetune_ReconWeight=self.recon_weight,
+                                val_finetune_AdversarialWeight=self.classifier_weight,
+                                val_finetune_AdversarialAlpha=kwargs['classifier_alpha'],
+                                val_finetune_Sparse_weight=self.sparse_weight,
+                                val_finetune_epoch=self.epoch)
 
-                    # After file complete, pacmap_window/stride the file and save each file from batch seperately
-                    # Seperate directory for each win/stride combination
-                    # First pull off GPU and convert to numpy
-                    files_means = files_means.cpu().numpy()
-                    for i in range(len(self.pre_PaCMAP_window_sec_list)):
+                        elif val_unseen:
+                            metrics = dict(
+                                val_unseen_attention_dropout=attention_dropout,
+                                val_unseen_loss=loss, 
+                                val_unseen_recon_loss=recon_loss, 
+                                val_unseen_kld_loss=kld_loss, 
+                                val_unseen_adversarial_loss=adversarial_loss,
+                                val_unseen_sparse_loss=sparse_loss,
+                                val_unseen_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                                val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                                val_unseen_KL_Beta=self.KL_multiplier, 
+                                val_unseen_ReconWeight=self.recon_weight,
+                                val_unseen_AdversarialWeight=self.classifier_weight,
+                                val_unseen_AdversarialAlpha=kwargs['classifier_alpha'],
+                                val_unseen_Sparse_weight=self.sparse_weight,
+                                val_unseen_epoch=self.epoch)
 
-                        win_sec_curr = self.pre_PaCMAP_window_sec_list[i]
-                        stride_sec_curr = self.pre_PaCMAP_stride_sec_list[i]
-                        sec_in_forward = num_samples_in_forward/self.FS
+                    wandb.log({**metrics, 'Steps': train_step})
 
-                        if (win_sec_curr < sec_in_forward) or (stride_sec_curr < sec_in_forward):
-                            raise Exception("Window or stride is too small compared to input sequence to encoder")
-                        
-                        num_latents_in_win = win_sec_curr / sec_in_forward
-                        assert (num_latents_in_win % 1) == 0
-                        num_latents_in_win = int(num_latents_in_win)
+                    # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
+                    iter_curr = iter_curr + 1
 
-                        num_latents_in_stride = stride_sec_curr / sec_in_forward
-                        assert (num_latents_in_stride % 1) == 0
-                        num_latents_in_stride = int(num_latents_in_stride)
-
-                        # May not go in evenly, that is ok
-                        num_strides_in_file = int((files_means.shape[1] - num_latents_in_win) / num_latents_in_stride) 
-                        windowed_file_latent = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
-                        for s in range(num_strides_in_file):
-                            windowed_file_latent[:, s, :] = np.mean(files_means[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
-
-                        # Save each windowed latent in a pickle for each file
-                        for b in range(data_tensor.shape[0]):
-
-                            filename_curr = file_name[b]
-                            save_dir = f"{self.model_dir}/latent_files/Epoch{self.epoch}/{win_sec_curr}SecondWindow_{stride_sec_curr}SecondStride/{dataset_string}"
-                            if not os.path.exists(save_dir): os.makedirs(save_dir)
-                            output_obj = open(f"{save_dir}/{filename_curr}_latent_{win_sec_curr}secWindow_{stride_sec_curr}secStride.pkl", 'wb')
-                            pickle.dump(windowed_file_latent[b, :, :], output_obj)
-                            output_obj.close()
-
-        ### RANDOM SUBSET OF FILES ###
-        # This setting is used for regular training 
-        else: 
-            dataset_curr.set_pat_curr(-1) # -1 sets to random generation
-            num_pats_curr = dataset_curr.get_pat_count()
-            dataloader_curr = utils_functions.prepare_dataloader(dataset_curr, batch_size=None, num_workers=num_dataloader_workers_SEQUENTIAL)
-            dataloader_curr.sampler.set_epoch(self.epoch) # Ensure new file order is pulled
-
-            iter_curr = 0
-            total_iters = len(dataloader_curr)
-            for x, file_name, file_class_label, hash_channel_order, hash_pat_embedding in dataloader_curr: 
-
-                # Put the data and labels on GPU
-                x = x.to(self.gpu_id)
-                file_class_label = file_class_label.to(self.gpu_id)
-                hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
-            
-                # For Training: Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                self.KL_multiplier, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight = utils_functions.LR_and_weight_schedules(
-                    epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
-                if (not val_finetune) & (not val_unseen): 
-                    self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
-                    self.opt_cls.param_groups[0]['lr'] = self.curr_LR_cls
-
-                # Check for NaNs
-                if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
-
-                ### VAE ENCODER: 1-shifted
-                mean, logvar, latent, class_probs_mean_of_means = self.vae(x[:, :-1, :, :], reverse=False)
-                
-                ### VAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
-                x_hat = self.vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, hash_channel_order=hash_channel_order)  
-
-                # LOSSES: Intra-Patient 
-                recon_loss = loss_functions.recon_loss_function(
-                    x=x[:, 1 + self.num_encode_concat_transformer_tokens :, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
-                    x_hat=x_hat,
-                    recon_weight=self.recon_weight)
-
-                kld_loss = loss_functions.kld_loss_function(
-                    mean=mean, 
-                    logvar=logvar,
-                    KL_multiplier=self.KL_multiplier)
-
-                adversarial_loss = loss_functions.adversarial_loss_function(
-                    class_probs=class_probs_mean_of_means, 
-                    file_class_label=file_class_label,
-                    classifier_weight=self.classifier_weight)
-
-                # Not currently used
-                sparse_loss = loss_functions.sparse_l1_reg(
-                    z=latent, 
-                    sparse_weight=self.sparse_weight, 
-                    **kwargs)
-
-                # AFTER EACH FORWARD PASS
-                self._zero_all_grads()
-                loss = recon_loss + kld_loss + adversarial_loss 
-                loss.backward()         
-                self.opt_vae.step()
-                self.opt_cls.step()
-
-                # Realtime terminal info and WandB 
-                if (iter_curr%self.recent_display_iters==0):
-                    if val_finetune: state_str = "VAL FINETUNE"
-                    elif val_unseen: state_str = "VAL UNSEEN"
-                    else: state_str = "TRAIN"
-                    now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
-                    if (self.gpu_id == 1):
-                        sys.stdout.write(
-                            f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, EPOCH {self.epoch}, Iter [BatchSize: {x.shape[0]}] {iter_curr}/{total_iters}, " + 
-                            f"MeanLoss: {round(loss.detach().item(), 2)}                 ")
-                        sys.stdout.flush() 
-
-                    # Log to WandB
-                    wandb.define_metric('Steps')
-                    wandb.define_metric("*", step_metric="Steps")
-                    train_step = self.epoch * int(total_iters) + iter_curr
-                    if (not val_finetune) & (not val_unseen):
-                        metrics = dict(
-                            train_attention_dropout=attention_dropout,
-                            train_loss=loss,
-                            train_recon_loss=recon_loss, 
-                            train_kld_loss=kld_loss, 
-                            train_adversarial_loss=adversarial_loss,
-                            train_sparse_loss=sparse_loss,
-                            train_LR_vae=self.opt_vae.param_groups[0]['lr'], 
-                            train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                            train_KL_Beta=self.KL_multiplier, 
-                            train_ReconWeight=self.recon_weight,
-                            train_AdversarialWeight=self.classifier_weight,
-                            train_AdversarialAlpha=kwargs['classifier_alpha'],
-                            train_Sparse_weight=self.sparse_weight,
-                            train_epoch=self.epoch)
-
-                    elif val_finetune:
-                        metrics = dict(
-                            val_finetune_attention_dropout=attention_dropout,
-                            val_finetune_loss=loss, 
-                            val_finetune_recon_loss=recon_loss, 
-                            val_finetune_kld_loss=kld_loss, 
-                            val_finetune_adversarial_loss=adversarial_loss,
-                            val_finetune_sparse_loss=sparse_loss,
-                            val_finetune_LR_vae=self.opt_vae.param_groups[0]['lr'], 
-                            val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                            val_finetune_KL_Beta=self.KL_multiplier, 
-                            val_finetune_ReconWeight=self.recon_weight,
-                            val_finetune_AdversarialWeight=self.classifier_weight,
-                            val_finetune_AdversarialAlpha=kwargs['classifier_alpha'],
-                            val_finetune_Sparse_weight=self.sparse_weight,
-                            val_finetune_epoch=self.epoch)
-
-                    elif val_unseen:
-                        metrics = dict(
-                            val_unseen_attention_dropout=attention_dropout,
-                            val_unseen_loss=loss, 
-                            val_unseen_recon_loss=recon_loss, 
-                            val_unseen_kld_loss=kld_loss, 
-                            val_unseen_adversarial_loss=adversarial_loss,
-                            val_unseen_sparse_loss=sparse_loss,
-                            val_unseen_LR_vae=self.opt_vae.param_groups[0]['lr'], 
-                            val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                            val_unseen_KL_Beta=self.KL_multiplier, 
-                            val_unseen_ReconWeight=self.recon_weight,
-                            val_unseen_AdversarialWeight=self.classifier_weight,
-                            val_unseen_AdversarialAlpha=kwargs['classifier_alpha'],
-                            val_unseen_Sparse_weight=self.sparse_weight,
-                            val_unseen_epoch=self.epoch)
-
-                wandb.log({**metrics, 'Steps': train_step})
-
-                # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
-                iter_curr = iter_curr + 1
-
-                # Realtime latent visualizations
-                if realtime_latent_printing & ((iter_curr + 1) % realtime_printing_interval == 0):
-                    if self.gpu_id == 0:
-                        if torch.isnan(loss).any():
-                            print("WARNING: Loss is nan, no plots can be made")
-                        else:
-                            utils_functions.print_latent_realtime(
-                                mu = mean.cpu().detach().numpy(), 
-                                logvar = logvar.cpu().detach().numpy(),
-                                savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
-                                epoch = self.epoch,
-                                iter_curr = iter_curr,
-                                file_name = file_name,
-                                **kwargs)
-                            utils_functions.print_recon_realtime(
-                                x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], 
-                                x_hat=x_hat, 
-                                savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_recon",
-                                epoch = self.epoch,
-                                iter_curr = iter_curr,
-                                file_name = file_name,
-                                **kwargs)
-                            utils_functions.print_classprobs_realtime(
-                                class_probs = class_probs_mean_of_means,
-                                class_labels = file_class_label,
-                                savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_classprob",
-                                epoch = self.epoch,
-                                iter_curr = iter_curr,
-                                file_name = file_name,
-                                **kwargs)
-    
+                    # Realtime latent visualizations
+                    if realtime_latent_printing & ((iter_curr + 1) % realtime_printing_interval == 0):
+                        if self.gpu_id == 0:
+                            if torch.isnan(loss).any():
+                                print("WARNING: Loss is nan, no plots can be made")
+                            else:
+                                utils_functions.print_latent_realtime(
+                                    mu = mean.cpu().detach().numpy(), 
+                                    logvar = logvar.cpu().detach().numpy(),
+                                    savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
+                                    epoch = self.epoch,
+                                    iter_curr = iter_curr,
+                                    file_name = file_name,
+                                    **kwargs)
+                                utils_functions.print_recon_realtime(
+                                    x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], 
+                                    x_hat=x_hat, 
+                                    savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_recon",
+                                    epoch = self.epoch,
+                                    iter_curr = iter_curr,
+                                    file_name = file_name,
+                                    **kwargs)
+                                utils_functions.print_classprobs_realtime(
+                                    class_probs = class_probs_mean_of_means,
+                                    class_labels = file_class_label,
+                                    savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_classprob",
+                                    epoch = self.epoch,
+                                    iter_curr = iter_curr,
+                                    file_name = file_name,
+                                    **kwargs)
         
+        finally:
+            del dataloader_curr
+            # shared_memory_cleanup()
+            gc.collect()
+            torch.cuda.empty_cache()
+            
 if __name__ == "__main__":
 
     # Set the hash seed 
