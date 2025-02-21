@@ -45,7 +45,7 @@ crattn_dropout: 0.1
 transformer_dim: kwargs['transformer_dim'] = kwargs['crattn_embed_dim'] * kwargs['autoencode_samples']
 transformer_seq_length: 256
 max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
-max_batch_size: kwargs['max_batch_size'] = kwargs['random_pats_in_batch'] * kwargs['random_files_per_pat'] * kwargs['random_epochs_per_file']
+max_batch_size: kwargs['max_batch_size'] = kwargs['random_pats_in_batch'] * kwargs['random_files_per_pat'] * kwargs['random_epochs_per_file'] * kwargs['inference_batch_mult']
 n_layers: 16
 n_heads: 128
 multiple_of: 256 
@@ -67,7 +67,7 @@ decoder_base_dims: kwargs['decoder_base_dims'] = kwargs['latent_dim'] # after th
 ### Classifier
 classifier_hidden_dims: [2048, 1024, 512]
 classifier_num_pats: 40 # Hardcoded  ########
-classifier_alpha: 0 # 1.0 # Default 1.0 # BALANCE of ADVERSARIAL effect between VAE encoder and classifier. Not a ratio, just a float value (negative causes VAE to HELP classifier)
+classifier_alpha: 0.001 # 1.0 # Default 1.0 # BALANCE of ADVERSARIAL effect between VAE encoder and classifier. Not a ratio, just a float value (negative causes VAE to HELP classifier)
 classifier_weight: 1 # OVERALL effect ADVERSARIAL training: i.e. reverse gradient (VAE) AND classifier power. # Should probably get into same ballpark as recon and KLD
 
 # TODO: schedule alpha AND classifier weight
@@ -96,8 +96,10 @@ train_forward_passes: 1000
 valfinetune_forward_passes: 500
 valunseen_forward_passes: 500
 
-pacmap_every: 99999 
-finetune_pacmap: True  
+# VAl and Inference Frequency
+inference_every: 1 
+inference_batch_mult: 1 # With current architecture/hardware, max batch size > 4 runs out of RAM
+finetune_inference: False  
 val_every: 99999
 num_rand_recon_plots: 4
 epochs_to_train: 999999 
@@ -175,8 +177,8 @@ tmp_file_dir: '/tmp_files'
   # w_FP = 1.
 apply_pca: True
 pca_comp: 100
-pre_PaCMAP_window_sec_list: [60, 10] # [60, 10]
-pre_PaCMAP_stride_sec_list: [30, 5] #[30, 5] 
+inference_window_sec_list: [60, 10] # [60, 10]
+inference_stride_sec_list: [30, 10] #[30, 5] 
 pacmap_build_strs: kwargs['pacmap_build_strs'] = ['train', "valfinetune"]
 pacmap_eval_strs: kwargs['pacmap_eval_strs'] = ["valunseen"]
 pacmap_LR: 1 # 0.5                                                                                              #################
@@ -191,8 +193,8 @@ delete_latent_files: False # If false, will not delete the latent files after bu
 
 # Multiprocessing 
 subprocess_num_threads: 1 
-num_dataloader_workers: 4
-persistent_workers: True # num workers must be > 0
+num_dataloader_workers: 0
+persistent_workers: False # num workers must be > 0
 
 # Plotting variables
 plot_alpha: 0.5

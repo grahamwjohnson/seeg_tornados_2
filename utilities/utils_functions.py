@@ -623,7 +623,7 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_rea
 
     # Make new grid/fig
     gs = gridspec.GridSpec(batchsize, num_realtime_channels_recon * 2) # *2 because beginning and end of transformer sequence
-    fig = pl.figure(figsize=(20, 14))
+    fig = pl.figure(figsize=(20, 16))
     palette = sns.cubehelix_palette(n_colors=2, start=3, rot=1) 
     for b in range(0, batchsize):
         for c in range(0,len(random_ch_idxs)):
@@ -644,7 +644,7 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_rea
 
                 ax = fig.add_subplot(gs[b, c*2 + seq]) 
                 sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
-                ax.set_title(f"B:{file_name[b]}, Ch:{random_ch_idxs[c]}, {title_str}")
+                ax.set_title(f"Ch:{random_ch_idxs[c]}\n{file_name[b]}, {title_str}", fontdict={'fontsize': 12, 'fontweight': 'medium'})
 
                 pl.ylim(-1, 1) # Set y-axis limit -1 to 1
             

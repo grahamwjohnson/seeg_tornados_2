@@ -178,7 +178,7 @@ def main(
     timestamp_id: int,
     start_epoch: int,
     LR_val_vae: float,
-    finetune_pacmap: bool, 
+    finetune_inference: bool, 
     PaCMAP_model_to_infer = [],
     vae_state_dict_prev_path = [],
     vae_opt_state_dict_prev_path = [],
@@ -224,7 +224,7 @@ def main(
         cls_opt_state_dict_prev = torch.load(cls_opt_state_dict_prev_path, map_location=map_location)
         opt_cls.load_state_dict(cls_opt_state_dict_prev)
 
-        print("Model and Opt weights loaded from checkpoints")
+        print(f"[GPU{gpu_id}] Model and Opt weights loaded from checkpoints")
 
     # Create the training object
     trainer = Trainer(
@@ -239,18 +239,18 @@ def main(
         valunseen_dataset=valunseen_dataset,
         PaCMAP_model_to_infer=PaCMAP_model_to_infer,
         wandb_run=wandb_run,
-        finetune_pacmap=finetune_pacmap,
+        finetune_inference=finetune_inference,
         **kwargs)
     
     # Run through all epochs
     for epoch in range(start_epoch, epochs_to_train):
         trainer.epoch = epoch
 
-        # PACMAP
-        if (epoch > 0) & ((trainer.epoch + 1) % trainer.pacmap_every == 0):
+        # Full INFERENCE on all data
+        if (epoch > 0) & ((trainer.epoch + 1) % trainer.inference_every == 0):
 
             # Save pre-finetune model/opt weights
-            if finetune_pacmap:
+            if finetune_inference:
                 vae_dict = trainer.vae.module.state_dict()
                 vae_opt_dict = trainer.opt_vae.state_dict()
                 cls_opt_dict = trainer.opt_cls.state_dict()
@@ -269,9 +269,15 @@ def main(
                     num_rand_hashes = val_num_rand_hashes,
                     **kwargs)
 
-            # # INFERENCE on all datasets
-            dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
-            dataset_strs = ["train", "valfinetune", "valunseen"]
+                dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
+                dataset_strs = ["train", "valfinetune", "valunseen"]
+
+            # No finetune, only run data for Train dataset
+            else:   
+                dataset_list = [trainer.train_dataset]
+                dataset_strs = ["train"]
+            
+            # INFERENCE on all selected datasets
             trainer._set_to_eval()
             with torch.no_grad():
                 for d in range(0, len(dataset_list)):
@@ -284,26 +290,26 @@ def main(
                         num_rand_hashes = -1,
                         **kwargs)
 
-            # After inferenece, run the PACMAP
-            # Only initiate for one GPU process - but calculations are done on CPU
-            if (gpu_id == 0): 
-                # New pacmap run for every win/stride combination
-                for i in range(len(trainer.pre_PaCMAP_window_sec_list)):
-                    utils_functions.run_pacmap(
-                        dataset_strs=dataset_strs, 
-                        epoch=epoch, 
-                        win_sec=trainer.pre_PaCMAP_window_sec_list[i], 
-                        stride_sec=trainer.pre_PaCMAP_stride_sec_list[i], 
-                        latent_subdir=f"/latent_files/Epoch{epoch}", 
-                        **kwargs)
+            # # After inferenece, run the PACMAP
+            # # Only initiate for one GPU process - but calculations are done on CPU
+            # if (gpu_id == 0): 
+            #     # New pacmap run for every win/stride combination
+            #     for i in range(len(trainer.inference_window_sec_list)):
+            #         utils_functions.run_pacmap(
+            #             dataset_strs=dataset_strs, 
+            #             epoch=epoch, 
+            #             win_sec=trainer.inference_window_sec_list[i], 
+            #             stride_sec=trainer.inference_stride_sec_list[i], 
+            #             latent_subdir=f"/latent_files/Epoch{epoch}", 
+            #             **kwargs)
 
             # Restore model/opt weights to pre-finetune
-            if finetune_pacmap:
+            if finetune_inference:
                 trainer.vae.module.load_state_dict(vae_dict)
                 trainer.opt_vae.load_state_dict(vae_opt_dict)
                 trainer.opt_cls.load_state_dict(cls_opt_dict)
 
-            print(f"GPU{str(trainer.gpu_id)} at post PaCMAP barrier")
+            print(f"GPU{str(trainer.gpu_id)} at post inference barrier")
             barrier()
         
         # TRAIN
@@ -324,7 +330,7 @@ def main(
 
         # VALIDATE 
         # (skip if it's a pacmap epoch because it will already have been done)
-        if ((trainer.epoch + 1) % trainer.val_every == 0) & ((trainer.epoch + 1) % trainer.pacmap_every != 0):
+        if ((trainer.epoch + 1) % trainer.val_every == 0) & ((trainer.epoch + 1) % trainer.inference_every != 0):
             # Save pre-finetune model/opt weights
             vae_dict = trainer.vae.module.state_dict()
             vae_opt_dict = trainer.opt_vae.state_dict()
@@ -379,8 +385,8 @@ class Trainer:
         wandb_run,
         model_dir: str,
         val_every: int,
-        pacmap_every: int,
-        finetune_pacmap: bool,
+        inference_every: int,
+        finetune_inference: bool,
         latent_dim: int,
         autoencode_samples: int,
         num_samples: int,
@@ -393,8 +399,8 @@ class Trainer:
         recon_weight: float,
         atd_file: str,
         PaCMAP_model_to_infer,
-        pre_PaCMAP_window_sec_list: list,
-        pre_PaCMAP_stride_sec_list: list,
+        inference_window_sec_list: list,
+        inference_stride_sec_list: list,
         recent_display_iters: int,
         **kwargs
     ) -> None:
@@ -409,8 +415,8 @@ class Trainer:
         self.opt_cls = opt_cls
         self.model_dir = model_dir
         self.val_every = val_every
-        self.pacmap_every = pacmap_every
-        self.finetune_pacmap = finetune_pacmap
+        self.inference_every = inference_every
+        self.finetune_inference = finetune_inference
         self.latent_dim = latent_dim
         self.autoencode_samples = autoencode_samples
         self.num_samples = num_samples
@@ -423,13 +429,13 @@ class Trainer:
         self.recon_weight = recon_weight
         self.atd_file = atd_file
         self.PaCMAP_model_to_infer = PaCMAP_model_to_infer
-        self.pre_PaCMAP_window_sec_list = pre_PaCMAP_window_sec_list
-        self.pre_PaCMAP_stride_sec_list = pre_PaCMAP_stride_sec_list
+        self.inference_window_sec_list = inference_window_sec_list
+        self.inference_stride_sec_list = inference_stride_sec_list
         self.recent_display_iters = recent_display_iters
         self.wandb_run = wandb_run
         self.kwargs = kwargs
 
-        assert len(self.pre_PaCMAP_window_sec_list) == len(self.pre_PaCMAP_stride_sec_list)
+        assert len(self.inference_window_sec_list) == len(self.inference_stride_sec_list)
 
         self.KL_multiplier = -1 # dummy variable, only needed when debugging and training is skipped
 
@@ -494,13 +500,15 @@ class Trainer:
         all_files_latent_only,
         num_dataloader_workers,
         max_batch_size,
+        inference_batch_mult,
+        padded_channels,
         val_finetune,
         val_unseen,
         realtime_latent_printing,
         realtime_printing_interval,
         **kwargs):
 
-        print(f"autoencode_samples: {self.autoencode_samples}")
+        print(f"[GPU{self.gpu_id}] Autoencode_samples: {self.autoencode_samples}")
 
         try:
             ### ALL/FULL FILES - LATENT ONLY - FULL TRANSFORMER CONTEXT ### 
@@ -515,13 +523,15 @@ class Trainer:
                 # Go through every subject in this dataset
                 for pat_idx in range(0,len(dataset_curr.pat_ids)):
                     dataset_curr.set_pat_curr(pat_idx)
-                    dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=num_dataloader_workers)
+                    dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=max_batch_size * inference_batch_mult, num_workers=num_dataloader_workers)
 
                     # Go through every file in dataset
                     file_count = 0
-                    for data_tensor, file_name, file_class_label in dataloader_curr:
+                    for data_tensor, file_name, file_class_label in dataloader_curr: # Hash done outside data.py for single pat inference
 
                         file_count = file_count + len(file_name)
+
+                        num_channels_curr = data_tensor.shape[1]
 
                         # Create the sequential latent sequence array for the file 
                         num_samples_in_forward = self.transformer_seq_length * self.autoencode_samples
@@ -544,37 +554,35 @@ class Trainer:
                                 sys.stdout.write(f"\r{dataset_string}: Pat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP), Intrafile Iter {w}/{num_windows_in_file}          ") 
                                 sys.stdout.flush() 
 
-                            # HASHING: Get the patient channel order and patid_embedding for this channel order
-                            np.random.seed(seed=None) 
-                            # rand_modifer = int(random.uniform(0, num_rand_hashes -1))
-                            rand_modifer = 0 # For Inference
+                            # Generate hashes for feedforward conditioning (single pat, so outside data.py)
+                            rand_modifer = 0 # 0 for inference
                             hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
                                 input_string=dataset_curr.pat_ids[pat_idx], 
-                                num_channels=data_tensor.shape[1], 
+                                num_channels=num_channels_curr, 
                                 latent_dim=self.latent_dim, 
                                 modifier=rand_modifer)
                             
                             # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
-                            x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.autoencode_samples).to(self.gpu_id)
+                            x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, padded_channels, self.autoencode_samples).to(self.gpu_id)
                             start_idx = w * num_samples_in_forward
                             for embedding_idx in range(0, self.transformer_seq_length):
                                 # Pull out data for this window - NOTE: no hashing
                                 end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
-                                x[:, embedding_idx, :, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
+                                x[:, embedding_idx, :num_channels_curr, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
 
                             ### VAE ENCODER
                             # Forward pass in stacked batch through VAE encoder
-                            mean, _, _, _ = self.vae(x, reverse=False)
+                            mean, _, _, _ = self.vae(x[:, :-1, :, :], reverse=False)   # 1 shifted just to be aligned with training style
                             files_means[:, w, :] = torch.mean(mean, dim=1)
 
                         # After file complete, pacmap_window/stride the file and save each file from batch seperately
                         # Seperate directory for each win/stride combination
                         # First pull off GPU and convert to numpy
                         files_means = files_means.cpu().numpy()
-                        for i in range(len(self.pre_PaCMAP_window_sec_list)):
+                        for i in range(len(self.inference_window_sec_list)):
 
-                            win_sec_curr = self.pre_PaCMAP_window_sec_list[i]
-                            stride_sec_curr = self.pre_PaCMAP_stride_sec_list[i]
+                            win_sec_curr = self.inference_window_sec_list[i]
+                            stride_sec_curr = self.inference_stride_sec_list[i]
                             sec_in_forward = num_samples_in_forward/self.FS
 
                             if (win_sec_curr < sec_in_forward) or (stride_sec_curr < sec_in_forward):
@@ -770,8 +778,10 @@ class Trainer:
                                     **kwargs)
         
         finally:
+            print(f"[GPU{str(self.gpu_id)}] at 'finally' section after epoch")
+            barrier()
+            # for worker in dataloader_curr._workers: worker.terminate()
             del dataloader_curr
-            # shared_memory_cleanup()
             # gc.collect()
             # torch.cuda.empty_cache()
             

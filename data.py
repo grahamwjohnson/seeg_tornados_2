@@ -153,6 +153,7 @@ class SEEG_Tornado_Dataset(Dataset):
 
             file_name = self.pat_fnames[self.pat_curr][idx].split("/")[-1].split(".")[0]      
 
+            # Label for classifier
             file_class_label = torch.tensor(self.pat_curr) 
 
             return data_tensor, file_name, file_class_label
