@@ -16,15 +16,13 @@ if __name__ == "__main__":
     atd_file = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple/trained_models/all_time_data_01092023_112957.csv'
 
     # Source data selection
-    model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025'
-    # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/jackal'
-    # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple/trained_models/pangolin_spat113_finetune'
-    # pat_ids_list = ['Epat34']
-    single_pat = [] #'Epat35'  # if [] will do all pats
-    epoch = 141 # 39 # 141 , 999 to debug
+    # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025'
+    model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/gar_Tue_Feb_18_13_39_07_2025'
+    single_pat = 'Spat18' # [] #'Epat35'  # if [] will do all pats
+    epoch = 165 # 39 # 141 , 999 to debug
     latent_subdir = f'latent_files/Epoch{epoch}'
-    win_sec = 60 # 60, 1.0
-    stride_sec = 30 # 30, 1.0 
+    win_sec = 60 # 60, 10
+    stride_sec = 30 # 30, 10 
 
     # pacmap_build_strs = ['train', 'valfinetune']
     # pacmap_eval_strs = ['valunseen']
@@ -33,16 +31,28 @@ if __name__ == "__main__":
     
     FS = 512 
 
+    # HDBSCAN Settings
+    HDBSCAN_min_cluster_size = 200
+    HDBSCAN_min_samples = 100
+
+    # Plotting Settings
+    plot_preictal_color_sec = 60*60*1
+    plot_postictal_color_sec = 60*30 #60*60*4
+
+    # UMAP settings
+    perplexity = 10
+
     # PaCMAP Settings
     # TODO take in previously calculated NN
+    exclude_self_pat = False
     apply_pca = True # Before PaCMAP
     pca_comp = 100
     pacmap_MedDim_numdims = 10
     pacmap_LR = 0.05 #0.05
     pacmap_NumIters = (1000,1000,1000)
     pacmap_NN = None
-    pacmap_MN_ratio = 7 #0.5
-    pacmap_FP_ratio = 11 #2.0
+    pacmap_MN_ratio = 7 # 7 #0.5
+    pacmap_FP_ratio = 11 # 11 #2.0
 
     # PHATE Settings
     custom_nn_bool = False
@@ -52,26 +62,21 @@ if __name__ == "__main__":
     precomputed_dist = [] # dummy
     phate_annoy_tree_size = 20
     phate_knn = 5
-    phate_decay = 25
-    phate_metric = 'euclidean' # 'angular', 'euclidean' # Used by custom ANNOY function, angular=cosine for ANNOY
+    phate_decay = 5
+    phate_metric = 'angular' # 'angular', 'euclidean' # Used by custom ANNOY function, angular=cosine for ANNOY
     phate_solver = 'smacof'  # 'smacof', 'sgd' 
     rand_subset_pat_bool = False # False plots all pats in their own row of plots
     num_rand_pats_plot = 4 # Only applicable if 'rand_subset_pat_bool' is True
 
-    # HDBSCAN Settings
-    HDBSCAN_min_cluster_size = 200
-    HDBSCAN_min_samples = 100
-
-    # Plotting Settings
-    plot_preictal_color_sec = 60*60*4
-    plot_postictal_color_sec = 60*30 #60*60*4
-
     # Create paths and create pacmap directory for saving dim reduction models and outputs
+    umap_dir = f"{model_dir}/umap/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
     latent_dir = f"{model_dir}/{latent_subdir}/{win_sec}SecondWindow_{stride_sec}SecondStride" 
     pacmap_dir = f"{model_dir}/pacmap/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
     phate_dir = f"{model_dir}/phate/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
+    umap_dir = f"{model_dir}/phate/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
     if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir)
     if not os.path.exists(phate_dir): os.makedirs(phate_dir)
+    if not os.path.exists(umap_dir): os.makedirs(umap_dir)
 
     ### GENERATION DATA ###
     build_filepaths = [] # Collect pacmap build files - i.e. what data is being used to construct data manifold approximator
@@ -106,12 +111,11 @@ if __name__ == "__main__":
     else: print(f"WARNING: no evaluation data for {single_pat} in these categories: {pacmap_eval_strs}")
 
 
-    ### PACMAP GENERATION ###
-         
-    # Call the subfunction to create/use pacmap and plot
-    if single_pat == []: pacmap_savedir = f"{pacmap_dir}/all_pats/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_generation"
-    else: pacmap_savedir = f"{pacmap_dir}/{single_pat}/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_generation"
-    axis_20, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = utils_functions.pacmap_subfunction(
+    ### UMAP GENERATION ###
+    # Call the subfunction to create/use umap and plot
+    if single_pat == []: umap_savedir = f"{umap_dir}/all_pats/perplexity{perplexity}/umap_generation"
+    else: umap_savedir = f"{umap_dir}/{single_pat}/perplexity{perplexity}/umap_generation"
+    axis_20, reducer, hdb, pca, xy_lims = utils_functions.umap_subfunction(
         atd_file = atd_file,
         pat_ids_list=build_pat_ids_list,
         latent_data_windowed=latent_data_windowed_generation, 
@@ -124,118 +128,145 @@ if __name__ == "__main__":
         FS = FS,
         apply_pca=apply_pca,
         pca_comp=pca_comp,
-        pacmap_MedDim_numdims = pacmap_MedDim_numdims,
-        pacmap_LR = pacmap_LR,
-        pacmap_NumIters = pacmap_NumIters,
-        pacmap_NN = pacmap_NN,
-        pacmap_MN_ratio = pacmap_MN_ratio,
-        pacmap_FP_ratio = pacmap_FP_ratio,
+        perplexity=perplexity,
         HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
         HDBSCAN_min_samples = HDBSCAN_min_samples,
         plot_preictal_color_sec = plot_preictal_color_sec,
         plot_postictal_color_sec = plot_postictal_color_sec,
         **kwargs)
 
-    # SAVE OBJECTS
-    utils_functions.save_pacmap_objects(
-        pacmap_dir=pacmap_savedir,
-        epoch=epoch,
-        axis=axis_20,
-        reducer=reducer, 
-        reducer_MedDim=reducer_MedDim, 
-        hdb=hdb, 
-        pca=pca, 
-        xy_lims=xy_lims, 
-        xy_lims_PCA=xy_lims_PCA, 
-        xy_lims_RAW_DIMS=xy_lims_RAW_DIMS)
-
-    ## PACMAP EVAL ONLY ###
-    
-    if eval_filepaths != []:
-        # Call the subfunction to create/use pacmap and plot
-        if single_pat == []: pacmap_savedir = f"{pacmap_dir}/all_pats/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_eval"
-        else: pacmap_savedir = f"{pacmap_dir}/{single_pat}/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_eval"
-        utils_functions.pacmap_subfunction(
-            atd_file=atd_file,
-            pat_ids_list=eval_pat_ids_list,
-            latent_data_windowed=latent_data_windowed_eval, 
-            start_datetimes_epoch=eval_start_datetimes,  
-            stop_datetimes_epoch=eval_stop_datetimes,
-            epoch=epoch, 
-            win_sec=win_sec, 
-            stride_sec=stride_sec, 
-            savedir=pacmap_savedir,
-            FS = FS,
-            apply_pca=apply_pca,
-            pca_comp=pca_comp,
-            pacmap_MedDim_numdims = pacmap_MedDim_numdims,
-            pacmap_LR = pacmap_LR,
-            pacmap_NumIters = pacmap_NumIters,
-            pacmap_NN = pacmap_NN,
-            pacmap_MN_ratio = pacmap_MN_ratio,
-            pacmap_FP_ratio = pacmap_FP_ratio,
-            HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
-            HDBSCAN_min_samples = HDBSCAN_min_samples,
-            plot_preictal_color_sec = plot_preictal_color_sec,
-            plot_postictal_color_sec = plot_postictal_color_sec,
-            xy_lims = xy_lims,
-            xy_lims_RAW_DIMS = xy_lims_RAW_DIMS,
-            xy_lims_PCA = xy_lims_PCA,
-            premade_PaCMAP = reducer,
-            premade_PaCMAP_MedDim = reducer_MedDim,
-            premade_PCA = pca,
-            premade_HDBSCAN = hdb,
-            **kwargs)
 
 
-    ### PHATE GENERATION ###
-    if single_pat == []: phate_savedir = f"{phate_dir}/all_pats/phate_gen"
-    else: phate_savedir = f"{phate_dir}/{single_pat}/phate_gen"
+    # ### PACMAP GENERATION ###
+    # # Call the subfunction to create/use pacmap and plot
+    # if single_pat == []: pacmap_savedir = f"{pacmap_dir}/all_pats/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_generation"
+    # else: pacmap_savedir = f"{pacmap_dir}/{single_pat}/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_generation"
+    # axis_20, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = utils_functions.pacmap_subfunction(
+    #     atd_file = atd_file,
+    #     pat_ids_list=build_pat_ids_list,
+    #     latent_data_windowed=latent_data_windowed_generation, 
+    #     start_datetimes_epoch=build_start_datetimes,  
+    #     stop_datetimes_epoch=build_stop_datetimes,
+    #     epoch=epoch, 
+    #     win_sec=win_sec, 
+    #     stride_sec=stride_sec, 
+    #     savedir=pacmap_savedir,
+    #     FS = FS,
+    #     apply_pca=apply_pca,
+    #     pca_comp=pca_comp,
+    #     exclude_self_pat=exclude_self_pat,
+    #     pacmap_MedDim_numdims = pacmap_MedDim_numdims,
+    #     pacmap_LR = pacmap_LR,
+    #     pacmap_NumIters = pacmap_NumIters,
+    #     pacmap_NN = pacmap_NN,
+    #     pacmap_MN_ratio = pacmap_MN_ratio,
+    #     pacmap_FP_ratio = pacmap_FP_ratio,
+    #     HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
+    #     HDBSCAN_min_samples = HDBSCAN_min_samples,
+    #     plot_preictal_color_sec = plot_preictal_color_sec,
+    #     plot_postictal_color_sec = plot_postictal_color_sec,
+    #     **kwargs)
 
-    # Pull in precomputed ANNOY values if any
-    if (precomputed_nn_path != []) and (precomputed_dist_path != []):
-        with open(precomputed_nn_path, "rb") as f: precomputed_nn = pickle.load(f)
-        with open(precomputed_dist_path, "rb") as f: precomputed_dist = pickle.load(f)
+    # # SAVE OBJECTS
+    # utils_functions.save_pacmap_objects(
+    #     pacmap_dir=pacmap_savedir,
+    #     epoch=epoch,
+    #     axis=axis_20,
+    #     reducer=reducer, 
+    #     reducer_MedDim=reducer_MedDim, 
+    #     hdb=hdb, 
+    #     pca=pca, 
+    #     xy_lims=xy_lims, 
+    #     xy_lims_PCA=xy_lims_PCA, 
+    #     xy_lims_RAW_DIMS=xy_lims_RAW_DIMS)
 
-    # Generate random idxs to plot
-    unique_pats = list(set(build_pat_ids_list))
-    if rand_subset_pat_bool:
-        np.random.seed(seed=None) 
-        plot_pat_ids = [unique_pats[np.random.randint(0, len(unique_pats))] for i in range(num_rand_pats_plot)]
-    else:
-        plot_pat_ids = unique_pats
+    # ## PACMAP EVAL ONLY ###
+    # if eval_filepaths != []:
+    #     # Call the subfunction to create/use pacmap and plot
+    #     if single_pat == []: pacmap_savedir = f"{pacmap_dir}/all_pats/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_eval"
+    #     else: pacmap_savedir = f"{pacmap_dir}/{single_pat}/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_eval"
+    #     utils_functions.pacmap_subfunction(
+    #         atd_file=atd_file,
+    #         pat_ids_list=eval_pat_ids_list,
+    #         latent_data_windowed=latent_data_windowed_eval, 
+    #         start_datetimes_epoch=eval_start_datetimes,  
+    #         stop_datetimes_epoch=eval_stop_datetimes,
+    #         epoch=epoch, 
+    #         win_sec=win_sec, 
+    #         stride_sec=stride_sec, 
+    #         savedir=pacmap_savedir,
+    #         FS = FS,
+    #         apply_pca=apply_pca,
+    #         pca_comp=pca_comp,
+    #         exclude_self_pat=exclude_self_pat,
+    #         pacmap_MedDim_numdims = pacmap_MedDim_numdims,
+    #         pacmap_LR = pacmap_LR,
+    #         pacmap_NumIters = pacmap_NumIters,
+    #         pacmap_NN = pacmap_NN,
+    #         pacmap_MN_ratio = pacmap_MN_ratio,
+    #         pacmap_FP_ratio = pacmap_FP_ratio,
+    #         HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
+    #         HDBSCAN_min_samples = HDBSCAN_min_samples,
+    #         plot_preictal_color_sec = plot_preictal_color_sec,
+    #         plot_postictal_color_sec = plot_postictal_color_sec,
+    #         xy_lims = xy_lims,
+    #         xy_lims_RAW_DIMS = xy_lims_RAW_DIMS,
+    #         xy_lims_PCA = xy_lims_PCA,
+    #         premade_PaCMAP = reducer,
+    #         premade_PaCMAP_MedDim = reducer_MedDim,
+    #         premade_PCA = pca,
+    #         premade_HDBSCAN = hdb,
+    #         **kwargs)
 
-    # Run the PHATE subfunction on generate data - plots are made/saved within this function
-    phate_ax20, phate, phate_hdb, phate_xy_lims = utils_functions.phate_subfunction(
-        atd_file = atd_file,
-        pat_ids_list=build_pat_ids_list,
-        latent_data_windowed=latent_data_windowed_generation, 
-        start_datetimes_epoch=build_start_datetimes,  
-        stop_datetimes_epoch=build_stop_datetimes,
-        epoch=epoch, 
-        win_sec=win_sec, 
-        stride_sec=stride_sec, 
-        savedir=phate_savedir,
-        FS = FS,
-        HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
-        HDBSCAN_min_samples = HDBSCAN_min_samples,
-        plot_preictal_color_sec = plot_preictal_color_sec,
-        plot_postictal_color_sec = plot_postictal_color_sec,  
-        interictal_contour=False,
-        knn=phate_knn,
-        decay=phate_decay,
-        phate_metric=phate_metric,
-        phate_solver=phate_solver,
-        verbose=True,
-        xy_lims = [],
-        custom_nn_bool = custom_nn_bool,
-        phate_annoy_tree_size = phate_annoy_tree_size,
-        knn_indices = precomputed_nn,
-        knn_distances = precomputed_dist,
-        premade_PHATE = [],
-        premade_HDBSCAN = [], 
-        plot_pat_ids = plot_pat_ids,
-        **kwargs)
+
+    # ### PHATE GENERATION ###
+    # if single_pat == []: phate_savedir = f"{phate_dir}/all_pats/phate_gen"
+    # else: phate_savedir = f"{phate_dir}/{single_pat}/phate_gen"
+
+    # # Pull in precomputed ANNOY values if any
+    # if (precomputed_nn_path != []) and (precomputed_dist_path != []):
+    #     with open(precomputed_nn_path, "rb") as f: precomputed_nn = pickle.load(f)
+    #     with open(precomputed_dist_path, "rb") as f: precomputed_dist = pickle.load(f)
+
+    # # Generate random idxs to plot
+    # unique_pats = list(set(build_pat_ids_list))
+    # if rand_subset_pat_bool:
+    #     np.random.seed(seed=None) 
+    #     plot_pat_ids = [unique_pats[np.random.randint(0, len(unique_pats))] for i in range(num_rand_pats_plot)]
+    # else:
+    #     plot_pat_ids = unique_pats
+
+    # # Run the PHATE subfunction on generate data - plots are made/saved within this function
+    # phate_ax20, phate, phate_hdb, phate_xy_lims = utils_functions.phate_subfunction(
+    #     atd_file = atd_file,
+    #     pat_ids_list=build_pat_ids_list,
+    #     latent_data_windowed=latent_data_windowed_generation, 
+    #     start_datetimes_epoch=build_start_datetimes,  
+    #     stop_datetimes_epoch=build_stop_datetimes,
+    #     epoch=epoch, 
+    #     win_sec=win_sec, 
+    #     stride_sec=stride_sec, 
+    #     savedir=phate_savedir,
+    #     FS = FS,
+    #     HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
+    #     HDBSCAN_min_samples = HDBSCAN_min_samples,
+    #     plot_preictal_color_sec = plot_preictal_color_sec,
+    #     plot_postictal_color_sec = plot_postictal_color_sec,  
+    #     interictal_contour=False,
+    #     knn=phate_knn,
+    #     decay=phate_decay,
+    #     phate_metric=phate_metric,
+    #     phate_solver=phate_solver,
+    #     verbose=True,
+    #     xy_lims = [],
+    #     custom_nn_bool = custom_nn_bool,
+    #     phate_annoy_tree_size = phate_annoy_tree_size,
+    #     knn_indices = precomputed_nn,
+    #     knn_distances = precomputed_dist,
+    #     premade_PHATE = [],
+    #     premade_HDBSCAN = [], 
+    #     plot_pat_ids = plot_pat_ids,
+    #     **kwargs)
 
 
     ### PAHTE SAVE OBJECTS ###
@@ -249,13 +280,15 @@ if __name__ == "__main__":
 
     ### PHATE EVAL ###
     # TODO
+    # if eval_filepaths != []:
 
 
 
 
-    ### HISTOGRAM LATENT ###
-
+    # ### HISTOGRAM LATENT ###
+    
     # # Generation data
+    # print("Histogram on generation data")
     # if single_pat == []: histo_dir = f"{model_dir}/histo_latent/all_pats/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride/histo_generation"
     # else: histo_dir = f"{model_dir}/histo_latent/{single_pat}/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride/histo_generation"
     # if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir)
@@ -267,23 +300,25 @@ if __name__ == "__main__":
     #     epoch=epoch, 
     #     win_sec=win_sec, 
     #     stride_sec=stride_sec, 
-    #     savedir=f"{histo_dir}/histo_generation",
+    #     savedir=histo_dir,
     #     FS = FS)
 
     # # Eval data
-    # if single_pat == []: histo_dir = f"{model_dir}/histo_latent/all_pats/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride/histo_eval"
-    # else: histo_dir = f"{model_dir}/histo_latent/{single_pat}/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride/histo_eval"
-    # if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir)
-    # utils_functions.histogram_latent(
-    #     pat_ids_list=eval_pat_ids_list,
-    #     latent_data_windowed=latent_data_windowed_eval, 
-    #     start_datetimes_epoch=eval_start_datetimes,  
-    #     stop_datetimes_epoch=eval_stop_datetimes,
-    #     epoch=epoch, 
-    #     win_sec=win_sec, 
-    #     stride_sec=stride_sec, 
-    #     savedir=f"{histo_dir}/histo_eval",
-    #     FS = FS)
+    # if eval_filepaths != []:
+    #     print("Histogram on evaluation data")
+    #     if single_pat == []: histo_dir = f"{model_dir}/histo_latent/all_pats/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride/histo_eval"
+    #     else: histo_dir = f"{model_dir}/histo_latent/{single_pat}/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride/histo_eval"
+    #     if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir)
+    #     utils_functions.histogram_latent(
+    #         pat_ids_list=eval_pat_ids_list,
+    #         latent_data_windowed=latent_data_windowed_eval, 
+    #         start_datetimes_epoch=eval_start_datetimes,  
+    #         stop_datetimes_epoch=eval_stop_datetimes,
+    #         epoch=epoch, 
+    #         win_sec=win_sec, 
+    #         stride_sec=stride_sec, 
+    #         savedir=histo_dir,
+    #         FS = FS)
 
 
 
