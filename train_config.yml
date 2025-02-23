@@ -67,7 +67,7 @@ decoder_base_dims: kwargs['decoder_base_dims'] = kwargs['latent_dim'] # after th
 ### Classifier
 classifier_hidden_dims: [2048, 1024, 512]
 classifier_num_pats: 40 # Hardcoded  ########
-classifier_alpha: 0.001 # 1.0 # Default 1.0 # BALANCE of ADVERSARIAL effect between VAE encoder and classifier. Not a ratio, just a float value (negative causes VAE to HELP classifier)
+classifier_alpha: 0.01 # 1.0 # Default 1.0 # BALANCE of ADVERSARIAL effect between VAE encoder and classifier. Not a ratio, just a float value (negative causes VAE to HELP classifier)
 classifier_weight: 1 # OVERALL effect ADVERSARIAL training: i.e. reverse gradient (VAE) AND classifier power. # Should probably get into same ballpark as recon and KLD
 
 # TODO: schedule alpha AND classifier weight
@@ -97,7 +97,7 @@ valfinetune_forward_passes: 500
 valunseen_forward_passes: 500
 
 # VAl and Inference Frequency
-inference_every: 1 
+inference_every: 99999
 inference_batch_mult: 1 # With current architecture/hardware, max batch size > 4 runs out of RAM
 finetune_inference: False  
 val_every: 99999
@@ -117,7 +117,7 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 # Beta VAE controls
 KL_max: kwargs['KL_max'] = 3e-4 # Pangolin 1e-4 ############# Check if loss is actually used!!! May be commented out in training script ###############
 KL_min: kwargs['KL_min'] = 1e-12
-KL_stall_epochs: 6 # No KL weight rise until stall is complete
+KL_stall_epochs: 5 # No KL weight rise until stall is complete
 KL_epochs_AT_max: 40
 KL_epochs_TO_max: 20
  
