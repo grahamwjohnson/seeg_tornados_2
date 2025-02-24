@@ -242,7 +242,7 @@ class AdversarialClassifier(nn.Module):
             mu = layer(mu)
         return self.softmax(mu)
 
-class VAE(nn.Module):
+class WAE(nn.Module):
     '''
     The Reverseable Encoder/Decoder 
     Shares weights between Conv/TransConv layers, in addition to FC layers (except Mean/Logvar layers)
@@ -264,7 +264,7 @@ class VAE(nn.Module):
         gpu_id=None,  
         **kwargs):
 
-        super(VAE, self).__init__()
+        super(WAE, self).__init__()
 
         self.gpu_id = gpu_id
         self.autoencode_samples = autoencode_samples
@@ -296,11 +296,11 @@ class VAE(nn.Module):
         # Core Encoder
         self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=True)
         self.norm_hidden = RMSNorm(dim=self.hidden_dims)
-        
-        # Encoder variational layers (not shared between enc/dec)
-        self.mean_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
-        self.logvar_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True) # bias=False
 
+        # Right before latent space
+        self.final_encode_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
+
+        # Decoder
         self.decoder = Decoder_MLP(
             gpu_id = self.gpu_id,
             latent_dim = self.latent_dim,
@@ -313,12 +313,6 @@ class VAE(nn.Module):
 
         # Non-linearity as needed
         self.silu = nn.SiLU()
-
-    def reparameterization(self, mean, logvar):
-        std = torch.exp(0.5 * logvar)  
-        epsilon = torch.randn_like(std).to(self.gpu_id) 
-        z = mean + std * epsilon
-        return z
 
     def concat_past_tokens(self, x):
         '''
@@ -345,26 +339,23 @@ class VAE(nn.Module):
             # TRANSFORMER
             y = self.transformer_encoder(y, start_pos=self.transformer_start_pos)
 
-            # VAE CORE
+            # WAE CORE
             y = self.concat_past_tokens(y) # Sliding window over transformer output: [batch, token, latent_dim] --> [batch, token_prime, latent_dim * num_encode_concat_transformer_tokens]
             y = y.reshape([y.shape[0]*y.shape[1], y.shape[2]]) # Batch the sliding windows for efficient decoding: [batch, token_prime, latent_dim * num_encode_concat_transformer_tokens] --> [batch x token_prime, latent_dim * num_encode_concat_transformer_tokens]
             y = self.top_to_hidden(y)
             y = self.silu(y)
             y = self.norm_hidden(y)
-            mean_batched, logvar_batched = self.mean_fc_layer(y), self.logvar_fc_layer(y)
-            latent_batched = self.reparameterization(mean_batched, logvar_batched)
+            latent_batched = self.final_encode_layer(y)
 
             # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
             # NOTE: you lose the priming tokens needed by transformer
-            mean = torch.stack(torch.split(mean_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
-            logvar = torch.stack(torch.split(logvar_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
             latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
 
             # CLASSIFIER - on the mean of the means
-            mean_of_means = torch.mean(mean, dim=1)
-            class_probs_mean_of_means = self.adversarial_classifier(mean_of_means, alpha)
+            mean_of_latent = torch.mean(latent, dim=1)
+            class_probs_mean_of_latent = self.adversarial_classifier(mean_of_latent, alpha)
             
-            return mean, logvar, latent, class_probs_mean_of_means
+            return latent, class_probs_mean_of_latent
 
         elif reverse == True:
 
@@ -393,17 +384,15 @@ def print_models_flow(x, **kwargs):
     pat_num_channels = x.shape[2] 
     file_class_label = torch.tensor([0]*x.shape[0]) # dummy
 
-    # Build the VAE
-    vae = VAE(**kwargs) 
+    # Build the WAE
+    wae = WAE(**kwargs) 
 
     # Run through Encoder
     print(f"INPUT TO <ENC>\n"
     f"x:{x.shape}")
-    mean, logvar, latent, class_probs = vae(x, reverse=False, alpha=1)  
-    summary(vae, input_size=(x.shape), depth=999, device="cpu")
+    latent, class_probs = wae(x, reverse=False, alpha=1)  
+    summary(wae, input_size=(x.shape), depth=999, device="cpu")
     print(
-    f"mean:{mean.shape}\n"
-    f"logvar:{logvar.shape}\n"
     f"latent:{latent.shape}\n"
     f"class_probs:{class_probs.shape}\n")
 
@@ -411,17 +400,17 @@ def print_models_flow(x, **kwargs):
     adversarial_loss = adversarial_loss_function(class_probs, file_class_label, classifier_weight = 1)
     print(f"Adversarial Loss: {adversarial_loss}")
 
-    # Run through VAE decoder
+    # Run through WAE decoder
     hash_pat_embedding = torch.rand(x.shape[0], latent.shape[2])
     hash_channel_order = np.arange(0, 199).tolist()
-    print(f"\n\n\nINPUT TO <VAE - Decoder Mode> \n"
+    print(f"\n\n\nINPUT TO <WAE - Decoder Mode> \n"
     f"z:{latent.shape}\n"
     f"hash_pat_embedding:{hash_pat_embedding.shape}\n")
-    summary(vae, input_data=[latent, True, hash_pat_embedding, hash_channel_order], depth=999, device="cpu")
-    core_out = vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
+    summary(wae, input_data=[latent, True, hash_pat_embedding, hash_channel_order], depth=999, device="cpu")
+    core_out = wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
     print(f"decoder_out:{core_out.shape}\n")
 
-    del vae
+    del wae
 
 if __name__ == "__main__":
 
@@ -438,7 +427,7 @@ if __name__ == "__main__":
 
     x = torch.rand(batchsize, in_channels, data_length, len(kernel_sizes))
 
-    vae = VAE(
+    wae = WAE(
         autoencode_samples=data_length,
         in_channels=in_channels,
         kernel_sizes=kernel_sizes, 
@@ -450,11 +439,11 @@ if __name__ == "__main__":
         **kwargs
     )
 
-    # mean,logvar,z = vae(x, reverse=False)
-    # x_hat = vae(z, reverse=True)
+    # mean,logvar,z = wae(x, reverse=False)
+    # x_hat = wae(z, reverse=True)
     # loss_fn = nn.MSELoss(reduction='mean')
     # recon_loss = loss_fn(x, x_hat) 
     # recon_loss.backward()
 
-    print(f"Are the weights of encoder and decoder tied? {torch.allclose(vae.top_to_hidden.weight.T, vae.hidden_to_top.weight)}")
+    print(f"Are the weights of encoder and decoder tied? {torch.allclose(wae.top_to_hidden.weight.T, wae.hidden_to_top.weight)}")
 

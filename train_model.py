@@ -36,7 +36,7 @@ from utilities import latent_plotting
 from utilities import utils_functions
 from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
-from models.VAE import VAE
+from models.WAE import WAE
 
 ######
 torch.autograd.set_detect_anomaly(False)
@@ -66,7 +66,7 @@ def load_train_objs(
     val_unseen_hour_dataset_range, 
     inference_selection, 
     
-    # VAE Optimizers
+    # WAE Optimizers
     core_weight_decay, 
     adamW_beta1,
     adamW_beta2,
@@ -143,29 +143,29 @@ def load_train_objs(
         num_forward_passes=train_forward_passes,
         **kwargs)
          
-    ### VAE ###
-    vae = VAE(gpu_id=gpu_id, **kwargs) 
-    vae = vae.to(gpu_id) 
+    ### WAE ###
+    wae = WAE(gpu_id=gpu_id, **kwargs) 
+    wae = wae.to(gpu_id) 
 
     # Separate the parameters into two groups
     classifier_params = []
-    vae_params = []
+    wae_params = []
 
     # Iterate through the model parameters
-    for name, param in vae.named_parameters():
+    for name, param in wae.named_parameters():
         # Check if the parameter is part of the encoder submodule
         if 'adversarial_classifier' in name:
             classifier_params.append(param)
         else:
-            vae_params.append(param)
+            wae_params.append(param)
     
-    # opt_vae = torch.optim.AdamW(vae.parameters(), weight_decay=core_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_core'])
-    # opt_cls = torch.optim.AdamW(vae.classifier.parameters(), weight_decay=classifier_weight_decay, betas=(classifier_adamW_beta1, classifier_adamW_beta2), lr=kwargs['LR_min_classifier'])
+    # opt_wae = torch.optim.AdamW(wae.parameters(), weight_decay=core_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_core'])
+    # opt_cls = torch.optim.AdamW(wae.classifier.parameters(), weight_decay=classifier_weight_decay, betas=(classifier_adamW_beta1, classifier_adamW_beta2), lr=kwargs['LR_min_classifier'])
     
-    opt_vae = torch.optim.AdamW(vae_params, weight_decay=core_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_core'])
+    opt_wae = torch.optim.AdamW(wae_params, weight_decay=core_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_core'])
     opt_cls = torch.optim.AdamW(classifier_params, weight_decay=classifier_weight_decay, betas=(classifier_adamW_beta1, classifier_adamW_beta2), lr=kwargs['LR_min_classifier'])
 
-    return train_dataset, valfinetune_dataset, valunseen_dataset, vae, opt_vae, opt_cls
+    return train_dataset, valfinetune_dataset, valunseen_dataset, wae, opt_wae, opt_cls
 
 def main(  
     # Ordered variables
@@ -177,11 +177,11 @@ def main(
     run_name: str,
     timestamp_id: int,
     start_epoch: int,
-    LR_val_vae: float,
+    LR_val_wae: float,
     finetune_inference: bool, 
     PaCMAP_model_to_infer = [],
-    vae_state_dict_prev_path = [],
-    vae_opt_state_dict_prev_path = [],
+    wae_state_dict_prev_path = [],
+    wae_opt_state_dict_prev_path = [],
     cls_opt_state_dict_prev_path = [],
     epochs_to_train: int = -1,
 
@@ -210,17 +210,17 @@ def main(
     ddp_setup(gpu_id, world_size)
 
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
-    train_dataset, valfinetune_dataset, valunseen_dataset, vae, opt_vae, opt_cls = load_train_objs(gpu_id=gpu_id, **kwargs) 
+    train_dataset, valfinetune_dataset, valunseen_dataset, wae, opt_wae, opt_cls = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
     # Load the model/opt states if not first epoch & if in training mode
     if (start_epoch > 0):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % gpu_id}
 
-        # Load in VAE weights and opts
-        vae_state_dict_prev = torch.load(vae_state_dict_prev_path, map_location=map_location)
-        vae.load_state_dict(vae_state_dict_prev)
-        vae_opt_state_dict_prev = torch.load(vae_opt_state_dict_prev_path, map_location=map_location)
-        opt_vae.load_state_dict(vae_opt_state_dict_prev)
+        # Load in WAE weights and opts
+        wae_state_dict_prev = torch.load(wae_state_dict_prev_path, map_location=map_location)
+        wae.load_state_dict(wae_state_dict_prev)
+        wae_opt_state_dict_prev = torch.load(wae_opt_state_dict_prev_path, map_location=map_location)
+        opt_wae.load_state_dict(wae_opt_state_dict_prev)
         cls_opt_state_dict_prev = torch.load(cls_opt_state_dict_prev_path, map_location=map_location)
         opt_cls.load_state_dict(cls_opt_state_dict_prev)
 
@@ -230,8 +230,8 @@ def main(
     trainer = Trainer(
         world_size=world_size,
         gpu_id=gpu_id, 
-        vae=vae, 
-        opt_vae=opt_vae,
+        wae=wae, 
+        opt_wae=opt_wae,
         opt_cls=opt_cls,
         start_epoch=start_epoch,
         train_dataset=train_dataset, 
@@ -251,14 +251,14 @@ def main(
 
             # Save pre-finetune model/opt weights
             if finetune_inference:
-                vae_dict = trainer.vae.module.state_dict()
-                vae_opt_dict = trainer.opt_vae.state_dict()
+                wae_dict = trainer.wae.module.state_dict()
+                wae_opt_dict = trainer.opt_wae.state_dict()
                 cls_opt_dict = trainer.opt_cls.state_dict()
 
                 # FINETUNE on beginning of validation patients (currently only one epoch)
                 # Set to train and change LR to validate settings
                 trainer._set_to_train()
-                trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
+                trainer.opt_wae.param_groups[0]['lr'] = LR_val_wae
                 trainer.opt_cls.param_groups[0]['lr'] = LR_val_cls
                 trainer._run_epoch(
                     dataset_curr = trainer.valfinetune_dataset, 
@@ -305,8 +305,8 @@ def main(
 
             # Restore model/opt weights to pre-finetune
             if finetune_inference:
-                trainer.vae.module.load_state_dict(vae_dict)
-                trainer.opt_vae.load_state_dict(vae_opt_dict)
+                trainer.wae.module.load_state_dict(wae_dict)
+                trainer.opt_wae.load_state_dict(wae_opt_dict)
                 trainer.opt_cls.load_state_dict(cls_opt_dict)
 
             print(f"GPU{str(trainer.gpu_id)} at post inference barrier")
@@ -332,14 +332,14 @@ def main(
         # (skip if it's a pacmap epoch because it will already have been done)
         if ((trainer.epoch + 1) % trainer.val_every == 0) & ((trainer.epoch + 1) % trainer.inference_every != 0):
             # Save pre-finetune model/opt weights
-            vae_dict = trainer.vae.module.state_dict()
-            vae_opt_dict = trainer.opt_vae.state_dict()
+            wae_dict = trainer.wae.module.state_dict()
+            wae_opt_dict = trainer.opt_wae.state_dict()
             cls_opt_dict = trainer.opt_cls.state_dict()
 
             # FINETUNE on beginning of validation patients (currently only one epoch)
             # Set to train and change LR to validate settings
             trainer._set_to_train()
-            trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
+            trainer.opt_wae.param_groups[0]['lr'] = LR_val_wae
             trainer.opt_cls.param_groups[0]['lr'] = LR_val_cls
             trainer._run_epoch(
                 dataset_curr = trainer.valfinetune_dataset, 
@@ -361,8 +361,8 @@ def main(
                     **kwargs)
 
             # Restore model/opt weights to pre-finetune
-            trainer.vae.module.load_state_dict(vae_dict)
-            trainer.opt_vae.load_state_dict(vae_opt_dict)
+            trainer.wae.module.load_state_dict(wae_dict)
+            trainer.opt_wae.load_state_dict(wae_opt_dict)
             trainer.opt_cls.load_state_dict(cls_opt_dict)
 
     # Kill the process after training loop completes
@@ -375,12 +375,12 @@ class Trainer:
         self,
         world_size: int,
         gpu_id: int,
-        vae: torch.nn.Module,
+        wae: torch.nn.Module,
         start_epoch: int,
         train_dataset: SEEG_Tornado_Dataset,
         valfinetune_dataset: SEEG_Tornado_Dataset,
         valunseen_dataset: SEEG_Tornado_Dataset,
-        opt_vae: torch.optim.Optimizer,
+        opt_wae: torch.optim.Optimizer,
         opt_cls: torch.optim.Optimizer,
         wandb_run,
         model_dir: str,
@@ -406,12 +406,12 @@ class Trainer:
     ) -> None:
         self.world_size = world_size
         self.gpu_id = gpu_id
-        self.vae = vae
+        self.wae = wae
         self.start_epoch = start_epoch
         self.train_dataset = train_dataset
         self.valfinetune_dataset = valfinetune_dataset
         self.valunseen_dataset = valunseen_dataset
-        self.opt_vae = opt_vae
+        self.opt_wae = opt_wae
         self.opt_cls = opt_cls
         self.model_dir = model_dir
         self.val_every = val_every
@@ -437,25 +437,25 @@ class Trainer:
 
         assert len(self.inference_window_sec_list) == len(self.inference_stride_sec_list)
 
-        self.KL_multiplier = -1 # dummy variable, only needed when debugging and training is skipped
+        self.MMD_multiplier = -1 # dummy variable, only needed when debugging and training is skipped
 
         # Number of iterations per file
         self.num_windows = int((self.num_samples - self.transformer_seq_length * self.autoencode_samples - self.autoencode_samples)/self.autoencode_samples) - 2
 
-        # Set up vae & transformer with DDP
-        self.vae = DDP(vae, device_ids=[gpu_id])   # find_unused_parameters=True
+        # Set up wae & transformer with DDP
+        self.wae = DDP(wae, device_ids=[gpu_id])   # find_unused_parameters=True
                     
         # Watch with WandB
-        wandb.watch(self.vae)
+        wandb.watch(self.wae)
         
     def _set_to_train(self):
-        self.vae.train()
+        self.wae.train()
 
     def _set_to_eval(self):
-        self.vae.eval()
+        self.wae.eval()
 
     def _zero_all_grads(self):
-        self.opt_vae.zero_grad()
+        self.opt_wae.zero_grad()
         self.opt_cls.zero_grad()
 
     def _save_checkpoint(self, epoch, delete_old_checkpoints, **kwargs):
@@ -466,20 +466,20 @@ class Trainer:
         base_checkpoint_dir = self.model_dir + f"/checkpoints"
         check_epoch_dir = base_checkpoint_dir + f"/Epoch_{str(epoch)}"
 
-        print("Saving vae model weights")
+        print("Saving wae model weights")
 
-        ### VAE CHECKPOINT 
+        ### WAE CHECKPOINT 
         check_core_dir = check_epoch_dir + "/core_checkpoints"
         if not os.path.exists(check_core_dir): os.makedirs(check_core_dir)
 
         # Save model
-        ckp = self.vae.module.state_dict()
-        check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae.pt"
+        ckp = self.wae.module.state_dict()
+        check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_wae.pt"
         torch.save(ckp, check_path)
 
         # Save optimizers
-        opt_ckp = self.opt_vae.state_dict()
-        opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_opt.pt"
+        opt_ckp = self.opt_wae.state_dict()
+        opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_wae_opt.pt"
         torch.save(opt_ckp, opt_path)
 
         opt_ckp_cls = self.opt_cls.state_dict()
@@ -544,7 +544,7 @@ class Trainer:
                         num_samples_in_forward = int(num_samples_in_forward)
 
                         # Prep the output tensor and put on GPU
-                        files_means = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
+                        files_latents = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
 
                         # Put whole file on GPU
                         data_tensor = data_tensor.to(self.gpu_id)
@@ -573,15 +573,15 @@ class Trainer:
                                 end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
                                 x[:, embedding_idx, :num_channels_curr, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
 
-                            ### VAE ENCODER
-                            # Forward pass in stacked batch through VAE encoder
-                            mean, _, _, _ = self.vae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
-                            files_means[:, w, :] = torch.mean(mean, dim=1)
+                            ### WAE ENCODER
+                            # Forward pass in stacked batch through WAE encoder
+                            latent, _ = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
+                            files_latents[:, w, :] = torch.mean(latent, dim=1)
 
                         # After file complete, pacmap_window/stride the file and save each file from batch seperately
                         # Seperate directory for each win/stride combination
                         # First pull off GPU and convert to numpy
-                        files_means = files_means.cpu().numpy()
+                        files_latents = files_latents.cpu().numpy()
                         for i in range(len(self.inference_window_sec_list)):
 
                             win_sec_curr = self.inference_window_sec_list[i]
@@ -600,10 +600,10 @@ class Trainer:
                             num_latents_in_stride = int(num_latents_in_stride)
 
                             # May not go in evenly, that is ok
-                            num_strides_in_file = int((files_means.shape[1] - num_latents_in_win) / num_latents_in_stride) 
+                            num_strides_in_file = int((files_latents.shape[1] - num_latents_in_win) / num_latents_in_stride) 
                             windowed_file_latent = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
                             for s in range(num_strides_in_file):
-                                windowed_file_latent[:, s, :] = np.mean(files_means[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
+                                windowed_file_latent[:, s, :] = np.mean(files_latents[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
 
                             # Save each windowed latent in a pickle for each file
                             for b in range(data_tensor.shape[0]):
@@ -632,21 +632,21 @@ class Trainer:
                     file_class_label = file_class_label.to(self.gpu_id)
                     hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
                 
-                    # For Training: Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                    self.KL_multiplier, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
+                    # For Training: Update the MMD multiplier (BETA), and Learning Rate according for Heads Models and Core Model
+                    self.MMD_multiplier, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                         epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
                     if (not val_finetune) & (not val_unseen): 
-                        self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
+                        self.opt_wae.param_groups[0]['lr'] = self.curr_LR_core
                         self.opt_cls.param_groups[0]['lr'] = self.curr_LR_cls
 
                     # Check for NaNs
                     if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
 
-                    ### VAE ENCODER: 1-shifted
-                    mean, logvar, latent, class_probs_mean_of_means = self.vae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
+                    ### WAE ENCODER: 1-shifted
+                    latent, class_probs_mean_of_latent = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
                     
-                    ### VAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
-                    x_hat = self.vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
+                    ### WAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
+                    x_hat = self.wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
 
                     # LOSSES: Intra-Patient 
                     recon_loss = loss_functions.recon_loss_function(
@@ -654,13 +654,12 @@ class Trainer:
                         x_hat=x_hat,
                         recon_weight=self.recon_weight)
 
-                    kld_loss = loss_functions.kld_loss_function(
-                        mean=mean, 
-                        logvar=logvar,
-                        KL_multiplier=self.KL_multiplier)
+                    mmd_loss = loss_functions.mmd_loss_function(
+                        z=latent,
+                        weight=self.MMD_multiplier)
 
                     adversarial_loss = loss_functions.adversarial_loss_function(
-                        class_probs=class_probs_mean_of_means, 
+                        class_probs=class_probs_mean_of_latent, 
                         file_class_label=file_class_label,
                         classifier_weight=self.classifier_weight)
 
@@ -672,9 +671,9 @@ class Trainer:
 
                     # AFTER EACH FORWARD PASS
                     self._zero_all_grads()
-                    loss = recon_loss + kld_loss + adversarial_loss 
+                    loss = recon_loss + mmd_loss + adversarial_loss 
                     loss.backward()         
-                    self.opt_vae.step()
+                    self.opt_wae.step()
                     self.opt_cls.step()
 
                     # Realtime terminal info and WandB 
@@ -698,12 +697,12 @@ class Trainer:
                                 train_attention_dropout=attention_dropout,
                                 train_loss=loss,
                                 train_recon_loss=recon_loss, 
-                                train_kld_loss=kld_loss, 
+                                train_mmd_loss=mmd_loss, 
                                 train_adversarial_loss=adversarial_loss,
                                 train_sparse_loss=sparse_loss,
-                                train_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                                train_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                                 train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                train_KL_Beta=self.KL_multiplier, 
+                                train_MMD_Beta=self.MMD_multiplier, 
                                 train_ReconWeight=self.recon_weight,
                                 train_AdversarialWeight=self.classifier_weight,
                                 train_AdversarialAlpha=self.classifier_alpha,
@@ -715,12 +714,12 @@ class Trainer:
                                 val_finetune_attention_dropout=attention_dropout,
                                 val_finetune_loss=loss, 
                                 val_finetune_recon_loss=recon_loss, 
-                                val_finetune_kld_loss=kld_loss, 
+                                val_finetune_mmd_loss=mmd_loss, 
                                 val_finetune_adversarial_loss=adversarial_loss,
                                 val_finetune_sparse_loss=sparse_loss,
-                                val_finetune_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                                val_finetune_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                                 val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                val_finetune_KL_Beta=self.KL_multiplier, 
+                                val_finetune_MMD_Beta=self.MMD_multiplier, 
                                 val_finetune_ReconWeight=self.recon_weight,
                                 val_finetune_AdversarialWeight=self.classifier_weight,
                                 val_finetune_AdversarialAlpha=self.classifier_alpha,
@@ -732,12 +731,12 @@ class Trainer:
                                 val_unseen_attention_dropout=attention_dropout,
                                 val_unseen_loss=loss, 
                                 val_unseen_recon_loss=recon_loss, 
-                                val_unseen_kld_loss=kld_loss, 
+                                val_unseen_mmd_loss=mmd_loss, 
                                 val_unseen_adversarial_loss=adversarial_loss,
                                 val_unseen_sparse_loss=sparse_loss,
-                                val_unseen_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                                val_unseen_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                                 val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                val_unseen_KL_Beta=self.KL_multiplier, 
+                                val_unseen_MMD_Beta=self.MMD_multiplier, 
                                 val_unseen_ReconWeight=self.recon_weight,
                                 val_unseen_AdversarialWeight=self.classifier_weight,
                                 val_unseen_AdversarialAlpha=self.classifier_alpha,
@@ -755,14 +754,14 @@ class Trainer:
                             if torch.isnan(loss).any():
                                 print("WARNING: Loss is nan, no plots can be made")
                             else:
-                                utils_functions.print_latent_realtime(
-                                    mu = mean.cpu().detach().numpy(), 
-                                    logvar = logvar.cpu().detach().numpy(),
-                                    savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
-                                    epoch = self.epoch,
-                                    iter_curr = iter_curr,
-                                    file_name = file_name,
-                                    **kwargs)
+                                # utils_functions.print_latent_realtime(
+                                #     mu = mean.cpu().detach().numpy(), 
+                                #     logvar = logvar.cpu().detach().numpy(),
+                                #     savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
+                                #     epoch = self.epoch,
+                                #     iter_curr = iter_curr,
+                                #     file_name = file_name,
+                                #     **kwargs)
                                 utils_functions.print_recon_realtime(
                                     x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], 
                                     x_hat=x_hat, 
@@ -772,7 +771,7 @@ class Trainer:
                                     file_name = file_name,
                                     **kwargs)
                                 utils_functions.print_classprobs_realtime(
-                                    class_probs = class_probs_mean_of_means,
+                                    class_probs = class_probs_mean_of_latent,
                                     class_labels = file_class_label,
                                     savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_classprob",
                                     epoch = self.epoch,

@@ -57,7 +57,7 @@ from annoy import AnnoyIndex
 from scipy.sparse import csr_matrix
 
 # Local imports
-from models.VAE import print_models_flow
+from models.WAE import print_models_flow
 
 def fill_hist_by_channel(data_in: np.ndarray, histo_bin_edges: np.ndarray, zero_island_delete_idxs: list):
 
@@ -171,7 +171,7 @@ def initalize_val_vars(gpu_id, batch_size, mini_batch_window_size, mini_batch_st
 def create_metadata_subtitle(plot_dict):
 
     return ("\nLR: " + str(plot_dict["LR_curr"]) + 
-    "\nKLD Multiplier: " + str(round(plot_dict["KL_multiplier"],4)) + 
+    "\nMMD Multiplier: " + str(round(plot_dict["MMD_multiplier"],4)) + 
     "\nPre/Postictal Color: " + str(plot_dict["plot_preictal_color"]) + "/" + str(plot_dict["plot_postictal_color"]) + " sec" + 
     ", File Attention Pre/Postictal: " + str(plot_dict["preictal_classify_sec"]) + "/" + str(plot_dict["postictal_classify_sec"]) + " sec" + 
     "\nInput Samples: " + str(plot_dict["input_samples"]) + 
@@ -214,7 +214,7 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
-        KL_max, KL_min, KL_epochs_TO_max, KL_epochs_AT_max, KL_stall_epochs,
+        MMD_max, MMD_min, MMD_epochs_TO_max, MMD_epochs_AT_max, MMD_stall_epochs,
         classifier_weight, 
         classifier_max, classifier_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier,
@@ -222,7 +222,7 @@ def LR_and_weight_schedules(
         LR_max_core, LR_min_core, 
         LR_epochs_TO_max_core, LR_epochs_AT_max_core, 
         manual_gamma_core, manual_step_size_core,
-        KL_rise_first=True, Sparse_rise_first=True, LR_rise_first=True, **kwargs):
+        MMD_rise_first=True, Sparse_rise_first=True, LR_rise_first=True, **kwargs):
             
     # *** Classifier Weight ###
     classifier_weight = classifier_weight # Dummy pass
@@ -249,50 +249,34 @@ def LR_and_weight_schedules(
         classifier_val = classifier_max
 
 
-    # *** KL SCHEDULE ***
+    # *** MMD SCHEDULE ***
     
-    # If within the stall, send out KL_min
-    if epoch < KL_stall_epochs:
-        KL_val = KL_min
+    # If within the stall, send out MMD_min
+    if epoch < MMD_stall_epochs:
+        MMD_val = MMD_min
 
     # After stall
     else:
-        KL_epoch_period = KL_epochs_TO_max + KL_epochs_AT_max
-        KL_epoch_residual = (epoch - KL_stall_epochs) % KL_epoch_period # Shift for the stall epochs
+        MMD_epoch_period = MMD_epochs_TO_max + MMD_epochs_AT_max
+        MMD_epoch_residual = (epoch - MMD_stall_epochs) % MMD_epoch_period # Shift for the stall epochs
 
-        # KL_range = 10**KL_max - 10**KL_min
-        KL_range = KL_max - KL_min
+        # MMD_range = 10**MMD_max - 10**MMD_min
+        MMD_range = MMD_max - MMD_min
 
         # START with rise
         # Logarithmic rise
-        if KL_rise_first: 
-            if KL_epoch_residual < KL_epochs_TO_max:
-                # KL_state_length = KL_epochs_AT_max
-                # KL_ceil = KL_max - ( KL_range * (KL_epoch_residual/KL_state_length) )
-                # KL_floor = KL_ceil - ( KL_range * (KL_epoch_residual + 1) /KL_state_length)
-                # KL_val = KL_ceil - iter_curr/iters_per_epoch * (KL_ceil - KL_floor) 
+        if MMD_rise_first: 
+            if MMD_epoch_residual < MMD_epochs_TO_max:
 
-                # KL_state_length = KL_epochs_TO_max 
-                # KL_floor = 10 ** KL_min + KL_range * (KL_epoch_residual/KL_state_length)
-                # KL_ceil = KL_floor + KL_range * (1) /KL_state_length
-                # KL_val = math.log10(KL_floor + iter_curr/iters_per_epoch * (KL_ceil - KL_floor))
-
-                KL_state_length = KL_epochs_TO_max 
-                KL_floor = KL_min + KL_range * (KL_epoch_residual/KL_state_length)
-                KL_ceil = KL_floor + KL_range * (1) /KL_state_length
-                KL_val = KL_floor + (iter_curr/iters_per_epoch) * (KL_ceil - KL_floor)
+                MMD_state_length = MMD_epochs_TO_max 
+                MMD_floor = MMD_min + MMD_range * (MMD_epoch_residual/MMD_state_length)
+                MMD_ceil = MMD_floor + MMD_range * (1) /MMD_state_length
+                MMD_val = MMD_floor + (iter_curr/iters_per_epoch) * (MMD_ceil - MMD_floor)
             else:
-                KL_val = KL_max
+                MMD_val = MMD_max
 
         else:
             raise Exception("ERROR: not coded up")
-            # if KL_epoch_residual < KL_epochs_AT_max:
-            #     KL_val = KL_max
-            # else:
-            #     KL_state_length = KL_epochs_AT_max
-            #     KL_ceil = KL_max - ( KL_range * (KL_epoch_residual/KL_state_length) )
-            #     KL_floor = KL_ceil - ( KL_range * (KL_epoch_residual + 1) /KL_state_length)
-            #     KL_val = KL_ceil - iter/iters_per_epoch * (KL_ceil - KL_floor)   
 
 
    # *** Sparse Weight ***
@@ -339,7 +323,7 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first 
     )
             
-    return KL_val, LR_val_core, LR_val_cls, Sparse_val, classifier_weight, classifier_val
+    return MMD_val, LR_val_core, LR_val_cls, Sparse_val, classifier_weight, classifier_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
@@ -2393,7 +2377,7 @@ def filename_to_datetimes(list_file_names):
             stop_datetimes[i] = datetime.datetime(int(bD[4:8]), int(bD[0:2]), int(bD[2:4]), int(bT[0:2]), int(bT[2:4]), int(bT[4:6]), int(int(bT[6:8])*1e4))
         return start_datetimes, stop_datetimes
 
-def delete_old_checkpoints(dir: str, curr_epoch: int, KL_stall_epochs, KL_epochs_AT_max, KL_epochs_TO_max, **kwargs):
+def delete_old_checkpoints(dir: str, curr_epoch: int, MMD_stall_epochs, MMD_epochs_AT_max, MMD_epochs_TO_max, **kwargs):
 
     SAVE_KEYWORDS = ["hdbscan", "pacmap"]
 
@@ -2412,8 +2396,8 @@ def delete_old_checkpoints(dir: str, curr_epoch: int, KL_stall_epochs, KL_epochs
     #             save_epochs.append(epoch_nums[i])
     #             break
 
-    # KL Epoch cycle save - save the last epoch in a KL annealing cycle
-    mod_val = KL_stall_epochs + KL_epochs_AT_max + KL_epochs_TO_max - 1
+    # MMD Epoch cycle save - save the last epoch in a MMD annealing cycle
+    mod_val = MMD_stall_epochs + MMD_epochs_AT_max + MMD_epochs_TO_max - 1
     for x in epoch_nums:
         if x % mod_val == 0:
             save_epochs.append(x)
@@ -3146,8 +3130,8 @@ def initialize_directories(
         print(f"Resuming training after saved epoch: {str(max_epoch)}")
         
         # Construct the proper file names to get CORE state dicts
-        kwargs['vae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae.pt'
-        kwargs['vae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_opt.pt'
+        kwargs['wae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_wae.pt'
+        kwargs['wae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_wae_opt.pt'
         kwargs['cls_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_cls_opt.pt'
 
         # Set the start epoch 1 greater than max trained

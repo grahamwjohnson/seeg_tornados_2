@@ -50,3 +50,22 @@ def adversarial_loss_function(class_probs, file_class_label, classifier_weight):
     adversarial_loss = nn.functional.cross_entropy(class_probs, file_class_label) / torch.log(torch.tensor(class_probs.shape[1]))
 
     return classifier_weight * adversarial_loss
+
+# Gaussian kernel for MMD
+def gaussian_kernel(x, y, sigma=1.0):
+    return torch.exp(-torch.norm(x.unsqueeze(1) - y.unsqueeze(0), dim=2) ** 2 / (2 * sigma ** 2))
+
+def mmd_loss_function(z, weight):
+
+    z_batched = z.reshape(z.shape[0] * z.shape[1], z.shape[2])
+
+    # Sample from standard Gaussian prior
+    prior_samples = torch.randn_like(z_batched)
+
+    # Compute MMD
+    z_kernel = gaussian_kernel(z_batched, z_batched)
+    prior_kernel = gaussian_kernel(prior_samples, prior_samples)
+    cross_kernel = gaussian_kernel(z_batched, prior_samples)
+    mmd = z_kernel.mean() + prior_kernel.mean() - 2 * cross_kernel.mean()
+
+    return mmd * weight
