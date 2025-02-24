@@ -17,19 +17,13 @@ import numpy as np
 import scipy
 import pickle
 import joblib
-import yaml
 import json
 import os
-import ipdb
 import sys
 import matplotlib.gridspec as gridspec
 import matplotlib.patches as mpatches
-try:
-    from .latent_plotting import plot_latent
-except ImportError:
-    import latent_plotting
+from .latent_plotting import plot_latent
 import matplotlib.pylab as pl
-
 pl.switch_backend('agg')
 from torchinfo import summary
 from torch.utils.data.distributed import DistributedSampler
@@ -49,13 +43,20 @@ from sklearn.datasets import load_iris
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 import math
+import pacmap
+import phate
+from scipy.stats import norm
 import matplotlib.colors as colors
 import auraloss
 from tkinter import filedialog
 import re
 from functools import partial
 from matplotlib.colors import LinearSegmentedColormap
+from annoy import AnnoyIndex
+from scipy.sparse import csr_matrix
+from loguru import logger
 
+# Local imports
 from models.VAE import print_models_flow
 
 def fill_hist_by_channel(data_in: np.ndarray, histo_bin_edges: np.ndarray, zero_island_delete_idxs: list):
@@ -213,47 +214,64 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
-        KL_max, KL_min, KL_epochs_TO_max, KL_epochs_AT_max, 
+        KL_max, KL_min, KL_epochs_TO_max, KL_epochs_AT_max, KL_stall_epochs,
+        classifier_weight,
+        LR_min_classifier,
         Sparse_max, Sparse_min, Sparse_epochs_TO_max, Sparse_epochs_AT_max, 
         LR_max_core, LR_min_core, 
         LR_epochs_TO_max_core, LR_epochs_AT_max_core, 
         manual_gamma_core, manual_step_size_core,
         KL_rise_first=True, Sparse_rise_first=True, LR_rise_first=True, **kwargs):
             
-    
+    # *** Classifier Alpha Weight ###
+    classifier_weight = classifier_weight # Dummy pass
+    LR_val_cls = LR_min_classifier
+
+
     # *** KL SCHEDULE ***
     
-    KL_epoch_period = KL_epochs_TO_max + KL_epochs_AT_max
-    KL_epoch_residual = epoch % KL_epoch_period
+    # If within the stall, send out KL_min
+    if epoch < KL_stall_epochs:
+        KL_val = KL_min
 
-    KL_range = 10**KL_max - 10**KL_min
-    # KL_range = KL_max - KL_min
-
-    # START with rise
-    # Logarithmic rise
-    if KL_rise_first: 
-        if KL_epoch_residual < KL_epochs_TO_max:
-            # KL_state_length = KL_epochs_AT_max
-            # KL_ceil = KL_max - ( KL_range * (KL_epoch_residual/KL_state_length) )
-            # KL_floor = KL_ceil - ( KL_range * (KL_epoch_residual + 1) /KL_state_length)
-            # KL_val = KL_ceil - iter_curr/iters_per_epoch * (KL_ceil - KL_floor) 
-
-            KL_state_length = KL_epochs_TO_max 
-            KL_floor = 10 ** KL_min + KL_range * (KL_epoch_residual/KL_state_length)
-            KL_ceil = KL_floor + KL_range * (1) /KL_state_length
-            KL_val = math.log10(KL_floor + iter_curr/iters_per_epoch * (KL_ceil - KL_floor))
-        else:
-            KL_val = KL_max
-
+    # After stall
     else:
-        raise Exception("ERROR: not coded up")
-        # if KL_epoch_residual < KL_epochs_AT_max:
-        #     KL_val = KL_max
-        # else:
-        #     KL_state_length = KL_epochs_AT_max
-        #     KL_ceil = KL_max - ( KL_range * (KL_epoch_residual/KL_state_length) )
-        #     KL_floor = KL_ceil - ( KL_range * (KL_epoch_residual + 1) /KL_state_length)
-        #     KL_val = KL_ceil - iter/iters_per_epoch * (KL_ceil - KL_floor)   
+        KL_epoch_period = KL_epochs_TO_max + KL_epochs_AT_max
+        KL_epoch_residual = (epoch - KL_stall_epochs) % KL_epoch_period # Shift for the stall epochs
+
+        # KL_range = 10**KL_max - 10**KL_min
+        KL_range = KL_max - KL_min
+
+        # START with rise
+        # Logarithmic rise
+        if KL_rise_first: 
+            if KL_epoch_residual < KL_epochs_TO_max:
+                # KL_state_length = KL_epochs_AT_max
+                # KL_ceil = KL_max - ( KL_range * (KL_epoch_residual/KL_state_length) )
+                # KL_floor = KL_ceil - ( KL_range * (KL_epoch_residual + 1) /KL_state_length)
+                # KL_val = KL_ceil - iter_curr/iters_per_epoch * (KL_ceil - KL_floor) 
+
+                # KL_state_length = KL_epochs_TO_max 
+                # KL_floor = 10 ** KL_min + KL_range * (KL_epoch_residual/KL_state_length)
+                # KL_ceil = KL_floor + KL_range * (1) /KL_state_length
+                # KL_val = math.log10(KL_floor + iter_curr/iters_per_epoch * (KL_ceil - KL_floor))
+
+                KL_state_length = KL_epochs_TO_max 
+                KL_floor = KL_min + KL_range * (KL_epoch_residual/KL_state_length)
+                KL_ceil = KL_floor + KL_range * (1) /KL_state_length
+                KL_val = KL_floor + (iter_curr/iters_per_epoch) * (KL_ceil - KL_floor)
+            else:
+                KL_val = KL_max
+
+        else:
+            raise Exception("ERROR: not coded up")
+            # if KL_epoch_residual < KL_epochs_AT_max:
+            #     KL_val = KL_max
+            # else:
+            #     KL_state_length = KL_epochs_AT_max
+            #     KL_ceil = KL_max - ( KL_range * (KL_epoch_residual/KL_state_length) )
+            #     KL_floor = KL_ceil - ( KL_range * (KL_epoch_residual + 1) /KL_state_length)
+            #     KL_val = KL_ceil - iter/iters_per_epoch * (KL_ceil - KL_floor)   
 
 
    # *** Sparse Weight ***
@@ -300,7 +318,7 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first 
     )
             
-    return KL_val, LR_val_core, Sparse_val
+    return KL_val, LR_val_core, LR_val_cls, Sparse_val, classifier_weight
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
@@ -318,12 +336,12 @@ def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_se
 
     return out.astype('int')
                 
-def in_seizure(file_name, start_idx, end_idx, samp_freq):
+def in_seizure(file_name, start_idx, end_idx, samp_freq, atd_file):
 
     pat_id = file_name.split("_")[0]
     start_datetimes, stop_datetimes = filename_to_datetimes([file_name])
     start_datetime, stop_datetime = start_datetimes[0], stop_datetimes[0]
-    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id)
+    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id, atd_file=atd_file)
     sample_microsec = (1/samp_freq) * 1e6
 
     curr_datetime_start = start_datetime + start_idx * datetime.timedelta(microseconds=sample_microsec)
@@ -371,11 +389,11 @@ def is_ictal_subprocess(i, dict_in):
 
     return in_seizure
 
-def get_all_is_ictal(file_name, data_samples):
+def get_all_is_ictal(file_name, data_samples, atd_file):
     pat_id = file_name.split("_")[0]
     start_datetimes, stop_datetimes = filename_to_datetimes([file_name])
     start_datetime, stop_datetime = start_datetimes[0], stop_datetimes[0]
-    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id)
+    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id, atd_file=atd_file)
 
     inferred_FS = data_samples/(stop_datetime - start_datetime).total_seconds()
     inferred_sample_microsec = (1/inferred_FS) * 1e6
@@ -548,7 +566,7 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier):
 
 # PLOTTING
 
-def print_latent_realtime(mu, logvar, savedir, epoch, iter_curr, pat_id, num_realtime_dims, **kwargs):
+def print_latent_realtime(mu, logvar, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
 
     dims_to_plot = np.arange(0,num_realtime_dims)
 
@@ -571,19 +589,19 @@ def print_latent_realtime(mu, logvar, savedir, epoch, iter_curr, pat_id, num_rea
         })
 
         sns.jointplot(data=df, x="mu", y="logvar", hue="dimension")
-        fig.suptitle(f"{pat_id}, epoch: {epoch}, iter: {iter_curr}")
+        fig.suptitle(f"{file_name[b]}, epoch: {epoch}, iter: {iter_curr}")
 
         if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-        if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-        savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}_batch{b}.jpg"
-        savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{pat_id}_batch_{b}.svg"
+        # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+        savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch{b}.jpg"
+        # savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch_{b}.svg"
         pl.savefig(savename_jpg)
-        pl.savefig(savename_svg)
+        # pl.savefig(savename_svg)
         pl.close(fig)    
 
         pl.close('all') 
     
-def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, pat_id, num_realtime_channels_recon, num_recon_samples, **kwargs):
+def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_realtime_channels_recon, num_recon_samples, **kwargs):
 
     x_hat = x_hat.detach().cpu().numpy()
     x = x.detach().cpu().numpy()
@@ -606,7 +624,7 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, pat_id, num_realti
 
     # Make new grid/fig
     gs = gridspec.GridSpec(batchsize, num_realtime_channels_recon * 2) # *2 because beginning and end of transformer sequence
-    fig = pl.figure(figsize=(20, 14))
+    fig = pl.figure(figsize=(20, 16))
     palette = sns.cubehelix_palette(n_colors=2, start=3, rot=1) 
     for b in range(0, batchsize):
         for c in range(0,len(random_ch_idxs)):
@@ -627,18 +645,78 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, pat_id, num_realti
 
                 ax = fig.add_subplot(gs[b, c*2 + seq]) 
                 sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
-                ax.set_title(f"B:{b}, Ch:{random_ch_idxs[c]}, {title_str}")
+                ax.set_title(f"Ch:{random_ch_idxs[c]}\n{file_name[b]}, {title_str}", fontdict={'fontsize': 12, 'fontweight': 'medium'})
+
+                pl.ylim(-1, 1) # Set y-axis limit -1 to 1
             
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-    if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-    savename_jpg = f"{savedir}/JPEGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{pat_id}_allbatch.jpg"
-    savename_svg = f"{savedir}/SVGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{pat_id}_allbatch.svg"
+    # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+    savename_jpg = f"{savedir}/JPEGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_allbatch.jpg"
+    # savename_svg = f"{savedir}/SVGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{pat_id}_allbatch.svg"
     pl.savefig(savename_jpg)
-    pl.savefig(savename_svg)
+    # pl.savefig(savename_svg)
     pl.close(fig)   
 
     pl.close('all') 
+
+def print_classprobs_realtime(class_probs, class_labels, savedir, epoch, iter_curr, file_name, classifier_num_pats, **kwargs):
+    batchsize = class_probs.shape[0]
+
+    class_probs_cpu = class_probs.detach().cpu().numpy()
+    class_labels_cpu = class_labels.detach().cpu().numpy()
+
+    for b in range(0, batchsize):
+        
+        # Make new grid/fig
+        gs = gridspec.GridSpec(1, 2)
+        fig = pl.figure(figsize=(20, 14))
+
+        # Only print for one batch index at a time
+        # class_probs_plot = class_probs_cpu[b, :, :]
+        class_probs_plot = class_probs_cpu[b, :]
+        class_labels_plot = class_labels_cpu[b]
+
+        # Compute mean and 95% confidence intervals for each class
+        # mean_probs = np.mean(class_probs_plot, axis=0)  # Mean probability for each class
+        # std_probs = np.std(class_probs_plot, axis=0)  # Standard deviation for each class
+        # n = class_probs_plot.shape[0]  # Number of samples
+        # confidence_intervals = 1.96 * (std_probs / np.sqrt(n))  # 95% CI
+
+        # Create a DataFrame for Seaborn
+        data = pd.DataFrame({
+            'Class': np.arange(classifier_num_pats),  # Class indices
+            'Mean Probability': class_probs_plot,  # Mean probabilities
+            # 'CI': confidence_intervals
+            })  # Confidence intervals
+
+        # Plot using Seaborn
+        pl.figure(figsize=(12, 6))
+        # sns.barplot(x='Class', y='Mean Probability', data=data, yerr=data['CI'], capsize=0.1, color='skyblue')
+        bar_plot = sns.barplot(x='Class', y='Mean Probability', data=data, capsize=0.1, color='skyblue')
+
+        # Change the color of the nth bar to orange
+        for i, bar in enumerate(bar_plot.patches):
+            if i == class_labels_plot:
+                bar.set_facecolor('orange')
+
+        # Add labels and title
+        pl.xlabel('Class')
+        pl.ylabel('Mean Probability')
+        pl.title(f'Mean Class Probabilities\nTrue Class: {class_labels_plot}')
+        pl.xticks(rotation=90)  # Rotate x-axis labels for better readability
+        pl.tight_layout()
+        pl.ylim(0, 1) # Set y-axis limit to 1
+
+        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+        # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+        savename_jpg = f"{savedir}/JPEGs/RealtimeClassProb_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch{b}.jpg"
+        # savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch_{b}.svg"
+        pl.savefig(savename_jpg)
+        # pl.savefig(savename_svg)
+        pl.close(fig)    
+
+        pl.close('all') 
 
 def print_autoreg_raw_predictions(gpu_id, epoch, pat_id, rand_file_count, raw_context, raw_pred, raw_target, autoreg_channels, savedir, num_realtime_dims, **kwargs):
 
@@ -816,8 +894,49 @@ def plot_recon(x, x_hat, plot_dict, batch_file_names, epoch, savedir, gpu_id, pa
         pl.savefig(savename_jpg)
         pl.savefig(savename_svg)
         pl.close(fig) 
-        
-def pacmap_subfunction(  
+
+def inter_patient_knn_annoy(data, phate_annoy_tree_size, patient_ids, k, n_trees=20, metric='angular'):
+    n_samples, n_features = data.shape
+
+    tree = AnnoyIndex(n_features, metric=metric)
+    # if _RANDOM_STATE is not None:
+    #     tree.set_seed(_RANDOM_STATE)
+    for i in range(n_samples):
+        tree.add_item(i, data[i, :])
+    tree.build(phate_annoy_tree_size)
+
+    knn_indices = np.zeros((n_samples, k), dtype=int)
+    knn_distances = np.zeros((n_samples, k))
+    for i in range(n_samples):
+
+        if i % 100 == 0:
+            sys.stdout.write(f"\r{i}/{n_samples}")
+            sys.stdout.flush() 
+
+        search_done = False
+        iter_buffer = 50
+        while not search_done:
+            nbrs_ = tree.get_nns_by_item(i, k + 1 + iter_buffer)
+
+            # Find and exclude self
+            self_idx = patient_ids[i]
+            ids = [patient_ids[ii] for ii in nbrs_]
+            self_idxs_bool = [x == self_idx for x in ids]
+            nbrs_pruned = [nbrs_[i] for i, value in enumerate(self_idxs_bool) if not value]
+
+            if len(nbrs_pruned) >= k: 
+                knn_indices[i, :] = nbrs_pruned[:k]
+                search_done = True
+            else:
+                iter_buffer = iter_buffer * 2
+
+        for j in range(k):
+            knn_distances[i, j] = tree.get_distance(i, knn_indices[i, j])
+
+    return knn_indices, knn_distances
+
+def phate_subfunction(  
+    atd_file,
     pat_ids_list,
     latent_data_windowed, 
     start_datetimes_epoch,  
@@ -827,32 +946,328 @@ def pacmap_subfunction(
     win_sec, 
     stride_sec, 
     savedir,
-    pacmap_MedDim_numdims,
-    pacmap_LR,
-    pacmap_NumIters,
-    pacmap_NN,
-    pacmap_MN_ratio,
-    pacmap_FP_ratio,
-    pacmap_MN_ratio_MedDim,
-    pacmap_FP_ratio_MedDim,
     HDBSCAN_min_cluster_size,
     HDBSCAN_min_samples,
     plot_preictal_color_sec,
     plot_postictal_color_sec,
     interictal_contour=False,
     verbose=True,
+    knn=5,
+    decay=15,  
+    phate_metric='cosine',
+    phate_solver='smacof',
+    apply_pca_phate=True,
+    pca_comp_phate = 100,
     xy_lims = [],
-    xy_lims_RAW_DIMS = [],
-    xy_lims_PCA = [],
-    premade_PaCMAP = [],
-    premade_PaCMAP_MedDim = [],
-    premade_PCA = [],
+    custom_nn_bool = False,
+    phate_annoy_tree_size = 20,
+    knn_indices = [],
+    knn_distances = [],
+    premade_PHATE = [],
+    premade_HDBSCAN = [],
+    plot_pat_ids = [],
+    store_nn = True,
+    **kwargs):
+
+    '''
+    Goal of function:
+    Run PHATE and plot
+
+    '''
+
+    # Metadata
+    latent_dim = latent_data_windowed[0].shape[1]
+    num_timepoints_in_windowed_file = latent_data_windowed[0].shape[0]
+    modified_FS = 1 / stride_sec
+
+    # Check for NaNs in files
+    delete_file_idxs = []
+    for i in range(len(latent_data_windowed)):
+        if np.sum(np.isnan(latent_data_windowed[i])) > 0:
+            delete_file_idxs = delete_file_idxs + [i]
+            print(f"WARNING: Deleted file {start_datetimes_epoch[i]} that had NaNs")
+
+    # Delete entries/files in lists where there is NaN in latent space for that file
+    latent_data_windowed = [item for i, item in enumerate(latent_data_windowed) if i not in delete_file_idxs]
+    start_datetimes_epoch = [item for i, item in enumerate(start_datetimes_epoch) if i not in delete_file_idxs]  
+    stop_datetimes_epoch = [item for i, item in enumerate(stop_datetimes_epoch) if i not in delete_file_idxs]
+    pat_ids_list = [item for i, item in enumerate(pat_ids_list) if i not in delete_file_idxs]
+
+    # Generate numerical IDs for each unique patient, and give each datapoint an ID
+    unique_ids = list(set(pat_ids_list))
+    id_to_index = {id: idx for idx, id in enumerate(unique_ids)}  # Create mapping dictionary
+    pat_idxs = [id_to_index[id] for id in pat_ids_list]
+    pat_idxs_expanded = [item for item in pat_idxs for _ in range(latent_data_windowed[0].shape[0])]
+
+    
+    ### PHATE ###
+
+    # Flatten data into [miniepoch, dim] to feed into PHATE, original data is [file, seq_miniepoch_in_file, latent_dim]
+    latent_PHATE_input = np.concatenate(latent_data_windowed, axis=0)
+
+    # No PHATE object passed in, make new one
+    if premade_PHATE == []:
+
+        # Custom NN search
+        if custom_nn_bool:
+            print("*** Custom *** PHATE NN Search")
+
+            # Custom NN to exclude intra-patient points
+            # Compute inter-patient k-NN graph using Annoy
+            if len(knn_indices) == 0 or len(knn_distances) == 0: # if either is epmty, then need to compute
+                print("Computing new NN, no precomputed values given")
+
+                # PCA
+                if apply_pca_phate:
+                    print(f"Applying PCA, new dimension of data is {pca_comp_phate}")
+                    pca = PCA(n_components=pca_comp_phate, svd_solver='full') # Different than PCA used for PaCMAP
+                    latent_PHATE_input = pca.fit_transform(latent_PHATE_input) # Overwrite the data with PCA version
+
+                # Now find NN indices and distances 
+                knn_indices, knn_distances = inter_patient_knn_annoy(latent_PHATE_input, phate_annoy_tree_size, pat_idxs_expanded, knn, metric=phate_metric)
+
+                # Save the NN indices and dists  
+                if store_nn:
+                    if not os.path.exists(savedir + '/nn_pickles'): os.makedirs(savedir + '/nn_pickles')
+                    savename_root = savedir + f"/nn_pickles/Window{win_sec}_Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}"
+                    savename_ind = savename_root + "_KNN_INDICES.pkl"
+                    with open(savename_ind, 'wb') as handle: pickle.dump(knn_indices, handle)
+                    savename_dist = savename_root + "_KNN_DISTANCES.pkl"
+                    with open(savename_dist, 'wb') as handle: pickle.dump(knn_distances, handle)
+                    print("\nSaved ANNOY outputs")
+
+            else: print("Using precomputed NN")
+
+            # Create a sparse matrix for the KNN distances (only store nearest neighbors)
+            # Convert the KNN distances to a sparse CSR matrix (Compressed Sparse Row format)
+            rows = np.repeat(np.arange(latent_PHATE_input.shape[0]), knn)
+            cols = knn_indices.flatten()
+            values = knn_distances.flatten()
+            sparse_knn_distances = csr_matrix((values, (rows, cols)), shape=(latent_PHATE_input.shape[0], latent_PHATE_input.shape[0]))
+
+            # Build and fit PHATE object
+            phate_op = phate.PHATE(
+                # pat_idxs=pat_idxs_expanded, # must now match input data
+                knn_dist='precomputed_distance', # override the default method of detecting 
+                knn=knn,
+                decay=decay,
+                mds_solver=phate_solver,
+                n_jobs= -2
+            )
+
+            # Fit and transform the data using distance matrix
+            phate_output = phate_op.fit_transform(sparse_knn_distances) # pass distance matrix
+
+        # Default PHATE NN search
+        else:
+            print("DEFAULT PHATE NN Search")
+            # Build and fit default PHATE object
+            phate_op = phate.PHATE(
+                knn=knn,
+                decay=decay,
+                mds_solver=phate_solver,
+                n_jobs= -2)
+            phate_output = phate_op.fit_transform(latent_PHATE_input) # Pass raw data
+
+    # Premade PHATE object has been passed in 
+    else:
+        phate_op = premade_PHATE
+        phate_output = phate_op.transform(latent_PHATE_input)
+
+    # Split reduced output back into files
+    latent_postPHATE_perfile = np.stack(np.split(phate_output, len(latent_data_windowed), axis=0),axis=0)
+
+
+    ### HDBSCAN ###
+    # If training, create new cluster model, otherwise "approximate_predict()" if running on val data
+    if premade_HDBSCAN == []:
+        # Now do the clustering with HDBSCAN
+        print("Building new HDBSCAN model")
+        hdb = hdbscan.HDBSCAN(
+            min_cluster_size=HDBSCAN_min_cluster_size,
+            min_samples=HDBSCAN_min_samples,
+            max_cluster_size=0,
+            metric='euclidean',  # cosine, manhattan
+            # memory=Memory(None, verbose=1)
+            algorithm='best',
+            cluster_selection_method='eom',
+            prediction_data=True
+            )
+        
+        hdb.fit(latent_postPHATE_perfile.reshape(latent_postPHATE_perfile.shape[0]*latent_postPHATE_perfile.shape[1], latent_postPHATE_perfile.shape[2]))  # []
+
+         #TODO Look into soft clustering
+        # soft_cluster_vecs = np.array(hdbscan.all_points_membership_vectors(hdb))
+        # soft_clusters = np.array([np.argmax(x) for x in soft_cluster_vecs], dtype=int)
+        # hdb_color_palette = sns.color_palette('Paired', int(np.max(soft_clusters) + 3))
+
+        hdb_labels_flat = hdb.labels_
+        # hdb_labels_flat = soft_clusters
+        hdb_probabilities_flat = hdb.probabilities_
+        # hdb_probabilities_flat = np.array([np.max(x) for x in soft_cluster_vecs])
+                
+    # If HDBSCAN is already made/provided, then predict cluster with built in HDBSCAN method
+    else:
+        print("Using pre-built HDBSCAN model")
+        hdb = premade_HDBSCAN
+        
+    #TODO Destaurate according to probability of being in cluster
+
+    # Per patient, Run data through model & Reshape the labels and probabilities for plotting
+    hdb_labels_flat_perfile = [-1] * latent_postPHATE_perfile.shape[0]
+    hdb_probabilities_flat_perfile = [-1] * latent_postPHATE_perfile.shape[0]
+    for i in range(len(latent_postPHATE_perfile)):
+        hdb_labels_flat_perfile[i], hdb_probabilities_flat_perfile[i] = hdbscan.prediction.approximate_predict(hdb, latent_postPHATE_perfile[i, :, :])
+
+
+    ###### START OF PLOTTING #####
+
+    # Get all of the seizure times and types
+    seiz_start_dt_perfile = [-1] * len(pat_ids_list)
+    seiz_stop_dt_perfile = [-1] * len(pat_ids_list)
+    seiz_types_perfile = [-1] * len(pat_ids_list)
+    for i in range(len(pat_ids_list)):
+        seiz_start_dt_perfile[i], seiz_stop_dt_perfile[i], seiz_types_perfile[i] = get_pat_seiz_datetimes(pat_ids_list[i], atd_file=atd_file)
+
+    # Intialize master figure 
+    fig_height = 15 + 5 * len(plot_pat_ids)
+    fig = pl.figure(figsize=(40, fig_height))
+    gs = gridspec.GridSpec(1 + len(plot_pat_ids), 5, figure=fig)
+
+    # **** PHATE PLOTTING ****
+
+    print(f"PHATE Plotting")
+    ax00 = fig.add_subplot(gs[0, 0]) 
+    ax01 = fig.add_subplot(gs[0, 1]) 
+    ax02 = fig.add_subplot(gs[0, 2]) 
+    ax03 = fig.add_subplot(gs[0, 3]) 
+    ax04 = fig.add_subplot(gs[0, 4]) 
+    ax00, ax01, ax02, ax03, ax04, xy_lims = plot_latent(
+        ax=ax00, 
+        interCont_ax=ax01,
+        seiztype_ax=ax02,
+        time_ax=ax03,
+        cluster_ax=ax04,
+        latent_data=latent_postPHATE_perfile.swapaxes(1,2), # [epoch, 2, timesample]
+        modified_samp_freq=modified_FS,  # accounts for windowing/stride
+        start_datetimes=start_datetimes_epoch, 
+        stop_datetimes=stop_datetimes_epoch, 
+        win_sec=win_sec,
+        stride_sec=stride_sec, 
+        seiz_start_dt=seiz_start_dt_perfile, 
+        seiz_stop_dt=seiz_stop_dt_perfile, 
+        seiz_types=seiz_types_perfile,
+        preictal_dur=plot_preictal_color_sec,
+        postictal_dur=plot_postictal_color_sec,
+        plot_ictal=True,
+        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
+        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
+        hdb=hdb,
+        xy_lims=xy_lims,
+        **kwargs)        
+
+    ax00.title.set_text('PHATE Latent Space: ' + 
+        'Window mean, dur/str=' + str(win_sec) + 
+        '/' + str(stride_sec) +' seconds' )
+    
+    if interictal_contour:
+        ax01.title.set_text('Interictal Contour (no peri-ictal data)')
+
+
+    #### Plot the individual patient IDs defined in 'plot_pat_ids'
+    for i in range(len(plot_pat_ids)):
+        print(f"Patient Specific PHATE Plotting")
+        pat_id_curr = plot_pat_ids[i]
+        
+        # Subindex the patient's data
+        found_file_ids = [index for index, value in enumerate(pat_ids_list) if value == pat_id_curr]
+        pat_data = latent_postPHATE_perfile[found_file_ids] 
+        pat_start_datetimes_epoch = [start_datetimes_epoch[x] for x in found_file_ids]
+        pat_stop_datetimes_epoch = [stop_datetimes_epoch[x] for x in found_file_ids]
+        pat_seiz_start_dt_perfile = [seiz_start_dt_perfile[x] for x in found_file_ids]
+        pat_seiz_stop_dt_perfile = [seiz_stop_dt_perfile[x] for x in found_file_ids]
+        pat_seiz_types_perfile = [seiz_types_perfile[x] for x in found_file_ids]
+        pat_hdb_labels_flat_perfile = [hdb_labels_flat_perfile[x] for x in found_file_ids]
+        pat_hdb_probabilities_flat_perfile = [hdb_probabilities_flat_perfile[x] for x in found_file_ids]
+
+        # Make the patient's subplots
+        axi0 = fig.add_subplot(gs[1 + i, 0]) 
+        axi1 = fig.add_subplot(gs[1 + i, 1]) 
+        axi2 = fig.add_subplot(gs[1 + i, 2]) 
+        axi3 = fig.add_subplot(gs[1 + i, 3]) 
+        axi4 = fig.add_subplot(gs[1 + i, 4]) 
+
+        plot_latent(
+            ax=axi0, 
+            interCont_ax=axi1,
+            seiztype_ax=axi2,
+            time_ax=axi3,
+            cluster_ax=axi4,
+            latent_data=pat_data.swapaxes(1,2), # [epoch, 2, timesample]
+            modified_samp_freq=modified_FS,  # accounts for windowing/stride
+            start_datetimes=pat_start_datetimes_epoch, 
+            stop_datetimes=pat_stop_datetimes_epoch, 
+            win_sec=win_sec,
+            stride_sec=stride_sec, 
+            seiz_start_dt=pat_seiz_start_dt_perfile, 
+            seiz_stop_dt=pat_seiz_stop_dt_perfile, 
+            seiz_types=pat_seiz_types_perfile,
+            preictal_dur=plot_preictal_color_sec,
+            postictal_dur=plot_postictal_color_sec,
+            plot_ictal=True,
+            hdb_labels=np.expand_dims(np.stack(pat_hdb_labels_flat_perfile, axis=0),axis=1),
+            hdb_probabilities=np.expand_dims(np.stack(pat_hdb_probabilities_flat_perfile, axis=0),axis=1),
+            hdb=hdb,
+            xy_lims=xy_lims, # passed from above
+            **kwargs)     
+
+        axi0.title.set_text(f"Only {pat_id_curr}")
+
+
+    # **** Save entire figure *****
+    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    if not os.path.exists(savedir + '/PDFs'): os.makedirs(savedir + '/PDFs')
+    savename_jpg = savedir + f"/JPEGs/PHATE_latent_smoothsec{win_sec}Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}_decay{decay}.jpg"
+    savename_pdf = savedir + f"/PDFs/PHATE_latent_smoothsec{win_sec}Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}_decay{decay}.pdf"
+    pl.savefig(savename_jpg, dpi=600)
+    pl.savefig(savename_pdf, dpi=600)
+
+    # TODO Upload to WandB
+
+    pl.close(fig)
+
+    # Bundle the save metrics together
+    # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
+    return ax00, phate_op, hdb, xy_lims # save_tuple
+
+def pacmap_subfunction(  
+    atd_file,
+    pat_ids_list,
+    latent_data_windowed, 
+    start_datetimes_epoch,  
+    stop_datetimes_epoch,
+    epoch, 
+    FS, 
+    win_sec, 
+    stride_sec, 
+    perplexity,
+    savedir,
+    HDBSCAN_min_cluster_size,
+    HDBSCAN_min_samples,
+    plot_preictal_color_sec,
+    plot_postictal_color_sec,
+    apply_pca=True,
+    pca_comp=100,
+    exclude_self_pat=False,
+    interictal_contour=False,
+    verbose=True,
+    xy_lims = [],
+    premade_UMAP = [],
     premade_HDBSCAN = [],
     **kwargs):
 
     '''
     Goal of function:
-    Make 2D PaCMAP, make 10D PaCMAP, HDBSCAN cluster on 10D, visualize clusters on 2D
 
     '''
 
@@ -877,6 +1292,11 @@ def pacmap_subfunction(
     # Flatten data into [miniepoch, dim] to feed into PaCMAP, original data is [file, seq_miniepoch_in_file, latent_dim]
     latent_PaCMAP_input = np.concatenate(latent_data_windowed, axis=0)
 
+    # Generate numerical IDs for each unique patient, and give each datapoint an ID
+    unique_ids = list(set(pat_ids_list))
+    id_to_index = {id: idx for idx, id in enumerate(unique_ids)}  # Create mapping dictionary
+    pat_idxs = [id_to_index[id] for id in pat_ids_list]
+    pat_idxs_expanded = [item for item in pat_idxs for _ in range(latent_data_windowed[0].shape[0])]
 
     ### PaCMAP 2-Dim ###
 
@@ -886,6 +1306,8 @@ def pacmap_subfunction(
         # initializing the pacmap instance
         # Setting n_neighbors to "None" leads to a default choice shown below in "parameter" section
         reducer = pacmap.PaCMAP(
+            exclude_self_pat=exclude_self_pat, 
+            pat_idxs=pat_idxs_expanded,
             distance='angular',
             lr=pacmap_LR,
             num_iters=pacmap_NumIters, # will default ~27 if left as None
@@ -894,7 +1316,8 @@ def pacmap_subfunction(
             MN_ratio=pacmap_MN_ratio, # default 0.5, 
             FP_ratio=pacmap_FP_ratio, # default 2.0,
             save_tree=True, # Save tree to enable 'transform" method
-            apply_pca=True, 
+            apply_pca=apply_pca, 
+            pca_comp=pca_comp,
             verbose=verbose) 
 
         # fit the data (The index of transformed data corresponds to the index of the original data)
@@ -919,15 +1342,22 @@ def pacmap_subfunction(
         # initializing the pacmap instance
         # Setting n_neighbors to "None" leads to a default choice shown below in "parameter" section
         reducer_MedDim = pacmap.PaCMAP(
+            exclude_self_pat=True, 
+            pat_idxs=pat_idxs_expanded,
+            tree=reducer.tree,
+            pair_neighbors=reducer.pair_neighbors, # Can use same pairs from 2D pacmap
+            pair_MN=reducer.pair_MN, # Can use same pairs from 2D pacmap
+            pair_FP=reducer.pair_FP, # Can use same pairs from 2D pacmap
             distance='angular',
             lr=pacmap_LR,
             num_iters=pacmap_NumIters, # will default ~27 if left as None
             n_components=pacmap_MedDim_numdims, 
             n_neighbors=pacmap_NN, # default None, 
-            MN_ratio=pacmap_MN_ratio_MedDim, # default 0.5, 
-            FP_ratio=pacmap_FP_ratio_MedDim, # default 2.0,
+            MN_ratio=pacmap_MN_ratio, # default 0.5, 
+            FP_ratio=pacmap_FP_ratio, # default 2.0,
             save_tree=True, 
-            apply_pca=True, 
+            apply_pca=apply_pca, 
+            pca_comp=pca_comp,
             verbose=verbose) # Save tree to enable 'transform" method?
 
         # fit the data (The index of transformed data corresponds to the index of the original data)
@@ -992,7 +1422,7 @@ def pacmap_subfunction(
     seiz_stop_dt_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
     seiz_types_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
     for i in range(len(latent_postPaCMAP_perfile_MEDdim)):
-        seiz_start_dt_perfile[i], seiz_stop_dt_perfile[i], seiz_types_perfile[i] = get_pat_seiz_datetimes(pat_ids_list[i])
+        seiz_start_dt_perfile[i], seiz_stop_dt_perfile[i], seiz_types_perfile[i] = get_pat_seiz_datetimes(pat_ids_list[i], atd_file=atd_file)
 
     # Intialize master figure 
     fig = pl.figure(figsize=(40, 25))
@@ -1047,7 +1477,7 @@ def pacmap_subfunction(
         
     if premade_PCA == []:
         print("Calculating new PCA")
-        pca = PCA(n_components=2, svd_solver='full')
+        pca = PCA(n_components=2, svd_solver='full') # Different than PCA used for PaCMAP
         latent_PCA_flat_transformed = pca.fit_transform(latent_PaCMAP_input)
 
     else:
@@ -1136,9 +1566,9 @@ def pacmap_subfunction(
     # **** Save entire figure *****
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
     # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-    savename_jpg = savedir + f"/JPEGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + ".jpg"
+    savename_jpg = savedir + f"/JPEGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + f"PCA{apply_pca}Ncomp{pca_comp}.jpg"
     # savename_svg = savedir + f"/SVGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + ".svg"
-    pl.savefig(savename_jpg, dpi=300)
+    pl.savefig(savename_jpg, dpi=600)
     # pl.savefig(savename_svg)
 
     # TODO Upload to WandB
@@ -1147,9 +1577,359 @@ def pacmap_subfunction(
 
     # Bundle the save metrics together
     # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
-    return reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS # save_tuple
+    return ax20, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS # save_tuple
 
-def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_build_strs, pacmap_eval_strs, delete_latent_files=False, **kwargs):
+
+def pacmap_subfunction(  
+    atd_file,
+    pat_ids_list,
+    latent_data_windowed, 
+    start_datetimes_epoch,  
+    stop_datetimes_epoch,
+    epoch, 
+    FS, 
+    win_sec, 
+    stride_sec, 
+    savedir,
+    pacmap_MedDim_numdims,
+    pacmap_LR,
+    pacmap_NumIters,
+    pacmap_NN,
+    pacmap_MN_ratio,
+    pacmap_FP_ratio,
+    HDBSCAN_min_cluster_size,
+    HDBSCAN_min_samples,
+    plot_preictal_color_sec,
+    plot_postictal_color_sec,
+    apply_pca=True,
+    pca_comp=100,
+    exclude_self_pat=False,
+    interictal_contour=False,
+    verbose=True,
+    xy_lims = [],
+    xy_lims_RAW_DIMS = [],
+    xy_lims_PCA = [],
+    premade_PaCMAP = [],
+    premade_PaCMAP_MedDim = [],
+    premade_PCA = [],
+    premade_HDBSCAN = [],
+    **kwargs):
+
+    '''
+    Goal of function:
+    Make 2D PaCMAP, make 10D PaCMAP, HDBSCAN cluster on 10D, visualize clusters on 2D
+
+    '''
+
+    # Metadata
+    latent_dim = latent_data_windowed[0].shape[1]
+    num_timepoints_in_windowed_file = latent_data_windowed[0].shape[0]
+    modified_FS = 1 / stride_sec
+
+    # Check for NaNs in files
+    delete_file_idxs = []
+    for i in range(len(latent_data_windowed)):
+        if np.sum(np.isnan(latent_data_windowed[i])) > 0:
+            delete_file_idxs = delete_file_idxs + [i]
+            print(f"WARNING: Deleted file {start_datetimes_epoch[i]} that had NaNs")
+
+    # Delete entries/files in lists where there is NaN in latent space for that file
+    latent_data_windowed = [item for i, item in enumerate(latent_data_windowed) if i not in delete_file_idxs]
+    start_datetimes_epoch = [item for i, item in enumerate(start_datetimes_epoch) if i not in delete_file_idxs]  
+    stop_datetimes_epoch = [item for i, item in enumerate(stop_datetimes_epoch) if i not in delete_file_idxs]
+    pat_ids_list = [item for i, item in enumerate(pat_ids_list) if i not in delete_file_idxs]
+
+    # Flatten data into [miniepoch, dim] to feed into PaCMAP, original data is [file, seq_miniepoch_in_file, latent_dim]
+    latent_PaCMAP_input = np.concatenate(latent_data_windowed, axis=0)
+
+    # Generate numerical IDs for each unique patient, and give each datapoint an ID
+    unique_ids = list(set(pat_ids_list))
+    id_to_index = {id: idx for idx, id in enumerate(unique_ids)}  # Create mapping dictionary
+    pat_idxs = [id_to_index[id] for id in pat_ids_list]
+    pat_idxs_expanded = [item for item in pat_idxs for _ in range(latent_data_windowed[0].shape[0])]
+
+    ### PaCMAP 2-Dim ###
+
+    # Make new PaCMAP
+    if premade_PaCMAP == []:
+        print("Making new 2-dim PaCMAP to use for visualization")
+        # initializing the pacmap instance
+        # Setting n_neighbors to "None" leads to a default choice shown below in "parameter" section
+        reducer = pacmap.PaCMAP(
+            exclude_self_pat=exclude_self_pat, 
+            pat_idxs=pat_idxs_expanded,
+            distance='angular',
+            lr=pacmap_LR,
+            num_iters=pacmap_NumIters, # will default ~27 if left as None
+            n_components=2, 
+            n_neighbors=pacmap_NN, # default None, 
+            MN_ratio=pacmap_MN_ratio, # default 0.5, 
+            FP_ratio=pacmap_FP_ratio, # default 2.0,
+            save_tree=True, # Save tree to enable 'transform" method
+            apply_pca=apply_pca, 
+            pca_comp=pca_comp,
+            verbose=verbose) 
+
+        # fit the data (The index of transformed data corresponds to the index of the original data)
+        reducer.fit(latent_PaCMAP_input, init='pca')
+
+    # Use premade PaCMAP
+    else: 
+        print("Using existing 2-dim PaCMAP for visualization")
+        reducer = premade_PaCMAP
+
+    # Project data through reducer (i.e. PaCMAP) and split back into files
+    latent_postPaCMAP_perfile = reducer.transform(latent_PaCMAP_input)
+    latent_postPaCMAP_perfile = np.stack(np.split(latent_postPaCMAP_perfile, len(latent_data_windowed), axis=0),axis=0)
+
+    # **** PaCMAP (MedDim)--> HDBSCAN ***** 
+    # i.e. NOTE This is the pacmap used for clustering
+
+    if premade_PaCMAP_MedDim == []: 
+        # Make new PaCMAP
+        print(f"\nMaking new {pacmap_MedDim_numdims}-dim PaCMAP to use for HDBSCAN clustering")
+        
+        # initializing the pacmap instance
+        # Setting n_neighbors to "None" leads to a default choice shown below in "parameter" section
+        reducer_MedDim = pacmap.PaCMAP(
+            exclude_self_pat=True, 
+            pat_idxs=pat_idxs_expanded,
+            tree=reducer.tree,
+            pair_neighbors=reducer.pair_neighbors, # Can use same pairs from 2D pacmap
+            pair_MN=reducer.pair_MN, # Can use same pairs from 2D pacmap
+            pair_FP=reducer.pair_FP, # Can use same pairs from 2D pacmap
+            distance='angular',
+            lr=pacmap_LR,
+            num_iters=pacmap_NumIters, # will default ~27 if left as None
+            n_components=pacmap_MedDim_numdims, 
+            n_neighbors=pacmap_NN, # default None, 
+            MN_ratio=pacmap_MN_ratio, # default 0.5, 
+            FP_ratio=pacmap_FP_ratio, # default 2.0,
+            save_tree=True, 
+            apply_pca=apply_pca, 
+            pca_comp=pca_comp,
+            verbose=verbose) # Save tree to enable 'transform" method?
+
+        # fit the data (The index of transformed data corresponds to the index of the original data)
+        reducer_MedDim.fit(latent_PaCMAP_input, init='pca')
+
+    # Use premade PaCMAP
+    else: 
+        print("Using existing medium dim PaCMAP to use for HDBSCAN clustering")
+        reducer_MedDim = premade_PaCMAP_MedDim
+
+    # Project data through reducer (i.e. PaCMAP) 
+    latent_postPaCMAP_perfile_MEDdim = reducer_MedDim.transform(latent_PaCMAP_input)
+    latent_postPaCMAP_perfile_MEDdim = np.stack(np.split(latent_postPaCMAP_perfile_MEDdim, len(latent_data_windowed), axis=0),axis=0)
+
+    ### HDBSCAN ###
+    # If training, create new cluster model, otherwise "approximate_predict()" if running on val data
+    if premade_HDBSCAN == []:
+        # Now do the clustering with HDBSCAN
+        print("Building new HDBSCAN model")
+        hdb = hdbscan.HDBSCAN(
+            min_cluster_size=HDBSCAN_min_cluster_size,
+            min_samples=HDBSCAN_min_samples,
+            max_cluster_size=0,
+            metric='euclidean',  # cosine, manhattan
+            # memory=Memory(None, verbose=1)
+            algorithm='best',
+            cluster_selection_method='eom',
+            prediction_data=True
+            )
+        
+        hdb.fit(latent_postPaCMAP_perfile_MEDdim.reshape(latent_postPaCMAP_perfile_MEDdim.shape[0]*latent_postPaCMAP_perfile_MEDdim.shape[1], latent_postPaCMAP_perfile_MEDdim.shape[2]))  # []
+
+         #TODO Look into soft clustering
+        # soft_cluster_vecs = np.array(hdbscan.all_points_membership_vectors(hdb))
+        # soft_clusters = np.array([np.argmax(x) for x in soft_cluster_vecs], dtype=int)
+        # hdb_color_palette = sns.color_palette('Paired', int(np.max(soft_clusters) + 3))
+
+        hdb_labels_flat = hdb.labels_
+        # hdb_labels_flat = soft_clusters
+        hdb_probabilities_flat = hdb.probabilities_
+        # hdb_probabilities_flat = np.array([np.max(x) for x in soft_cluster_vecs])
+                
+    # If HDBSCAN is already made/provided, then predict cluster with built in HDBSCAN method
+    else:
+        print("Using pre-built HDBSCAN model")
+        hdb = premade_HDBSCAN
+        
+
+    #TODO Destaurate according to probability of being in cluster
+
+    # Per patient, Run data through model & Reshape the labels and probabilities for plotting
+    hdb_labels_flat_perfile = [-1] * latent_postPaCMAP_perfile_MEDdim.shape[0]
+    hdb_probabilities_flat_perfile = [-1] * latent_postPaCMAP_perfile_MEDdim.shape[0]
+    for i in range(len(latent_postPaCMAP_perfile_MEDdim)):
+        hdb_labels_flat_perfile[i], hdb_probabilities_flat_perfile[i] = hdbscan.prediction.approximate_predict(hdb, latent_postPaCMAP_perfile_MEDdim[i, :, :])
+
+
+    ###### START OF PLOTTING #####
+
+    # Get all of the seizure times and types
+    seiz_start_dt_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
+    seiz_stop_dt_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
+    seiz_types_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
+    for i in range(len(latent_postPaCMAP_perfile_MEDdim)):
+        seiz_start_dt_perfile[i], seiz_stop_dt_perfile[i], seiz_types_perfile[i] = get_pat_seiz_datetimes(pat_ids_list[i], atd_file=atd_file)
+
+    # Intialize master figure 
+    fig = pl.figure(figsize=(40, 25))
+    gs = gridspec.GridSpec(3, 5, figure=fig)
+
+
+    # **** PACMAP PLOTTING ****
+
+    print(f"PaCMAP Plotting")
+    ax20 = fig.add_subplot(gs[2, 0]) 
+    ax21 = fig.add_subplot(gs[2, 1]) 
+    ax22 = fig.add_subplot(gs[2, 2]) 
+    ax23 = fig.add_subplot(gs[2, 3]) 
+    ax24 = fig.add_subplot(gs[2, 4]) 
+    ax20, ax21, ax22, ax23, ax24, xy_lims = plot_latent(
+        ax=ax20, 
+        interCont_ax=ax21,
+        seiztype_ax=ax22,
+        time_ax=ax23,
+        cluster_ax=ax24,
+        latent_data=latent_postPaCMAP_perfile.swapaxes(1,2), # [epoch, 2, timesample]
+        modified_samp_freq=modified_FS,  # accounts for windowing/stride
+        start_datetimes=start_datetimes_epoch, 
+        stop_datetimes=stop_datetimes_epoch, 
+        win_sec=win_sec,
+        stride_sec=stride_sec, 
+        seiz_start_dt=seiz_start_dt_perfile, 
+        seiz_stop_dt=seiz_stop_dt_perfile, 
+        seiz_types=seiz_types_perfile,
+        preictal_dur=plot_preictal_color_sec,
+        postictal_dur=plot_postictal_color_sec,
+        plot_ictal=True,
+        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
+        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
+        hdb=hdb,
+        xy_lims=xy_lims,
+        **kwargs)        
+
+    ax20.title.set_text('PaCMAP Latent Space: ' + 
+        'Window mean, dur/str=' + str(win_sec) + 
+        '/' + str(stride_sec) +' seconds,' + 
+        f'\nLR: {str(pacmap_LR)}, ' +
+        f'NumIters: {str(pacmap_NumIters)}, ' +
+        f'NN: {pacmap_NN}, MN_ratio: {str(pacmap_MN_ratio)}, FP_ratio: {str(pacmap_FP_ratio)}'
+        )
+    
+    if interictal_contour:
+        ax21.title.set_text('Interictal Contour (no peri-ictal data)')
+
+
+    # ***** PCA PLOTTING *****
+        
+    if premade_PCA == []:
+        print("Calculating new PCA")
+        pca = PCA(n_components=2, svd_solver='full') # Different than PCA used for PaCMAP
+        latent_PCA_flat_transformed = pca.fit_transform(latent_PaCMAP_input)
+
+    else:
+        print("Using existing PCA")
+        pca = premade_PCA
+        
+    # Project data through PCA and split into files
+    print("Projecting data through built PCA")
+    latent_PCA_flat_transformed_perfile = pca.transform(latent_PaCMAP_input)
+    latent_PCA_flat_transformed_perfile = np.stack(np.split(latent_PCA_flat_transformed_perfile, len(latent_data_windowed), axis=0),axis=0)
+
+    print(f"PCA Plotting")
+    ax10 = fig.add_subplot(gs[1, 0]) 
+    ax11 = fig.add_subplot(gs[1, 1]) 
+    ax12 = fig.add_subplot(gs[1, 2]) 
+    ax13 = fig.add_subplot(gs[1, 3]) 
+    ax14 = fig.add_subplot(gs[1, 4]) 
+    ax10, ax11, ax12, ax13, ax14, xy_lims_PCA = plot_latent(
+        ax=ax10, 
+        interCont_ax=ax11,
+        seiztype_ax=ax12,
+        time_ax=ax13,
+        cluster_ax=ax14,
+        latent_data=latent_PCA_flat_transformed_perfile.swapaxes(1,2),   # [epoch, 2, timesample]
+        modified_samp_freq=modified_FS,
+        start_datetimes=start_datetimes_epoch, 
+        stop_datetimes=stop_datetimes_epoch, 
+        win_sec=win_sec,
+        stride_sec=stride_sec, 
+        seiz_start_dt=seiz_start_dt_perfile, 
+        seiz_stop_dt=seiz_stop_dt_perfile, 
+        seiz_types=seiz_types_perfile,
+        preictal_dur=plot_preictal_color_sec,
+        postictal_dur=plot_postictal_color_sec,
+        plot_ictal=True,
+        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
+        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
+        hdb=hdb,
+        xy_lims=xy_lims_PCA,
+        **kwargs)        
+
+    ax10.title.set_text("PCA Components 1,2")
+    ax11.title.set_text('Interictal Contour (no peri-ictal data)')
+
+
+    # **** INFO RAW DIM PLOTTING *****
+
+    raw_dims_to_plot = [0,1]
+
+    # Pull out the raw dims of interest and stack the data by file
+    latent_flat_RawDim_perfile = [latent_data_windowed[i][:, raw_dims_to_plot] for i in range(len(latent_data_windowed))]
+
+    print(f"Raw Dims Plotting")
+    ax00 = fig.add_subplot(gs[0, 0]) 
+    ax01 = fig.add_subplot(gs[0, 1]) 
+    ax02 = fig.add_subplot(gs[0, 2]) 
+    ax03 = fig.add_subplot(gs[0, 3]) 
+    ax04 = fig.add_subplot(gs[0, 4])
+    ax00, ax01, ax02, ax03, ax04, xy_lims_RAW_DIMS = plot_latent(
+        ax=ax00, 
+        interCont_ax=ax01,
+        seiztype_ax=ax02,
+        time_ax=ax03,
+        cluster_ax=ax04,
+        latent_data=np.stack(latent_flat_RawDim_perfile,axis=0).swapaxes(1,2), # [epoch, 2, timesample]
+        modified_samp_freq=modified_FS,
+        start_datetimes=start_datetimes_epoch, 
+        stop_datetimes=stop_datetimes_epoch, 
+        win_sec=win_sec,
+        stride_sec=stride_sec, 
+        seiz_start_dt=seiz_start_dt_perfile, 
+        seiz_stop_dt=seiz_stop_dt_perfile, 
+        seiz_types=seiz_types_perfile,
+        preictal_dur=plot_preictal_color_sec,
+        postictal_dur=plot_postictal_color_sec,
+        plot_ictal=True,
+        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
+        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
+        hdb=hdb,
+        xy_lims=xy_lims_RAW_DIMS,
+        **kwargs)        
+
+    ax00.title.set_text(f'Dims [{raw_dims_to_plot[0]},{raw_dims_to_plot[1]}], Window mean, dur/str=' + str(win_sec) + '/' + str(stride_sec) +' seconds,' )
+    ax01.title.set_text('Interictal Contour (no peri-ictal data)')
+
+    # **** Save entire figure *****
+    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+    savename_jpg = savedir + f"/JPEGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + f"PCA{apply_pca}Ncomp{pca_comp}.jpg"
+    # savename_svg = savedir + f"/SVGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + ".svg"
+    pl.savefig(savename_jpg, dpi=600)
+    # pl.savefig(savename_svg)
+
+    # TODO Upload to WandB
+
+    pl.close(fig)
+
+    # Bundle the save metrics together
+    # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
+    return ax20, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS # save_tuple
+
+def run_pacmap(atd_file, epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_build_strs, pacmap_eval_strs, apply_pca, delete_latent_files=False, **kwargs):
     
     print(f"Running PaCMAP: {win_sec}SecondWindow_{stride_sec}SecondStride")
 
@@ -1184,7 +1964,8 @@ def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_buil
             latent_data_windowed[i] = pickle.load(f)
          
     # Call the subfunction to create/use pacmap and plot
-    reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = pacmap_subfunction(
+    axis, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = pacmap_subfunction(
+        atd_file=atd_file,
         pat_ids_list=build_pat_ids_list,
         latent_data_windowed=latent_data_windowed, 
         start_datetimes_epoch=build_start_datetimes,  
@@ -1192,6 +1973,7 @@ def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_buil
         epoch=epoch, 
         win_sec=win_sec, 
         stride_sec=stride_sec, 
+        apply_pca=apply_pca,
         savedir=f"{pacmap_dir}/pacmap_generation",
         **kwargs)
 
@@ -1223,6 +2005,7 @@ def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_buil
          
     # Call the subfunction to create/use pacmap and plot
     pacmap_subfunction(
+        atd_file=atd_file,
         pat_ids_list=eval_pat_ids_list,
         latent_data_windowed=latent_data_windowed, 
         start_datetimes_epoch=eval_start_datetimes,  
@@ -1231,6 +2014,7 @@ def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_buil
         win_sec=win_sec, 
         stride_sec=stride_sec, 
         savedir=f"{pacmap_dir}/pacmap_eval_only",
+        apply_pca=apply_pca,
         xy_lims = xy_lims,
         xy_lims_RAW_DIMS = xy_lims_RAW_DIMS,
         xy_lims_PCA = xy_lims_PCA,
@@ -1244,6 +2028,7 @@ def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_buil
     save_pacmap_objects(
         pacmap_dir=pacmap_dir,
         epoch=epoch,
+        axis=axis,
         reducer=reducer, 
         reducer_MedDim=reducer_MedDim, 
         hdb=hdb, 
@@ -1256,7 +2041,36 @@ def run_pacmap(epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_buil
     if delete_latent_files:
         shutil.rmtree(latent_dir)
 
-def save_pacmap_objects(pacmap_dir, epoch, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS):
+def save_phate_objects(savedir, epoch, axis, phate, hdb, xy_lims):
+    
+    if not os.path.exists(savedir): os.makedirs(savedir) 
+
+    # Save the PHATE model for use in inference
+    phate_path = savedir + "/epoch" +str(epoch) + "_phate.pkl"
+    output_obj = open(phate_path, 'wb')
+    pickle.dump(phate, output_obj)
+    output_obj.close()
+    print("Saved PHATE object")
+
+    hdbscan_path = savedir + "/epoch" +str(epoch) + "_hdbscan.pkl"
+    output_obj = open(hdbscan_path, 'wb')
+    pickle.dump(hdb, output_obj)
+    output_obj.close()
+    print("Saved PHATE HDBSCAN")
+
+    xylim_path = savedir + "/epoch" +str(epoch) + "_xy_lims.pkl"
+    output_obj = open(xylim_path, 'wb')
+    pickle.dump(xy_lims, output_obj)
+    output_obj.close()
+    print("Saved PHATE xy_lims for PaCMAP")
+
+    axis_path = savedir + "/epoch" +str(epoch) + "_plotaxis.pkl"
+    output_obj = open(axis_path, 'wb')
+    pickle.dump(axis, output_obj)
+    output_obj.close()
+    print("Saved PHATE plot axis object")
+
+def save_pacmap_objects(pacmap_dir, epoch, axis, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS):
 
     if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir) 
 
@@ -1297,6 +2111,12 @@ def save_pacmap_objects(pacmap_dir, epoch, reducer, reducer_MedDim, hdb, pca, xy
     pickle.dump(xy_lims_PCA, output_obj9)
     output_obj9.close()
     print("Saved xy_lims PCA")
+
+    axis_path = pacmap_dir + "/epoch" +str(epoch) + "_plotaxis.pkl"
+    output_obj10 = open(axis_path, 'wb')
+    pickle.dump(axis, output_obj10)
+    output_obj10.close()
+    print("Saved plot axis")
 
 def compute_histograms(data, min_val, max_val, B):
     """
@@ -1393,7 +2213,7 @@ def histogram_latent(
 
     pl.close(fig)
 
-def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, pre_ictal_taper_sec=120, post_ictal_taper_sec=120, atd_file=''):
+def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, atd_file, pre_ictal_taper_sec=120, post_ictal_taper_sec=120, **kwargs):
 
     # Get the end of the path (i.e. filename)
     potential_fnames = [x.split("/")[-1] for x in curr_fpaths]
@@ -1427,7 +2247,7 @@ def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir
     test_middle_seconds = [int((x - first_starttime).total_seconds() + file_seconds_nonoverlap/2) for x in test_datetimes[0]]
 
     # Get the seizure seconds from file start
-    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id, atd_file)
+    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id, atd_file=atd_file, **kwargs)
     seiz_start_seconds = [(x - first_starttime).total_seconds() for x in seiz_start_dt]
     seiz_stop_seconds = [(x - first_starttime).total_seconds() for x in seiz_stop_dt]
 
@@ -1633,167 +2453,12 @@ def get_PaCMAP_model(model_common_prefix, pre_PaCMAP_window_sec_path, pre_PaCMAP
 
     return PaCMAP, pre_PaCMAP_window_sec, pre_PaCMAP_stride_sec
 
-# def load_inferred_pkl(file):
-#     # Assumes the .pkl files have the following order for their save tuple:
-#     # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
-   
-#     # Each array expected to have shape of [batch, latent dim/label dim, time elements]
-
-#     # Import the window/smooth seconds and stride seconds from filename
-#     splitties = file.split("/")[-1].split("_")
-#     str_of_interest = splitties[8]
-#     if ('window' not in str_of_interest) | ('stride' not in str_of_interest): raise Exception(f"Expected string to have 'window' and 'stride' parsed from filename, but got {str_of_interest}")
-#     str_of_interest = str_of_interest.split("seconds")[0]
-#     window_sec = float(str_of_interest.split('window')[-1].split('stride')[0])
-#     stride_sec = float(str_of_interest.split('window')[-1].split('stride')[1])
-
-#     expected_len = 6
-#     with open(file, "rb") as f: S = pickle.load(f)
-#     if len(S) != expected_len: raise Exception(f"ERROR: expected tuple to have {expected_len} elements, but it has {len(S)}")
-#     latent_data_windowed = S[0]                                         
-#     latent_PCA_allFiles = S[1]
-#     latent_topPaCMAP_allFiles = S[2]
-#     latent_topPaCMAP_MedDim_allFiles = S[3]
-#     hdb_labels_allFiles = S[4]
-#     hdb_probabilities_allFiles = S[5]
-
-#     return window_sec, stride_sec, latent_data_windowed, latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles
-
 def load_data_tensor(filename):
     file = open(filename,'rb')
     data = pickle.load(file) 
     file.close()
     # data_channel_subset = data[0:self.num_channels,:]   
     return torch.FloatTensor(data)
-
-# def collect_latent_tmp_files(path, keyword, expected_GPU_count, approx_file_count, win_sec, stride_sec, decode_samples, FS):
-#     # Determine how many GPUs have saved tmp files
-#     potential_paths = glob.glob(f"{path}/*{keyword}*")
-
-#     print("WARNING: expected file count check suspended")
-#     # file_buffer = 2 # files should be spread evenly over GPUs by DDP, so buffer of 1 is even probably sufficient
-#     # if (len(potential_paths) < (approx_file_count * expected_GPU_count - file_buffer)) or (len(potential_paths) > (approx_file_count * expected_GPU_count + file_buffer)):
-#     #     raise Exception (f"ERROR: expected approximately {str(approx_file_count)} files across {str(expected_GPU_count)} GPUs, but found {str(len(potential_paths))} in {path}")
-
-#     for f in range(len(potential_paths)):
-#         with open(potential_paths[f], 'rb') as file: 
-#             latent_tuple = pickle.load(file)
-        
-#         latent_raw = latent_tuple[0].detach().numpy()
-#         # Average the data temporally according to smoothing seconds, before feeding into PaCMAP
-#         num_iters = int((latent_raw.shape[2]*decode_samples - win_sec * FS)/(stride_sec * FS)+ 1)
-#         if num_iters == 0: raise Exception("ERROR: num_iters = 0 somehow. It should be > 0")
-#         window_subsamps = int((win_sec * FS) / decode_samples)
-#         stride_subsamps = int((stride_sec * FS) / decode_samples)
-#         latent_windowed = [np.zeros([latent_raw.shape[1], num_iters], dtype=np.float16)] * latent_raw.shape[0]
-#         for j in range(0, latent_raw.shape[0]):
-#             latent_windowed[j] = np.array([np.mean(latent_raw[j, :, i*stride_subsamps: i*stride_subsamps + window_subsamps], axis=1) for i in range(0,num_iters)], dtype=np.float32).transpose()
-
-#         if f == 0:            
-#             latent_windowed_ALL = latent_windowed
-#             start_ALL = latent_tuple[1] # ensure it is a list 
-#             stop_ALL = latent_tuple[2] # ensure it is a list 
-
-#         else: 
-#             latent_windowed_ALL = latent_windowed_ALL + latent_windowed
-#             start_ALL = start_ALL + latent_tuple[1]
-#             stop_ALL = stop_ALL + latent_tuple[2]
-
-#     return latent_windowed_ALL, start_ALL, stop_ALL
-
-# def collate_latent_tmps(save_dir: str, samp_freq: int, patid: str, epoch_used: int, hours_inferred_str: str, save_dimension_style: str, stride: int):
-#     print("\nCollating tmp files")
-#     # Pull in all the tmp files across all tmp directories (assumes directory is named 'tmp<#>')
-#     dirs = glob.glob(save_dir + '/tmp*')
-#     file_count = len(glob.glob(save_dir + "/tmp*/*.pkl"))
-#     all_filenames = ["NaN"]*(file_count)
-
-#     # Pull in one latent file to get the sample size in latent variable
-#     f1 = glob.glob(dirs[0] + "/*.pkl")[0]
-#     with open(f1, 'rb') as file: 
-#         latent_sample_data = pickle.load(file)
-#     latent_dims = latent_sample_data[1].shape[1]
-#     latent_samples_in_epoch = latent_sample_data[1].shape[2]
-#     del latent_sample_data
-
-#     all_latent = np.zeros([file_count, latent_dims, latent_samples_in_epoch], dtype=np.float16)
-#     d_count = 0
-#     ff_count = 0
-#     individual_count = 0
-#     for d in dirs:
-#         d_count= d_count + 1
-#         files = glob.glob(d + "/*.pkl")
-#         for ff in files:
-#             ff_count = ff_count + 1
-#             if ff_count%10 == 0: print("GPUDir " + str(d_count) + "/" + str(len(dirs)) + ": File " + str(ff_count) + "/" + str(file_count))
-#             with open(ff, 'rb') as file:
-#                 file_data = pickle.load(file)
-
-#                 # Check to see the actual count of data within the batch
-#                 batch_count = len(file_data[0])
-#                 if batch_count != 1: raise Exception("Batch size not equal to one, batch size must be one")
-                
-#                 all_filenames[individual_count : individual_count + batch_count] = file_data[0]
-
-#                 # Get the start and end datetime objects. IMPORTANT: base the start datetime on the end datetime working backwards,
-#                 # because there may have been time shrinkage due to NO PADDING in the time dimension
-
-#                 # Append the data together batchwise (mandated batch of 1)
-#                 all_latent[individual_count : individual_count + batch_count, :, :] = file_data[1][0, :, :].astype(np.float16)
-               
-#                 individual_count = individual_count + batch_count
-
-#     # sort the filenames to find the last file and the first file to get a total number of samples to initialize in final variable
-#     sort_idxs = np.argsort(all_filenames)
-
-#     # Get all of end objects to prepare for iterating through batches and placing 
-#     file_end_objects = [filename_to_dateobj(f, start_or_end=1) for f in all_filenames]
-#     first_end_datetime = file_end_objects[sort_idxs[0]]
-
-#     # Get the length of the latent variable (will be shorter than input data if NO PADDING)
-#     # TODO Get the total EMU time utilized in seconds and sample
-#     # VERY IMPORTANT, define the start time based off the end time and samples in latent space  
-#     dur_latentVar_seconds = all_latent.shape[2] / samp_freq
-#     file_start_objects = [fend - datetime.timedelta(seconds=dur_latentVar_seconds) for fend in file_end_objects] # All of the start times for the files (NOT the same as filename start times if there is latent time shrinking)
-    
-#     first_start_dateobj = first_end_datetime - datetime.timedelta(seconds=dur_latentVar_seconds) # Only the first file
-#     last_end_dateobj = file_end_objects[sort_idxs[-1]]
-
-#     # Total samples of latent space (may not all get filled)
-#     master_latent_samples = round(((last_end_dateobj - first_start_dateobj).total_seconds() * samp_freq)) 
-
-#     # Initialize the final output variable
-#     master_latent = np.zeros([latent_dims, master_latent_samples], dtype=np.float16)
-#     num_files_avgd_at_sample = np.zeros([master_latent.shape[1]], dtype=np.uint8) # WIll use this for weighting the new data as it comes in
-
-#     # Fill the master latent variables using the filename timestamps
-#     # Average latent variables for any time overlap due to sliding window of training data (weighted average as new overlaps are discovered)
-#     for i in range(0,len(sort_idxs)):
-#         curr_idx = sort_idxs[i]
-#         latent_data = all_latent[curr_idx, :, :]
-#         dt = file_start_objects[sort_idxs[i]]
-#         ai = round((dt - first_start_dateobj).total_seconds() * samp_freq) # insert start sample index
-#         bi = ai + latent_data.shape[1] # insert end sample index
-
-#         # Insert each latent channel as a weighted average of what is already there
-#         master_latent[:, ai:bi] = master_latent[:, ai:bi] * (num_files_avgd_at_sample[ai:bi]/(num_files_avgd_at_sample[ai:bi] + 1)) + latent_data * (1/(num_files_avgd_at_sample[ai:bi] + 1))
-
-#         # Increment the number of files used at these sample points                                                              
-#         num_files_avgd_at_sample[ai:bi] = num_files_avgd_at_sample[ai:bi] + 1                                                                           
-
-#     # Change wherever there are zero files contributing to latent data into np.nan
-#     zero_files_used_idxs = np.where(num_files_avgd_at_sample == 0)[0]
-#     master_latent[:,zero_files_used_idxs] = np.nan
-
-#     # Pickle the master_latent variable
-#     s_start = all_filenames[sort_idxs[0]].split("_")
-#     s_end = all_filenames[sort_idxs[-1]].split("_")
-#     master_filename = save_dir + "/" + patid + "_" + save_dimension_style + "_master_latent_" + hours_inferred_str + "_trainedepoch" + str(epoch_used) + "_" + s_start[1] + "_" + s_start[2] + "_to_" + s_end[4] + "_" + s_end[5] + ".pkl"
-#     with open(master_filename, 'wb') as file: pickle.dump(master_latent, file)
-
-#     # # Delete tmp directories
-#     # for d in dirs:
-#     #     shutil.rmtree(d)
 
 def filename_to_dateobj(f: str, start_or_end: int):
     # if start_or_end is '0' the beginning of file timestamp is used, if '1' the end
@@ -1831,7 +2496,7 @@ def filename_to_datetimes(list_file_names):
             stop_datetimes[i] = datetime.datetime(int(bD[4:8]), int(bD[0:2]), int(bD[2:4]), int(bT[0:2]), int(bT[2:4]), int(bT[4:6]), int(int(bT[6:8])*1e4))
         return start_datetimes, stop_datetimes
 
-def delete_old_checkpoints(dir: str, curr_epoch: int):
+def delete_old_checkpoints(dir: str, curr_epoch: int, KL_stall_epochs, KL_epochs_AT_max, KL_epochs_TO_max, **kwargs):
 
     SAVE_KEYWORDS = ["hdbscan", "pacmap"]
 
@@ -1841,12 +2506,20 @@ def delete_old_checkpoints(dir: str, curr_epoch: int):
 
     # Add current epoch to save files
     save_epochs = [curr_epoch]
-    for i in range(len(all_dir_names)):
-        subepoch_dirs = [f.split("/")[-1] for f in glob.glob(all_dir_names[i] + "/*")]
-        for f in subepoch_dirs:
-            if any(substr in f for substr in SAVE_KEYWORDS):
-                save_epochs.append(epoch_nums[i])
-                break
+
+    # KEYWORD Save
+    # for i in range(len(all_dir_names)):
+    #     subepoch_dirs = [f.split("/")[-1] for f in glob.glob(all_dir_names[i] + "/*")]
+    #     for f in subepoch_dirs:
+    #         if any(substr in f for substr in SAVE_KEYWORDS):
+    #             save_epochs.append(epoch_nums[i])
+    #             break
+
+    # KL Epoch cycle save - save the last epoch in a KL annealing cycle
+    mod_val = KL_stall_epochs + KL_epochs_AT_max + KL_epochs_TO_max - 1
+    for x in epoch_nums:
+        if x % mod_val == 0:
+            save_epochs.append(x)
 
     [shutil.rmtree(all_dir_names[i]) if epoch_nums[i] not in save_epochs else print(f"saved: {all_dir_names[i].split('/')[-1]}") for i in range(len(epoch_nums))]
 
@@ -2033,7 +2706,7 @@ def get_hours_inferred_str(intrapatient_dataset_style):
 
 def get_pat_seiz_datetimes(
     pat_id, 
-    atd_file,
+    atd_file, 
     FBTC_bool=True, 
     FIAS_bool=True, 
     FAS_to_FIAS_bool=True,
@@ -2122,7 +2795,10 @@ def get_desired_fnames(
         intrapatient_dataset_style: list, 
         hour_dataset_range: list, 
         dataset_pic_dir: str,
+        viz_dataset: bool,
+        **kwargs
         ):
+    
     # This will have all of the desired file names before splitting into train/val/test
     curr_fnames = []  
 
@@ -2134,21 +2810,16 @@ def get_desired_fnames(
     # Get all data with SPES
     elif intrapatient_dataset_style == 2:
         curr_fnames = glob.glob(data_dir + '/*/*.pkl')
-        if len(curr_fnames) == 0:
-            curr_fnames = glob.glob(data_dir + '/*.pkl')
-
         curr_fnames = sort_filenames(curr_fnames)
-
 
     # Get ONLY SPES data
     elif intrapatient_dataset_style == 3:
         curr_fnames = glob.glob(data_dir + '/SPES/*.pkl')
         curr_fnames = sort_filenames(curr_fnames)
-
+ 
     else:
         raise Exception(f"[GPU{str(gpu_id)}] Invalid 'dataset_style' choice, must be 1, 2, or 3")
-
-
+    logger.info(f"Found {len(curr_fnames)}, from directory: {data_dir}")
     # Now split up the data according to dataset range
     end_names = [x.split('/')[-1] for x in curr_fnames]
     start_dts, end_dts = filename_to_datetimes(end_names)
@@ -2169,8 +2840,6 @@ def get_desired_fnames(
     
     elif hour_dataset_range[0] == -1:
         # Run from beginning to given end hours
-        import ipdb
-        ipdb.set_trace()
         found_hours = False
         print("ToDO")
         for i in range(len(end_dts)):
@@ -2193,8 +2862,8 @@ def get_desired_fnames(
                 break
         if not found_hours: raise Exception("Hours desired not found")
 
-    if gpu_id == 0:
-        print_dataset_bargraphs(pat_id, curr_fnames, curr_fnames, dataset_pic_dir,atd_file=atd_file)
+    if (gpu_id == 0) & viz_dataset:
+        print_dataset_bargraphs(pat_id, curr_fnames, curr_fnames, dataset_pic_dir, atd_file=atd_file)
 
     return curr_fnames
 
@@ -2417,7 +3086,7 @@ def montage_filter_pickle_edfs(pat_id: str, dir_edf: str, save_dir: str, desired
         for file in files:
             file_idx += 1
             print("[" + str(file_idx) + '/' + str(total_files) + ']: ' + file)
-            if "c_label" not in file.split("/")[-1]:
+            if "clabel" not in file.split("/")[-1]:
                 print(f"Found file [{file}], calculating bipolar montage")
                 # Use PyEDFLib to read in files
                 # (MNE broke for large files) 
@@ -2428,7 +3097,8 @@ def montage_filter_pickle_edfs(pat_id: str, dir_edf: str, save_dir: str, desired
                 f._close()
                 del f
                 break
-        
+
+
         file_idx = -1
         total_files = len(files)
         print("Processing all files:")
@@ -2450,17 +3120,10 @@ def montage_filter_pickle_edfs(pat_id: str, dir_edf: str, save_dir: str, desired
                 sig_headers = f.getSignalHeaders()
                 ch_units = np.empty(len(channels), dtype=object)
                 for i in range(0,len(channels)):
-                    if sig_headers[i]['label'] in ch_names_to_ignore:
-                        # Could also add expected unit here. TODO: verify with Graham
-                        ch_units[i] = "EXCLUDE"
-                    else:
-                        ch_units[i] = sig_headers[i]['dimension']
-                if not np.all(ch_units[ch_units != "EXCLUDE"] == ch_units[0]): 
-                    
-                    raise Exception("Not all channel units are the same for file: " + file)  
+                    ch_units[i] = sig_headers[i]['dimension']
+                if not np.all(ch_units == ch_units[0]): raise Exception("Not all channel units are the same for file: " + file)  
                 # Compare this unit to the expected file units
-                #
-                if ch_units[ch_units != "EXCLUDE"][0] != expected_unit: raise Exception("Current file's channel units do not equal expected units: " + expected_unit + ". Current file: " + file)
+                if ch_units[0] != expected_unit: raise Exception("Current file's channel units do not equal expected units: " + expected_unit + ". Current file: " + file)
                 # Store this unit to compare to next EDF file
             
             start_t = time.time()
@@ -2543,14 +3206,22 @@ def montage_filter_pickle_edfs(pat_id: str, dir_edf: str, save_dir: str, desired
 
 
 
-
 # INITIALIZATIONS
 
-def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=True, num_workers=0):
+def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, persistent_workers=False, num_workers=0, distributed=True):
 
     if num_workers > 0:
         print("WARNING: num workers >0, have experienced odd errors...")
-
+    if not distributed:
+        return DataLoader(
+            dataset,
+            batch_size=batch_size,
+            num_workers=num_workers,    
+            pin_memory=True,
+            shuffle=False,
+            drop_last=droplast,
+            persistent_workers=persistent_workers
+        )
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -2558,7 +3229,8 @@ def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=True, num_wor
         pin_memory=True,
         shuffle=False,
         sampler=DistributedSampler(dataset),
-        drop_last=droplast
+        drop_last=droplast,
+        persistent_workers=persistent_workers
     )
 
 def initialize_directories(
@@ -2574,7 +3246,7 @@ def initialize_directories(
 
         kwargs['model_dir'] = cont_train_model_dir
         kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs'
-        
+
         # Find the epoch to start training
         check_dir = kwargs['model_dir'] + "/checkpoints"
         epoch_dirs = glob.glob(check_dir + '/Epoch*')
@@ -2587,6 +3259,7 @@ def initialize_directories(
         # Construct the proper file names to get CORE state dicts
         kwargs['vae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae.pt'
         kwargs['vae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_opt.pt'
+        kwargs['cls_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_cls_opt.pt'
 
         # Set the start epoch 1 greater than max trained
         kwargs['start_epoch'] = (max_epoch + 1) 
@@ -2605,6 +3278,7 @@ def initialize_directories(
         kwargs['start_epoch'] = 0
 
     return kwargs
+
 def run_setup(**kwargs):
     # Print to console
     print("\n\n***************** MAIN START " + datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y") + "******************\n\n")        
@@ -2615,7 +3289,7 @@ def run_setup(**kwargs):
     # All Time Data file to get event timestamps
     kwargs['root_save_dir'] = assemble_model_save_path(**kwargs)
     # kwargs['data_dir'] = kwargs['root_save_dir'] + kwargs['data_dir_subfolder']
-    kwargs['tmp_model_dir'] = os.getcwd() + kwargs['tmp_file_dir']
+    kwargs['tmp_model_dir'] = os.getcwd() + kwargs['tmp_file_dir']                             
     kwargs['run_params_dir_name'] = get_training_dir_name(**kwargs)
 
     # Set world size to number of GPUs in system available to CUDA
@@ -2628,8 +3302,7 @@ def run_setup(**kwargs):
     kwargs = initialize_directories(run_notes=run_notes, **kwargs)
 
     # Print the model forward pass sizes
-    
-    fake_data = torch.rand(kwargs['wdecode_batch_size'], kwargs['transformer_seq_length'], 199, kwargs['autoencode_samples']) # 199 is just an example of number of patient channels
+    fake_data = torch.rand(kwargs['max_batch_size'], kwargs['transformer_seq_length'] - 1, kwargs['padded_channels'], kwargs['autoencode_samples']) # 199 is just an example of number of patient channels
     print_models_flow(x=fake_data, **kwargs)
 
     # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)

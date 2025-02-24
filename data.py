@@ -48,6 +48,7 @@ class SEEG_Tornado_Dataset(Dataset):
         self.preictal_augmentation_seconds = preictal_augmentation_seconds
 
         self.num_windows = int((self.num_samples - self.autoencode_samples)/self.autoencode_samples) - 2
+        self.pat_curr = None #always initialize class objects in Init
     
         # Get ONLY the .pkl file names in the subdirectories of choice
         # self.data_dir = data_dir
@@ -56,9 +57,15 @@ class SEEG_Tornado_Dataset(Dataset):
         self.pat_num_channels = np.ones(len(pat_list), dtype=np.int32)*-1
         self.pat_ids = pat_list
         self.pat_dirs = pat_dirs
+        if len(self.pat_dirs) <1:
+             logger.warning(f"No patient directories found! for {self.pat_ids}")
 
         # Initilaize the lists of lists for data filenames
         self.pat_fnames = [[] for i in range(len(self.pat_ids))]
+
+        self.single_pat_seq = True if len(self.pat_dirs) == 1 else False
+
+        self.set_pat_curr(0) # fair assumption at this point because at least one pat is verified
 
         # ### Now determine which files in the data directory shoud be given to the dataset
         # Dataset splits is a tuple of 3 floats for train/val/test and must add up to 1
@@ -80,14 +87,8 @@ class SEEG_Tornado_Dataset(Dataset):
             self.pat_num_channels[i] = 129# Hard code
             # Hardcode as utils_functions.get_num_channels(pat_list[i], pat_num_channels_LUT)
             logger.info(f"Loading from {pat_dirs[i]}{data_dir_subfolder} for the following range: {hour_dataset_range}")
-            self.pat_fnames[i] = utils_functions.get_desired_fnames(
-                gpu_id = self.gpu_id,
-                pat_id = pat_list[i], 
-                atd_file = atd_file, 
-                data_dir = f"{pat_dirs[i]}{data_dir_subfolder}", 
-                intrapatient_dataset_style = intrapatient_dataset_style, 
-                hour_dataset_range = hour_dataset_range,
-                dataset_pic_dir = dataset_pic_dir)
+            
+            self.pat_fnames[i]=utils_functions.get_desired_fnames(gpu_id=self.gpu_id, pat_id=pat_list[i], atd_file=atd_file, data_dir=f"{pat_dirs[i]}{data_dir_subfolder}", intrapatient_dataset_style=intrapatient_dataset_style, hour_dataset_range=hour_dataset_range, dataset_pic_dir=dataset_pic_dir, viz_dataset=True)
 
             # Sort the filenames
             self.pat_fnames[i] = utils_functions.sort_filenames(self.pat_fnames[i])

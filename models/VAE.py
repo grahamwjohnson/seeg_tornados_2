@@ -2,11 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+import numpy as np
 from torch import Tensor
 from torchinfo import summary
 
 # Local imports
 from .Transformer import ModelArgs, Transformer, RMSNorm
+from utilities.loss_functions import adversarial_loss_function
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -117,11 +119,11 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
 
     def forward(self, x):
         # inputs: a single time series of shape (batch_size, num_channels, seq_len)        
-        in_channels = x.shape[1]
+        # in_channels = x.shape[1]
 
-        # Step 1: pad the channel dimension
-        padding = (0, 0, 0, self.padded_channels - in_channels, 0, 0) # (dim0 left padding, dim0 right padding... etc.)
-        x = F.pad(x, padding, mode='constant', value=0)
+        # # Step 1: pad the channel dimension
+        # padding = (0, 0, 0, self.padded_channels - in_channels, 0, 0) # (dim0 left padding, dim0 right padding... etc.)
+        # x = F.pad(x, padding, mode='constant', value=0)
 
         # Step 2: Permute to (batch_size, seq_len, padded_channels)
         x = x.permute(0, 2, 1)  # Shape: (batch_size, seq_len, padded_channels)
@@ -149,111 +151,97 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         # return torch.mean(x, dim=1)
         # return x[:,-1,:] # Return last in sequence (should be embedded with meaning)
 
-class HybridDecoder(nn.Module):
-    def __init__(self, gpu_id, latent_dim, hidden_dim, output_channels, seq_length, num_transformer_layers, num_heads, ffm, max_bs, max_seq_len, num_gru_layers, activation):
-        super(HybridDecoder, self).__init__()
+class Decoder_MLP(nn.Module):
+    def __init__(self, gpu_id, latent_dim, decoder_base_dims, output_channels, decode_samples):
+        super(Decoder_MLP, self).__init__()
         self.gpu_id = gpu_id
         self.latent_dim = latent_dim
-        self.hidden_dim = hidden_dim
+        self.decoder_base_dims = decoder_base_dims
         self.output_channels = output_channels
-        self.seq_length = seq_length
-        self.num_transformer_layers = num_transformer_layers
-        self.num_heads = num_heads
-        self.ffm = ffm
-        self.max_bs = max_bs
-        self.max_seq_len = max_seq_len
+        self.decode_samples = decode_samples
 
-        self.num_gru_layers = num_gru_layers
-        
-        # Non-autoregressive decoder (rough sketch generator)
+        # Non-autoregressive decoder 
         self.non_autoregressive_fc = nn.Sequential(
-            nn.Linear(latent_dim, int(hidden_dim * seq_length/2)),
-            # nn.Tanh(),
+            nn.Linear(latent_dim, decoder_base_dims * decode_samples),
             nn.SiLU(),
-            RMSNorm(int(hidden_dim * seq_length/2)),
-            nn.Linear(int(hidden_dim * seq_length/2), hidden_dim * seq_length),
-            # nn.Tanh(),
+            RMSNorm(decoder_base_dims * decode_samples),
+            nn.Linear(decoder_base_dims * decode_samples, decoder_base_dims * decode_samples * 2),
             nn.SiLU(),
-            RMSNorm(hidden_dim * seq_length)
-            )
-
-        self.non_autoregressive_transformer = Transformer(ModelArgs(
-            device=self.gpu_id, 
-            dim=self.hidden_dim, 
-            n_layers=self.num_transformer_layers,
-            n_heads=self.num_heads,
-            ffn_dim_multiplier=self.ffm,
-            max_batch_size=self.max_bs,
-            max_seq_len=self.max_seq_len,
-            activation=activation)) 
-        
+            RMSNorm(decoder_base_dims * decode_samples * 2),
+            nn.Linear(decoder_base_dims * decode_samples * 2, decoder_base_dims * decode_samples * 4),
+            nn.SiLU(),
+            RMSNorm(decoder_base_dims * decode_samples * 4),
+            nn.Linear(decoder_base_dims * decode_samples * 4, decoder_base_dims * decode_samples * 4),
+            nn.SiLU(),
+            RMSNorm(decoder_base_dims * decode_samples * 4),
+            nn.Linear(decoder_base_dims * decode_samples * 4, decoder_base_dims * decode_samples * 4),
+            nn.SiLU(),
+            RMSNorm(decoder_base_dims * decode_samples * 4)
+            )        
+        # Now FC without norms, after reshaping so that each token is seperated
         self.non_autoregressive_output = nn.Sequential(
-            nn.Linear(hidden_dim, output_channels),
+            nn.Linear(decoder_base_dims * 4, output_channels),
             nn.Tanh())
-        
-        # # Autoregressive decoder (refinement)
-        # self.autoregressive_rnn = nn.GRU(output_channels + hidden_dim, hidden_dim, num_gru_layers, batch_first=True)
-        # self.autoregressive_output = nn.Linear(hidden_dim, output_channels)
-    
+            
     def forward(self, z):
         batch_size = z.size(0)
         
-        # Step 1: Non-autoregressive generation (rough sketch)
-        h_na = self.non_autoregressive_fc(z).view(batch_size, self.seq_length, self.hidden_dim)
-        h_na = self.non_autoregressive_transformer(h_na, start_pos=0, causal_mask_bool=False)  # Self-attention with no causal mask
+        # Step 1: Non-autoregressive generation 
+        h_na = self.non_autoregressive_fc(z).view(batch_size, self.decode_samples, self.decoder_base_dims * 4)
         x_na = self.non_autoregressive_output(h_na)  # (batch_size, seq_length, output_channels)
         
-        # # Step 2: Autoregressive refinement
-        # h_ar = torch.zeros(self.num_gru_layers, batch_size, self.hidden_dim).to(z.device)
-        # x_ar = torch.zeros(batch_size, 1, self.output_channels).to(z.device)
-        
-        # outputs = []
-        # for t in range(self.seq_length):
-        #     # Concatenate non-autoregressive output and previous autoregressive output
-        #     input_ar = torch.cat([x_na[:, t:t+1, :], x_ar], dim=-1)
-            
-        #     # RNN step
-        #     out_ar, h_ar = self.autoregressive_rnn(input_ar, h_ar)
-            
-        #     # Predict next timestep
-        #     x_ar = self.autoregressive_output(out_ar)
-        #     outputs.append(x_ar)
-        
-        # # Stack outputs into a sequence
-        # x_ar_final = torch.cat(outputs, dim=1)  # (batch_size, seq_length, output_channels)
-        
-        # return x_ar_final
-
         return x_na
 
+# Gradient Reversal Layer
+class GradientReversalLayer(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, alpha):
+        ctx.alpha = alpha
+        return x
 
-# class SimpleDecoder(nn.Module):
-#     def __init__(self, gpu_id, latent_dim, hidden_dim, padded_channels, seq_length):
-#         super(SimpleDecoder, self).__init__()
+    @staticmethod
+    def backward(ctx, grad_output):
+        return -ctx.alpha * grad_output, None # None is for alpha 
 
-#         self.gpu_id = gpu_id
-#         self.latent_dim = latent_dim
-#         self.hidden_dim = hidden_dim
-#         self.padded_channels = padded_channels
-#         self.seq_length = seq_length
+# Wrapper for Gradient Reversal
+class GradientReversal(nn.Module):
+    def __init__(self, alpha):
+        super(GradientReversal, self).__init__()
+        self.alpha = alpha
 
-#         self.latent_to_out = nn.Sequential(
-#             nn.Linear(latent_dim, hidden_dim),
-#             nn.Tanh(),
-#             nn.Linear(hidden_dim, hidden_dim),
-#             nn.Tanh(),
-#             nn.Linear(hidden_dim, hidden_dim),
-#             nn.Tanh(),
-#             nn.Linear(hidden_dim, padded_channels * seq_length),
-#             nn.Tanh()
-#         )
+    def forward(self, x):
+        return GradientReversalLayer.apply(x, self.alpha)
 
-#     def forward(self, x):
-#         x = self.latent_to_out(x)
-#         x = x.view(x.shape[0], self.padded_channels, self.seq_length)
+# Define the Adversarial Classifier with Gradient Reversal
+class AdversarialClassifier(nn.Module):
+    def __init__(self, latent_dim, classifier_hidden_dims, classifier_num_pats, classifier_alpha, **kwargs):
+        super(AdversarialClassifier, self).__init__()
+        self.gradient_reversal = GradientReversal(classifier_alpha)
+        
+        self.mlp_layers = nn.ModuleList()
 
-#         return x
+        # Input layer
+        self.mlp_layers.append(nn.Linear(latent_dim, classifier_hidden_dims[0]))
+        self.mlp_layers.append(nn.SiLU())
+        # self.mlp_layers.append(RMSNorm(classifier_hidden_dims[0]))
 
+        # Hidden layers
+        for i in range(len(classifier_hidden_dims) - 1):
+            self.mlp_layers.append(nn.Linear(classifier_hidden_dims[i], classifier_hidden_dims[i + 1]))
+            self.mlp_layers.append(nn.SiLU())
+            # self.mlp_layers.append(RMSNorm(classifier_hidden_dims[i + 1]))
+
+        # Output layer
+        self.mlp_layers.append(nn.Linear(classifier_hidden_dims[-1], classifier_num_pats)) # No activation and no norm
+
+        # Softmax the output
+        self.softmax = nn.Softmax(dim=1)
+
+    def forward(self, mu):
+        mu = self.gradient_reversal(mu)
+        for layer in self.mlp_layers:
+            mu = layer(mu)
+        return self.softmax(mu)
 
 class VAE(nn.Module):
     '''
@@ -265,6 +253,7 @@ class VAE(nn.Module):
         autoencode_samples,
         padded_channels,
         crattn_embed_dim,
+        transformer_seq_length,
         num_encode_concat_transformer_tokens,
         transformer_start_pos,
         transformer_dim,
@@ -272,14 +261,7 @@ class VAE(nn.Module):
         top_dims,
         hidden_dims,
         latent_dim, 
-        decoder_hidden_dims,
-        decoder_num_heads,
-        decoder_num_transformer_layers,
-        decoder_ffm,
-        decoder_max_batch_size,
-        decoder_max_seq_len,
-        decoder_num_gru_layers,
-        decoder_transformer_activation,
+        decoder_base_dims,
         gpu_id=None,  
         **kwargs):
 
@@ -290,33 +272,29 @@ class VAE(nn.Module):
         self.padded_channels = padded_channels
         self.crattn_embed_dim = crattn_embed_dim
         self.num_encode_concat_transformer_tokens = num_encode_concat_transformer_tokens
+        self.transformer_seq_length = transformer_seq_length
         self.transformer_start_pos = transformer_start_pos
         self.transformer_dim = transformer_dim
         self.encoder_transformer_activation = encoder_transformer_activation
         self.top_dims = top_dims
         self.hidden_dims = hidden_dims
         self.latent_dim = latent_dim 
-
-        self.decoder_hidden_dims = decoder_hidden_dims
-        self.decoder_num_transformer_layers = decoder_num_transformer_layers
-        self.decoder_num_heads = decoder_num_heads
-        self.decoder_ffm = decoder_ffm
-        self.decoder_max_batch_size = decoder_max_batch_size
-        self.decoder_max_seq_len = decoder_max_seq_len
-        self.decoder_transformer_activation = decoder_transformer_activation
-
-        self.decoder_num_gru_layers = decoder_num_gru_layers
-
+        self.decoder_base_dims = decoder_base_dims
 
         # Raw CrossAttention Head
-        self.encoder_head = Encoder_TimeSeriesWithCrossAttention(padded_channels = self.padded_channels, crattn_embed_dim=self.crattn_embed_dim, **kwargs)
+        self.encoder_head = Encoder_TimeSeriesWithCrossAttention(
+            padded_channels=self.padded_channels, 
+            crattn_embed_dim=self.crattn_embed_dim, 
+            **kwargs)
 
         # Transformer - dimension is same as output of cross attention
-        self.transformer_encoder = Transformer(ModelArgs(device=self.gpu_id, dim=self.transformer_dim, activation=self.encoder_transformer_activation, **kwargs))
+        self.transformer_encoder = Transformer(ModelArgs(
+            device=self.gpu_id, 
+            dim=self.transformer_dim, 
+            activation=self.encoder_transformer_activation, 
+            **kwargs))
 
         # Core Encoder
-        # self.head_to_top = nn.Linear(self.crattn_embed_dim * self.autoencode_samples, self.top_dims, bias=True)
-        # self.norm_top = RMSNorm(dim=self.top_dims)
         self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=True)
         self.norm_hidden = RMSNorm(dim=self.hidden_dims)
         
@@ -324,29 +302,17 @@ class VAE(nn.Module):
         self.mean_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
         self.logvar_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True) # bias=False
 
-        # self.decoder = SimpleDecoder(
-        #     gpu_id = self.gpu_id,
-        #     latent_dim = self.latent_dim,
-        #     hidden_dim = self.decoder_hidden_dims,
-        #     padded_channels = self.padded_channels,
-        #     seq_length = self.autoencode_samples
-        # )
-
-        self.decoder = HybridDecoder(
+        self.decoder = Decoder_MLP(
             gpu_id = self.gpu_id,
             latent_dim = self.latent_dim,
-            hidden_dim = self.decoder_hidden_dims,
+            decoder_base_dims = self.decoder_base_dims,
             output_channels = self.padded_channels,
-            seq_length = self.autoencode_samples,
-            num_heads = self.decoder_num_heads,
-            num_transformer_layers = self.decoder_num_transformer_layers,
-            ffm = self.decoder_ffm,
-            max_bs = self.decoder_max_batch_size,
-            max_seq_len = self.decoder_max_seq_len,
-            num_gru_layers = self.decoder_num_gru_layers,
-            activation=self.decoder_transformer_activation
-            )
+            decode_samples = self.autoencode_samples)
 
+        # Adversarial Classifier
+        self.adversarial_classifier = AdversarialClassifier(latent_dim=self.latent_dim, **kwargs) # the name 'adversarial_classifier' is tied to model parameter search to create seperate optimizer for classifier
+
+        # Non-linearity as needed
         self.silu = nn.SiLU()
 
     def reparameterization(self, mean, logvar):
@@ -356,7 +322,9 @@ class VAE(nn.Module):
         return z
 
     def concat_past_tokens(self, x):
-        
+        '''
+        Sliding window with stride of 1 that collects N concat tokens at a time
+        '''
         num_pulls = x.shape[1] - self.num_encode_concat_transformer_tokens - self.transformer_start_pos
         y = torch.zeros([x.shape[0], num_pulls, self.top_dims]).to(x)
 
@@ -365,40 +333,56 @@ class VAE(nn.Module):
 
         return y
 
-    def forward(self, x, reverse=False, hash_pat_embedding=-1, out_channels=-1):
-        import ipdb
-        
+    def forward(self, x, reverse=False, hash_pat_embedding=-1, hash_channel_order=-1):
+
         if reverse == False:
+
             # RAW CROSS-ATTENTION HEAD
-            # [batch, token, channel, waveform]
-            y = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
+            y = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]]) # [batch, token, channel, waveform] --> [batch x token, channel, waveform]
             y = self.encoder_head(y)
-            y = torch.split(y, x.shape[1], dim=0)
+            y = torch.split(y, x.shape[1], dim=0) # [batch x token, latent_dim] --> [batch, token, latent_dim]
             y = torch.stack(y, dim=0)
 
             # TRANSFORMER
-            
             y = self.transformer_encoder(y, start_pos=self.transformer_start_pos)
 
             # VAE CORE
-            y = self.concat_past_tokens(y) # Sliding window over transformer output
-            y = y.reshape([y.shape[0]*y.shape[1], y.shape[2]]) # Batch the sliding windows for efficient decoding
+            y = self.concat_past_tokens(y) # Sliding window over transformer output: [batch, token, latent_dim] --> [batch, token_prime, latent_dim * num_encode_concat_transformer_tokens]
+            y = y.reshape([y.shape[0]*y.shape[1], y.shape[2]]) # Batch the sliding windows for efficient decoding: [batch, token_prime, latent_dim * num_encode_concat_transformer_tokens] --> [batch x token_prime, latent_dim * num_encode_concat_transformer_tokens]
             y = self.top_to_hidden(y)
             y = self.silu(y)
             y = self.norm_hidden(y)
             mean_batched, logvar_batched = self.mean_fc_layer(y), self.logvar_fc_layer(y)
-            y = self.reparameterization(mean_batched, logvar_batched)
-            return mean_batched, logvar_batched, y
+            latent_batched = self.reparameterization(mean_batched, logvar_batched)
+
+            # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
+            # NOTE: you lose the priming tokens needed by transformer
+            mean = torch.stack(torch.split(mean_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
+            logvar = torch.stack(torch.split(logvar_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
+            latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
+
+            # CLASSIFIER - on the mean of the means
+            mean_of_means = torch.mean(mean, dim=1)
+            class_probs_mean_of_means = self.adversarial_classifier(mean_of_means)
+            
+            return mean, logvar, latent, class_probs_mean_of_means
 
         elif reverse == True:
 
             # Add the hash_pat_embedding to latent vector
-            y = x + hash_pat_embedding
+            y = x + hash_pat_embedding.unsqueeze(dim=1).repeat(1, x.shape[1], 1)
 
-            y = self.decoder(y).transpose(1,2)
-            # y = self.decoder(y)
+            # Stack the sequences into batch dimension for faster decoding
+            y = y.reshape([y.shape[0]*y.shape[1], y.shape[2]]) # [batch, token, latent_dim] --> [batch x token, latent_dim]
 
-            y = y[:, 0:out_channels, :]
+            # Transformer Decoder
+            # Goes in as [batch * seq, ]
+            y = self.decoder(y).transpose(1,2)  # Comes out as [batch, waveform, num_channels] --> [batch, num_channels, waveform]
+
+            # Index the correct output channels for each batch index
+            y = torch.split(y, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0)
+            y = torch.stack(y, dim=0)
+
             return y
 
 def print_models_flow(x, **kwargs):
@@ -406,9 +390,9 @@ def print_models_flow(x, **kwargs):
     Builds models on CPU and prints sizes of forward passes
 
     '''
-    import ipdb
-    
+
     pat_num_channels = x.shape[2] 
+    file_class_label = torch.tensor([0]*x.shape[0]) # dummy
 
     # Build the VAE
     vae = VAE(**kwargs) 
@@ -416,20 +400,27 @@ def print_models_flow(x, **kwargs):
     # Run through Enc Head
     print(f"INPUT TO <ENC>\n"
     f"x:{x.shape}")
-    mean, logvar, latent = vae(x, reverse=False)  
+    mean, logvar, latent, class_probs = vae(x, reverse=False)  
     summary(vae, input_size=(x.shape), depth=999, device="cpu")
     print(
     f"mean:{mean.shape}\n"
     f"logvar:{logvar.shape}\n"
-    f"latent:{latent.shape}\n")
+    f"latent:{latent.shape}\n"
+    f"class_probs:{class_probs.shape}\n")
+
+    # Adversarial loss
+    adversarial_loss = adversarial_loss_function(class_probs, file_class_label, classifier_weight = 1)
+    print(f"Adversarial Loss: {adversarial_loss}")
 
     # Run through VAE decoder
-    hash_pat_embedding = torch.rand(latent.shape[1])
+    hash_pat_embedding = torch.rand(x.shape[0], latent.shape[2])
+    hash_channel_order = np.arange(0, 199).tolist()
     print(f"\n\n\nINPUT TO <VAE - Decoder Mode> \n"
     f"z:{latent.shape}\n"
     f"hash_pat_embedding:{hash_pat_embedding.shape}\n")
-    core_out = vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, out_channels=pat_num_channels)  
-    print(f"core_out:{core_out.shape}\n")
+    summary(vae, input_data=[latent, True, hash_pat_embedding, hash_channel_order], depth=999, device="cpu")
+    core_out = vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, hash_channel_order=hash_channel_order)  
+    print(f"decoder_out:{core_out.shape}\n")
 
     del vae
 
