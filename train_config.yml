@@ -22,9 +22,9 @@ periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if
 preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
 # Training settings
-continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 print_dataset_bargraphs: False # Typically set to False if not the first run of model, but may want true if adding new patients
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/gar_Tue_Feb_18_13_39_07_2025' 
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/mustang_Sun_Feb_23_15_27_59_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### VAE ###
@@ -65,12 +65,10 @@ latent_dim: 1024 # 2048
 decoder_base_dims: kwargs['decoder_base_dims'] = kwargs['latent_dim'] # after this layer, it will be connected into FC to [batch, padded_channels * seq_len] to prepare for decoder transformer input
 
 ### Classifier
-classifier_hidden_dims: [2048, 1024, 512]
+classifier_hidden_dims: [2048, 4096, 4096, 2048, 1024]
 classifier_num_pats: 40 # Hardcoded  ########
-classifier_alpha: 0.01 # 1.0 # Default 1.0 # BALANCE of ADVERSARIAL effect between VAE encoder and classifier. Not a ratio, just a float value (negative causes VAE to HELP classifier)
-classifier_weight: 1 # OVERALL effect ADVERSARIAL training: i.e. reverse gradient (VAE) AND classifier power. # Should probably get into same ballpark as recon and KLD
 
-# TODO: schedule alpha AND classifier weight
+
 
 # VAE Optimizer hyperparameters
 core_weight_decay: 0.1
@@ -115,9 +113,9 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 ### Dynamic Weights ###
 
 # Beta VAE controls
-KL_max: kwargs['KL_max'] = 3e-4 # Pangolin 1e-4 ############# Check if loss is actually used!!! May be commented out in training script ###############
-KL_min: kwargs['KL_min'] = 1e-12
-KL_stall_epochs: 5 # No KL weight rise until stall is complete
+KL_max: kwargs['KL_max'] = 0.01 # 3e-4 # Pangolin 1e-4 ############# Check if loss is actually used!!! May be commented out in training script ###############
+KL_min: kwargs['KL_min'] = 0
+KL_stall_epochs: 0 # No KL weight rise until stall is complete
 KL_epochs_AT_max: 40
 KL_epochs_TO_max: 20
  
@@ -126,6 +124,14 @@ Sparse_max: kwargs['Sparse_max'] = 1e-7 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  #########
 Sparse_min: kwargs['Sparse_min'] = 0
 Sparse_epochs_AT_max: 99999
 Sparse_epochs_TO_max: 0
+
+# Classifier (Varies alpha of reverse gradient flow, not weight)
+classifier_weight: 1 # OVERALL ADVERSARIAL training: i.e. reverse gradient (VAE) AND classifier power. # Should probably get into same ballpark as recon and KLD
+classifier_max: kwargs['classifier_max'] = 0 # 1 # 
+classifier_min: kwargs['classifier_min'] = 0 # 0.001
+classifier_epochs_AT_max: 5
+classifier_epochs_TO_max: 5
+classifier_rise_first: False
 
 ### Static Weights ###
 recon_weight: 3 # 3

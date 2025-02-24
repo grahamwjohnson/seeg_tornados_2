@@ -516,6 +516,9 @@ class Trainer:
             # If wanting all files from every patient, need to run patients serially
             if all_files_latent_only: 
 
+                print("WARNING: Setting alpha = 1")
+                self.classifier_alpha = 1
+
                 # Check for erroneous configs
                 if val_finetune or val_unseen:
                     raise Exception("ERROR: innapropriate config: if running all files then val_finetune/val_unseen must all be False")
@@ -572,7 +575,7 @@ class Trainer:
 
                             ### VAE ENCODER
                             # Forward pass in stacked batch through VAE encoder
-                            mean, _, _, _ = self.vae(x[:, :-1, :, :], reverse=False)   # 1 shifted just to be aligned with training style
+                            mean, _, _, _ = self.vae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
                             files_means[:, w, :] = torch.mean(mean, dim=1)
 
                         # After file complete, pacmap_window/stride the file and save each file from batch seperately
@@ -630,7 +633,7 @@ class Trainer:
                     hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
                 
                     # For Training: Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                    self.KL_multiplier, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight = utils_functions.LR_and_weight_schedules(
+                    self.KL_multiplier, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                         epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
                     if (not val_finetune) & (not val_unseen): 
                         self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
@@ -640,10 +643,10 @@ class Trainer:
                     if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
 
                     ### VAE ENCODER: 1-shifted
-                    mean, logvar, latent, class_probs_mean_of_means = self.vae(x[:, :-1, :, :], reverse=False)
+                    mean, logvar, latent, class_probs_mean_of_means = self.vae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
                     
                     ### VAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
-                    x_hat = self.vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, hash_channel_order=hash_channel_order)  
+                    x_hat = self.vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
 
                     # LOSSES: Intra-Patient 
                     recon_loss = loss_functions.recon_loss_function(
@@ -703,7 +706,7 @@ class Trainer:
                                 train_KL_Beta=self.KL_multiplier, 
                                 train_ReconWeight=self.recon_weight,
                                 train_AdversarialWeight=self.classifier_weight,
-                                train_AdversarialAlpha=kwargs['classifier_alpha'],
+                                train_AdversarialAlpha=self.classifier_alpha,
                                 train_Sparse_weight=self.sparse_weight,
                                 train_epoch=self.epoch)
 
@@ -720,7 +723,7 @@ class Trainer:
                                 val_finetune_KL_Beta=self.KL_multiplier, 
                                 val_finetune_ReconWeight=self.recon_weight,
                                 val_finetune_AdversarialWeight=self.classifier_weight,
-                                val_finetune_AdversarialAlpha=kwargs['classifier_alpha'],
+                                val_finetune_AdversarialAlpha=self.classifier_alpha,
                                 val_finetune_Sparse_weight=self.sparse_weight,
                                 val_finetune_epoch=self.epoch)
 
@@ -737,7 +740,7 @@ class Trainer:
                                 val_unseen_KL_Beta=self.KL_multiplier, 
                                 val_unseen_ReconWeight=self.recon_weight,
                                 val_unseen_AdversarialWeight=self.classifier_weight,
-                                val_unseen_AdversarialAlpha=kwargs['classifier_alpha'],
+                                val_unseen_AdversarialAlpha=self.classifier_alpha,
                                 val_unseen_Sparse_weight=self.sparse_weight,
                                 val_unseen_epoch=self.epoch)
 

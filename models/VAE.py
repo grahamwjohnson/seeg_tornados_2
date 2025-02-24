@@ -205,18 +205,17 @@ class GradientReversalLayer(torch.autograd.Function):
 
 # Wrapper for Gradient Reversal
 class GradientReversal(nn.Module):
-    def __init__(self, alpha):
+    def __init__(self):
         super(GradientReversal, self).__init__()
-        self.alpha = alpha
 
-    def forward(self, x):
-        return GradientReversalLayer.apply(x, self.alpha)
+    def forward(self, x, alpha):
+        return GradientReversalLayer.apply(x, alpha)
 
 # Define the Adversarial Classifier with Gradient Reversal
 class AdversarialClassifier(nn.Module):
-    def __init__(self, latent_dim, classifier_hidden_dims, classifier_num_pats, classifier_alpha, **kwargs):
+    def __init__(self, latent_dim, classifier_hidden_dims, classifier_num_pats, **kwargs):
         super(AdversarialClassifier, self).__init__()
-        self.gradient_reversal = GradientReversal(classifier_alpha)
+        self.gradient_reversal = GradientReversal()
         
         self.mlp_layers = nn.ModuleList()
 
@@ -229,7 +228,7 @@ class AdversarialClassifier(nn.Module):
         for i in range(len(classifier_hidden_dims) - 1):
             self.mlp_layers.append(nn.Linear(classifier_hidden_dims[i], classifier_hidden_dims[i + 1]))
             self.mlp_layers.append(nn.SiLU())
-            # self.mlp_layers.append(RMSNorm(classifier_hidden_dims[i + 1]))
+            self.mlp_layers.append(RMSNorm(classifier_hidden_dims[i + 1]))
 
         # Output layer
         self.mlp_layers.append(nn.Linear(classifier_hidden_dims[-1], classifier_num_pats)) # No activation and no norm
@@ -237,8 +236,8 @@ class AdversarialClassifier(nn.Module):
         # Softmax the output
         self.softmax = nn.Softmax(dim=1)
 
-    def forward(self, mu):
-        mu = self.gradient_reversal(mu)
+    def forward(self, mu, alpha):
+        mu = self.gradient_reversal(mu, alpha)
         for layer in self.mlp_layers:
             mu = layer(mu)
         return self.softmax(mu)
@@ -333,7 +332,7 @@ class VAE(nn.Module):
 
         return y
 
-    def forward(self, x, reverse=False, hash_pat_embedding=-1, hash_channel_order=-1):
+    def forward(self, x, reverse=False, hash_pat_embedding=-1, alpha=None):
 
         if reverse == False:
 
@@ -363,7 +362,7 @@ class VAE(nn.Module):
 
             # CLASSIFIER - on the mean of the means
             mean_of_means = torch.mean(mean, dim=1)
-            class_probs_mean_of_means = self.adversarial_classifier(mean_of_means)
+            class_probs_mean_of_means = self.adversarial_classifier(mean_of_means, alpha)
             
             return mean, logvar, latent, class_probs_mean_of_means
 
@@ -397,10 +396,10 @@ def print_models_flow(x, **kwargs):
     # Build the VAE
     vae = VAE(**kwargs) 
 
-    # Run through Enc Head
+    # Run through Encoder
     print(f"INPUT TO <ENC>\n"
     f"x:{x.shape}")
-    mean, logvar, latent, class_probs = vae(x, reverse=False)  
+    mean, logvar, latent, class_probs = vae(x, reverse=False, alpha=1)  
     summary(vae, input_size=(x.shape), depth=999, device="cpu")
     print(
     f"mean:{mean.shape}\n"
@@ -419,7 +418,7 @@ def print_models_flow(x, **kwargs):
     f"z:{latent.shape}\n"
     f"hash_pat_embedding:{hash_pat_embedding.shape}\n")
     summary(vae, input_data=[latent, True, hash_pat_embedding, hash_channel_order], depth=999, device="cpu")
-    core_out = vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, hash_channel_order=hash_channel_order)  
+    core_out = vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
     print(f"decoder_out:{core_out.shape}\n")
 
     del vae

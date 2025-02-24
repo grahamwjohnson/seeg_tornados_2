@@ -215,7 +215,8 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         KL_max, KL_min, KL_epochs_TO_max, KL_epochs_AT_max, KL_stall_epochs,
-        classifier_weight,
+        classifier_weight, 
+        classifier_max, classifier_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier,
         Sparse_max, Sparse_min, Sparse_epochs_TO_max, Sparse_epochs_AT_max, 
         LR_max_core, LR_min_core, 
@@ -223,9 +224,29 @@ def LR_and_weight_schedules(
         manual_gamma_core, manual_step_size_core,
         KL_rise_first=True, Sparse_rise_first=True, LR_rise_first=True, **kwargs):
             
-    # *** Classifier Alpha Weight ###
+    # *** Classifier Weight ###
     classifier_weight = classifier_weight # Dummy pass
+
+    # *** Classifier LR ###
     LR_val_cls = LR_min_classifier
+
+    # *** Classifier Alpha ###
+    classifier_range = classifier_max - classifier_min
+    classifier_epoch_period = classifier_epochs_TO_max + classifier_epochs_AT_max
+
+    if classifier_rise_first: # START with rise
+        classifier_epoch_residual = epoch % classifier_epoch_period 
+    else:
+        classifier_epoch_residual = (epoch + classifier_epochs_TO_max) % classifier_epoch_period 
+    
+    # Calculate alpha value for where in period we are
+    if classifier_epoch_residual < classifier_epochs_TO_max:
+        classifier_state_length = classifier_epochs_TO_max 
+        classifier_floor = classifier_min + classifier_range * (classifier_epoch_residual/classifier_state_length)
+        classifier_ceil = classifier_floor + classifier_range * (1) /classifier_state_length
+        classifier_val = classifier_floor + (iter_curr/iters_per_epoch) * (classifier_ceil - classifier_floor)
+    else:
+        classifier_val = classifier_max
 
 
     # *** KL SCHEDULE ***
@@ -318,7 +339,7 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first 
     )
             
-    return KL_val, LR_val_core, LR_val_cls, Sparse_val, classifier_weight
+    return KL_val, LR_val_core, LR_val_cls, Sparse_val, classifier_weight, classifier_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
