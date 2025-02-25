@@ -457,6 +457,7 @@ class Trainer:
         self.accumulated_labels = torch.zeros(self.running_mmd_passes, dtype=torch.int64).to(self.gpu_id)
         self.accumulated_class_probs = torch.randn(self.running_mmd_passes, self.classifier_num_pats).to(self.gpu_id)
         self.next_update_index = 0
+        self.buffer_filled = False
 
         # Watch with WandB
         wandb.watch(self.wae)
@@ -699,144 +700,167 @@ class Trainer:
                     # Update the running MMD window
                     mean_latent = torch.mean(latent, dim=1)
                     new_prior_samples = torch.randn_like(mean_latent)
+
+                    # Check if new run, if so will need to fill buffers
+                    if not self.buffer_filled: 
+                        if (self.next_update_index + mean_latent.shape[0]) >= self.running_mmd_passes: 
+                            self.buffer_filled = True
+                            print("Buffers filled, proceeding with backprop from here on")
+                        else:
+                            sys.stdout.write(f"\rNo Backprop: Filling running window MMD and Classifier Buffers {self.next_update_index}/{self.running_mmd_passes}")
+                            sys.stdout.flush() 
+                            self.accumulated_z = self.accumulated_z.detach() # No backprop on these data
+                            self.accumulated_class_probs = self.accumulated_class_probs.detach() # No backprop on these data
+
+                    # Update the buffers
                     self._update_mmd_window(mean_latent, new_prior_samples, file_class_label, class_probs_mean_of_latent)
 
-                    # LOSSES: Intra-Patient 
-                    recon_loss = loss_functions.recon_loss_function(
-                        x=x[:, 1 + self.num_encode_concat_transformer_tokens :, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
-                        x_hat=x_hat,
-                        recon_weight=self.recon_weight)
+                    # Buffer HAS been filled, okay to backprop
+                    if self.buffer_filled:
+                        # LOSSES: Intra-Patient 
+                        recon_loss = loss_functions.recon_loss_function(
+                            x=x[:, 1 + self.num_encode_concat_transformer_tokens :, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
+                            x_hat=x_hat,
+                            recon_weight=self.recon_weight)
 
-                    mmd_loss, sigma = loss_functions.mmd_loss_function(
-                        x=self.accumulated_z,
-                        y=self.accumulated_prior,
-                        weight=self.MMD_multiplier)
+                        mmd_loss, sigma = loss_functions.mmd_loss_function(
+                            x=self.accumulated_z,
+                            y=self.accumulated_prior,
+                            weight=self.MMD_multiplier,
+                            **kwargs)
 
-                    adversarial_loss = loss_functions.adversarial_loss_function(
-                        probs=self.accumulated_class_probs, 
-                        labels=self.accumulated_labels,
-                        classifier_weight=self.classifier_weight)
+                        adversarial_loss = loss_functions.adversarial_loss_function(
+                            probs=class_probs_mean_of_latent, 
+                            labels=file_class_label,
+                            classifier_weight=self.classifier_weight)
 
-                    # Not currently used
-                    sparse_loss = loss_functions.sparse_l1_reg(
-                        z=latent, 
-                        sparse_weight=self.sparse_weight, 
-                        **kwargs)
+                        # Not currently used
+                        sparse_loss = loss_functions.sparse_l1_reg(
+                            z=latent, 
+                            sparse_weight=self.sparse_weight, 
+                            **kwargs)
 
-                    # AFTER EACH FORWARD PASS
-                    self._zero_all_grads()
-                    loss = recon_loss + mmd_loss + adversarial_loss 
-                    loss.backward()         
-                    self.opt_wae.step()
-                    self.opt_cls.step()
-                    self.accumulated_z = self.accumulated_z.detach() # Detach to allow next backpass
-                    self.accumulated_class_probs = self.accumulated_class_probs.detach() # Detach to allow next backpass
+                        # AFTER EACH FORWARD PASS
+                        self._zero_all_grads()
+                        loss = recon_loss + mmd_loss + adversarial_loss 
+                        loss.backward()         
+                        self.opt_wae.step()
+                        self.opt_cls.step()
+                        self.accumulated_z = self.accumulated_z.detach() # Detach to allow next backpass
+                        self.accumulated_class_probs = self.accumulated_class_probs.detach() # Detach to allow next backpass
 
-                    # Realtime terminal info and WandB 
-                    if (iter_curr%self.recent_display_iters==0):
-                        if val_finetune: state_str = "VAL FINETUNE"
-                        elif val_unseen: state_str = "VAL UNSEEN"
-                        else: state_str = "TRAIN"
-                        now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
-                        if (self.gpu_id == 1):
-                            sys.stdout.write(
-                                f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, EPOCH {self.epoch}, Iter [BatchSize: {x.shape[0]}] {iter_curr}/{total_iters}, " + 
-                                f"MeanLoss: {round(loss.detach().item(), 2)}                 ")
-                            sys.stdout.flush() 
+                        # Realtime terminal info and WandB 
+                        if (iter_curr%self.recent_display_iters==0):
+                            if val_finetune: state_str = "VAL FINETUNE"
+                            elif val_unseen: state_str = "VAL UNSEEN"
+                            else: state_str = "TRAIN"
+                            now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
+                            if (self.gpu_id == 1):
+                                sys.stdout.write(
+                                    f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, EPOCH {self.epoch}, Iter [BatchSize: {x.shape[0]}] {iter_curr}/{total_iters}, " + 
+                                    f"MeanLoss: {round(loss.detach().item(), 2)}                 ")
+                                sys.stdout.flush() 
 
-                        # Log to WandB
-                        wandb.define_metric('Steps')
-                        wandb.define_metric("*", step_metric="Steps")
-                        train_step = self.epoch * int(total_iters) + iter_curr
-                        if (not val_finetune) & (not val_unseen):
-                            metrics = dict(
-                                train_attention_dropout=attention_dropout,
-                                train_loss=loss,
-                                train_recon_loss=recon_loss, 
-                                train_mmd_loss=mmd_loss, 
-                                train_adversarial_loss=adversarial_loss,
-                                train_sparse_loss=sparse_loss,
-                                train_LR_wae=self.opt_wae.param_groups[0]['lr'], 
-                                train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                train_MMD_Beta=self.MMD_multiplier, 
-                                train_sigma=sigma,
-                                train_ReconWeight=self.recon_weight,
-                                train_AdversarialWeight=self.classifier_weight,
-                                train_AdversarialAlpha=self.classifier_alpha,
-                                train_Sparse_weight=self.sparse_weight,
-                                train_epoch=self.epoch)
+                            # Log to WandB
+                            wandb.define_metric('Steps')
+                            wandb.define_metric("*", step_metric="Steps")
+                            train_step = self.epoch * int(total_iters) + iter_curr
+                            if (not val_finetune) & (not val_unseen):
+                                metrics = dict(
+                                    train_attention_dropout=attention_dropout,
+                                    train_loss=loss,
+                                    train_recon_loss=recon_loss, 
+                                    train_mmd_loss=mmd_loss, 
+                                    train_adversarial_loss=adversarial_loss,
+                                    train_sparse_loss=sparse_loss,
+                                    train_LR_wae=self.opt_wae.param_groups[0]['lr'], 
+                                    train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                                    train_MMD_Beta=self.MMD_multiplier, 
+                                    train_sigma=sigma,
+                                    train_ReconWeight=self.recon_weight,
+                                    train_AdversarialWeight=self.classifier_weight,
+                                    train_AdversarialAlpha=self.classifier_alpha,
+                                    train_Sparse_weight=self.sparse_weight,
+                                    train_epoch=self.epoch)
 
-                        elif val_finetune:
-                            metrics = dict(
-                                val_finetune_attention_dropout=attention_dropout,
-                                val_finetune_loss=loss, 
-                                val_finetune_recon_loss=recon_loss, 
-                                val_finetune_mmd_loss=mmd_loss, 
-                                val_finetune_adversarial_loss=adversarial_loss,
-                                val_finetune_sparse_loss=sparse_loss,
-                                val_finetune_LR_wae=self.opt_wae.param_groups[0]['lr'], 
-                                val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                val_finetune_MMD_Beta=self.MMD_multiplier, 
-                                val_finetune_sigma=sigma,
-                                val_finetune_ReconWeight=self.recon_weight,
-                                val_finetune_AdversarialWeight=self.classifier_weight,
-                                val_finetune_AdversarialAlpha=self.classifier_alpha,
-                                val_finetune_Sparse_weight=self.sparse_weight,
-                                val_finetune_epoch=self.epoch)
+                            elif val_finetune:
+                                metrics = dict(
+                                    val_finetune_attention_dropout=attention_dropout,
+                                    val_finetune_loss=loss, 
+                                    val_finetune_recon_loss=recon_loss, 
+                                    val_finetune_mmd_loss=mmd_loss, 
+                                    val_finetune_adversarial_loss=adversarial_loss,
+                                    val_finetune_sparse_loss=sparse_loss,
+                                    val_finetune_LR_wae=self.opt_wae.param_groups[0]['lr'], 
+                                    val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                                    val_finetune_MMD_Beta=self.MMD_multiplier, 
+                                    val_finetune_sigma=sigma,
+                                    val_finetune_ReconWeight=self.recon_weight,
+                                    val_finetune_AdversarialWeight=self.classifier_weight,
+                                    val_finetune_AdversarialAlpha=self.classifier_alpha,
+                                    val_finetune_Sparse_weight=self.sparse_weight,
+                                    val_finetune_epoch=self.epoch)
 
-                        elif val_unseen:
-                            metrics = dict(
-                                val_unseen_attention_dropout=attention_dropout,
-                                val_unseen_loss=loss, 
-                                val_unseen_recon_loss=recon_loss, 
-                                val_unseen_mmd_loss=mmd_loss, 
-                                val_unseen_adversarial_loss=adversarial_loss,
-                                val_unseen_sparse_loss=sparse_loss,
-                                val_unseen_LR_wae=self.opt_wae.param_groups[0]['lr'], 
-                                val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                val_unseen_MMD_Beta=self.MMD_multiplier, 
-                                val_unseen_sigma=sigma,
-                                val_unseen_ReconWeight=self.recon_weight,
-                                val_unseen_AdversarialWeight=self.classifier_weight,
-                                val_unseen_AdversarialAlpha=self.classifier_alpha,
-                                val_unseen_Sparse_weight=self.sparse_weight,
-                                val_unseen_epoch=self.epoch)
+                            elif val_unseen:
+                                metrics = dict(
+                                    val_unseen_attention_dropout=attention_dropout,
+                                    val_unseen_loss=loss, 
+                                    val_unseen_recon_loss=recon_loss, 
+                                    val_unseen_mmd_loss=mmd_loss, 
+                                    val_unseen_adversarial_loss=adversarial_loss,
+                                    val_unseen_sparse_loss=sparse_loss,
+                                    val_unseen_LR_wae=self.opt_wae.param_groups[0]['lr'], 
+                                    val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                                    val_unseen_MMD_Beta=self.MMD_multiplier, 
+                                    val_unseen_sigma=sigma,
+                                    val_unseen_ReconWeight=self.recon_weight,
+                                    val_unseen_AdversarialWeight=self.classifier_weight,
+                                    val_unseen_AdversarialAlpha=self.classifier_alpha,
+                                    val_unseen_Sparse_weight=self.sparse_weight,
+                                    val_unseen_epoch=self.epoch)
 
-                    wandb.log({**metrics, 'Steps': train_step})
+                        wandb.log({**metrics, 'Steps': train_step})
 
-                    # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
-                    iter_curr = iter_curr + 1
+                        # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
+                        iter_curr = iter_curr + 1
 
-                    # Realtime latent visualizations
-                    if realtime_latent_printing & ((iter_curr + 1) % realtime_printing_interval == 0):
-                        if self.gpu_id == 0:
-                            if torch.isnan(loss).any():
-                                print("WARNING: Loss is nan, no plots can be made")
-                            else:
-                                utils_functions.print_latent_realtime(
-                                    latent = self.accumulated_z.cpu().detach().numpy(), 
-                                    prior = self.accumulated_prior.cpu().detach().numpy(),
-                                    savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
-                                    epoch = self.epoch,
-                                    iter_curr = iter_curr,
-                                    file_name = file_name,
-                                    **kwargs)
-                                utils_functions.print_recon_realtime(
-                                    x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], 
-                                    x_hat=x_hat, 
-                                    savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_recon",
-                                    epoch = self.epoch,
-                                    iter_curr = iter_curr,
-                                    file_name = file_name,
-                                    **kwargs)
-                                utils_functions.print_classprobs_realtime(
-                                    class_probs = self.accumulated_class_probs,
-                                    class_labels = self.accumulated_class_labels,
-                                    savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_classprob",
-                                    epoch = self.epoch,
-                                    iter_curr = iter_curr,
-                                    file_name = file_name,
-                                    **kwargs)
+                        # Realtime latent visualizations
+                        if realtime_latent_printing & ((iter_curr + 1) % realtime_printing_interval == 0):
+                            if self.gpu_id == 0:
+                                if torch.isnan(loss).any():
+                                    print("WARNING: Loss is nan, no plots can be made")
+                                else:
+                                    utils_functions.print_latent_realtime(
+                                        latent = self.accumulated_z.cpu().detach().numpy(), 
+                                        prior = self.accumulated_prior.cpu().detach().numpy(),
+                                        savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
+                                        epoch = self.epoch,
+                                        iter_curr = iter_curr,
+                                        file_name = file_name,
+                                        **kwargs)
+                                    utils_functions.print_recon_realtime(
+                                        x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], 
+                                        x_hat=x_hat, 
+                                        savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_recon",
+                                        epoch = self.epoch,
+                                        iter_curr = iter_curr,
+                                        file_name = file_name,
+                                        **kwargs)
+                                    utils_functions.print_confusion_realtime(
+                                        class_probs = self.accumulated_class_probs,
+                                        class_labels = self.accumulated_labels,
+                                        savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_confusion",
+                                        epoch = self.epoch,
+                                        iter_curr = iter_curr,
+                                        **kwargs)
+                                    utils_functions.print_classprobs_realtime(
+                                        class_probs = class_probs_mean_of_latent,
+                                        class_labels = file_class_label,
+                                        savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_classprobs",
+                                        epoch = self.epoch,
+                                        iter_curr = iter_curr,
+                                        file_name = file_name,
+                                        **kwargs)
         
         finally:
             print(f"[GPU{str(self.gpu_id)}] at 'finally' section after epoch")

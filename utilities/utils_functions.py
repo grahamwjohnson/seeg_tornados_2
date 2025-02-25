@@ -55,6 +55,7 @@ from functools import partial
 from matplotlib.colors import LinearSegmentedColormap
 from annoy import AnnoyIndex
 from scipy.sparse import csr_matrix
+from sklearn.metrics import confusion_matrix
 
 # Local imports
 from models.WAE import print_models_flow
@@ -666,10 +667,6 @@ def print_classprobs_realtime(class_probs, class_labels, savedir, epoch, iter_cu
 
     for b in range(0, batchsize):
         
-        # Make new grid/fig
-        gs = gridspec.GridSpec(1, 2)
-        fig = pl.figure(figsize=(20, 14))
-
         # Only print for one batch index at a time
         # class_probs_plot = class_probs_cpu[b, :, :]
         class_probs_plot = class_probs_cpu[b, :]
@@ -689,7 +686,7 @@ def print_classprobs_realtime(class_probs, class_labels, savedir, epoch, iter_cu
             })  # Confidence intervals
 
         # Plot using Seaborn
-        pl.figure(figsize=(12, 6))
+        fig = pl.figure(figsize=(12, 6))
         # sns.barplot(x='Class', y='Mean Probability', data=data, yerr=data['CI'], capsize=0.1, color='skyblue')
         bar_plot = sns.barplot(x='Class', y='Mean Probability', data=data, capsize=0.1, color='skyblue')
 
@@ -715,6 +712,32 @@ def print_classprobs_realtime(class_probs, class_labels, savedir, epoch, iter_cu
         pl.close(fig)    
 
         pl.close('all') 
+
+def print_confusion_realtime(class_probs, class_labels, savedir, epoch, iter_curr, classifier_num_pats, **kwargs):
+    batchsize = class_probs.shape[0]
+
+    class_probs_cpu = class_probs.detach().cpu().numpy()
+    true_labels = class_labels.detach().cpu().numpy()
+    predicted_labels = np.argmax(class_probs_cpu, axis=1)
+    
+    cm = confusion_matrix(true_labels, predicted_labels)
+
+    # Create a mask for the diagonal
+    mask = np.eye(cm.shape[0], dtype=bool)
+    
+    fig = pl.figure(figsize=(12, 12))  # Square figure
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", mask=mask, cbar=False)
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Oranges", mask=~mask, cbar=False)
+    pl.xlabel("Predicted Labels")
+    pl.ylabel("True Labels")
+    pl.title("Confusion Matrix")
+    
+    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    savename_jpg = f"{savedir}/JPEGs/RealtimeConfusion_epoch{epoch}_iter{iter_curr}.jpg"
+    pl.savefig(savename_jpg)
+    pl.close(fig)    
+
+    pl.close('all') 
 
 def print_autoreg_raw_predictions(gpu_id, epoch, pat_id, rand_file_count, raw_context, raw_pred, raw_target, autoreg_channels, savedir, num_realtime_dims, **kwargs):
 

@@ -80,7 +80,7 @@ def gaussian_kernel(x, y, sigma):
     # Compute Gaussian kernel
     return torch.exp(-dist_sq / (2 * sigma ** 2))
 
-def mmd_loss_function(x, y, weight):
+def mmd_loss_function(x, y, weight, sigma_override, sigma_clip, **kwargs):
     """
     Compute the Maximum Mean Discrepancy (MMD) between two sets of samples.
     
@@ -93,7 +93,12 @@ def mmd_loss_function(x, y, weight):
         MMD value (scalar).
     """
 
-    sigma = median_heuristic(x, y)
+    if sigma_override > 0:
+        sigma = sigma_override
+    else:
+        sigma = median_heuristic(x, y)
+        if sigma > sigma_clip:
+            sigma = sigma_clip
 
     # Compute kernel matrices
     xx = gaussian_kernel(x, x, sigma)
