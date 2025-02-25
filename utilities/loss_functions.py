@@ -36,7 +36,7 @@ def sparse_l1_reg(z, sparse_weight, **kwargs):
 
     return sparse_weight * l1_penalty
     
-def adversarial_loss_function(class_probs, file_class_label, classifier_weight):
+def adversarial_loss_function(probs, labels, classifier_weight):
 
     # Class probs comes in as [batch, seq, num_classes] softmax
     # Change to [batch * seq, num_classes] softmax
@@ -47,25 +47,59 @@ def adversarial_loss_function(class_probs, file_class_label, classifier_weight):
     # labels_batched = torch.squeeze(labels_repeated.reshape(labels_repeated.shape[0] * labels_repeated.shape[1], -1))
     # adversarial_loss = nn.functional.cross_entropy(class_probs_batched, labels_batched)
 
-    adversarial_loss = nn.functional.cross_entropy(class_probs, file_class_label) / torch.log(torch.tensor(class_probs.shape[1]))
+    adversarial_loss = nn.functional.cross_entropy(probs, labels) / torch.log(torch.tensor(probs.shape[1]))
 
     return classifier_weight * adversarial_loss
 
+def median_heuristic(x, y):
+    """
+    Compute the median pairwise distance between samples in x and y.
+    """
+    pairwise_dist = torch.cdist(x, y)  # Compute pairwise distances
+    return torch.median(pairwise_dist)
+
 # Gaussian kernel for MMD
-def gaussian_kernel(x, y, sigma=1.0):
-    return torch.exp(-torch.norm(x.unsqueeze(1) - y.unsqueeze(0), dim=2) ** 2 / (2 * sigma ** 2))
+def gaussian_kernel(x, y, sigma):
+    """
+    Compute the Gaussian kernel matrix between two sets of samples.
+    
+    Args:
+        x: Tensor of shape (n_samples, n_features).
+        y: Tensor of shape (m_samples, n_features).
+        sigma: Bandwidth parameter for the Gaussian kernel.
+    
+    Returns:
+        Kernel matrix of shape (n_samples, m_samples).
+    """
+    # Compute pairwise squared distances
+    x_sq = torch.sum(x ** 2, dim=1, keepdim=True)
+    y_sq = torch.sum(y ** 2, dim=1, keepdim=True)
+    xy = torch.matmul(x, y.t())
+    dist_sq = x_sq + y_sq.t() - 2 * xy
+    
+    # Compute Gaussian kernel
+    return torch.exp(-dist_sq / (2 * sigma ** 2))
 
-def mmd_loss_function(z, weight):
+def mmd_loss_function(x, y, weight):
+    """
+    Compute the Maximum Mean Discrepancy (MMD) between two sets of samples.
+    
+    Args:
+        x: Tensor of shape (n_samples, n_features).
+        y: Tensor of shape (m_samples, n_features).
+        sigma: Bandwidth parameter for the Gaussian kernel.
+    
+    Returns:
+        MMD value (scalar).
+    """
 
-    z_batched = z.reshape(z.shape[0] * z.shape[1], z.shape[2])
+    sigma = median_heuristic(x, y)
 
-    # Sample from standard Gaussian prior
-    prior_samples = torch.randn_like(z_batched)
-
+    # Compute kernel matrices
+    xx = gaussian_kernel(x, x, sigma)
+    yy = gaussian_kernel(y, y, sigma)
+    xy = gaussian_kernel(x, y, sigma)
+    
     # Compute MMD
-    z_kernel = gaussian_kernel(z_batched, z_batched)
-    prior_kernel = gaussian_kernel(prior_samples, prior_samples)
-    cross_kernel = gaussian_kernel(z_batched, prior_samples)
-    mmd = z_kernel.mean() + prior_kernel.mean() - 2 * cross_kernel.mean()
-
-    return mmd * weight
+    mmd = xx.mean() + yy.mean() - 2 * xy.mean()
+    return mmd * weight, sigma

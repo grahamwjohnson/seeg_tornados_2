@@ -211,12 +211,24 @@ class GradientReversal(nn.Module):
     def forward(self, x, alpha):
         return GradientReversalLayer.apply(x, alpha)
 
+class LinearWithDropout(nn.Module):
+    def __init__(self, input_dim, output_dim, dropout_prob=0.5):
+        super(LinearWithDropout, self).__init__()
+        self.linear = nn.Linear(input_dim, output_dim)
+        self.dropout = nn.Dropout(dropout_prob)
+
+    def forward(self, x):
+        x = self.linear(x)  # Apply linear transformation
+        x = self.dropout(x)  # Apply dropout internally
+        return x
+
 # Define the Adversarial Classifier with Gradient Reversal
 class AdversarialClassifier(nn.Module):
-    def __init__(self, latent_dim, classifier_hidden_dims, classifier_num_pats, **kwargs):
+    def __init__(self, latent_dim, classifier_hidden_dims, classifier_num_pats, classifier_dropout, **kwargs):
         super(AdversarialClassifier, self).__init__()
         self.gradient_reversal = GradientReversal()
         
+        self.classifier_dropout = classifier_dropout
         self.mlp_layers = nn.ModuleList()
 
         # Input layer
@@ -226,9 +238,9 @@ class AdversarialClassifier(nn.Module):
 
         # Hidden layers
         for i in range(len(classifier_hidden_dims) - 1):
-            self.mlp_layers.append(nn.Linear(classifier_hidden_dims[i], classifier_hidden_dims[i + 1]))
+            self.mlp_layers.append(LinearWithDropout(classifier_hidden_dims[i], classifier_hidden_dims[i + 1], classifier_dropout))
             self.mlp_layers.append(nn.SiLU())
-            self.mlp_layers.append(RMSNorm(classifier_hidden_dims[i + 1]))
+            # self.mlp_layers.append(RMSNorm(classifier_hidden_dims[i + 1]))
 
         # Output layer
         self.mlp_layers.append(nn.Linear(classifier_hidden_dims[-1], classifier_num_pats)) # No activation and no norm

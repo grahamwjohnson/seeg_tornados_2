@@ -571,40 +571,33 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier):
 
 # PLOTTING
 
-def print_latent_realtime(mu, logvar, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
+def print_latent_realtime(latent, prior, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
 
     dims_to_plot = np.arange(0,num_realtime_dims)
-
-    batchsize = mu.shape[0]
-
-    for b in range(0, batchsize):
         
-        # Make new grid/fig
-        gs = gridspec.GridSpec(1, 2)
-        fig = pl.figure(figsize=(20, 14))
+    # Make new grid/fig
+    gs = gridspec.GridSpec(1, 2)
+    fig = pl.figure(figsize=(20, 14))
 
-        # Only print for one batch index at a time
-        mu_plot = mu[b, :, 0:len(dims_to_plot)]
-        logvar_plot = logvar[b, :, 0:len(dims_to_plot)]
+    # Only print for one batch index at a time
+    latent_plot = latent[:, 0:len(dims_to_plot)]
+    prior_plot = prior[:, 0:len(dims_to_plot)]
 
-        df = pd.DataFrame({
-            'dimension': np.tile(dims_to_plot, mu_plot.shape[0]),
-            'mu': mu_plot.flatten(),
-            'logvar': logvar_plot.flatten() 
-        })
+    df = pd.DataFrame({
+        'dimension': np.tile(dims_to_plot, latent_plot.shape[0]),
+        'latent': latent_plot.flatten(),
+        'prior': prior_plot.flatten() 
+    })
 
-        sns.jointplot(data=df, x="mu", y="logvar", hue="dimension")
-        fig.suptitle(f"{file_name[b]}, epoch: {epoch}, iter: {iter_curr}")
+    sns.jointplot(data=df, x="latent", y="prior", hue="dimension")
+    fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
 
-        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-        # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-        savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch{b}.jpg"
-        # savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch_{b}.svg"
-        pl.savefig(savename_jpg)
-        # pl.savefig(savename_svg)
-        pl.close(fig)    
+    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}.jpg"
+    pl.savefig(savename_jpg)
+    pl.close(fig)    
 
-        pl.close('all') 
+    pl.close('all') 
     
 def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_realtime_channels_recon, num_recon_samples, **kwargs):
 

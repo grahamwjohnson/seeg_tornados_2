@@ -65,10 +65,9 @@ latent_dim: 1024 # 2048
 decoder_base_dims: kwargs['decoder_base_dims'] = kwargs['latent_dim'] # after this layer, it will be connected into FC to [batch, padded_channels * seq_len] to prepare for decoder transformer input
 
 ### Classifier
-classifier_hidden_dims: [2048, 4096, 4096, 2048, 1024]
+classifier_hidden_dims: [2048, 4096, 2048, 1024]
 classifier_num_pats: 40 # Hardcoded  ########
-
-
+classifier_dropout: 0.1
 
 # WAE Optimizer hyperparameters
 core_weight_decay: 0.1
@@ -113,11 +112,12 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 ### Dynamic Weights ###
 
 # Beta WAE controls
-MMD_max: kwargs['MMD_max'] = 1 # 3e-4 # Pangolin 1e-4 ############# Check if loss is actually used!!! May be commented out in training script ###############
-MMD_min: kwargs['MMD_min'] = 1
-MMD_stall_epochs: 0 # No MMD weight rise until stall is complete
-MMD_epochs_AT_max: 40
-MMD_epochs_TO_max: 20
+MMD_max: kwargs['MMD_max'] = 100 # 3e-4 # Pangolin 1e-4 ############# Check if loss is actually used!!! May be commented out in training script ###############
+MMD_min: kwargs['MMD_min'] = 0
+MMD_stall_epochs: 1 # No MMD weight rise until stall is complete
+MMD_epochs_AT_max: 99999
+MMD_epochs_TO_max: 5
+running_mmd_passes: 500
  
 # Sparsity weight control
 Sparse_max: kwargs['Sparse_max'] = 1e-7 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
@@ -159,7 +159,6 @@ LR_val_cls: 1e-4
 manual_step_size_val_core: 10
 manual_gamma_val_core: 0.5
 val_subsample_file_factor: 64 # Only iterates through file_lnegth/X
-
 
 
 delete_old_checkpoints: True   

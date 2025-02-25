@@ -402,6 +402,8 @@ class Trainer:
         inference_window_sec_list: list,
         inference_stride_sec_list: list,
         recent_display_iters: int,
+        running_mmd_passes: int,
+        classifier_num_pats: int,
         **kwargs
     ) -> None:
         self.world_size = world_size
@@ -432,6 +434,8 @@ class Trainer:
         self.inference_window_sec_list = inference_window_sec_list
         self.inference_stride_sec_list = inference_stride_sec_list
         self.recent_display_iters = recent_display_iters
+        self.running_mmd_passes = running_mmd_passes
+        self.classifier_num_pats = classifier_num_pats
         self.wandb_run = wandb_run
         self.kwargs = kwargs
 
@@ -445,6 +449,15 @@ class Trainer:
         # Set up wae & transformer with DDP
         self.wae = DDP(wae, device_ids=[gpu_id])   # find_unused_parameters=True
                     
+        # Running MMD window for latent data
+        self.accumulated_z = torch.randn(self.running_mmd_passes, self.latent_dim).to(self.gpu_id)
+        self.accumulated_prior = torch.randn(self.running_mmd_passes, self.latent_dim).to(self.gpu_id)
+
+        # Running class labels for classifier
+        self.accumulated_labels = torch.randn(self.running_mmd_passes, self.classifier_num_pats).to(self.gpu_id)
+        self.accumulated_class_probs = torch.randn(self.running_mmd_passes, self.classifier_num_pats).to(self.gpu_id)
+        self.next_update_index = 0
+
         # Watch with WandB
         wandb.watch(self.wae)
         
@@ -492,6 +505,41 @@ class Trainer:
             utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch, **kwargs)
             print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
 
+    def _update_mmd_window(
+        self,
+        mean_latent, 
+        new_prior_samples,
+        file_class_label,
+        class_probs_mean_of_latent
+        ):
+
+        num_new_updates = mean_latent.shape[0]
+        if (self.next_update_index + num_new_updates) < self.running_mmd_passes:
+            self.accumulated_z[self.next_update_index: self.next_update_index + num_new_updates, :] = mean_latent
+            self.accumulated_prior[self.next_update_index: self.next_update_index + num_new_updates, :] = new_prior_samples
+            self.accumulated_labels[self.next_update_index: self.next_update_index + num_new_updates, :] = file_class_label
+            self.accumulated_class_probs[self.next_update_index: self.next_update_index + num_new_updates, :] = class_probs_mean_of_latent
+            
+            self.next_update_index = self.next_update_index + num_new_updates
+
+        # Rollover
+        else:
+            residual_num = (self.next_update_index + num_new_updates) % self.running_mmd_passes
+            end_num = num_new_updates - residual_num
+            self.accumulated_z[self.next_update_index: self.next_update_index + end_num, :] = mean_latent[:end_num, :]
+            self.accumulated_z[0: residual_num, :] = mean_latent[end_num:, :]
+
+            self.accumulated_prior[self.next_update_index: self.next_update_index + end_num, :] = new_prior_samples[:end_num, :]
+            self.accumulated_prior[0: residual_num, :] = new_prior_samples[end_num:, :]
+
+            self.accumulated_labels[self.next_update_index: self.next_update_index + end_num, :] = file_class_label[:end_num, :]
+            self.accumulated_labels[0: residual_num, :] = file_class_label[end_num:, :]
+
+            self.accumulated_class_probs[self.next_update_index: self.next_update_index + end_num, :] = class_probs_mean_of_latent[:end_num, :]
+            self.accumulated_class_probs[0: residual_num, :] = class_probs_mean_of_latent[end_num:, :]
+
+            self.next_update_index = residual_num
+            
     def _run_epoch(
         self, 
         dataset_curr, 
@@ -648,19 +696,25 @@ class Trainer:
                     ### WAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
                     x_hat = self.wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
 
+                    # Update the running MMD window
+                    mean_latent = torch.mean(latent, dim=1)
+                    new_prior_samples = torch.randn_like(mean_latent)
+                    self._update_mmd_window(mean_latent, new_prior_samples, file_class_label, class_probs_mean_of_latent)
+
                     # LOSSES: Intra-Patient 
                     recon_loss = loss_functions.recon_loss_function(
                         x=x[:, 1 + self.num_encode_concat_transformer_tokens :, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
                         x_hat=x_hat,
                         recon_weight=self.recon_weight)
 
-                    mmd_loss = loss_functions.mmd_loss_function(
-                        z=latent,
+                    mmd_loss, sigma = loss_functions.mmd_loss_function(
+                        x=self.accumulated_z,
+                        y=self.accumulated_prior,
                         weight=self.MMD_multiplier)
 
                     adversarial_loss = loss_functions.adversarial_loss_function(
-                        class_probs=class_probs_mean_of_latent, 
-                        file_class_label=file_class_label,
+                        probs=self.accumulated_class_probs, 
+                        labels=self.accumulated_class_labels,
                         classifier_weight=self.classifier_weight)
 
                     # Not currently used
@@ -675,6 +729,7 @@ class Trainer:
                     loss.backward()         
                     self.opt_wae.step()
                     self.opt_cls.step()
+                    self.accumulated_z = self.accumulated_z.detach() # Detach to allow next backpass
 
                     # Realtime terminal info and WandB 
                     if (iter_curr%self.recent_display_iters==0):
@@ -703,6 +758,7 @@ class Trainer:
                                 train_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                                 train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                                 train_MMD_Beta=self.MMD_multiplier, 
+                                train_sigma=sigma,
                                 train_ReconWeight=self.recon_weight,
                                 train_AdversarialWeight=self.classifier_weight,
                                 train_AdversarialAlpha=self.classifier_alpha,
@@ -720,6 +776,7 @@ class Trainer:
                                 val_finetune_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                                 val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                                 val_finetune_MMD_Beta=self.MMD_multiplier, 
+                                val_finetune_sigma=sigma,
                                 val_finetune_ReconWeight=self.recon_weight,
                                 val_finetune_AdversarialWeight=self.classifier_weight,
                                 val_finetune_AdversarialAlpha=self.classifier_alpha,
@@ -737,6 +794,7 @@ class Trainer:
                                 val_unseen_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                                 val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                                 val_unseen_MMD_Beta=self.MMD_multiplier, 
+                                val_unseen_sigma=sigma,
                                 val_unseen_ReconWeight=self.recon_weight,
                                 val_unseen_AdversarialWeight=self.classifier_weight,
                                 val_unseen_AdversarialAlpha=self.classifier_alpha,
@@ -754,14 +812,14 @@ class Trainer:
                             if torch.isnan(loss).any():
                                 print("WARNING: Loss is nan, no plots can be made")
                             else:
-                                # utils_functions.print_latent_realtime(
-                                #     mu = mean.cpu().detach().numpy(), 
-                                #     logvar = logvar.cpu().detach().numpy(),
-                                #     savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
-                                #     epoch = self.epoch,
-                                #     iter_curr = iter_curr,
-                                #     file_name = file_name,
-                                #     **kwargs)
+                                utils_functions.print_latent_realtime(
+                                    latent = self.accumulated_z.cpu().detach().numpy(), 
+                                    prior = self.accumulated_prior.cpu().detach().numpy(),
+                                    savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
+                                    epoch = self.epoch,
+                                    iter_curr = iter_curr,
+                                    file_name = file_name,
+                                    **kwargs)
                                 utils_functions.print_recon_realtime(
                                     x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], 
                                     x_hat=x_hat, 
