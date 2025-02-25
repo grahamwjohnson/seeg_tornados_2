@@ -454,7 +454,7 @@ class Trainer:
         self.accumulated_prior = torch.randn(self.running_mmd_passes, self.latent_dim).to(self.gpu_id)
 
         # Running class labels for classifier
-        self.accumulated_labels = torch.randn(self.running_mmd_passes, self.classifier_num_pats).to(self.gpu_id)
+        self.accumulated_labels = torch.zeros(self.running_mmd_passes, dtype=torch.int64).to(self.gpu_id)
         self.accumulated_class_probs = torch.randn(self.running_mmd_passes, self.classifier_num_pats).to(self.gpu_id)
         self.next_update_index = 0
 
@@ -517,7 +517,7 @@ class Trainer:
         if (self.next_update_index + num_new_updates) < self.running_mmd_passes:
             self.accumulated_z[self.next_update_index: self.next_update_index + num_new_updates, :] = mean_latent
             self.accumulated_prior[self.next_update_index: self.next_update_index + num_new_updates, :] = new_prior_samples
-            self.accumulated_labels[self.next_update_index: self.next_update_index + num_new_updates, :] = file_class_label
+            self.accumulated_labels[self.next_update_index: self.next_update_index + num_new_updates] = file_class_label
             self.accumulated_class_probs[self.next_update_index: self.next_update_index + num_new_updates, :] = class_probs_mean_of_latent
             
             self.next_update_index = self.next_update_index + num_new_updates
@@ -532,8 +532,8 @@ class Trainer:
             self.accumulated_prior[self.next_update_index: self.next_update_index + end_num, :] = new_prior_samples[:end_num, :]
             self.accumulated_prior[0: residual_num, :] = new_prior_samples[end_num:, :]
 
-            self.accumulated_labels[self.next_update_index: self.next_update_index + end_num, :] = file_class_label[:end_num, :]
-            self.accumulated_labels[0: residual_num, :] = file_class_label[end_num:, :]
+            self.accumulated_labels[self.next_update_index: self.next_update_index + end_num] = file_class_label[:end_num]
+            self.accumulated_labels[0: residual_num] = file_class_label[end_num:]
 
             self.accumulated_class_probs[self.next_update_index: self.next_update_index + end_num, :] = class_probs_mean_of_latent[:end_num, :]
             self.accumulated_class_probs[0: residual_num, :] = class_probs_mean_of_latent[end_num:, :]
@@ -714,7 +714,7 @@ class Trainer:
 
                     adversarial_loss = loss_functions.adversarial_loss_function(
                         probs=self.accumulated_class_probs, 
-                        labels=self.accumulated_class_labels,
+                        labels=self.accumulated_labels,
                         classifier_weight=self.classifier_weight)
 
                     # Not currently used
@@ -730,6 +730,7 @@ class Trainer:
                     self.opt_wae.step()
                     self.opt_cls.step()
                     self.accumulated_z = self.accumulated_z.detach() # Detach to allow next backpass
+                    self.accumulated_class_probs = self.accumulated_class_probs.detach() # Detach to allow next backpass
 
                     # Realtime terminal info and WandB 
                     if (iter_curr%self.recent_display_iters==0):
@@ -829,8 +830,8 @@ class Trainer:
                                     file_name = file_name,
                                     **kwargs)
                                 utils_functions.print_classprobs_realtime(
-                                    class_probs = class_probs_mean_of_latent,
-                                    class_labels = file_class_label,
+                                    class_probs = self.accumulated_class_probs,
+                                    class_labels = self.accumulated_class_labels,
                                     savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_classprob",
                                     epoch = self.epoch,
                                     iter_curr = iter_curr,
