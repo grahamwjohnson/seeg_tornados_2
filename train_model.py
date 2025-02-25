@@ -550,10 +550,10 @@ class Trainer:
                             # rand_modifer = int(random.uniform(0, num_rand_hashes -1))
                             rand_modifer = 0 # For Inference
                             hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
-                                input_string=dataset_curr.pat_ids[pat_idx], 
-                                num_channels=data_tensor.shape[1], 
-                                latent_dim=self.latent_dim, 
-                                modifier=rand_modifer)
+                                        input_string=dataset_curr.pat_ids[pat_idx], 
+                                        num_channels=data_tensor.shape[1], 
+                                        latent_dim=self.latent_dim, 
+                                        modifier=rand_modifer)
                             
                             # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
                             x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.autoencode_samples).to(self.gpu_id)
