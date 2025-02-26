@@ -9,6 +9,7 @@ from torchinfo import summary
 # Local imports
 from .Transformer import ModelArgs, Transformer, RMSNorm
 from utilities.loss_functions import adversarial_loss_function
+from loguru import logger
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -133,7 +134,7 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         
         # Step 4: Reshape for multi-head attention (seq_len, batch_size, high_dim)
         x = x.permute(1, 0, 2)  # Shape: (seq_len, batch_size, padded_channels)
-
+        
         # Step 5: Apply Input Cross-Attention at PADDED dimension 
         for layer in self.highdim_attention_layers:
             x = layer(x, x, x)  # Cross-attention (q=k=v)
@@ -156,11 +157,15 @@ class Decoder_MLP(nn.Module):
         super(Decoder_MLP, self).__init__()
         self.gpu_id = gpu_id
         self.latent_dim = latent_dim
-        self.decoder_base_dims = decoder_base_dims
+        decoder_base_dims = int(decoder_base_dims / 2)
+        self.decoder_base_dims = decoder_base_dims# hacky add on to make live work
+        output_channels = int(output_channels)
+        
         self.output_channels = output_channels
         self.decode_samples = decode_samples
 
         # Non-autoregressive decoder 
+        logger.info(f"First layer shape should be: {latent_dim} x {decoder_base_dims * decode_samples}")
         self.non_autoregressive_fc = nn.Sequential(
             nn.Linear(latent_dim, decoder_base_dims * decode_samples),
             nn.SiLU(),
@@ -180,7 +185,7 @@ class Decoder_MLP(nn.Module):
             )        
         # Now FC without norms, after reshaping so that each token is seperated
         self.non_autoregressive_output = nn.Sequential(
-            nn.Linear(decoder_base_dims * 4, output_channels),
+            nn.Linear(decoder_base_dims * 2, output_channels),
             nn.Tanh())
             
     def forward(self, z):
@@ -357,9 +362,14 @@ class VAE(nn.Module):
 
             # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
             # NOTE: you lose the priming tokens needed by transformer
-            mean = torch.stack(torch.split(mean_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
-            logvar = torch.stack(torch.split(logvar_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
-            latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
+            # import ipdb
+            # ipdb.set_trace()
+            #TODO check with this off-by one with graham
+            # import ipdb
+            # ipdb.set_trace()
+            mean = torch.stack(torch.split(mean_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens , dim=0), dim=0)
+            logvar = torch.stack(torch.split(logvar_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens , dim=0), dim=0)
+            latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens , dim=0), dim=0)
 
             # CLASSIFIER - on the mean of the means
             mean_of_means = torch.mean(mean, dim=1)

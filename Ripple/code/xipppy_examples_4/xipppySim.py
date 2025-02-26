@@ -1,4 +1,4 @@
-from datetime import datetime
+import time
 import pyedflib
 import numpy as np
 from loguru import logger
@@ -11,6 +11,7 @@ class RippleSim:
         self.snippet_size = snippet_size
         self.ch_list = ch_list
         self.stream_samps = None
+        self.start_time = int(time.time()*1000) #start time in milliseconds
     
     def _open(self, use_tcp=False):
         if use_tcp:
@@ -32,7 +33,7 @@ class RippleSim:
         logger.success(f"{ch} channels enabled with {stream_ty} samples/sec")
 
     def time(self):
-        return datetime.now().microsecond #microseconds to milliseconds
+        return int(time.time()*1000) - self.start_time #microseconds to milliseconds
 
     def cont_raw(self, num_samps, ch_list):
         """returns num_samps for defined channels
@@ -98,10 +99,10 @@ class RippleSim:
             # sample_rate = f.getSampleFrequency(channel)  # Sampling rate of the channel
             # data = f.readSignal(channel)  # Read full signal for the channel
             step_size = snippet_size - overlap
+            
             for start in range(0, num_samples - snippet_size + 1, step_size):
                 sigs = []
                 for channel in self.ch_list:
                     sigs.append(f.readSignal(channel, start=start, n=snippet_size))
-                ipdb.set_trace()
                 yield np.concatenate(sigs)
 

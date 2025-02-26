@@ -782,7 +782,7 @@ if __name__ == "__main__":
     os.environ['PYTHONHASHSEED'] = '1234'  
 
     # Read in configuration file & setup the run
-    config_f = 'config_live.yml'
+    config_f = 'train_config.yml'
     with open(config_f, "r") as f: kwargs = yaml.load(f,Loader=yaml.FullLoader)
     kwargs = utils_functions.exec_kwargs(kwargs) # Execute the arithmatic build into kwargs and reassign kwargs
     world_size, kwargs = utils_functions.run_setup(**kwargs)

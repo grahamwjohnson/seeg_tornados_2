@@ -26,7 +26,7 @@ PARALELL_NODES = 16
 # def transform_hist(linear_interp_by_ch: list,
 #                    in_channel_data: list):
     
-#     return linear_interp_by_ch[ch_idx](in_channel_data)
+#   b  return linear_interp_by_ch[ch_idx](in_channel_data)
 
 
 def employ_norm(
