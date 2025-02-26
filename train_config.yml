@@ -117,7 +117,7 @@ MMD_min: kwargs['MMD_min'] = 0
 MMD_stall_epochs: 1 # No MMD weight rise until stall is complete
 MMD_epochs_AT_max: 99999
 MMD_epochs_TO_max: 1
-running_mmd_passes: 500
+running_mmd_passes: 64
 sigma_override: -1 # if >0 will NOT use mean_heuristic to calculate sigma
 sigma_clip: 100
  

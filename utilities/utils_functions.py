@@ -590,7 +590,9 @@ def print_latent_realtime(latent, prior, pat_labels, savedir, epoch, iter_curr, 
     gs = gridspec.GridSpec(1, 2)
     fig = pl.figure(figsize=(20, 14))
 
-    sns.jointplot(data=df, x="latent", y="prior", hue="dimension")
+    g1 = sns.jointplot(data=df, x="latent", y="prior", hue="dimension")
+    xlim = g1.ax_joint.get_xlim()
+    ylim = g1.ax_joint.get_ylim()
     fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
 
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
@@ -605,7 +607,9 @@ def print_latent_realtime(latent, prior, pat_labels, savedir, epoch, iter_curr, 
     gs = gridspec.GridSpec(1, 2)
     fig = pl.figure(figsize=(20, 14))
 
-    sns.jointplot(data=df, x="latent", y="prior", hue="pat_labels")
+    g2 = sns.jointplot(data=df, x="latent", y="prior", hue="pat_labels")
+    g2.ax_joint.set_xlim(xlim)
+    g2.ax_joint.set_ylim(ylim)
     fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
 
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
