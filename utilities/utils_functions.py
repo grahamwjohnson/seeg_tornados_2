@@ -572,33 +572,49 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier):
 
 # PLOTTING
 
-def print_latent_realtime(latent, prior, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
+def print_latent_realtime(latent, prior, pat_labels, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
 
     dims_to_plot = np.arange(0,num_realtime_dims)
         
-    # Make new grid/fig
-    gs = gridspec.GridSpec(1, 2)
-    fig = pl.figure(figsize=(20, 14))
-
-    # Only print for one batch index at a time
     latent_plot = latent[:, 0:len(dims_to_plot)]
     prior_plot = prior[:, 0:len(dims_to_plot)]
 
     df = pd.DataFrame({
         'dimension': np.tile(dims_to_plot, latent_plot.shape[0]),
         'latent': latent_plot.flatten(),
-        'prior': prior_plot.flatten() 
+        'prior': prior_plot.flatten(),
+        'pat_labels': np.tile(pat_labels, num_realtime_dims)
     })
+
+    # COLOR BY DIM
+    gs = gridspec.GridSpec(1, 2)
+    fig = pl.figure(figsize=(20, 14))
 
     sns.jointplot(data=df, x="latent", y="prior", hue="dimension")
     fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
 
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-    savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}.jpg"
+    savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_colorbyDIM.jpg"
     pl.savefig(savename_jpg)
     pl.close(fig)    
 
     pl.close('all') 
+
+
+    # COLOR BY PAT
+    gs = gridspec.GridSpec(1, 2)
+    fig = pl.figure(figsize=(20, 14))
+
+    sns.jointplot(data=df, x="latent", y="prior", hue="pat_labels")
+    fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
+
+    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_colorbyPAT.jpg"
+    pl.savefig(savename_jpg)
+    pl.close(fig)    
+
+    pl.close('all') 
+
     
 def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_realtime_channels_recon, num_recon_samples, **kwargs):
 
@@ -1475,7 +1491,6 @@ def umap_subfunction(
     # Bundle the save metrics together
     # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
     return ax00, reducer, hdb, xy_lims # save_tuple
-
 
 def pacmap_subfunction(  
     atd_file,

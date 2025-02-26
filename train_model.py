@@ -457,7 +457,10 @@ class Trainer:
         self.accumulated_labels = torch.zeros(self.running_mmd_passes, dtype=torch.int64).to(self.gpu_id)
         self.accumulated_class_probs = torch.randn(self.running_mmd_passes, self.classifier_num_pats).to(self.gpu_id)
         self.next_update_index = 0
-        self.buffer_filled = False
+        if self.start_epoch == 0:
+            self.buffer_filled = True
+        else:
+            self.buffer_filled = False
 
         # Watch with WandB
         wandb.watch(self.wae)
@@ -707,7 +710,7 @@ class Trainer:
                             self.buffer_filled = True
                             print("Buffers filled, proceeding with backprop from here on")
                         else:
-                            sys.stdout.write(f"\rNo Backprop: Filling running window MMD and Classifier Buffers {self.next_update_index}/{self.running_mmd_passes}")
+                            sys.stdout.write(f"\rNo Backprop: Filling running window MMD and Classifier buffers {self.next_update_index}/{self.running_mmd_passes}")
                             sys.stdout.flush() 
                             self.accumulated_z = self.accumulated_z.detach() # No backprop on these data
                             self.accumulated_class_probs = self.accumulated_class_probs.detach() # No backprop on these data
@@ -833,6 +836,7 @@ class Trainer:
                                     utils_functions.print_latent_realtime(
                                         latent = self.accumulated_z.cpu().detach().numpy(), 
                                         prior = self.accumulated_prior.cpu().detach().numpy(),
+                                        pat_labels = self.accumulated_labels.cpu().detach().numpy(),
                                         savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
                                         epoch = self.epoch,
                                         iter_curr = iter_curr,
