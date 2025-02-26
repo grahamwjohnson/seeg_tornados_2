@@ -20,6 +20,8 @@ import joblib
 import json
 import os
 import sys
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.patches as mpatches
 from .latent_plotting import plot_latent
@@ -56,6 +58,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from annoy import AnnoyIndex
 from scipy.sparse import csr_matrix
 from sklearn.metrics import confusion_matrix
+
 
 # Local imports
 from models.WAE import print_models_flow
@@ -604,12 +607,18 @@ def print_latent_realtime(latent, prior, pat_labels, savedir, epoch, iter_curr, 
 
 
     # COLOR BY PAT
+    num_pats_sampled = len(set(pat_labels))
+    cmap_raw = plt.get_cmap('cubehelix')
+    samp_vec = np.linspace(0.1, 0.8, num_pats_sampled)  # Sample 10 colors for the palette
+    cmap_list = [mpl.colors.rgb2hex(cmap_raw(i)) for i in samp_vec]  # Convert to hex
+
     gs = gridspec.GridSpec(1, 2)
     fig = pl.figure(figsize=(20, 14))
 
-    g2 = sns.jointplot(data=df, x="latent", y="prior", hue="pat_labels")
+    g2 = sns.jointplot(data=df, x="latent", y="prior", hue="pat_labels", kind="kde", palette=cmap_list)
     g2.ax_joint.set_xlim(xlim)
     g2.ax_joint.set_ylim(ylim)
+    g2.ax_joint.get_legend().remove()
     fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
 
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
@@ -619,7 +628,6 @@ def print_latent_realtime(latent, prior, pat_labels, savedir, epoch, iter_curr, 
 
     pl.close('all') 
 
-    
 def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_realtime_channels_recon, num_recon_samples, **kwargs):
 
     x_hat = x_hat.detach().cpu().numpy()
@@ -647,22 +655,39 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_rea
     palette = sns.cubehelix_palette(n_colors=2, start=3, rot=1) 
     for b in range(0, batchsize):
         for c in range(0,len(random_ch_idxs)):
-            for seq in range(0,2):
-                if seq == 0:
-                    x_decode_plot = x_fused[b, random_ch_idxs[c], :num_recon_samples]
-                    x_hat_plot = x_hat_fused[b, random_ch_idxs[c], :num_recon_samples]
-                    title_str = 'StartOfTransSeq'
-                else:
-                    x_decode_plot = x_fused[b, random_ch_idxs[c], -num_recon_samples:]
-                    x_hat_plot = x_hat_fused[b, random_ch_idxs[c], -num_recon_samples:]   
-                    title_str = 'EndOfTransSeq'             
+            if x_fused.shape[2] > num_recon_samples: # If length of recon is bigger than desire visualized length, then plot start and end of transformer tokens
+                for seq in range(0,2):
+                    if seq == 0:
+                        x_decode_plot = x_fused[b, random_ch_idxs[c], :num_recon_samples]
+                        x_hat_plot = x_hat_fused[b, random_ch_idxs[c], :num_recon_samples]
+                        title_str = 'StartOfTransSeq'
+                    else:
+                        x_decode_plot = x_fused[b, random_ch_idxs[c], -num_recon_samples:]
+                        x_hat_plot = x_hat_fused[b, random_ch_idxs[c], -num_recon_samples:]   
+                        title_str = 'EndOfTransSeq'             
+
+                    df = pd.DataFrame({
+                        "Target": x_decode_plot,
+                        "Prediction": x_hat_plot
+                    })
+
+                    ax = fig.add_subplot(gs[b, c*2 + seq]) 
+                    sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
+                    ax.set_title(f"Ch:{random_ch_idxs[c]}\n{file_name[b]}, {title_str}", fontdict={'fontsize': 12, 'fontweight': 'medium'})
+
+                    pl.ylim(-1, 1) # Set y-axis limit -1 to 1
+
+            else: # Can fit entire seuqnce into visualization 
+                x_decode_plot = x_fused[b, random_ch_idxs[c], :]
+                x_hat_plot = x_hat_fused[b, random_ch_idxs[c], :]
+                title_str = "Entire Transformer Sequence"
 
                 df = pd.DataFrame({
                     "Target": x_decode_plot,
                     "Prediction": x_hat_plot
                 })
 
-                ax = fig.add_subplot(gs[b, c*2 + seq]) 
+                ax = fig.add_subplot(gs[b, c]) 
                 sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
                 ax.set_title(f"Ch:{random_ch_idxs[c]}\n{file_name[b]}, {title_str}", fontdict={'fontsize': 12, 'fontweight': 'medium'})
 

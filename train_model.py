@@ -404,6 +404,7 @@ class Trainer:
         recent_display_iters: int,
         running_mmd_passes: int,
         classifier_num_pats: int,
+        optimizer_forward_passes: int,
         **kwargs
     ) -> None:
         self.world_size = world_size
@@ -436,6 +437,7 @@ class Trainer:
         self.recent_display_iters = recent_display_iters
         self.running_mmd_passes = running_mmd_passes
         self.classifier_num_pats = classifier_num_pats
+        self.optimizer_forward_passes = optimizer_forward_passes
         self.wandb_run = wandb_run
         self.kwargs = kwargs
 
@@ -747,10 +749,13 @@ class Trainer:
                         self._zero_all_grads()
                         loss = recon_loss + mmd_loss + adversarial_loss 
                         loss.backward()         
-                        self.opt_wae.step()
-                        self.opt_cls.step()
                         self.accumulated_z = self.accumulated_z.detach() # Detach to allow next backpass
                         self.accumulated_class_probs = self.accumulated_class_probs.detach() # Detach to allow next backpass
+
+                        # Step optimizer at desired number of froward passes
+                        if (iter_curr%self.optimizer_forward_passes==0):
+                            self.opt_wae.step()
+                            self.opt_cls.step()
 
                         # Realtime terminal info and WandB 
                         if (iter_curr%self.recent_display_iters==0):
