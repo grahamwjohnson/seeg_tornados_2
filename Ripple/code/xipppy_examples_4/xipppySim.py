@@ -1,4 +1,5 @@
 import time
+import datetime
 import pyedflib
 import numpy as np
 from loguru import logger
@@ -12,6 +13,9 @@ class RippleSim:
         self.ch_list = ch_list
         self.stream_samps = None
         self.start_time = int(time.time()*1000) #start time in milliseconds
+        self.edf_start_time = None
+        self.edf_end_time = None
+        self.fs = None
     
     def _open(self, use_tcp=False):
         if use_tcp:
@@ -41,7 +45,7 @@ class RippleSim:
         t = self.time()
         self.snippet_size = num_samps
         try:
-            return next(self.stream_samps), t
+            return next(self.stream_samps)
         except TypeError:
             logger.error(f"self.stream_samps is not defined correctly! Val: {self.stream_samps}")
             raise BufferError("set up stream correctly!")
@@ -52,7 +56,7 @@ class RippleSim:
         t = self.time()
         self.snippet_size = num_samps
         try:
-            return next(self.stream_samps), t
+            return next(self.stream_samps)
         except TypeError:
             logger.error(f"self.stream_samps is not defined correctly! Val: {self.stream_samps}")
             raise BufferError("set up stream correctly!")
@@ -63,7 +67,7 @@ class RippleSim:
         t = self.time()
         self.snippet_size = num_samps
         try:
-            return next(self.stream_samps), t
+            return next(self.stream_samps)
         except TypeError:
             logger.error(f"self.stream_samps is not defined correctly! Val: {self.stream_samps}")
             raise BufferError("set up stream correctly!")
@@ -74,7 +78,7 @@ class RippleSim:
         t = self.time()
         self.snippet_size = num_samps
         try:
-            return next(self.stream_samps), t
+            return next(self.stream_samps)
         except TypeError:
             logger.error(f"self.stream_samps is not defined correctly! Val: {self.stream_samps}")
             raise BufferError("set up stream correctly!")
@@ -95,14 +99,29 @@ class RippleSim:
         snippet_size = self.snippet_size
         start = 0
         with pyedflib.EdfReader(self.edf_file) as f:
-            num_samples = f.getNSamples()[0]  # Total samples in the channel
+            num_samples = f.getNSamples()[0] 
+            self.edf_start_time = f.getStartdatetime() # Total samples in the channel
+            duration = f.getFileDuration()
+            self.edf_end_time = self.edf_start_time + datetime.timedelta(seconds=duration)
+            ipdb.set_trace()
             # sample_rate = f.getSampleFrequency(channel)  # Sampling rate of the channel
             # data = f.readSignal(channel)  # Read full signal for the channel
             step_size = snippet_size - overlap
-            
+            self.fs = f.getSampleFrequencies()[0] # assumes that all sampling freq are the same
+
             for start in range(0, num_samples - snippet_size + 1, step_size):
                 sigs = []
+                curr_time = self.edf_start_time + datetime.timedelta(seconds=start/self.fs)
                 for channel in self.ch_list:
                     sigs.append(f.readSignal(channel, start=start, n=snippet_size))
-                yield np.concatenate(sigs)
+                yield np.concatenate(sigs),curr_time
 
+"""
+seizure times 
+Seizure,Spat113,1,01:31:2025,02:35:39,02:37:35,FIAS,0,2025-01-31 02:35:39.000000,2025-01-25 02:37:35.000000,,,,
+Seizure,Spat113,2B,02:01:2025,19:50:06,19:51:28,Focal unknown awareness,0,2025-02-01 19:50:06.0000,2025-02-01 19:51:28.0000,,,,
+Seizure,Spat113,3B,02:02:2025,13:49:39,13:51:20,Focal unknown awareness,0,2025-02-02 13:49:39.0000,2025-02-02 13:51:20.0000,,,,
+Seizure,Spat113,4b,02:02:2025,18:09:40,18:11:14,Focal unknown awareness,0,2025-02-02 18:09:40.0000,2025-02-02 18:11:14.0000,,,,
+Seizure,Spat113,5b,02:03:2025,09:50:22,09:52:03,Focal unknown awareness,0,2025-02-03 09:50:22,2025-02-03 09:52:03,,,,
+Seizure,Spat113,6b,02:03:2025,13:33:29,13:35:08,Focal unknown awareness,0,2025-02-03 13:33:29, 2025-02-03 13:35:08,,,,
+"""

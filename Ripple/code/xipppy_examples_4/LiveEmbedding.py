@@ -2,8 +2,8 @@
 This is a script that takes live streams of SEEG data and runs inference
 on a brain state embedding model on the SEEG data.
 1. First uses digital notch filters for SEEG data
-2. Feeds data into histogram normalization pipeline
-3. Runs hist norm data through GPU and performs inference on model
+2. Feeds data into histogram eqalization pipeline
+3. Runs hist eq data through GPU and performs inference on model
 4. Generates an embedding then feeds embedding of last 5s of data into pacmap-> generates an embedding
 5. plots this embedding relative to a preplotted 100 point plot 
 
@@ -16,6 +16,7 @@ SIM_MODE = True
 N_CH =129
 import ipdb
 import time
+from datetime import datetime, timedelta
 import sys
 import re
 import yaml
@@ -30,6 +31,8 @@ from time import sleep
 import loguru
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+
 #use xipppySim if not connected to ripple
 
 import sys
@@ -48,7 +51,7 @@ if SIM_MODE:
     snippet_size = 4*512 #number of seconds * sampling_freqdf
     N_CH_EDF = 148 # this mayh be different than them model was trained on because of the addition of Micro+MAcro
                 # We often ignore the micro channels and thus a discrepancy
-    stream_edf = "/home/ghassanmakhoul/Documents/data/Spat113/Spat113_01302025_07021304_clabel.EDF"
+    stream_edf = "/home/ghassanmakhoul/Documents/data/Spat113/Spat113_02012025_07014401_clabel.EDF"
     xp = RippleSim(stream_edf, snippet_size, [i for i in range(N_CH_EDF)])
     #set up stream here
 else:
@@ -59,14 +62,14 @@ class LiveStreamBrainStateEmbedding:
     This class sets up and displays a livestream of acquired data and its live periodogram.
     """
 
-    def __init__(self,subject, model_file, hist_eq_pkl, pac_prefix, display_s=5, window_ms=5000, stream_ch=[a for a in range(128)], stream_ty='hifreq'):
+    def __init__(self,subject, model_file, hist_eq_pkl, pac_prefix, config_f, display_s=5, window_ms=5000, stream_ch=[a for a in range(128)], stream_ty='hifreq', gpu_id=0, **kwargs):
         """
         Initialization function for setting up the LiveStreamPeriodogram class.
 
         Parameters:
             subject : subject name (should follow 'pat' convention) Important for streaming and saving of data
             model_file : location of the saved model weights for running inference, TODO: update to reflect how /where model loaded
-            pre_proc_pkl : location of a pickle file containing the histogram normalization code
+            pre_proc_pkl : location of a pickle file containing the histogram eqalization code
             display_s: Number of seconds of data to display on live plots
             window_ms: Number of milliseconds in FFT sliding window
             stream_ch: Channel number to record from
@@ -83,7 +86,8 @@ class LiveStreamBrainStateEmbedding:
         else:
             self.ripple_freq = 7500 # TODO add cases for streams later. for now hifreq
             self.n_stream_ch = len(self.stream_ch)
-        self.bip_df_path = "/home/ghassanmakhoul/Documents/data/Resamp_512_Hz/bipole_filtered_wholeband_unscaled_big_pickles/Spat113/metadata/Spat113_bipolar_montage_names_and_indexes_from_rawEDF.csv"
+        self.event_df = kwargs['event_df']
+        self.bip_df_path = kwargs['bip_path']
         self.bip_df = pd.read_csv(self.bip_df_path)
         self.model_sampling_freq = 512 #magic natus number for now
         self.pac_prefix = pac_prefix
@@ -93,6 +97,8 @@ class LiveStreamBrainStateEmbedding:
         self.transformed_latent_space = []
         self.curr_prediction_count = 0
         self.model_kwargs = dict()
+        self.gpu_id = gpu_id
+        self.config_f = config_f
         # Setup frequency range (x-axis limits) and decibel range (y-axis limits) for periodogram
         self.f_range = [0, 2000]
         self.db_range = [-50, 100]
@@ -103,26 +109,32 @@ class LiveStreamBrainStateEmbedding:
         # Pause for display duration to fill signal buffer
         sleep(self.display_s)
 
-        # Load histogram norm pkl for normalizing data
-        self.hist_norm = self.setup_hist_equalize(hist_eq_pkl)
+        # Load histogram eq pkl for eqalizing data
+        self.hist_eq = self.setup_hist_equalize(hist_eq_pkl)
         #Load model for inference 
-        self.model = self.setup_inference(model_file)
+        self.model_kwargs = {}
+        self.model = self.setup_inference()
         # set up empty tensor to track embeddings 
         self.curr_embeddings = torch.zeros(int(display_s), self.model_kwargs['transformer_seq_length'],self.model_kwargs['latent_dim'])
         # Setup parameters for performing live pacmap calculation
         self.sampling_rate, self.window_samp, self.n_sig, self.t_sig, = self.setup_stream()
         self.PACMAP = None
-        self.setup_pacmap_settings() #should set pacmap
+        self.setup_pacmap_settings(**self.model_kwargs) #should set pacmap
         self.projections = []
 
         # Setup plots for live signal and live periodogram subplots
+        self.colors = None 
+        self.mymap = None
+        # get the colors from the color map
+        self.my_colors = []
+        self.pt_colors = []
         self.live_plot, self.ax_pre, self.ax_live, \
-         self.h_pre, self.h_live, self.ax_raw, self.ax_clean, self.ax_histnorm= self.setup_plots()
-        self.h_raw, self.h_clean, self.h_histnorm = None, None, None
+         self.h_pre, self.h_live, self.ax_raw, self.ax_clean, self.ax_histeq= self.setup_plots()
+        self.h_raw, self.h_clean, self.h_histeq = None, None, None
 
         self.raw_sig = np.array([])
         self.clean_sig = np.array([])
-        self.norm_sig = np.array([])
+        self.eq_sig = np.array([])
 
     def connect_to_processor(self):
         """
@@ -209,10 +221,10 @@ class LiveStreamBrainStateEmbedding:
 
 
     def setup_hist_equalize(self, pre_proc_pkl:str):
-        """set up histogram normalization runner
+        """set up histogram eqalization runner
 
         Args:
-            pre_proc_pkl (str): Location of the pickle file for the histogram normalization code
+            pre_proc_pkl (str): Location of the pickle file for the histogram eqalization code
         """
         import joblib
         with open(pre_proc_pkl, "rb") as f:
@@ -228,7 +240,7 @@ class LiveStreamBrainStateEmbedding:
         scaled_filt_data = scaled_filt_data.clip(-1,1)
         return scaled_filt_data
         
-    def setup_inference(self, config_f: str):
+    def setup_inference(self):
         """loads the pytorch model to perform live inference
 
         Args:
@@ -236,19 +248,22 @@ class LiveStreamBrainStateEmbedding:
         """
 
         #TODO: implement make modular in future
-        config_f = '/home/ghassanmakhoul/Documents/Tornadoes_v1/config_live.yml'
-        with open(config_f, 'r') as f : kwargs = yaml.load(f, Loader=yaml.FullLoader)
+        assert os.path.exists(self.model_file), f"Need to pass valid model file location. Got: {self.model_file}"
+        assert self.config_f != '' and os.path.exists(self.config_f), "Pass in valide config file"
+        with open(self.config_f, 'r') as f : kwargs = yaml.load(f, Loader=yaml.FullLoader)
         kwargs = utils_functions.exec_kwargs(kwargs) # Execute the arithmatic build into kwargs and reassign kwargs
         world_size = torch.cuda.device_count()
         #NOTE: very important that you feed in
         # the same number type of kwargs to inference
         self.model_kwargs = kwargs 
         if world_size == 1:
-            gpu_id = 0
+            self.gpu_id = 0
         else:
-            gpu_id = 0
-        vae = VAE(pu_id=gpu_id, **kwargs)
-        map_location = {'cuda:%d' % 0: 'cuda:%d' % gpu_id}
+            self.gpu_id = 0
+        vae = VAE(gpu_id=self.gpu_id, **kwargs)
+        vae = vae.to(self.gpu_id)
+        vae.eval()
+        map_location = {'cuda:%d' % 0: 'cuda:%d' % self.gpu_id}
         vae_state_dict_prev = torch.load(self.model_file, map_location=map_location)
         
         
@@ -299,9 +314,10 @@ class LiveStreamBrainStateEmbedding:
 
         return sampling_rate, window_samp, n_sig, t_sig
 
-    def setup_pacmap_settings(self):
+    def setup_pacmap_settings(self, num_iters=(150,150,150), **kwargs):
             #NOTE: why am I loading the pacmap and setting up the streaming settings all at once?
             self.PACMAP = pacmap.load(self.pac_prefix)
+            self.PACMAP.num_iters = num_iters
 
 
     def setup_plots(self):
@@ -327,29 +343,47 @@ class LiveStreamBrainStateEmbedding:
         # generate a numpy random array (-5 +5 on all axes, and incorporate time stamps for seizures appropriately)
         lim_file = self.pac_prefix.replace("PaCMAP","") + 'xy_lims.pkl'
         with open(lim_file, 'rb') as f: lims = pickle.load(f)
+        gs = gridspec.GridSpec(4, 2, height_ratios=[6, 1, 1, 1])  # Top row is twice as tall!
+
+
         xlims, ylims = lims
-        live_fig, (ax_pre, ax_live, ax_raw, ax_clean, ax_histnorm) = plt.subplots(5, 1,figsize=(10,10))
+        live_fig = plt.figure(figsize=(8,11))
         x = np.random.random(10)
         y = np.sin(x)
         # Pretrained pacmap values here 
-        h_pre = ax_pre.scatter(x,y)  # Add colors
         # TODO find out the dimensions of the PACMAP
+        ax_pre = live_fig.add_subplot(gs[0,0])
+        ax_pre.set_aspect('equal', adjustable='box')
+        h_pre = ax_pre.scatter(x,y)  # Add colors
         ax_pre.set_xlim(*xlims)
         ax_pre.set_ylim(*ylims)
-        ax_pre.set_title(f'Pretrained Brain State Embedding for {self.subject}')
+        ax_pre.set_title(f'Pretrained   Embedding: {self.subject}')
         ax_pre.set_xlabel('Dimension 1')
         ax_pre.set_ylabel('Dimension 2')
         # Add pacmap
+        ax_live =live_fig.add_subplot(gs[0,1])
+        ax_live.set_aspect('equal', adjustable='box')
         h_live = ax_live.scatter(x,y)  # Live PacMAP embeddings
-        ax_live.set_ylim(*xlims)
-        ax_live.set_xlim(*ylims)
-        ax_live.set_title(f'Live Brain State Embedding for {self.subject}')
+        ax_live.set_xlim(*xlims)
+        ax_live.set_ylim(*ylims)
+        ax_live.set_title(f'Live Prediction: {self.subject}')
         ax_live.set_xlabel('Dimension 1')
         ax_live.set_ylabel('Dimension 2')
 
-        plt.subplots_adjust(hspace=0.4)
+        ##Set up colors for PaCMAP scatter
+        self.colors = np.r_[np.linspace(0.1, 1, 5), np.linspace(0.1, 1, 5)] 
+        self.mymap = plt.get_cmap("Reds")
+        # get the colors from the color map
+        self.my_colors = self.mymap(self.colors)
 
-        return live_fig, ax_pre, ax_live, h_pre, h_live, ax_raw, ax_clean, ax_histnorm
+        #setup SEEG plots
+        ax_raw = live_fig.add_subplot(gs[1,:])
+        ax_clean=live_fig.add_subplot(gs[2,:])
+        ax_histeq = live_fig.add_subplot(gs[3,:])
+        plt.subplots_adjust(hspace=0.55)
+        plt.suptitle("Live Brain State Embedding", fontweight='bold')
+
+        return live_fig, ax_pre, ax_live, h_pre, h_live, ax_raw, ax_clean, ax_histeq
     
     def reshape_stream(self, stream_data):
         """Reshape stream data from a [n_samp*n_ch,1] array to a 
@@ -379,46 +413,48 @@ class LiveStreamBrainStateEmbedding:
         point of failure if the config file does not reflect the most
         up to date model params
         """
-        n_ch, t_samps = inp_stream.shape
-        params = self.model_kwargs
-        n_ch_model = params['padded_channels']
-        num_samples_in_forward = params['transformer_seq_length']* params['autoencode_samples']
-        num_windows_in_file = inp_stream.shape[-1] /num_samples_in_forward
-        assert(num_windows_in_file %1) == 0, "Error in dividing up input steam into batches!"
-        num_windows_in_file = int(num_windows_in_file)
-        num_samples_in_forward = int(num_samples_in_forward)
+        with torch.no_grad(): # Does not allocate for autograd/build computational graph.
+            n_ch, t_samps = inp_stream.shape
+            params = self.model_kwargs
+            n_ch_model = params['padded_channels']
+            num_samples_in_forward = params['transformer_seq_length']* params['autoencode_samples']
+            num_windows_in_file = inp_stream.shape[-1] /num_samples_in_forward
+            assert(num_windows_in_file %1) == 0, "Error in dividing up input steam into batches!"
+            num_windows_in_file = int(num_windows_in_file)
+            num_samples_in_forward = int(num_samples_in_forward)
 
-        # reshape data to create a batch_size x n_ch x t_samps tensor
-        # currently using naive method just because i know it works
-        data = torch.zeros(num_windows_in_file, n_ch_model, num_samples_in_forward)
-        inp_stream = torch.from_numpy(inp_stream)
-        inp_stream = inp_stream.type(data.dtype) # cast input stream to same type as data 
-        s, e = 0, num_samples_in_forward
-        ch_idx = np.arange(n_ch)
-        for w in range(num_windows_in_file):
+            # reshape data to create a batch_size x n_ch x t_samps tensor
+            # currently using naive method just because i know it works
+            data = torch.zeros(num_windows_in_file, n_ch_model, num_samples_in_forward)
+            inp_stream = torch.from_numpy(inp_stream)
+            inp_stream = inp_stream.type(data.dtype) # cast input stream to same type as data 
+            s, e = 0, num_samples_in_forward
+            ch_idx = np.arange(n_ch)
+            for w in range(num_windows_in_file):
 
-            data[w,ch_idx,:] = inp_stream[:,s:e]
-            s = e
-            e = (w+1)*num_samples_in_forward + num_samples_in_forward
-        # ipdb.set_trace()
-        # collect sequential embeddings for transformer to pseudo-batch
-        # In this case num_windows_in_file will be used as the batch dimension
-        # double check implementation 
-        for w in range(1):
-            x = torch.zeros(num_windows_in_file, params['transformer_seq_length'], n_ch_model,params['autoencode_samples'])
-            start_idx = w*num_samples_in_forward
-            for embedding_idx in range(0,params['transformer_seq_length']):
-                end_idx = start_idx + params['autoencode_samples']*embedding_idx + params['autoencode_samples']
-                x[:,embedding_idx,:,:] = data[:,:,end_idx-params['autoencode_samples']: end_idx]
-            mean,_,_,_ = self.model.forward(x, reverse=False)
-            mean = mean.cpu()
-            # mean = torch.stack(\
-            #     torch.split(mean_batched, \
-            #         params['transformer_seq_length'] - params['num_encode_concat_transformer_tokens'], \
-            #         dim=0), dim=0)
-            # no longer have to handle, thanks to Graham-y:)
-            self.update_prediction(mean)
-        logger.info(f"Ran inference on {num_windows_in_file} windows ")
+                data[w,ch_idx,:] = inp_stream[:,s:e]
+                s = e
+                e = (w+1)*num_samples_in_forward + num_samples_in_forward
+            # ipdb.set_trace()
+            # collect sequential embeddings for transformer to pseudo-batch
+            # In this case num_windows_in_file will be used as the batch dimension
+            # double check implementation 
+            for w in range(1):
+                x = torch.zeros(num_windows_in_file, params['transformer_seq_length'], n_ch_model,params['autoencode_samples']).to(self.gpu_id)
+                start_idx = w*num_samples_in_forward
+                for embedding_idx in range(0,params['transformer_seq_length']):
+                    end_idx = start_idx + params['autoencode_samples']*embedding_idx + params['autoencode_samples']
+                    x[:,embedding_idx,:,:] = data[:,:,end_idx-params['autoencode_samples']: end_idx]
+                mean,_,_,_ = self.model.forward(x, reverse=False)
+
+                mean = mean.cpu().numpy()
+                # mean = torch.stack(\
+                #     torch.split(mean_batched, \
+                #         params['transformer_seq_length'] - params['num_encode_concat_transformer_tokens'], \
+                #         dim=0), dim=0)
+                # no longer have to handle, thanks to Graham-y:)
+                self.update_prediction(mean)
+            logger.info(f"Ran inference on {num_windows_in_file} windows ")
         gc.collect()
         return
 
@@ -445,10 +481,40 @@ class LiveStreamBrainStateEmbedding:
         # within forward pass, model is gonna shuffle axes like crazy
         # should get back n_ch x 1024 
         # mean across the 248 mean dimension 
-        #Inpt dim : [batch_size x transformer_seq_length, pat_ch x auto_encoder_samps]
+        # Inpt dim : [batch_size x transformer_seq_length, pat_ch x auto_encoder_samps]
         # 
         
         self.batch_inference(data)
+
+    def calc_seizure_risk(self, ts, sim_mode=SIM_MODE):
+        """Calculates seizure risk and reports a live score for bar chart"""
+        def conv_datetime(row):
+            """converts our event csv format to datetime obj"""
+            format_string = "%m:%d:%Y %H:%M:%S"
+            day = row['Date (MM:DD:YYYY)'].values[0]
+            time_of_day = row['Onset String (HH:MM:SS)'].values[0]
+            date_str = day.values[0] + " " + time.values[0]
+            return  datetime.strptime(date_str, format_string)
+
+
+        if sim_mode:
+            #shouldn't calc each time but for now okay            
+            prev_events = self.event_df.apply(conv_datetime, axis=0)
+            time_diff = prev_events - ts
+
+            any_below_2_hours = (time_diff.dt.total_seconds() < 2 * 3600).any()
+            if any_below_2_hours:
+                logger.warning("WITHIN 2 hours of a seizure")
+                
+                return    
+
+            any_below_4_hours = (time_diff.dt.total_seconds() < 4 * 3600).any()
+            if any_below_4_hours:
+                logger.warning("WITHIN 4 hours of a seizure")
+                return
+            return
+            #calculate based on time to nearest seizure
+
 
     def update_time_now(self) -> bool:
         """Returns True/False if enough 
@@ -469,9 +535,9 @@ class LiveStreamBrainStateEmbedding:
             self.pred_batch = []
             
             
-        mean_seq = torch.mean(mean_batched,dim=1) #get mean embedding per-pseudobatch
-        mean_of_means = torch.mean(mean_seq, dim=0) #
-        mu = mean_of_means.detach().numpy()
+        mean_seq = np.mean(mean_batched,axis=1) #get mean embedding per-pseudobatch
+        mean_of_means = np.mean(mean_seq, axis=0) #
+        mu = mean_of_means
         self.pred_batch.append(mu.reshape(1,-1))
 
     
@@ -481,6 +547,7 @@ class LiveStreamBrainStateEmbedding:
         """
         mean_proj = np.mean(np.concatenate(self.pred_batch), axis=0).reshape(1,-1)
         #since we are passing one sample at a time, just pull out first set of coords
+        logger.info(f"Shape of updating projection: {mean_proj.shape}")
         transformed_latent_space = self.PACMAP.transform(mean_proj)[0]
         if len(self.projections) == 0:
             self.projections = transformed_latent_space 
@@ -489,8 +556,8 @@ class LiveStreamBrainStateEmbedding:
         logger.success(f"Updated embeddings for time:{self.curr_prediction_count-self.pacmap_win_size}s to {self.curr_prediction_count}s")
         return
     
-    def update_plots(self):
-            """Subroutine that updates all plots, live_trajectories, example seeg_raw, seeg_clean, seeg_histnorm
+    def update_plots(self,i):
+            """Subroutine that updates all plots, live_trajectories, example seeg_raw, seeg_clean, seeg_histeq
             #if we have accumulated 60s worth of embedding, then pacmap 
             # has enough information to generate meaningful low dim representation
             
@@ -498,37 +565,44 @@ class LiveStreamBrainStateEmbedding:
             # assume embeddings have shape N_samp x 2_dim
 
             """
-            assert  len(self.raw_sig) != 0 and len(self.clean_sig) != 0 and len(self.norm_sig) != 0, "Signals have not been added to plot vars"
+            assert  len(self.raw_sig) != 0 and len(self.clean_sig) != 0 and len(self.eq_sig) != 0, "Signals have not been added to plot vars"
             #update live pacmap
-            self.h_live.set_offsets(self.projections)
+            ipdb.set_trace()
+            self.pt_colors.append(self.my_colors[i%5])
+            self.h_live.set_offsets(self.projections )
+            self.h_live.set_facecolor(self.pt_colors)
             self.ax_live.autoscale_view()
             # self.ax_sig.relim()
             # Line plots, typically gonna be lineplot
-            self.ax_clean, self.ax_histnorm
+            self.ax_clean, self.ax_histeq
             t_raw = np.arange(self.raw_sig.shape[1])/self.ripple_freq
-            t_hist_norm = t_clean = np.arange(self.clean_sig.shape[1])/self.model_sampling_freq
-            ch = 0 
+            t_hist_eq = t_clean = np.arange(self.clean_sig.shape[1])/self.model_sampling_freq
+            ch = np.random.randint(0, self.bip_df.shape[0])
             ch_names = self.bip_df.bip_names.values[ch]
 
             if self.h_raw == None:
-                self.h_raw = self.ax_raw.plot(t_raw, self.raw_sig[0,:])
+                self.h_raw = self.ax_raw.plot(t_raw, self.raw_sig[ch,:])
                 self.ax_raw.set_title(f'Raw SEEG for  {self.subject} at Ch {ch_names}')
-                self.ax_raw.set_xlabel('Time (s)')
                 self.ax_raw.set_ylabel('uV')
+                self.ax_raw.set_xlabel('Time (s)')
+                
 
-                self.h_clean = self.ax_clean.plot(t_clean, self.clean_sig[0,:])
+                self.h_clean = self.ax_clean.plot(t_clean, self.clean_sig[ch,:])
                 self.ax_clean.set_title(f'Clean SEEG for  {self.subject} at Ch {ch_names}')
-                self.ax_clean.set_xlabel('uV ')
+                self.ax_clean.set_ylabel('uV ')
                 self.ax_clean.set_xlabel('Time (s)')
-                self.h_histnorm = self.ax_histnorm.plot(t_hist_norm, self.norm_sig[0,:])
+                self.h_histeq = self.ax_histeq.plot(t_hist_eq, self.eq_sig[ch,:])
 
-                self.ax_histnorm.set_title(f'Histnorm SEEG for  {self.subject} at Ch {ch_names}')
-                self.ax_histnorm.set_ylabel('uV (Normed) 1')
-                self.ax_histnorm.set_xlabel('Time (s)')
+                self.ax_histeq.set_title(f'Histeq SEEG for  {self.subject} at Ch {ch_names}')
+                self.ax_histeq.set_ylabel('uV (eqed)')
+                self.ax_histeq.set_xlabel('Time (s)')
             else:
-                self.h_raw[0].set_ydata(self.raw_sig[0,:])
-                self.h_clean[0].set_ydata(self.clean_sig[0,:])
-                self.h_histnorm[0].set_ydata(self.norm_sig[0,:])
+                self.h_raw[0].set_ydata(self.raw_sig[ch,:])
+                self.h_clean[0].set_ydata(self.clean_sig[ch,:])
+                self.h_histeq[0].set_ydata(self.eq_sig[ch,:])
+            self.ax_pre.set_ylim((-28,28))
+    
+            self.ax_live.set_ylim((-28,28))
             plt.tight_layout()
             return
 
@@ -548,13 +622,14 @@ class LiveStreamBrainStateEmbedding:
         i = 0
         while True:
             t1 = xp.time()
-            i+=1
-            logger.info(f"Loop {i}: with {t1},{t0} condition {(t1 - t0) >= (3e4 / 30)}")
+           
+            # logger.info(f"Loop {i}: with {t1},{t0} condition {(t1 - t0) >= (3e4 / 30)}")
 
             # If time since last loop is greater than 1/30 seconds, update loop
             # (Frame rate is capped at 30 FPS)
-            if (t1 - t0) >= (3e4 / 30): #has 1 second passed?
+            if (t1 - t0) >= 10:#(3e4 / 30)*self.display_s: #has 1 second passed?
                 t0 = t1
+                
                 # Data collection based on stream type
                 if self.stream_ty == 'raw':
                     x_sig, ts = xp.cont_raw(round(self.display_s * self.sampling_rate), self.stream_ch)
@@ -571,11 +646,13 @@ class LiveStreamBrainStateEmbedding:
                 # Filter 60hz line noise and resample to 512Hz
                 # do the exact preprocessing filtering
                 clean_sig = self.clean_signal(sig_reshape)
-                # Can apply norm parameters, open pickle and use logic for the right channel
+
+                # Can apply eq parameters, open pickle and use logic for the right channel
                 # The setup goes here 
                 
-                norm_sig = self.hist_equalize(clean_sig)
-                self.query_model(norm_sig)
+                eq_sig = self.hist_equalize(clean_sig)
+                self.query_model(eq_sig)
+                self.calc_seizure_risk(ts)
                 # Make sure to load random model and feed in dummy data 
                 # TODO - load pangolin, initialize, load weights, torch.rand(with correct shape)
                 #           - pull out the mu, check the pacmap forloop where it calles pacmap then fine tunes
@@ -589,8 +666,10 @@ class LiveStreamBrainStateEmbedding:
                 if self.update_time_now():
                     self.raw_sig = sig_reshape
                     self.clean_sig = clean_sig
-                    self.norm_sig = norm_sig
-                    self.update_plots()
+                    self.eq_sig = eq_sig
+                
+                    self.update_plots(i)
+                    i += 1
                 # self.h_psd.set_offsets(np.c_[x_sig, x_sig])
                     plt.pause(0.05)  # Small pause to update the plot
                     plt.savefig("tst.png")
@@ -601,10 +680,14 @@ if __name__ == '__main__':
 
     n_ch = [a for a in range(N_CH)] # num of channels for Spat 113
     model_file = "/home/ghassanmakhoul/Documents/trained_models/pangolin_finetune/Epoch_297/core_checkpoints/checkpoint_epoch297_vae.pt"
-    hist_eq_pkl = '/home/ghassanmakhoul/Documents/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/DurStr_1024s896s_epoched_datasets/Spat113/scaled_data_epochs/metadata/scaling_metadata/linear_interpolations_by_channel.pkl'
+    hist_eq_pkl = '/home/ghassanmakhoul/Documents/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_eqalized_to_first_24_hours/wholeband/DurStr_1024s896s_epoched_datasets/Spat113/scaled_data_epochs/metadata/scaling_metadata/linear_interpolations_by_channel.pkl'
     pac_prefix = '/home/ghassanmakhoul/Documents/trained_models/pangolin_finetune/Epoch_297/pacmap_generation/epoch298_PaCMAP'
-    
-    processor = LiveStreamBrainStateEmbedding('Spat113',model_file, hist_eq_pkl, pac_prefix, display_s=4, stream_ch=n_ch)
+    config_f = '/home/ghassanmakhoul/Documents/Tornadoes_v1/config_live.yml'
+    event_df = pd.read_csv("/home/ghassanmakhoul/Documents/Tornadoes_v1/all_time_data_01092023_112957.csv")
+    bip_path = "/home/ghassanmakhoul/Documents/data/Resamp_512_Hz/bipole_filtered_wholeband_unscaled_big_pickles/Spat113/metadata/Spat113_bipolar_montage_names_and_indexes_from_rawEDF.csv"
+    pat_id = 'Spat113'
+    pat_event_df = event_df['Pat ID'] = pat_id
+    processor = LiveStreamBrainStateEmbedding(pat_id,model_file, hist_eq_pkl, pac_prefix, config_f,  display_s=4, stream_ch=n_ch, event_df=pat_event_df, bip_path=bip_path)
     processor.live_data_loop()
     plt.show()
     xp._close()
