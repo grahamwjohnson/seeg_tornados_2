@@ -1,6 +1,9 @@
 import torch
 from torch import nn
 import heapq
+import torch.nn.functional as F
+from geomloss import SamplesLoss  # GeomLoss provides Sinkhorn divergence
+
 
 def recon_loss_function(x, x_hat, recon_weight):
 
@@ -51,60 +54,78 @@ def adversarial_loss_function(probs, labels, classifier_weight):
 
     return classifier_weight * adversarial_loss
 
-def median_heuristic(x, y):
-    """
-    Compute the median pairwise distance between samples in x and y.
-    """
-    pairwise_dist = torch.cdist(x, y)  # Compute pairwise distances
-    return torch.median(pairwise_dist)
+# def median_heuristic(x, y):
+#     """
+#     Compute the median pairwise distance between samples in x and y.
+#     """
+#     pairwise_dist = torch.cdist(x, y)  # Compute pairwise distances
+#     return torch.median(pairwise_dist)
 
 # Gaussian kernel for MMD
-def gaussian_kernel(x, y, sigma):
-    """
-    Compute the Gaussian kernel matrix between two sets of samples.
+# def gaussian_kernel(x, y, sigma):
+#     """
+#     Compute the Gaussian kernel matrix between two sets of samples.
     
-    Args:
-        x: Tensor of shape (n_samples, n_features).
-        y: Tensor of shape (m_samples, n_features).
-        sigma: Bandwidth parameter for the Gaussian kernel.
+#     Args:
+#         x: Tensor of shape (n_samples, n_features).
+#         y: Tensor of shape (m_samples, n_features).
+#         sigma: Bandwidth parameter for the Gaussian kernel.
     
-    Returns:
-        Kernel matrix of shape (n_samples, m_samples).
-    """
-    # Compute pairwise squared distances
-    x_sq = torch.sum(x ** 2, dim=1, keepdim=True)
-    y_sq = torch.sum(y ** 2, dim=1, keepdim=True)
-    xy = torch.matmul(x, y.t())
-    dist_sq = x_sq + y_sq.t() - 2 * xy
+#     Returns:
+#         Kernel matrix of shape (n_samples, m_samples).
+#     """
+#     # Compute pairwise squared distances
+#     x_sq = torch.sum(x ** 2, dim=1, keepdim=True)
+#     y_sq = torch.sum(y ** 2, dim=1, keepdim=True)
+#     xy = torch.matmul(x, y.t())
+#     dist_sq = x_sq + y_sq.t() - 2 * xy
     
-    # Compute Gaussian kernel
-    return torch.exp(-dist_sq / (2 * sigma ** 2))
+#     # Compute Gaussian kernel
+#     return torch.exp(-dist_sq / (2 * sigma ** 2))
 
-def mmd_loss_function(x, y, weight, sigma_override, sigma_clip, **kwargs):
-    """
-    Compute the Maximum Mean Discrepancy (MMD) between two sets of samples.
+# def mmd_loss_function(x, y, weight, sigma_override, sigma_clip, **kwargs):
+#     """
+#     Compute the Maximum Mean Discrepancy (MMD) between two sets of samples.
     
-    Args:
-        x: Tensor of shape (n_samples, n_features).
-        y: Tensor of shape (m_samples, n_features).
-        sigma: Bandwidth parameter for the Gaussian kernel.
+#     Args:
+#         x: Tensor of shape (n_samples, n_features).
+#         y: Tensor of shape (m_samples, n_features).
+#         sigma: Bandwidth parameter for the Gaussian kernel.
     
-    Returns:
-        MMD value (scalar).
-    """
+#     Returns:
+#         MMD value (scalar).
+#     """
 
-    if sigma_override > 0:
-        sigma = sigma_override
-    else:
-        sigma = median_heuristic(x, y)
-        if sigma > sigma_clip:
-            sigma = sigma_clip
+#     if sigma_override > 0:
+#         sigma = sigma_override
+#     else:
+#         sigma = median_heuristic(x, y)
+#         if sigma > sigma_clip:
+#             sigma = sigma_clip
 
-    # Compute kernel matrices
-    xx = gaussian_kernel(x, x, sigma)
-    yy = gaussian_kernel(y, y, sigma)
-    xy = gaussian_kernel(x, y, sigma)
+#     # Compute kernel matrices
+#     xx = gaussian_kernel(x, x, sigma)
+#     yy = gaussian_kernel(y, y, sigma)
+#     xy = gaussian_kernel(x, y, sigma)
     
-    # Compute MMD
-    mmd = xx.mean() + yy.mean() - 2 * xy.mean()
-    return mmd * weight, sigma
+#     # Compute MMD
+#     mmd = xx.mean() + yy.mean() - 2 * xy.mean()
+#     return mmd * weight, sigma
+
+
+# def contrastive_loss(z_real, z_fake, temperature, weight):
+#     z = torch.cat([z_real, z_fake], dim=0)  # Combine real and fake latents
+#     z = F.normalize(z, dim=-1)  # Normalize to unit sphere
+
+#     # Compute cosine similarity
+#     logits = torch.mm(z, z.T) / temperature
+#     labels = torch.arange(len(z), device=z.device)
+
+#     loss = F.cross_entropy(logits, labels)
+#     return loss * weight
+
+def sinkhorn_loss(z_real, z_fake, weight, sinkhorn_blur, **kwargs):
+    sinkhorn = SamplesLoss(loss="sinkhorn", p=2, blur=0.05)  # Blur controls entropy strength
+    loss = sinkhorn(z_real, z_fake)  # Computes Sinkhorn loss instead of MMD
+
+    return loss * weight

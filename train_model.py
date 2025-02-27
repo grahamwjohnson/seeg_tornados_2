@@ -402,7 +402,7 @@ class Trainer:
         inference_window_sec_list: list,
         inference_stride_sec_list: list,
         recent_display_iters: int,
-        running_mmd_passes: int,
+        running_reg_passes: int,
         classifier_num_pats: int,
         optimizer_forward_passes: int,
         **kwargs
@@ -435,7 +435,7 @@ class Trainer:
         self.inference_window_sec_list = inference_window_sec_list
         self.inference_stride_sec_list = inference_stride_sec_list
         self.recent_display_iters = recent_display_iters
-        self.running_mmd_passes = running_mmd_passes
+        self.running_reg_passes = running_reg_passes
         self.classifier_num_pats = classifier_num_pats
         self.optimizer_forward_passes = optimizer_forward_passes
         self.wandb_run = wandb_run
@@ -443,7 +443,7 @@ class Trainer:
 
         assert len(self.inference_window_sec_list) == len(self.inference_stride_sec_list)
 
-        self.MMD_multiplier = -1 # dummy variable, only needed when debugging and training is skipped
+        self.reg_weight = -1 # dummy variable, only needed when debugging and training is skipped
 
         # Number of iterations per file
         self.num_windows = int((self.num_samples - self.transformer_seq_length * self.autoencode_samples - self.autoencode_samples)/self.autoencode_samples) - 2
@@ -452,12 +452,12 @@ class Trainer:
         self.wae = DDP(wae, device_ids=[gpu_id])   # find_unused_parameters=True
                     
         # Running MMD window for latent data
-        self.accumulated_z = torch.randn(self.running_mmd_passes, self.latent_dim).to(self.gpu_id)
-        self.accumulated_prior = torch.randn(self.running_mmd_passes, self.latent_dim).to(self.gpu_id)
+        self.accumulated_z = torch.randn(self.running_reg_passes, self.latent_dim).to(self.gpu_id)
+        self.accumulated_prior = torch.randn(self.running_reg_passes, self.latent_dim).to(self.gpu_id)
 
         # Running class labels for classifier
-        self.accumulated_labels = torch.zeros(self.running_mmd_passes, dtype=torch.int64).to(self.gpu_id)
-        self.accumulated_class_probs = torch.randn(self.running_mmd_passes, self.classifier_num_pats).to(self.gpu_id)
+        self.accumulated_labels = torch.zeros(self.running_reg_passes, dtype=torch.int64).to(self.gpu_id)
+        self.accumulated_class_probs = torch.randn(self.running_reg_passes, self.classifier_num_pats).to(self.gpu_id)
         self.next_update_index = 0
         if self.start_epoch == 0:
             self.buffer_filled = True
@@ -511,7 +511,11 @@ class Trainer:
             utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch, **kwargs)
             print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
 
-    def _update_mmd_window(
+    def _sample_prior(self, z, gamma_shape, gamma_scale, **kwargs):
+        gamma_samples = torch.distributions.Gamma(gamma_shape, 1/gamma_scale).sample((z.shape[0], z.shape[1]))
+        return gamma_samples
+
+    def _update_reg_window(
         self,
         mean_latent, 
         new_prior_samples,
@@ -520,7 +524,7 @@ class Trainer:
         ):
 
         num_new_updates = mean_latent.shape[0]
-        if (self.next_update_index + num_new_updates) < self.running_mmd_passes:
+        if (self.next_update_index + num_new_updates) < self.running_reg_passes:
             self.accumulated_z[self.next_update_index: self.next_update_index + num_new_updates, :] = mean_latent
             self.accumulated_prior[self.next_update_index: self.next_update_index + num_new_updates, :] = new_prior_samples
             self.accumulated_labels[self.next_update_index: self.next_update_index + num_new_updates] = file_class_label
@@ -530,7 +534,7 @@ class Trainer:
 
         # Rollover
         else:
-            residual_num = (self.next_update_index + num_new_updates) % self.running_mmd_passes
+            residual_num = (self.next_update_index + num_new_updates) % self.running_reg_passes
             end_num = num_new_updates - residual_num
             self.accumulated_z[self.next_update_index: self.next_update_index + end_num, :] = mean_latent[:end_num, :]
             self.accumulated_z[0: residual_num, :] = mean_latent[end_num:, :]
@@ -687,7 +691,7 @@ class Trainer:
                     hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
                 
                     # For Training: Update the MMD multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                    self.MMD_multiplier, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
+                    self.reg_weight, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                         epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
                     if (not val_finetune) & (not val_unseen): 
                         self.opt_wae.param_groups[0]['lr'] = self.curr_LR_core
@@ -704,21 +708,22 @@ class Trainer:
 
                     # Update the running MMD window
                     mean_latent = torch.mean(latent, dim=1)
-                    new_prior_samples = torch.randn_like(mean_latent)
+                    # new_prior_samples = torch.randn_like(mean_latent)
+                    new_prior_samples = self._sample_prior(z=mean_latent, **kwargs)
 
                     # Check if new run, if so will need to fill buffers
                     if not self.buffer_filled: 
-                        if (self.next_update_index + mean_latent.shape[0]) >= self.running_mmd_passes: 
+                        if (self.next_update_index + mean_latent.shape[0]) >= self.running_reg_passes: 
                             self.buffer_filled = True
                             print("Buffers filled, proceeding with backprop from here on")
                         else:
-                            sys.stdout.write(f"\rNo Backprop: Filling running window MMD and Classifier buffers {self.next_update_index}/{self.running_mmd_passes}")
+                            sys.stdout.write(f"\rNo Backprop: Filling running window MMD and Classifier buffers {self.next_update_index}/{self.running_reg_passes}")
                             sys.stdout.flush() 
                             self.accumulated_z = self.accumulated_z.detach() # No backprop on these data
                             self.accumulated_class_probs = self.accumulated_class_probs.detach() # No backprop on these data
 
                     # Update the buffers
-                    self._update_mmd_window(mean_latent, new_prior_samples, file_class_label, class_probs_mean_of_latent)
+                    self._update_reg_window(mean_latent, new_prior_samples, file_class_label, class_probs_mean_of_latent)
 
                     # Buffer HAS been filled, okay to backprop
                     if self.buffer_filled:
@@ -728,11 +733,12 @@ class Trainer:
                             x_hat=x_hat,
                             recon_weight=self.recon_weight)
 
-                        mmd_loss, sigma = loss_functions.mmd_loss_function(
-                            x=self.accumulated_z,
-                            y=self.accumulated_prior,
-                            weight=self.MMD_multiplier,
-                            **kwargs)
+                        reg_loss = loss_functions.sinkhorn_loss(
+                            z_real = self.accumulated_z,
+                            z_fake = self.accumulated_prior,
+                            weight = self.reg_weight,
+                            **kwargs
+                        )
 
                         adversarial_loss = loss_functions.adversarial_loss_function(
                             probs=class_probs_mean_of_latent, 
@@ -747,7 +753,7 @@ class Trainer:
 
                         # AFTER EACH FORWARD PASS
                         self._zero_all_grads()
-                        loss = recon_loss + mmd_loss + adversarial_loss 
+                        loss = recon_loss + reg_loss + adversarial_loss 
                         loss.backward()         
                         self.accumulated_z = self.accumulated_z.detach() # Detach to allow next backpass
                         self.accumulated_class_probs = self.accumulated_class_probs.detach() # Detach to allow next backpass
@@ -778,13 +784,13 @@ class Trainer:
                                     train_attention_dropout=attention_dropout,
                                     train_loss=loss,
                                     train_recon_loss=recon_loss, 
-                                    train_mmd_loss=mmd_loss, 
+                                    train_reg_loss=reg_loss, 
                                     train_adversarial_loss=adversarial_loss,
                                     train_sparse_loss=sparse_loss,
                                     train_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                                     train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                    train_MMD_Beta=self.MMD_multiplier, 
-                                    train_sigma=sigma,
+                                    train_reg_Beta=self.reg_weight, 
+                                    # train_temperature=self.contrastive_temperature,
                                     train_ReconWeight=self.recon_weight,
                                     train_AdversarialWeight=self.classifier_weight,
                                     train_AdversarialAlpha=self.classifier_alpha,
@@ -796,13 +802,13 @@ class Trainer:
                                     val_finetune_attention_dropout=attention_dropout,
                                     val_finetune_loss=loss, 
                                     val_finetune_recon_loss=recon_loss, 
-                                    val_finetune_mmd_loss=mmd_loss, 
+                                    val_finetune_reg_loss=reg_loss, 
                                     val_finetune_adversarial_loss=adversarial_loss,
                                     val_finetune_sparse_loss=sparse_loss,
                                     val_finetune_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                                     val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                    val_finetune_MMD_Beta=self.MMD_multiplier, 
-                                    val_finetune_sigma=sigma,
+                                    val_finetune_reg_Beta=self.reg_weight, 
+                                    # val_finetune_temperature=self.contrastive_temperature,
                                     val_finetune_ReconWeight=self.recon_weight,
                                     val_finetune_AdversarialWeight=self.classifier_weight,
                                     val_finetune_AdversarialAlpha=self.classifier_alpha,
@@ -814,13 +820,13 @@ class Trainer:
                                     val_unseen_attention_dropout=attention_dropout,
                                     val_unseen_loss=loss, 
                                     val_unseen_recon_loss=recon_loss, 
-                                    val_unseen_mmd_loss=mmd_loss, 
+                                    val_unseen_reg_loss=reg_loss, 
                                     val_unseen_adversarial_loss=adversarial_loss,
                                     val_unseen_sparse_loss=sparse_loss,
                                     val_unseen_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                                     val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                    val_unseen_MMD_Beta=self.MMD_multiplier, 
-                                    val_unseen_sigma=sigma,
+                                    val_unseen_reg_Beta=self.reg_weight, 
+                                    # val_unseen_temperature=self.contrastive_temperature,
                                     val_unseen_ReconWeight=self.recon_weight,
                                     val_unseen_AdversarialWeight=self.classifier_weight,
                                     val_unseen_AdversarialAlpha=self.classifier_alpha,

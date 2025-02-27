@@ -175,7 +175,7 @@ def initalize_val_vars(gpu_id, batch_size, mini_batch_window_size, mini_batch_st
 def create_metadata_subtitle(plot_dict):
 
     return ("\nLR: " + str(plot_dict["LR_curr"]) + 
-    "\nMMD Multiplier: " + str(round(plot_dict["MMD_multiplier"],4)) + 
+    "\nReg Multiplier: " + str(round(plot_dict["Reg_multiplier"],4)) + 
     "\nPre/Postictal Color: " + str(plot_dict["plot_preictal_color"]) + "/" + str(plot_dict["plot_postictal_color"]) + " sec" + 
     ", File Attention Pre/Postictal: " + str(plot_dict["preictal_classify_sec"]) + "/" + str(plot_dict["postictal_classify_sec"]) + " sec" + 
     "\nInput Samples: " + str(plot_dict["input_samples"]) + 
@@ -218,7 +218,7 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
-        MMD_max, MMD_min, MMD_epochs_TO_max, MMD_epochs_AT_max, MMD_stall_epochs,
+        Reg_max, Reg_min, Reg_epochs_TO_max, Reg_epochs_AT_max, Reg_stall_epochs,
         classifier_weight, 
         classifier_max, classifier_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier,
@@ -226,7 +226,7 @@ def LR_and_weight_schedules(
         LR_max_core, LR_min_core, 
         LR_epochs_TO_max_core, LR_epochs_AT_max_core, 
         manual_gamma_core, manual_step_size_core,
-        MMD_rise_first=True, Sparse_rise_first=True, LR_rise_first=True, **kwargs):
+        Reg_rise_first=True, Sparse_rise_first=True, LR_rise_first=True, **kwargs):
             
     # *** Classifier Weight ###
     classifier_weight = classifier_weight # Dummy pass
@@ -253,31 +253,31 @@ def LR_and_weight_schedules(
         classifier_val = classifier_max
 
 
-    # *** MMD SCHEDULE ***
+    # *** Reg SCHEDULE ***
     
-    # If within the stall, send out MMD_min
-    if epoch < MMD_stall_epochs:
-        MMD_val = MMD_min
+    # If within the stall, send out Reg_min
+    if epoch < Reg_stall_epochs:
+        Reg_val = Reg_min
 
     # After stall
     else:
-        MMD_epoch_period = MMD_epochs_TO_max + MMD_epochs_AT_max
-        MMD_epoch_residual = (epoch - MMD_stall_epochs) % MMD_epoch_period # Shift for the stall epochs
+        Reg_epoch_period = Reg_epochs_TO_max + Reg_epochs_AT_max
+        Reg_epoch_residual = (epoch - Reg_stall_epochs) % Reg_epoch_period # Shift for the stall epochs
 
-        # MMD_range = 10**MMD_max - 10**MMD_min
-        MMD_range = MMD_max - MMD_min
+        # Reg_range = 10**Reg_max - 10**Reg_min
+        Reg_range = Reg_max - Reg_min
 
         # START with rise
         # Logarithmic rise
-        if MMD_rise_first: 
-            if MMD_epoch_residual < MMD_epochs_TO_max:
+        if Reg_rise_first: 
+            if Reg_epoch_residual < Reg_epochs_TO_max:
 
-                MMD_state_length = MMD_epochs_TO_max 
-                MMD_floor = MMD_min + MMD_range * (MMD_epoch_residual/MMD_state_length)
-                MMD_ceil = MMD_floor + MMD_range * (1) /MMD_state_length
-                MMD_val = MMD_floor + (iter_curr/iters_per_epoch) * (MMD_ceil - MMD_floor)
+                Reg_state_length = Reg_epochs_TO_max 
+                Reg_floor = Reg_min + Reg_range * (Reg_epoch_residual/Reg_state_length)
+                Reg_ceil = Reg_floor + Reg_range * (1) /Reg_state_length
+                Reg_val = Reg_floor + (iter_curr/iters_per_epoch) * (Reg_ceil - Reg_floor)
             else:
-                MMD_val = MMD_max
+                Reg_val = Reg_max
 
         else:
             raise Exception("ERROR: not coded up")
@@ -327,7 +327,7 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first 
     )
             
-    return MMD_val, LR_val_core, LR_val_cls, Sparse_val, classifier_weight, classifier_val
+    return Reg_val, LR_val_core, LR_val_cls, Sparse_val, classifier_weight, classifier_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
@@ -650,12 +650,18 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_rea
     random_ch_idxs = r[0:num_realtime_channels_recon]
 
     # Make new grid/fig
-    gs = gridspec.GridSpec(batchsize, num_realtime_channels_recon * 2) # *2 because beginning and end of transformer sequence
-    fig = pl.figure(figsize=(20, 16))
+    if x_fused.shape[2] > num_recon_samples:
+        gs = gridspec.GridSpec(batchsize, num_realtime_channels_recon * 2) # *2 because beginning and end of transformer sequence
+    else:
+        sqrt_num = int(np.ceil(np.sqrt(batchsize * num_realtime_channels_recon)))
+        gs = gridspec.GridSpec(sqrt_num, sqrt_num) 
+        subplot_iter = 0
+
+    fig = pl.figure(figsize=(24, 24))
     palette = sns.cubehelix_palette(n_colors=2, start=3, rot=1) 
     for b in range(0, batchsize):
         for c in range(0,len(random_ch_idxs)):
-            if x_fused.shape[2] > num_recon_samples: # If length of recon is bigger than desire visualized length, then plot start and end of transformer tokens
+            if x_fused.shape[2] > num_recon_samples: # If length of recon is bigger than desire visualized length, then plot only start and end of transformer tokens (may be overlap)
                 for seq in range(0,2):
                     if seq == 0:
                         x_decode_plot = x_fused[b, random_ch_idxs[c], :num_recon_samples]
@@ -677,21 +683,23 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_rea
 
                     pl.ylim(-1, 1) # Set y-axis limit -1 to 1
 
-            else: # Can fit entire seuqnce into visualization 
+            else: # Can fit entire seuqence into desired raw signal visualization length
                 x_decode_plot = x_fused[b, random_ch_idxs[c], :]
                 x_hat_plot = x_hat_fused[b, random_ch_idxs[c], :]
-                title_str = "Entire Transformer Sequence"
 
                 df = pd.DataFrame({
                     "Target": x_decode_plot,
                     "Prediction": x_hat_plot
                 })
 
-                ax = fig.add_subplot(gs[b, c]) 
+                row = int(subplot_iter/sqrt_num)
+                col = subplot_iter - (row * sqrt_num)
+                ax = fig.add_subplot(gs[row, col]) 
                 sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
-                ax.set_title(f"Ch:{random_ch_idxs[c]}\n{file_name[b]}, {title_str}", fontdict={'fontsize': 12, 'fontweight': 'medium'})
+                ax.set_title(f"{file_name[b]}", fontdict={'fontsize': 8, 'fontweight': 'medium'})
 
                 pl.ylim(-1, 1) # Set y-axis limit -1 to 1
+                subplot_iter = subplot_iter + 1
             
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
@@ -2437,7 +2445,7 @@ def filename_to_datetimes(list_file_names):
             stop_datetimes[i] = datetime.datetime(int(bD[4:8]), int(bD[0:2]), int(bD[2:4]), int(bT[0:2]), int(bT[2:4]), int(bT[4:6]), int(int(bT[6:8])*1e4))
         return start_datetimes, stop_datetimes
 
-def delete_old_checkpoints(dir: str, curr_epoch: int, MMD_stall_epochs, MMD_epochs_AT_max, MMD_epochs_TO_max, **kwargs):
+def delete_old_checkpoints(dir: str, curr_epoch: int, Reg_stall_epochs, Reg_epochs_AT_max, Reg_epochs_TO_max, **kwargs):
 
     SAVE_KEYWORDS = ["hdbscan", "pacmap"]
 
@@ -2456,8 +2464,8 @@ def delete_old_checkpoints(dir: str, curr_epoch: int, MMD_stall_epochs, MMD_epoc
     #             save_epochs.append(epoch_nums[i])
     #             break
 
-    # MMD Epoch cycle save - save the last epoch in a MMD annealing cycle
-    mod_val = MMD_stall_epochs + MMD_epochs_AT_max + MMD_epochs_TO_max - 1
+    # Reg Epoch cycle save - save the last epoch in a Reg annealing cycle
+    mod_val = Reg_stall_epochs + Reg_epochs_AT_max + Reg_epochs_TO_max - 1
     for x in epoch_nums:
         if x % mod_val == 0:
             save_epochs.append(x)
