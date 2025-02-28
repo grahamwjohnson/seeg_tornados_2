@@ -125,7 +125,8 @@ running_reg_passes: 16384
 gamma_shape: 2
 gamma_scale: 0.5
 num_barycenter_iters: 1000
-sinkhorn_blur: 0.5  # TODO Currently applies to both batch and barycenter level updates
+sinkhorn_batch_blur: 0.2  # This is the BATCH/SMALL scale blur updates
+sinkhorn_barycenter_blur: 0.05  # This is the LARGE scale blur updates
 random_barycenter_numplots: 4
 
 # Sparsity weight control

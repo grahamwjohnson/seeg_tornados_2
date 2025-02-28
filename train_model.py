@@ -418,7 +418,7 @@ class Trainer:
         recent_display_iters: int,
         running_reg_passes: int,
         classifier_num_pats: int,
-        sinkhorn_blur: int,
+        sinkhorn_batch_blur: int,
         optimizer_forward_passes: int,
         barycenter,
         accumulated_z,
@@ -454,7 +454,7 @@ class Trainer:
         self.recent_display_iters = recent_display_iters
         self.running_reg_passes = running_reg_passes
         self.classifier_num_pats = classifier_num_pats
-        self.sinkhorn_blur = sinkhorn_blur
+        self.sinkhorn_batch_blur = sinkhorn_batch_blur
         self.optimizer_forward_passes = optimizer_forward_passes
         self.barycenter = barycenter
         self.accumulated_z = accumulated_z
@@ -559,7 +559,7 @@ class Trainer:
         # Sample from the barycenter using the selected indices
         return self.barycenter[indices]
 
-    def _update_barycenter(self, gamma_shape, gamma_scale, num_barycenter_iters, sinkhorn_blur, plot, savedir, **kwargs):
+    def _update_barycenter(self, gamma_shape, gamma_scale, num_barycenter_iters, sinkhorn_barycenter_blur, plot, savedir, **kwargs):
 
         # Sample from gamma
         gamma_samples = torch.distributions.Gamma(gamma_shape, 1/gamma_scale).sample((self.accumulated_z.shape[0], self.accumulated_z.shape[1])).to(self.accumulated_z)
@@ -569,7 +569,7 @@ class Trainer:
         cost_matrix = cost_matrix / cost_matrix.max() 
         
         # Compute optimal transport plan using Sinkhorn
-        transport_plan = loss_functions.sinkhorn(cost_matrix, blur=sinkhorn_blur, n_iter=num_barycenter_iters)
+        transport_plan = loss_functions.sinkhorn(cost_matrix, blur=sinkhorn_barycenter_blur, n_iter=num_barycenter_iters)
         
         # Update barycenter as the weighted average of gamma samples
         self.barycenter = torch.matmul(transport_plan.T, gamma_samples)  # Shape: (16384, 1024)
@@ -800,7 +800,7 @@ class Trainer:
                     z_real = mean_latent, 
                     z_fake = new_prior_samples, # From Barycenter
                     weight = self.reg_weight,
-                    sinkhorn_blur = self.sinkhorn_blur)
+                    sinkhorn_batch_blur = self.sinkhorn_batch_blur)
 
                 adversarial_loss = loss_functions.adversarial_loss_function(
                     probs=class_probs_mean_of_latent, 
@@ -852,7 +852,7 @@ class Trainer:
                             train_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                             train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                             train_reg_Beta=self.reg_weight, 
-                            train_sinkhorn_blur=self.sinkhorn_blur,
+                            train_sinkhorn_batch_blur=self.sinkhorn_batch_blur,
                             train_running_reg_passes=self.running_reg_passes,
                             train_ReconWeight=self.recon_weight,
                             train_AdversarialWeight=self.classifier_weight,
@@ -871,7 +871,7 @@ class Trainer:
                             val_finetune_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                             val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                             val_finetune_reg_Beta=self.reg_weight, 
-                            val_finetune_sinkhorn_blur=self.sinkhorn_blur,
+                            val_finetune_sinkhorn_batch_blur=self.sinkhorn_batch_blur,
                             val_finetune_ReconWeight=self.recon_weight,
                             val_finetune_AdversarialWeight=self.classifier_weight,
                             val_finetune_AdversarialAlpha=self.classifier_alpha,
@@ -889,7 +889,7 @@ class Trainer:
                             val_unseen_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                             val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                             val_unseen_reg_Beta=self.reg_weight, 
-                            val_unseen_sinkhorn_blur=self.sinkhorn_blur,
+                            val_unseen_sinkhorn_batch_blur=self.sinkhorn_batch_blur,
                             val_unseen_ReconWeight=self.recon_weight,
                             val_unseen_AdversarialWeight=self.classifier_weight,
                             val_unseen_AdversarialAlpha=self.classifier_alpha,
