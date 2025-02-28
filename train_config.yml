@@ -24,7 +24,7 @@ preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 # Training settings
 continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 print_dataset_bargraphs: False # Typically set to False if not the first run of model, but may want true if adding new patients
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/hyracotherium_Wed_Feb_26_10_59_38_2025' 
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/whimbrel_Thu_Feb_27_21_59_12_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### WAE ###
@@ -34,9 +34,9 @@ autoencode_samples: 2 # 8
 padded_channels: 256 #input padded to allow for different number of channels, also the top level embed dim
 crattn_embed_dim: 512  # This times autoencode_samples will be transformer dims e.g. 32*32 = 1024
 crattn_num_highdim_heads: 16 # at padding dimension
-crattn_num_highdim_layers: 4 # at padding dimension
+crattn_num_highdim_layers: 2 # at padding dimension
 crattn_num_lowdim_heads: 8 # at embed dim dimension
-crattn_num_lowdim_layers: 4 # at embed dim dimension
+crattn_num_lowdim_layers: 2 # at embed dim dimension
 crattn_max_seq_len: kwargs['crattn_max_seq_len'] = kwargs['autoencode_samples']
 crattn_cnn_kernel_size: 3
 crattn_dropout: 0.1
@@ -46,10 +46,10 @@ transformer_dim: kwargs['transformer_dim'] = kwargs['crattn_embed_dim'] * kwargs
 transformer_seq_length: 256
 max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
 max_batch_size: kwargs['max_batch_size'] = kwargs['random_pats_in_batch'] * kwargs['random_files_per_pat'] * kwargs['random_epochs_per_file'] * kwargs['inference_batch_mult']
-n_layers: 8
+n_layers: 4
 n_heads: 128
 multiple_of: 256 
-ffn_dim_multiplier: 0.6 # 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
+ffn_dim_multiplier: 0.4 # 0.2  # Default is 1 to make FF layers account for 2/3 of total parameter count
 attention_dropout: 0.1          # 0.8 is very aggressive     
 encoder_transformer_activation: "silu"
 
@@ -66,7 +66,7 @@ decoder_base_dims: kwargs['decoder_base_dims'] = kwargs['latent_dim'] # after th
 
 ### Classifier
 classifier_hidden_dims: [1024, 1024, 512, 256]
-classifier_num_pats: 40 # Hardcoded  ########
+classifier_num_pats: 40 #       Hardcoded  ########
 classifier_dropout: 0.1
 
 # WAE Optimizer hyperparameters
@@ -85,7 +85,7 @@ autoreg_num_rand_hashes: 1 # Need to be only one to work? in theory should work 
 val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
 
 # Training variables
-optimizer_forward_passes: 1
+optimizer_forward_passes: 1 # How often to step optimizier 
 random_pats_in_batch: 16 # Random data pull when pat_curr = -1
 random_files_per_pat: 1 # Random data pull when pat_curr = -1
 random_epochs_per_file: 1 # Random data pull when pat_curr = -1
@@ -119,12 +119,13 @@ Reg_min: kwargs['Reg_min'] = 0
 Reg_stall_epochs: 0 # No Reg weight rise until stall is complete
 Reg_epochs_AT_max: 99999
 Reg_epochs_TO_max: 0
-running_reg_passes: 4096
-sinkhorn_blur: 0.2
+running_reg_passes: 16384
 
-# Distribution params
+# Gamma distribution params
 gamma_shape: 2
 gamma_scale: 0.5
+num_barycenter_iters: 1000
+sinkhorn_blur: 0.2  # TODO Currently applies to both batch and barycenter level updates
 
 # Sparsity weight control
 Sparse_max: kwargs['Sparse_max'] = 1e-7 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
@@ -203,7 +204,7 @@ delete_latent_files: False # If false, will not delete the latent files after bu
 
 # Multiprocessing 
 subprocess_num_threads: 1 
-num_dataloader_workers: 2
+num_dataloader_workers: 0
 persistent_workers: False # num workers must be > 0
 
 # Plotting variables
