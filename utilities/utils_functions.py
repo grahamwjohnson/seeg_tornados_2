@@ -562,18 +562,54 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier):
     
     return hashed_vector_tensor, ordered_vector
 
-# def un_pseudobatch_raw_data(x_batched, token_samples):
-#     ''' 
-#     x_batched [batch * token_lengths, channels, datapoints]
-#     returns: x [batch, channels, datapoints]
-#     '''
-#     x = torch.stack(torch.split(x_batched, token_samples, dim=0), dim=1).transpose(2,3).transpose(1,2)
-#     x = x.reshape(x.shape[0]* x.shape[1], x.shape[2], x.shape[3]).transpose(0,1).transpose(1,2)
-
-#     return x
-
 
 # PLOTTING
+
+def plot_barycenter(barycenter, savedir, epoch, random_barycenter_numplots, **kwargs):
+    
+    barycenter_meanSample = np.mean(barycenter, axis=0)
+    barycenter_meanDim = np.mean(barycenter, axis=1)
+
+    N,D = barycenter.shape
+
+    gs = gridspec.GridSpec(2, random_barycenter_numplots)
+    fig = pl.figure(figsize=(20, 14))
+
+    # Plot mean of samples (i.e. shows dims)
+    ax0 = fig.add_subplot(gs[0, :int(random_barycenter_numplots/2)])
+    df = pd.DataFrame({
+        'dim': np.arange(D),
+        'meanSample': barycenter_meanSample})
+
+    sns.barplot(data=df, x="dim", y="meanSample")
+    ax0.set_title(f"Meaned Across Samples")
+
+    # Plot mean of dims (i.e. shows samples)
+    ax1 = fig.add_subplot(gs[0, int(random_barycenter_numplots/2):])
+    sns.histplot(barycenter_meanDim, bins=200, kde=True, line_kws={'color': 'black'}, ax=ax1)
+    ax1.set_title(f"Meaned Across Dimensions")
+
+    # Add random dimensions in to plot 
+    for i in range(random_barycenter_numplots):
+        ax_curr = fig.add_subplot(gs[1, i])
+        
+        # Random dim
+        np.random.seed(seed=None) # should replace with Generator for newer code
+        dim_idx = np.random.randint(0, D)
+        data_curr = barycenter[:, dim_idx]
+        sns.histplot(data_curr, bins=200, kde=True, ax=ax_curr)
+        ax_curr.set_title(f"Dim {dim_idx}")
+
+    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    savename_jpg = f"{savedir}/JPEGs/Barycenter_epoch{epoch}.jpg"
+    pl.savefig(savename_jpg)
+    pl.close(fig)    
+
+    pl.close('all') 
+
+    print("Barycenter Plotted")
+
+
 
 def print_latent_realtime(latent, prior, pat_labels, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
 
@@ -2467,7 +2503,7 @@ def delete_old_checkpoints(dir: str, curr_epoch: int, Reg_stall_epochs, Reg_epoc
     # Reg Epoch cycle save - save the last epoch in a Reg annealing cycle
     mod_val = Reg_stall_epochs + Reg_epochs_AT_max + Reg_epochs_TO_max - 1
     for x in epoch_nums:
-        if x % mod_val == 0:
+        if (x % mod_val == 0) & (curr_epoch > 0):
             save_epochs.append(x)
 
     [shutil.rmtree(all_dir_names[i]) if epoch_nums[i] not in save_epochs else print(f"saved: {all_dir_names[i].split('/')[-1]}") for i in range(len(epoch_nums))]

@@ -24,7 +24,7 @@ preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 # Training settings
 continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 print_dataset_bargraphs: False # Typically set to False if not the first run of model, but may want true if adding new patients
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/whimbrel_Thu_Feb_27_21_59_12_2025' 
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/eider_Fri_Feb_28_07_53_31_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### WAE ###
@@ -125,7 +125,8 @@ running_reg_passes: 16384
 gamma_shape: 2
 gamma_scale: 0.5
 num_barycenter_iters: 1000
-sinkhorn_blur: 0.2  # TODO Currently applies to both batch and barycenter level updates
+sinkhorn_blur: 0.5  # TODO Currently applies to both batch and barycenter level updates
+random_barycenter_numplots: 4
 
 # Sparsity weight control
 Sparse_max: kwargs['Sparse_max'] = 1e-7 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
@@ -173,6 +174,7 @@ delete_old_checkpoints: True
 tmp_file_dir: '/tmp_files'
 
 # PaCMAP and HDBSCAN settings
+# TODO: Decouple this and leave for manifolds.py
 # NN local, MN: global, FP global and local
 # Phase 1:
   # w_MN = (1 - itr/phase_1_iters) * w_MN_init + itr/phase_1_iters * 3.0     Starts high, goes down to 3

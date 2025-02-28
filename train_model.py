@@ -477,8 +477,13 @@ class Trainer:
             self.accumulated_prior = Gamma(kwargs['gamma_shape'], 1/kwargs['gamma_scale']).sample((self.running_reg_passes, self.latent_dim)).to(self.gpu_id)
         
         else:
-            self.accumulated_prior = self.barycenter
+            self.accumulated_prior = self.barycenter.to(self.gpu_id)
             if self.accumulated_z == []: raise Exception("Error, accumulated_z is [], should be filled if barycenter was passed in")
+
+        # Ensure on proper device
+        self.barycenter = self.barycenter.to(self.gpu_id)
+        self.accumulated_z = self.accumulated_z.to(self.gpu_id)
+        self.accumulated_prior = self.accumulated_prior.to(self.gpu_id)
 
         # Running class labels for classifier
         self.accumulated_labels = torch.zeros(self.running_reg_passes, dtype=torch.int64).to(self.gpu_id)
@@ -550,11 +555,11 @@ class Trainer:
     def _sample_barycenter(self, z, **kwargs):
         # Randomly select indices from the barycenter samples
         indices = torch.randint(0, self.barycenter.shape[0], (z.shape[0],))
-    
+
         # Sample from the barycenter using the selected indices
         return self.barycenter[indices]
 
-    def _update_barycenter(self, gamma_shape, gamma_scale, num_barycenter_iters, sinkhorn_blur, **kwargs):
+    def _update_barycenter(self, gamma_shape, gamma_scale, num_barycenter_iters, sinkhorn_blur, plot, savedir, **kwargs):
 
         # Sample from gamma
         gamma_samples = torch.distributions.Gamma(gamma_shape, 1/gamma_scale).sample((self.accumulated_z.shape[0], self.accumulated_z.shape[1])).to(self.accumulated_z)
@@ -570,6 +575,14 @@ class Trainer:
         self.barycenter = torch.matmul(transport_plan.T, gamma_samples)  # Shape: (16384, 1024)
 
         print(f"[GPU{self.gpu_id}] Barycenter updated: {self.barycenter.shape}")
+
+        # Plot the barycenter if desired
+        if plot & (self.gpu_id == 0):
+            utils_functions.plot_barycenter(
+                barycenter = self.barycenter.cpu().detach().numpy(), 
+                savedir = savedir,
+                epoch = self.epoch,
+                **kwargs)
         
     def _update_reg_window(
         self,
@@ -624,281 +637,272 @@ class Trainer:
 
         print(f"[GPU{self.gpu_id}] Autoencode_samples: {self.autoencode_samples}")
 
-        try:
-            ### ALL/FULL FILES - LATENT ONLY - FULL TRANSFORMER CONTEXT ### 
-            # This setting is used for inference
-            # If wanting all files from every patient, need to run patients serially
-            if all_files_latent_only: 
+        # try:
+        ### ALL/FULL FILES - LATENT ONLY - FULL TRANSFORMER CONTEXT ### 
+        # This setting is used for inference
+        # If wanting all files from every patient, need to run patients serially
+        if all_files_latent_only: 
 
-                print("WARNING: Setting alpha = 1")
-                self.classifier_alpha = 1
+            print("WARNING: Setting alpha = 1")
+            self.classifier_alpha = 1
 
-                # Check for erroneous configs
-                if val_finetune or val_unseen:
-                    raise Exception("ERROR: innapropriate config: if running all files then val_finetune/val_unseen must all be False")
+            # Check for erroneous configs
+            if val_finetune or val_unseen:
+                raise Exception("ERROR: innapropriate config: if running all files then val_finetune/val_unseen must all be False")
 
-                # Go through every subject in this dataset
-                for pat_idx in range(0,len(dataset_curr.pat_ids)):
-                    dataset_curr.set_pat_curr(pat_idx)
-                    dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=max_batch_size * inference_batch_mult, num_workers=num_dataloader_workers)
+            # Go through every subject in this dataset
+            for pat_idx in range(0,len(dataset_curr.pat_ids)):
+                dataset_curr.set_pat_curr(pat_idx)
+                dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=max_batch_size * inference_batch_mult, num_workers=num_dataloader_workers)
 
-                    # Go through every file in dataset
-                    file_count = 0
-                    for data_tensor, file_name, file_class_label in dataloader_curr: # Hash done outside data.py for single pat inference
+                # Go through every file in dataset
+                file_count = 0
+                for data_tensor, file_name, file_class_label in dataloader_curr: # Hash done outside data.py for single pat inference
 
-                        file_count = file_count + len(file_name)
+                    file_count = file_count + len(file_name)
 
-                        num_channels_curr = data_tensor.shape[1]
+                    num_channels_curr = data_tensor.shape[1]
 
-                        # Create the sequential latent sequence array for the file 
-                        num_samples_in_forward = self.transformer_seq_length * self.autoencode_samples
-                        num_windows_in_file = data_tensor.shape[2] / num_samples_in_forward
-                        assert (num_windows_in_file % 1) == 0
-                        num_windows_in_file = int(num_windows_in_file)
-                        num_samples_in_forward = int(num_samples_in_forward)
+                    # Create the sequential latent sequence array for the file 
+                    num_samples_in_forward = self.transformer_seq_length * self.autoencode_samples
+                    num_windows_in_file = data_tensor.shape[2] / num_samples_in_forward
+                    assert (num_windows_in_file % 1) == 0
+                    num_windows_in_file = int(num_windows_in_file)
+                    num_samples_in_forward = int(num_samples_in_forward)
 
-                        # Prep the output tensor and put on GPU
-                        files_latents = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
+                    # Prep the output tensor and put on GPU
+                    files_latents = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
 
-                        # Put whole file on GPU
-                        data_tensor = data_tensor.to(self.gpu_id)
+                    # Put whole file on GPU
+                    data_tensor = data_tensor.to(self.gpu_id)
 
-                        for w in range(num_windows_in_file):
-                            
-                            # Print Status
-                            print_interval = 100
-                            if (self.gpu_id == 0) & (w % print_interval == 0):
-                                sys.stdout.write(f"\r{dataset_string}: Pat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP), Intrafile Iter {w}/{num_windows_in_file}          ") 
-                                sys.stdout.flush() 
-
-                            # Generate hashes for feedforward conditioning (single pat, so outside data.py)
-                            rand_modifer = 0 # 0 for inference
-                            hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
-                                input_string=dataset_curr.pat_ids[pat_idx], 
-                                num_channels=num_channels_curr, 
-                                latent_dim=self.latent_dim, 
-                                modifier=rand_modifer)
-                            
-                            # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
-                            x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, padded_channels, self.autoencode_samples).to(self.gpu_id)
-                            start_idx = w * num_samples_in_forward
-                            for embedding_idx in range(0, self.transformer_seq_length):
-                                # Pull out data for this window - NOTE: no hashing
-                                end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
-                                x[:, embedding_idx, :num_channels_curr, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
-
-                            ### WAE ENCODER
-                            # Forward pass in stacked batch through WAE encoder
-                            latent, _ = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
-                            files_latents[:, w, :] = torch.mean(latent, dim=1)
-
-                        # After file complete, pacmap_window/stride the file and save each file from batch seperately
-                        # Seperate directory for each win/stride combination
-                        # First pull off GPU and convert to numpy
-                        files_latents = files_latents.cpu().numpy()
-                        for i in range(len(self.inference_window_sec_list)):
-
-                            win_sec_curr = self.inference_window_sec_list[i]
-                            stride_sec_curr = self.inference_stride_sec_list[i]
-                            sec_in_forward = num_samples_in_forward/self.FS
-
-                            if (win_sec_curr < sec_in_forward) or (stride_sec_curr < sec_in_forward):
-                                raise Exception("Window or stride is too small compared to input sequence to encoder")
-                            
-                            num_latents_in_win = win_sec_curr / sec_in_forward
-                            assert (num_latents_in_win % 1) == 0
-                            num_latents_in_win = int(num_latents_in_win)
-
-                            num_latents_in_stride = stride_sec_curr / sec_in_forward
-                            assert (num_latents_in_stride % 1) == 0
-                            num_latents_in_stride = int(num_latents_in_stride)
-
-                            # May not go in evenly, that is ok
-                            num_strides_in_file = int((files_latents.shape[1] - num_latents_in_win) / num_latents_in_stride) 
-                            windowed_file_latent = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
-                            for s in range(num_strides_in_file):
-                                windowed_file_latent[:, s, :] = np.mean(files_latents[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
-
-                            # Save each windowed latent in a pickle for each file
-                            for b in range(data_tensor.shape[0]):
-
-                                filename_curr = file_name[b]
-                                save_dir = f"{self.model_dir}/latent_files/Epoch{self.epoch}/{win_sec_curr}SecondWindow_{stride_sec_curr}SecondStride/{dataset_string}"
-                                if not os.path.exists(save_dir): os.makedirs(save_dir)
-                                output_obj = open(f"{save_dir}/{filename_curr}_latent_{win_sec_curr}secWindow_{stride_sec_curr}secStride.pkl", 'wb')
-                                pickle.dump(windowed_file_latent[b, :, :], output_obj)
-                                output_obj.close()
-
-            ### RANDOM SUBSET OF FILES ###
-            # This setting is used for regular training 
-            else: 
-                dataset_curr.set_pat_curr(-1) # -1 sets to random generation
-                num_pats_curr = dataset_curr.get_pat_count()
-                dataloader_curr = utils_functions.prepare_dataloader(dataset_curr, batch_size=None, num_workers=num_dataloader_workers)
-                dataloader_curr.sampler.set_epoch(self.epoch) # Ensure new file order is pulled
-
-
-                # Update the Barycenter (average between empiric latent distriubution and given prior (e.g. Gamma) for this epoch
-                self._update_barycenter(**kwargs)
-
-                iter_curr = 0
-                total_iters = len(dataloader_curr)
-                for x, file_name, file_class_label, hash_channel_order, hash_pat_embedding in dataloader_curr: 
-
-                    # Put the data and labels on GPU
-                    x = x.to(self.gpu_id)
-                    file_class_label = file_class_label.to(self.gpu_id)
-                    hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
-                
-                    # For Training: Update the Regulizer multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                    self.reg_weight, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
-                        epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
-                    if (not val_finetune) & (not val_unseen): 
-                        self.opt_wae.param_groups[0]['lr'] = self.curr_LR_core
-                        self.opt_cls.param_groups[0]['lr'] = self.curr_LR_cls
-
-                    # Check for NaNs
-                    if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
-
-                    ### WAE ENCODER: 1-shifted
-                    latent, class_probs_mean_of_latent = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
-                    
-                    ### WAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
-                    x_hat = self.wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
-
-                    # Average the latents to get single embedding per encoder input
-                    mean_latent = torch.mean(latent, dim=1)
-
-                    # # Check if new run, if so will need to fill buffers
-                    # if not self.buffer_filled: # NOTE: This logic breaks if buffer cannot be filled within one epoch
-                    #     if (self.next_update_index + mean_latent.shape[0]) >= self.running_reg_passes: 
-                    #         self.buffer_filled = True
-                    #         print("Buffers filled, proceeding with backprop from here on")
-                    #     else:
-                    #         sys.stdout.write(f"\r[Backprop Skipped] Filling running window Regulizer and Classifier buffers {self.next_update_index}/{self.running_reg_passes}")
-                    #         sys.stdout.flush() 
-                    #         self.accumulated_z = self.accumulated_z.detach() # No backprop on these data
-                    #         self.accumulated_class_probs = self.accumulated_class_probs.detach() # No backprop on these data
-
-                    # Sample from the Barycenter
-                    new_prior_samples = self._sample_barycenter(z=mean_latent, **kwargs)  
-
-                    # Update the buffers
-                    self._update_reg_window(mean_latent, new_prior_samples, file_class_label, class_probs_mean_of_latent)
-
-                    # LOSSES
-                    recon_loss = loss_functions.recon_loss_function(
-                        x=x[:, 1 + self.num_encode_concat_transformer_tokens :, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
-                        x_hat=x_hat,
-                        recon_weight=self.recon_weight)
-
-                    reg_loss = loss_functions.sinkhorn_loss( # Just on this local batch compared to Barycenter
-                        z_real = mean_latent, 
-                        z_fake = new_prior_samples, # From Barycenter
-                        weight = self.reg_weight,
-                        sinkhorn_blur = self.sinkhorn_blur)
-
-                    adversarial_loss = loss_functions.adversarial_loss_function(
-                        probs=class_probs_mean_of_latent, 
-                        labels=file_class_label,
-                        classifier_weight=self.classifier_weight)
-
-                    # Not currently used
-                    sparse_loss = loss_functions.sparse_l1_reg(
-                        z=latent, 
-                        sparse_weight=self.sparse_weight, 
-                        **kwargs)
-
-                    # AFTER EACH FORWARD PASS
-                    self._zero_all_grads()
-                    loss = recon_loss + reg_loss + adversarial_loss 
-                    loss.backward()         
-                    self.accumulated_z = self.accumulated_z.detach() # Detach to allow next backpass
-                    self.accumulated_class_probs = self.accumulated_class_probs.detach() # Detach to allow next backpass
-
-                    # Step optimizer at desired number of froward passes
-                    if (iter_curr%self.optimizer_forward_passes==0):
-                        self.opt_wae.step()
-                        self.opt_cls.step()
-
-                    # Realtime terminal info and WandB 
-                    if (iter_curr%self.recent_display_iters==0):
-                        if val_finetune: state_str = "VAL FINETUNE"
-                        elif val_unseen: state_str = "VAL UNSEEN"
-                        else: state_str = "TRAIN"
-                        now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
-                        if (self.gpu_id == 1):
-                            sys.stdout.write(
-                                f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, EPOCH {self.epoch}, Iter [BatchSize: {x.shape[0]}] {iter_curr}/{total_iters}, " + 
-                                f"MeanLoss: {round(loss.detach().item(), 2)}                 ")
+                    for w in range(num_windows_in_file):
+                        
+                        # Print Status
+                        print_interval = 100
+                        if (self.gpu_id == 0) & (w % print_interval == 0):
+                            sys.stdout.write(f"\r{dataset_string}: Pat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP), Intrafile Iter {w}/{num_windows_in_file}          ") 
                             sys.stdout.flush() 
 
-                        # Log to WandB
-                        wandb.define_metric('Steps')
-                        wandb.define_metric("*", step_metric="Steps")
-                        train_step = self.epoch * int(total_iters) + iter_curr
-                        if (not val_finetune) & (not val_unseen):
-                            metrics = dict(
-                                train_attention_dropout=attention_dropout,
-                                train_loss=loss,
-                                train_recon_loss=recon_loss, 
-                                train_reg_loss=reg_loss, 
-                                train_adversarial_loss=adversarial_loss,
-                                train_sparse_loss=sparse_loss,
-                                train_LR_wae=self.opt_wae.param_groups[0]['lr'], 
-                                train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                train_reg_Beta=self.reg_weight, 
-                                train_sinkhorn_blur=self.sinkhorn_blur,
-                                train_running_reg_passes=self.running_reg_passes,
-                                train_ReconWeight=self.recon_weight,
-                                train_AdversarialWeight=self.classifier_weight,
-                                train_AdversarialAlpha=self.classifier_alpha,
-                                train_Sparse_weight=self.sparse_weight,
-                                train_epoch=self.epoch)
+                        # Generate hashes for feedforward conditioning (single pat, so outside data.py)
+                        rand_modifer = 0 # 0 for inference
+                        hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
+                            input_string=dataset_curr.pat_ids[pat_idx], 
+                            num_channels=num_channels_curr, 
+                            latent_dim=self.latent_dim, 
+                            modifier=rand_modifer)
+                        
+                        # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
+                        x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, padded_channels, self.autoencode_samples).to(self.gpu_id)
+                        start_idx = w * num_samples_in_forward
+                        for embedding_idx in range(0, self.transformer_seq_length):
+                            # Pull out data for this window - NOTE: no hashing
+                            end_idx = start_idx + self.autoencode_samples * embedding_idx + self.autoencode_samples 
+                            x[:, embedding_idx, :num_channels_curr, :] = data_tensor[:, hash_channel_order, end_idx-self.autoencode_samples : end_idx]
 
-                        elif val_finetune:
-                            metrics = dict(
-                                val_finetune_attention_dropout=attention_dropout,
-                                val_finetune_loss=loss, 
-                                val_finetune_recon_loss=recon_loss, 
-                                val_finetune_reg_loss=reg_loss, 
-                                val_finetune_adversarial_loss=adversarial_loss,
-                                val_finetune_sparse_loss=sparse_loss,
-                                val_finetune_LR_wae=self.opt_wae.param_groups[0]['lr'], 
-                                val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                val_finetune_reg_Beta=self.reg_weight, 
-                                val_finetune_sinkhorn_blur=self.sinkhorn_blur,
-                                val_finetune_ReconWeight=self.recon_weight,
-                                val_finetune_AdversarialWeight=self.classifier_weight,
-                                val_finetune_AdversarialAlpha=self.classifier_alpha,
-                                val_finetune_Sparse_weight=self.sparse_weight,
-                                val_finetune_epoch=self.epoch)
+                        ### WAE ENCODER
+                        # Forward pass in stacked batch through WAE encoder
+                        latent, _ = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
+                        files_latents[:, w, :] = torch.mean(latent, dim=1)
 
-                        elif val_unseen:
-                            metrics = dict(
-                                val_unseen_attention_dropout=attention_dropout,
-                                val_unseen_loss=loss, 
-                                val_unseen_recon_loss=recon_loss, 
-                                val_unseen_reg_loss=reg_loss, 
-                                val_unseen_adversarial_loss=adversarial_loss,
-                                val_unseen_sparse_loss=sparse_loss,
-                                val_unseen_LR_wae=self.opt_wae.param_groups[0]['lr'], 
-                                val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
-                                val_unseen_reg_Beta=self.reg_weight, 
-                                val_unseen_sinkhorn_blur=self.sinkhorn_blur,
-                                val_unseen_ReconWeight=self.recon_weight,
-                                val_unseen_AdversarialWeight=self.classifier_weight,
-                                val_unseen_AdversarialAlpha=self.classifier_alpha,
-                                val_unseen_Sparse_weight=self.sparse_weight,
-                                val_unseen_epoch=self.epoch)
+                    # After file complete, pacmap_window/stride the file and save each file from batch seperately
+                    # Seperate directory for each win/stride combination
+                    # First pull off GPU and convert to numpy
+                    files_latents = files_latents.cpu().numpy()
+                    for i in range(len(self.inference_window_sec_list)):
 
-                    wandb.log({**metrics, 'Steps': train_step})
+                        win_sec_curr = self.inference_window_sec_list[i]
+                        stride_sec_curr = self.inference_stride_sec_list[i]
+                        sec_in_forward = num_samples_in_forward/self.FS
 
-                    # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
-                    iter_curr = iter_curr + 1
+                        if (win_sec_curr < sec_in_forward) or (stride_sec_curr < sec_in_forward):
+                            raise Exception("Window or stride is too small compared to input sequence to encoder")
+                        
+                        num_latents_in_win = win_sec_curr / sec_in_forward
+                        assert (num_latents_in_win % 1) == 0
+                        num_latents_in_win = int(num_latents_in_win)
 
-                    # Realtime latent visualizations
-                    if realtime_latent_printing & ((iter_curr + 1) % realtime_printing_interval == 0):
+                        num_latents_in_stride = stride_sec_curr / sec_in_forward
+                        assert (num_latents_in_stride % 1) == 0
+                        num_latents_in_stride = int(num_latents_in_stride)
+
+                        # May not go in evenly, that is ok
+                        num_strides_in_file = int((files_latents.shape[1] - num_latents_in_win) / num_latents_in_stride) 
+                        windowed_file_latent = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
+                        for s in range(num_strides_in_file):
+                            windowed_file_latent[:, s, :] = np.mean(files_latents[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
+
+                        # Save each windowed latent in a pickle for each file
+                        for b in range(data_tensor.shape[0]):
+
+                            filename_curr = file_name[b]
+                            save_dir = f"{self.model_dir}/latent_files/Epoch{self.epoch}/{win_sec_curr}SecondWindow_{stride_sec_curr}SecondStride/{dataset_string}"
+                            if not os.path.exists(save_dir): os.makedirs(save_dir)
+                            output_obj = open(f"{save_dir}/{filename_curr}_latent_{win_sec_curr}secWindow_{stride_sec_curr}secStride.pkl", 'wb')
+                            pickle.dump(windowed_file_latent[b, :, :], output_obj)
+                            output_obj.close()
+
+        ### RANDOM SUBSET OF FILES ###
+        # This setting is used for regular training 
+        else: 
+            dataset_curr.set_pat_curr(-1) # -1 sets to random generation
+            num_pats_curr = dataset_curr.get_pat_count()
+            dataloader_curr = utils_functions.prepare_dataloader(dataset_curr, batch_size=None, num_workers=num_dataloader_workers)
+            dataloader_curr.sampler.set_epoch(self.epoch) # Ensure new file order is pulled
+
+            # Update the Barycenter (average between empiric latent distriubution and given prior (e.g. Gamma) for this epoch
+            self._update_barycenter(
+                plot=True, 
+                savedir = self.model_dir + f"/realtime_plots/{dataset_string}/barycenters",
+                **kwargs)
+            
+            iter_curr = 0
+            total_iters = len(dataloader_curr)
+            for x, file_name, file_class_label, hash_channel_order, hash_pat_embedding in dataloader_curr: 
+
+                # Put the data and labels on GPU
+                x = x.to(self.gpu_id)
+                file_class_label = file_class_label.to(self.gpu_id)
+                hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
+            
+                # For Training: Update the Regulizer multiplier (BETA), and Learning Rate according for Heads Models and Core Model
+                self.reg_weight, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
+                    epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
+                if (not val_finetune) & (not val_unseen): 
+                    self.opt_wae.param_groups[0]['lr'] = self.curr_LR_core
+                    self.opt_cls.param_groups[0]['lr'] = self.curr_LR_cls
+
+                # Check for NaNs
+                if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
+
+                ### WAE ENCODER: 1-shifted
+                latent, class_probs_mean_of_latent = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
+                
+                ### WAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
+                x_hat = self.wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
+
+                # Average the latents to get single embedding per encoder input
+                mean_latent = torch.mean(latent, dim=1)
+
+                # Sample from the Barycenter
+                new_prior_samples = self._sample_barycenter(z=mean_latent, **kwargs)  
+
+                # Update the buffers
+                self._update_reg_window(mean_latent, new_prior_samples, file_class_label, class_probs_mean_of_latent)
+
+                # LOSSES
+                recon_loss = loss_functions.recon_loss_function(
+                    x=x[:, 1 + self.num_encode_concat_transformer_tokens :, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
+                    x_hat=x_hat,
+                    recon_weight=self.recon_weight)
+
+                reg_loss = loss_functions.sinkhorn_loss( # Just on this local batch compared to Barycenter
+                    z_real = mean_latent, 
+                    z_fake = new_prior_samples, # From Barycenter
+                    weight = self.reg_weight,
+                    sinkhorn_blur = self.sinkhorn_blur)
+
+                adversarial_loss = loss_functions.adversarial_loss_function(
+                    probs=class_probs_mean_of_latent, 
+                    labels=file_class_label,
+                    classifier_weight=self.classifier_weight)
+
+                # Not currently used
+                sparse_loss = loss_functions.sparse_l1_reg(
+                    z=latent, 
+                    sparse_weight=self.sparse_weight, 
+                    **kwargs)
+
+                # AFTER EACH FORWARD PASS
+                self._zero_all_grads()
+                loss = recon_loss + reg_loss + adversarial_loss 
+                loss.backward()         
+                self.accumulated_z = self.accumulated_z.detach() # Detach to allow next backpass
+                self.accumulated_class_probs = self.accumulated_class_probs.detach() # Detach to allow next backpass
+
+                # Step optimizer at desired number of froward passes
+                if (iter_curr%self.optimizer_forward_passes==0):
+                    self.opt_wae.step()
+                    self.opt_cls.step()
+
+                # Realtime terminal info and WandB 
+                if (iter_curr%self.recent_display_iters==0):
+                    if val_finetune: state_str = "VAL FINETUNE"
+                    elif val_unseen: state_str = "VAL UNSEEN"
+                    else: state_str = "TRAIN"
+                    now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
+                    if (self.gpu_id == 1):
+                        sys.stdout.write(
+                            f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, EPOCH {self.epoch}, Iter [BatchSize: {x.shape[0]}] {iter_curr}/{total_iters}, " + 
+                            f"MeanLoss: {round(loss.detach().item(), 2)}                 ")
+                        sys.stdout.flush() 
+
+                    # Log to WandB
+                    wandb.define_metric('Steps')
+                    wandb.define_metric("*", step_metric="Steps")
+                    train_step = self.epoch * int(total_iters) + iter_curr
+                    if (not val_finetune) & (not val_unseen):
+                        metrics = dict(
+                            train_attention_dropout=attention_dropout,
+                            train_loss=loss,
+                            train_recon_loss=recon_loss, 
+                            train_reg_loss=reg_loss, 
+                            train_adversarial_loss=adversarial_loss,
+                            train_sparse_loss=sparse_loss,
+                            train_LR_wae=self.opt_wae.param_groups[0]['lr'], 
+                            train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                            train_reg_Beta=self.reg_weight, 
+                            train_sinkhorn_blur=self.sinkhorn_blur,
+                            train_running_reg_passes=self.running_reg_passes,
+                            train_ReconWeight=self.recon_weight,
+                            train_AdversarialWeight=self.classifier_weight,
+                            train_AdversarialAlpha=self.classifier_alpha,
+                            train_Sparse_weight=self.sparse_weight,
+                            train_epoch=self.epoch)
+
+                    elif val_finetune:
+                        metrics = dict(
+                            val_finetune_attention_dropout=attention_dropout,
+                            val_finetune_loss=loss, 
+                            val_finetune_recon_loss=recon_loss, 
+                            val_finetune_reg_loss=reg_loss, 
+                            val_finetune_adversarial_loss=adversarial_loss,
+                            val_finetune_sparse_loss=sparse_loss,
+                            val_finetune_LR_wae=self.opt_wae.param_groups[0]['lr'], 
+                            val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                            val_finetune_reg_Beta=self.reg_weight, 
+                            val_finetune_sinkhorn_blur=self.sinkhorn_blur,
+                            val_finetune_ReconWeight=self.recon_weight,
+                            val_finetune_AdversarialWeight=self.classifier_weight,
+                            val_finetune_AdversarialAlpha=self.classifier_alpha,
+                            val_finetune_Sparse_weight=self.sparse_weight,
+                            val_finetune_epoch=self.epoch)
+
+                    elif val_unseen:
+                        metrics = dict(
+                            val_unseen_attention_dropout=attention_dropout,
+                            val_unseen_loss=loss, 
+                            val_unseen_recon_loss=recon_loss, 
+                            val_unseen_reg_loss=reg_loss, 
+                            val_unseen_adversarial_loss=adversarial_loss,
+                            val_unseen_sparse_loss=sparse_loss,
+                            val_unseen_LR_wae=self.opt_wae.param_groups[0]['lr'], 
+                            val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                            val_unseen_reg_Beta=self.reg_weight, 
+                            val_unseen_sinkhorn_blur=self.sinkhorn_blur,
+                            val_unseen_ReconWeight=self.recon_weight,
+                            val_unseen_AdversarialWeight=self.classifier_weight,
+                            val_unseen_AdversarialAlpha=self.classifier_alpha,
+                            val_unseen_Sparse_weight=self.sparse_weight,
+                            val_unseen_epoch=self.epoch)
+
+                wandb.log({**metrics, 'Steps': train_step})
+
+                # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
+                iter_curr = iter_curr + 1
+
+                # Realtime latent visualizations
+                if realtime_latent_printing & ((iter_curr + 1) % realtime_printing_interval == 0):
                         if self.gpu_id == 0:
                             if torch.isnan(loss).any():
                                 print("WARNING: Loss is nan, no plots can be made")
@@ -936,13 +940,13 @@ class Trainer:
                                     file_name = file_name,
                                     **kwargs)
     
-        finally:
-            print(f"[GPU{str(self.gpu_id)}] at 'finally' section after epoch")
-            barrier()
-            # for worker in dataloader_curr._workers: worker.terminate()
-            del dataloader_curr
-            # gc.collect()
-            # torch.cuda.empty_cache()
+        # finally:
+        #     print(f"[GPU{str(self.gpu_id)}] at 'finally' section after epoch")
+        #     barrier()
+        #     # for worker in dataloader_curr._workers: worker.terminate()
+        #     del dataloader_curr
+        #     # gc.collect()
+        #     # torch.cuda.empty_cache()
             
 if __name__ == "__main__":
 
