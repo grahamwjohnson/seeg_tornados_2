@@ -477,11 +477,11 @@ class Trainer:
             self.accumulated_prior = Gamma(kwargs['gamma_shape'], 1/kwargs['gamma_scale']).sample((self.running_reg_passes, self.latent_dim)).to(self.gpu_id)
         
         else:
-            self.accumulated_prior = self.barycenter.to(self.gpu_id)
+            self.barycenter = self.barycenter.to(self.gpu_id)
+            self.accumulated_prior = self.barycenter
             if self.accumulated_z == []: raise Exception("Error, accumulated_z is [], should be filled if barycenter was passed in")
 
         # Ensure on proper device
-        self.barycenter = self.barycenter.to(self.gpu_id)
         self.accumulated_z = self.accumulated_z.to(self.gpu_id)
         self.accumulated_prior = self.accumulated_prior.to(self.gpu_id)
 
