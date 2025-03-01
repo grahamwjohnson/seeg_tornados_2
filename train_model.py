@@ -31,6 +31,8 @@ import auraloss
 import wandb
 import math
 import ot
+from ot.lp import wasserstein_1d
+from ot.utils import proj_simplex
 # from torch.utils.data._utils import shared_memory_cleanup
 
 # Local Imports
@@ -473,8 +475,8 @@ class Trainer:
                     
         # Running Regulizer window for latent data
         if self.barycenter == []:
-            self.accumulated_z = Gamma(kwargs['gamma_shape'], 1/kwargs['gamma_scale']).sample((self.running_reg_passes, self.latent_dim)).to(self.gpu_id)
-            self.accumulated_prior = Gamma(kwargs['gamma_shape'], 1/kwargs['gamma_scale']).sample((self.running_reg_passes, self.latent_dim)).to(self.gpu_id)
+            self.accumulated_z = torch.randn(self.running_reg_passes, self.latent_dim).to(self.gpu_id)
+            self.accumulated_prior = torch.randn(self.running_reg_passes, self.latent_dim).to(self.gpu_id)
         
         else:
             self.barycenter = self.barycenter.to(self.gpu_id)
@@ -559,20 +561,30 @@ class Trainer:
         # Sample from the barycenter using the selected indices
         return self.barycenter[indices]
 
-    def _update_barycenter(self, gamma_shape, gamma_scale, num_barycenter_iters, sinkhorn_barycenter_blur, plot, savedir, **kwargs):
+    def _update_barycenter(self, gamma_shape, gamma_scale, num_barycenter_iters, plot, savedir, **kwargs):
 
         # Sample from gamma
-        gamma_samples = torch.distributions.Gamma(gamma_shape, 1/gamma_scale).sample((self.accumulated_z.shape[0], self.accumulated_z.shape[1])).to(self.accumulated_z)
+        x1 = torch.distributions.Gamma(gamma_shape, 1/gamma_scale).sample((self.accumulated_z.shape[0], self.accumulated_z.shape[1])).to(self.accumulated_z).cpu().numpy()
+        x2 = self.accumulated_z.cpu().numpy()
+        
+        measures_locations = [x1, x2]
+        measures_weights = [ot.unif(x1.shape[0]), ot.unif(x2.shape[0])]
 
-        # Compute pairwise cost matrix (Euclidean distance)
-        cost_matrix = torch.cdist(self.accumulated_z, gamma_samples, p=2)
-        cost_matrix = cost_matrix / cost_matrix.max() 
-        
-        # Compute optimal transport plan using Sinkhorn
-        transport_plan = loss_functions.sinkhorn(cost_matrix, blur=sinkhorn_barycenter_blur, n_iter=num_barycenter_iters)
-        
-        # Update barycenter as the weighted average of gamma samples
-        self.barycenter = torch.matmul(transport_plan.T, gamma_samples)  # Shape: (16384, 1024)
+        k, d = self.accumulated_z.shape
+        X_init = np.random.normal(0.0, 1.0, (k, d))  # initial Dirac locations
+        b = (
+            np.ones((k,)) / k
+        )  # weights of the barycenter (it will not be optimized, only the locations are optimized)
+
+        X = ot.lp.free_support_barycenter(
+            measures_locations, 
+            measures_weights, 
+            X_init, 
+            b,
+            numItermax=num_barycenter_iters,
+            verbose=True)
+
+        self.barycenter = torch.tensor(X).to(self.gpu_id).float()
 
         print(f"[GPU{self.gpu_id}] Barycenter updated: {self.barycenter.shape}")
 
@@ -800,7 +812,7 @@ class Trainer:
                     z_real = mean_latent, 
                     z_fake = new_prior_samples, # From Barycenter
                     weight = self.reg_weight,
-                    sinkhorn_batch_blur = self.sinkhorn_batch_blur)
+                    sinkhorn_blur = self.sinkhorn_batch_blur)
 
                 adversarial_loss = loss_functions.adversarial_loss_function(
                     probs=class_probs_mean_of_latent, 

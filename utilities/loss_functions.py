@@ -55,28 +55,28 @@ def adversarial_loss_function(probs, labels, classifier_weight):
     return classifier_weight * adversarial_loss
 
 def sinkhorn_loss(z_real, z_fake, weight, sinkhorn_blur):
-    sinkhorn = SamplesLoss(loss="sinkhorn", p=2, blur=sinkhorn_blur)  # Blur controls entropy strength
-    loss = sinkhorn(z_real, z_fake)  # Computes Sinkhorn loss instead of MMD
+    sinkhorn = SamplesLoss(loss="sinkhorn", p=2, blur=sinkhorn_blur)  # Blur controls entropy strength, if potentials is True, returns Transport plan
+    loss = sinkhorn(z_real, z_fake) 
 
     return loss * weight
 
-def sinkhorn(cost_matrix, blur, n_iter):
-    """
-    Compute the optimal transport plan using the Sinkhorn algorithm.
+# def sinkhorn(cost_matrix, blur, n_iter):
+#     """
+#     Compute the optimal transport plan using the Sinkhorn algorithm.
     
-    Args:
-        cost_matrix (torch.Tensor): Pairwise cost matrix (batch_size x batch_size).
-        blur (float): Entropy regularization parameter.
-        n_iter (int): Number of Sinkhorn iterations.
+#     Args:
+#         cost_matrix (torch.Tensor): Pairwise cost matrix (batch_size x batch_size).
+#         blur (float): Entropy regularization parameter.
+#         n_iter (int): Number of Sinkhorn iterations.
     
-    Returns:
-        torch.Tensor: Optimal transport plan.
-    """
-    K = torch.exp(-cost_matrix / blur)  # Gibbs kernel
-    u = torch.ones_like(K[:, 0])  # Initialize dual variables
+#     Returns:
+#         torch.Tensor: Optimal transport plan.
+#     """
+#     K = torch.exp(-cost_matrix / blur)  # Gibbs kernel
+#     u = torch.ones_like(K[:, 0])  # Initialize dual variables
     
-    for _ in range(n_iter):
-        v = 1.0 / (K @ u + 1e-8)  # Update v
-        u = 1.0 / (K @ v + 1e-8)  # Update u
+#     for _ in range(n_iter):
+#         v = 1.0 / (K @ u + 1e-8)  # Update v
+#         u = 1.0 / (K @ v + 1e-8)  # Update u
     
-    return u[:, None] * K * v[None, :]  # Transport plan
+#     return u[:, None] * K * v[None, :]  # Transport plan
