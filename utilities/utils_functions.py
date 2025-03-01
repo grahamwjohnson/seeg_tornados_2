@@ -565,10 +565,15 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier):
 
 # PLOTTING
 
-def plot_barycenter(barycenter, savedir, epoch, random_barycenter_numplots, **kwargs):
+def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycenter_numplots, bins=200, alpha=0.2, **kwargs):
     
     barycenter_meanSample = np.mean(barycenter, axis=0)
     barycenter_meanDim = np.mean(barycenter, axis=1)
+    prior_meanSample = np.mean(prior, axis=0)
+    prior_meanDim = np.mean(prior, axis=1)
+    observed_meanSample = np.mean(observed, axis=0)
+    observed_meanDim = np.mean(observed, axis=1)
+    
 
     N,D = barycenter.shape
 
@@ -577,17 +582,19 @@ def plot_barycenter(barycenter, savedir, epoch, random_barycenter_numplots, **kw
 
     # Plot mean of samples (i.e. shows dims)
     ax0 = fig.add_subplot(gs[0, :int(random_barycenter_numplots/2)])
-    df = pd.DataFrame({
-        'dim': np.arange(D),
-        'meanSample': barycenter_meanSample})
-
-    sns.barplot(data=df, x="dim", y="meanSample")
+    sns.histplot(barycenter_meanSample, bins=bins, color="purple", alpha=alpha, label="Barycenter", kde=True, ax=ax0)
+    sns.histplot(prior_meanSample, bins=bins, color="red", alpha=alpha, label="Prior", kde=True, ax=ax0)
+    sns.histplot(observed_meanSample, bins=bins, color="blue", alpha=alpha, label="Observed", kde=True, ax=ax0)
     ax0.set_title(f"Meaned Across Samples")
+    pl.legend()
 
     # Plot mean of dims (i.e. shows samples)
     ax1 = fig.add_subplot(gs[0, int(random_barycenter_numplots/2):])
-    sns.histplot(barycenter_meanDim, bins=200, kde=True, line_kws={'color': 'black'}, ax=ax1)
+    sns.histplot(barycenter_meanDim, bins=bins, color="purple", alpha=alpha, label="Barycenter", kde=True, ax=ax1)
+    sns.histplot(prior_meanDim, bins=bins, color="red", alpha=alpha, label="Prior", kde=True, ax=ax1)
+    sns.histplot(observed_meanDim, bins=bins, color="blue", alpha=alpha, label="Observed", kde=True, ax=ax1)
     ax1.set_title(f"Meaned Across Dimensions")
+    pl.legend()
 
     # Add random dimensions in to plot 
     for i in range(random_barycenter_numplots):
@@ -596,9 +603,14 @@ def plot_barycenter(barycenter, savedir, epoch, random_barycenter_numplots, **kw
         # Random dim
         np.random.seed(seed=None) # should replace with Generator for newer code
         dim_idx = np.random.randint(0, D)
-        data_curr = barycenter[:, dim_idx]
-        sns.histplot(data_curr, bins=200, kde=True, ax=ax_curr)
+        data_curr_barycenter = barycenter[:, dim_idx]
+        data_curr_prior = prior[:, dim_idx]
+        data_curr_observed = observed[:, dim_idx]
+        sns.histplot(data_curr_barycenter, bins=bins, color="purple", alpha=alpha, label="Barycenter", kde=True, ax=ax_curr)
+        sns.histplot(data_curr_prior, bins=bins, color="red", alpha=alpha, label="Prior", kde=True, ax=ax_curr)
+        sns.histplot(data_curr_observed, bins=bins, color="blue", alpha=alpha, label="Observed", kde=True, ax=ax_curr)
         ax_curr.set_title(f"Dim {dim_idx}")
+        pl.legend()
 
     if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
     savename_jpg = f"{savedir}/JPEGs/Barycenter_epoch{epoch}.jpg"
@@ -609,27 +621,25 @@ def plot_barycenter(barycenter, savedir, epoch, random_barycenter_numplots, **kw
 
     print("Barycenter Plotted")
 
-
-
-def print_latent_realtime(latent, prior, pat_labels, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
+def print_latent_realtime(latent, barycenter, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
 
     dims_to_plot = np.arange(0,num_realtime_dims)
         
     latent_plot = latent[:, 0:len(dims_to_plot)]
-    prior_plot = prior[:, 0:len(dims_to_plot)]
+    barycenter_plot = barycenter[:, 0:len(dims_to_plot)]
 
     df = pd.DataFrame({
         'dimension': np.tile(dims_to_plot, latent_plot.shape[0]),
         'latent': latent_plot.flatten(),
-        'prior': prior_plot.flatten(),
-        'pat_labels': np.tile(pat_labels, num_realtime_dims)
+        'barycenter': barycenter_plot.flatten(),
+        # 'pat_labels': np.tile(pat_labels, num_realtime_dims)
     })
 
     # COLOR BY DIM
     gs = gridspec.GridSpec(1, 2)
     fig = pl.figure(figsize=(20, 14))
 
-    g1 = sns.jointplot(data=df, x="latent", y="prior", hue="dimension")
+    g1 = sns.jointplot(data=df, x="latent", y="barycenter", hue="dimension")
     xlim = g1.ax_joint.get_xlim()
     ylim = g1.ax_joint.get_ylim()
     fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
@@ -642,25 +652,25 @@ def print_latent_realtime(latent, prior, pat_labels, savedir, epoch, iter_curr, 
     pl.close('all') 
 
 
-    # COLOR BY PAT
-    num_pats_sampled = len(set(pat_labels))
-    cmap_raw = plt.get_cmap('cubehelix')
-    samp_vec = np.linspace(0.1, 0.8, num_pats_sampled)  # Sample 10 colors for the palette
-    cmap_list = [mpl.colors.rgb2hex(cmap_raw(i)) for i in samp_vec]  # Convert to hex
+    # # COLOR BY PAT
+    # num_pats_sampled = len(set(pat_labels))
+    # cmap_raw = plt.get_cmap('cubehelix')
+    # samp_vec = np.linspace(0.1, 0.8, num_pats_sampled)  # Sample 10 colors for the palette
+    # cmap_list = [mpl.colors.rgb2hex(cmap_raw(i)) for i in samp_vec]  # Convert to hex
 
-    gs = gridspec.GridSpec(1, 2)
-    fig = pl.figure(figsize=(20, 14))
+    # gs = gridspec.GridSpec(1, 2)
+    # fig = pl.figure(figsize=(20, 14))
 
-    g2 = sns.jointplot(data=df, x="latent", y="prior", hue="pat_labels", kind="kde", palette=cmap_list)
-    g2.ax_joint.set_xlim(xlim)
-    g2.ax_joint.set_ylim(ylim)
-    g2.ax_joint.get_legend().remove()
-    fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
+    # g2 = sns.jointplot(data=df, x="latent", y="prior", hue="pat_labels", kind="kde", palette=cmap_list)
+    # g2.ax_joint.set_xlim(xlim)
+    # g2.ax_joint.set_ylim(ylim)
+    # g2.ax_joint.get_legend().remove()
+    # fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
 
-    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-    savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_colorbyPAT.jpg"
-    pl.savefig(savename_jpg)
-    pl.close(fig)    
+    # if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    # savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_colorbyPAT.jpg"
+    # pl.savefig(savename_jpg)
+    # pl.close(fig)    
 
     pl.close('all') 
 
