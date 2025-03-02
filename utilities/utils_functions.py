@@ -582,17 +582,17 @@ def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycent
 
     # Plot mean of samples (i.e. shows dims)
     ax0 = fig.add_subplot(gs[0, :int(random_barycenter_numplots/2)])
-    sns.histplot(barycenter_meanSample, bins=bins, color="purple", alpha=alpha, label="Barycenter", kde=True, ax=ax0)
-    sns.histplot(prior_meanSample, bins=bins, color="red", alpha=alpha, label="Prior", kde=True, ax=ax0)
-    sns.histplot(observed_meanSample, bins=bins, color="blue", alpha=alpha, label="Observed", kde=True, ax=ax0)
+    sns.histplot(barycenter_meanSample, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax0)
+    sns.histplot(prior_meanSample, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax0)
+    sns.histplot(observed_meanSample, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax0)
     ax0.set_title(f"Meaned Across Samples")
     pl.legend()
 
     # Plot mean of dims (i.e. shows samples)
     ax1 = fig.add_subplot(gs[0, int(random_barycenter_numplots/2):])
-    sns.histplot(barycenter_meanDim, bins=bins, color="purple", alpha=alpha, label="Barycenter", kde=True, ax=ax1)
-    sns.histplot(prior_meanDim, bins=bins, color="red", alpha=alpha, label="Prior", kde=True, ax=ax1)
-    sns.histplot(observed_meanDim, bins=bins, color="blue", alpha=alpha, label="Observed", kde=True, ax=ax1)
+    sns.histplot(barycenter_meanDim, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax1)
+    sns.histplot(prior_meanDim, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax1)
+    sns.histplot(observed_meanDim, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax1)
     ax1.set_title(f"Meaned Across Dimensions")
     pl.legend()
 
@@ -606,9 +606,9 @@ def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycent
         data_curr_barycenter = barycenter[:, dim_idx]
         data_curr_prior = prior[:, dim_idx]
         data_curr_observed = observed[:, dim_idx]
-        sns.histplot(data_curr_barycenter, bins=bins, color="purple", alpha=alpha, label="Barycenter", kde=True, ax=ax_curr)
-        sns.histplot(data_curr_prior, bins=bins, color="red", alpha=alpha, label="Prior", kde=True, ax=ax_curr)
-        sns.histplot(data_curr_observed, bins=bins, color="blue", alpha=alpha, label="Observed", kde=True, ax=ax_curr)
+        sns.histplot(data_curr_barycenter, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax_curr)
+        sns.histplot(data_curr_prior, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax_curr)
+        sns.histplot(data_curr_observed, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax_curr)
         ax_curr.set_title(f"Dim {dim_idx}")
         pl.legend()
 
