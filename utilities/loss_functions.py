@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import heapq
 import torch.nn.functional as F
-from utilities.sinkhorn import sinkhorn
+from geomloss import SamplesLoss
 
 def recon_loss_function(x, x_hat, recon_weight):
     # recon_loss = LogCosh_weight * LogCosh_loss_fn(x, x_hat) 
@@ -25,18 +25,35 @@ def adversarial_loss_function(probs, labels, classifier_weight):
     adversarial_loss = nn.functional.cross_entropy(probs, labels) / torch.log(torch.tensor(probs.shape[1]))
     return classifier_weight * adversarial_loss
 
-def sinkhorn_loss(observed, prior, weight, sinkhorn_eps, wasserstein_order, max_sinkhorn_iters, **kwargs):
+def sinkhorn_loss(observed, prior, weight, sinkhorn_blur, wasserstein_order, tail_penalty_lambda, max_sinkhorn_iters, **kwargs):
+    
+    """
+    Compute an asymmetric Sinkhorn divergence where movements from the tail 
+    (higher values) toward lower values are penalized.
+    
+    :param observed: Tensor of shape [batch_size, d] (model output, latent samples)
+    :param prior: Tensor of shape [batch_size, d] (prior distribution, e.g., Gamma)
+    :param tail_penalty_lambda: Strength of asymmetry (higher = stronger penalty)
+    :param wasserstein_order: Wasserstein order (1, 2, default W2)
+    :param blur: Sinkhorn regularization (higher = more smoothing)
+    :return: Asymmetric Sinkhorn divergence
+    """
 
-    loss, corrs_x_to_y, corr_y_to_x = sinkhorn(
-        x = observed, 
-        y = prior, 
-        p = wasserstein_order,
-        w_x = None,
-        w_y = None,
-        eps = sinkhorn_eps,
-        max_iters = max_sinkhorn_iters, 
-        stop_thresh = 1e-5,
-        verbose=False)
+    # **Apply Asymmetric Penalty**: Penalize movement from high observed → low prior
+    penalty_factor = 1 + tail_penalty_lambda * (observed.mean(dim=1, keepdim=True) > prior.mean(dim=1, keepdim=True)).float()
+    
+    # **Modify Observed Samples Instead of Cost Matrix**
+    observed_scaled = observed * penalty_factor  # Penalizes tail movement
+
+    # Compute standard Sinkhorn Loss using GeomLoss
+    loss_fn = SamplesLoss(loss="sinkhorn", p=wasserstein_order, blur=sinkhorn_blur)
+    loss = loss_fn(observed_scaled, prior)  # Use modified observed distribution
 
     return loss * weight
+    
+    # OLD
+    # criterion = SamplesLoss(loss="sinkhorn", p=wasserstein_order, blur=sinkhorn_blur)
+    # loss = criterion(observed, prior)
+
+    # return loss * weight
 

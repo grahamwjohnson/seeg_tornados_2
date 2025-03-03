@@ -416,7 +416,8 @@ class Trainer:
         classifier_num_pats: int,
         gamma_shape: float,
         gamma_scale: float,
-        sinkhorn_eps: int,
+        sinkhorn_blur: int,
+        tail_penalty_lambda: float,
         optimizer_forward_passes: int,
         barycenter,
         accumulated_z,
@@ -455,7 +456,8 @@ class Trainer:
         self.classifier_num_pats = classifier_num_pats
         self.gamma_shape = gamma_shape
         self.gamma_scale = gamma_scale
-        self.sinkhorn_eps = sinkhorn_eps
+        self.sinkhorn_blur = sinkhorn_blur
+        self.tail_penalty_lambda = tail_penalty_lambda
         self.optimizer_forward_passes = optimizer_forward_passes
         self.barycenter = barycenter
         self.accumulated_z = accumulated_z
@@ -836,6 +838,7 @@ class Trainer:
                 observed = observed_samples, 
                 prior = barycenter_samples, # From Barycenter
                 weight = self.reg_weight,
+                tail_penalty_lambda=self.tail_penalty_lambda,
                 **kwargs)
 
             adversarial_loss = loss_functions.adversarial_loss_function(
@@ -887,7 +890,8 @@ class Trainer:
                         train_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                         train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                         train_reg_Beta=self.reg_weight, 
-                        train_sinkhorn_eps=self.sinkhorn_eps,
+                        train_sinkhorn_blur=self.sinkhorn_blur,
+                        train_tail_penalty_lambda=self.tail_penalty_lambda,
                         train_running_reg_passes=self.running_reg_passes,
                         train_ReconWeight=self.recon_weight,
                         train_AdversarialWeight=self.classifier_weight,
@@ -906,7 +910,8 @@ class Trainer:
                         val_finetune_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                         val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                         val_finetune_reg_Beta=self.reg_weight, 
-                        val_finetune_sinkhorn_eps=self.sinkhorn_eps,
+                        val_finetune_sinkhorn_blur=self.sinkhorn_blur,
+                        val_finetune_tail_penalty_lambda=self.tail_penalty_lambda,
                         val_finetune_ReconWeight=self.recon_weight,
                         val_finetune_AdversarialWeight=self.classifier_weight,
                         val_finetune_AdversarialAlpha=self.classifier_alpha,
@@ -924,7 +929,8 @@ class Trainer:
                         val_unseen_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                         val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                         val_unseen_reg_Beta=self.reg_weight, 
-                        val_unseen_sinkhorn_eps=self.sinkhorn_eps,
+                        val_unseen_sinkhorn_blur=self.sinkhorn_blur,
+                        val_unseen_tail_penalty_lambda=self.tail_penalty_lambda,
                         val_unseen_ReconWeight=self.recon_weight,
                         val_unseen_AdversarialWeight=self.classifier_weight,
                         val_unseen_AdversarialAlpha=self.classifier_alpha,
