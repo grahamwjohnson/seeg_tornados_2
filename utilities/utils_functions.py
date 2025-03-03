@@ -3204,10 +3204,14 @@ def montage_filter_pickle_edfs(pat_id: str, dir_edf: str, save_dir: str, desired
 
 # INITIALIZATIONS
 
-def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, persistent_workers=False, num_workers=0):
+def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_workers=0):
 
     if num_workers > 0:
+        persistent_workers=True
         print("WARNING: num workers >0, have experienced odd errors...")
+
+    else:
+        persistent_workers=False
 
     return DataLoader(
         dataset,

@@ -69,7 +69,8 @@ def load_train_objs(
     val_finetune_hour_dataset_range, 
     val_unseen_hour_dataset_range, 
     inference_selection, 
-    
+    num_dataloader_workers,
+
     # WAE Optimizers
     core_weight_decay, 
     adamW_beta1,
@@ -146,6 +147,18 @@ def load_train_objs(
         num_rand_hashes=train_num_rand_hashes,
         num_forward_passes=train_forward_passes,
         **kwargs)
+
+
+
+    ### Random DataLoaders ###
+    train_dataset.set_pat_curr(-1) # -1 sets to random generation
+    train_dataloader = utils_functions.prepare_dataloader(train_dataset, batch_size=None, num_workers=num_dataloader_workers)
+
+    valfinetune_dataset.set_pat_curr(-1) # -1 sets to random generation
+    valfinetune_dataloader = utils_functions.prepare_dataloader(valfinetune_dataset, batch_size=None, num_workers=num_dataloader_workers)
+
+    valunseen_dataset.set_pat_curr(-1) # -1 sets to random generation
+    valunseen_dataloader = utils_functions.prepare_dataloader(valunseen_dataset, batch_size=None, num_workers=num_dataloader_workers)
          
     ### WAE ###
     wae = WAE(gpu_id=gpu_id, **kwargs) 
@@ -169,7 +182,7 @@ def load_train_objs(
     opt_wae = torch.optim.AdamW(wae_params, weight_decay=core_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_core'])
     opt_cls = torch.optim.AdamW(classifier_params, weight_decay=classifier_weight_decay, betas=(classifier_adamW_beta1, classifier_adamW_beta2), lr=kwargs['LR_min_classifier'])
 
-    return train_dataset, valfinetune_dataset, valunseen_dataset, wae, opt_wae, opt_cls
+    return train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, wae, opt_wae, opt_cls
 
 def main(  
     # Ordered variables
@@ -216,7 +229,7 @@ def main(
     ddp_setup(gpu_id, world_size)
 
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
-    train_dataset, valfinetune_dataset, valunseen_dataset, wae, opt_wae, opt_cls = load_train_objs(gpu_id=gpu_id, **kwargs) 
+    train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, wae, opt_wae, opt_cls = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
     # Load the model/opt states if not first epoch & if in training mode
     if (start_epoch > 0):
@@ -249,8 +262,11 @@ def main(
         opt_cls=opt_cls,
         start_epoch=start_epoch,
         train_dataset=train_dataset, 
+        train_dataloader=train_dataloader,
         valfinetune_dataset=valfinetune_dataset,
+        valfinetune_dataloader=valfinetune_dataloader,
         valunseen_dataset=valunseen_dataset,
+        valunseen_dataloader=valunseen_dataloader,
         PaCMAP_model_to_infer=PaCMAP_model_to_infer,
         wandb_run=wandb_run,
         finetune_inference=finetune_inference,
@@ -276,8 +292,8 @@ def main(
                 trainer._set_to_train()
                 trainer.opt_wae.param_groups[0]['lr'] = LR_val_wae
                 trainer.opt_cls.param_groups[0]['lr'] = LR_val_cls
-                trainer._run_epoch(
-                    dataset_curr = trainer.valfinetune_dataset, 
+                trainer._run_train_epoch(
+                    dataloader_curr = trainer.valfinetune_dataloader, 
                     dataset_string = "valfinetune",
                     val_finetune = True,
                     val_unseen = False,
@@ -296,8 +312,8 @@ def main(
             trainer._set_to_eval()
             with torch.no_grad():
                 for d in range(0, len(dataset_list)):
-                    trainer._run_inference(
-                        dataset_curr = dataset_list[d], 
+                    trainer._run_export_embeddings(
+                        dataset_curr = dataset_list[d],  # Takes in a Dataset, NOT a DataLoader
                         dataset_string = dataset_strs[d],
                         num_rand_hashes = -1,
                         **kwargs)
@@ -326,8 +342,8 @@ def main(
         
         # TRAIN
         trainer._set_to_train()
-        trainer._run_epoch(
-            dataset_curr = trainer.train_dataset, 
+        trainer._run_train_epoch(
+            dataloader_curr = trainer.train_dataloader, 
             dataset_string = "train",
             val_finetune = False,
             val_unseen = False,
@@ -352,8 +368,8 @@ def main(
             trainer._set_to_train()
             trainer.opt_wae.param_groups[0]['lr'] = LR_val_wae
             trainer.opt_cls.param_groups[0]['lr'] = LR_val_cls
-            trainer._run_epoch(
-                dataset_curr = trainer.valfinetune_dataset, 
+            trainer._run_train_epoch(
+                dataloader_curr = trainer.valfinetune_dataloader, 
                 dataset_string = "valfinetune",
                 val_finetune = True,
                 val_unseen = False,
@@ -362,8 +378,8 @@ def main(
             # UNSEEN portion of validation patients 
             trainer._set_to_eval()
             with torch.no_grad():
-                trainer._run_epoch(
-                    dataset_curr = trainer.valunseen_dataset, 
+                trainer._run_train_epoch(
+                    dataloader_curr = trainer.valunseen_dataloader, 
                     dataset_string = "valunseen",
                     val_finetune = False,
                     val_unseen = True,
@@ -389,6 +405,9 @@ class Trainer:
         train_dataset: SEEG_Tornado_Dataset,
         valfinetune_dataset: SEEG_Tornado_Dataset,
         valunseen_dataset: SEEG_Tornado_Dataset,
+        train_dataloader: DataLoader,
+        valfinetune_dataloader: DataLoader,
+        valunseen_dataloader: DataLoader,
         opt_wae: torch.optim.Optimizer,
         opt_cls: torch.optim.Optimizer,
         wandb_run,
@@ -417,6 +436,7 @@ class Trainer:
         gamma_shape: float,
         gamma_scale: float,
         sinkhorn_blur: int,
+        wasserstein_order: float,
         tail_penalty_lambda: float,
         optimizer_forward_passes: int,
         barycenter,
@@ -430,6 +450,9 @@ class Trainer:
         self.train_dataset = train_dataset
         self.valfinetune_dataset = valfinetune_dataset
         self.valunseen_dataset = valunseen_dataset
+        self.train_dataloader = train_dataloader
+        self.valfinetune_dataloader = valfinetune_dataloader
+        self.valunseen_dataloader = valunseen_dataloader
         self.opt_wae = opt_wae
         self.opt_cls = opt_cls
         self.model_dir = model_dir
@@ -457,6 +480,7 @@ class Trainer:
         self.gamma_shape = gamma_shape
         self.gamma_scale = gamma_scale
         self.sinkhorn_blur = sinkhorn_blur
+        self.wasserstein_order = wasserstein_order
         self.tail_penalty_lambda = tail_penalty_lambda
         self.optimizer_forward_passes = optimizer_forward_passes
         self.barycenter = barycenter
@@ -648,7 +672,7 @@ class Trainer:
         self.accumulated_z = self.accumulated_z.detach() 
         self.accumulated_class_probs = self.accumulated_class_probs.detach()
 
-    def _run_inference(
+    def _run_export_embeddings(
         self, 
         dataset_curr, 
         dataset_string,
@@ -662,8 +686,12 @@ class Trainer:
         '''
         This will run inference (ONLY encoder) and save the latent space per file to a pkl
 
-        Unlike _run_epoch (which is random data pulls), this function will sequentially iterate through entire file
+        Unlike _run_train_epoch (which is random data pulls), this function will sequentially iterate through entire file
+
+        IMPORTANT: Takes in a Dataset, NOT a Dataloader (used in _run_train_epoch)
+
         '''
+
         print(f"[GPU{self.gpu_id}] Autoencode_samples: {self.autoencode_samples}")
 
         ### ALL/FULL FILES - LATENT ONLY - FULL TRANSFORMER CONTEXT ### 
@@ -762,9 +790,9 @@ class Trainer:
                         pickle.dump(windowed_file_latent[b, :, :], output_obj)
                         output_obj.close()
 
-    def _run_epoch(
+    def _run_train_epoch( ### RANDOM SUBSET OF FILES ###    
         self, 
-        dataset_curr, 
+        dataloader_curr, 
         dataset_string,
         attention_dropout,
         num_dataloader_workers,
@@ -779,15 +807,11 @@ class Trainer:
         '''
         This function is for training the model. 
         It will pull: random pats/random files/random portions of file
+
+        Takes in a DataLoader, not a Dataset
         '''
 
         print(f"[GPU{self.gpu_id}] Autoencode_samples: {self.autoencode_samples}")
-
-        ### RANDOM SUBSET OF FILES ###    
-        dataset_curr.set_pat_curr(-1) # -1 sets to random generation
-        num_pats_curr = dataset_curr.get_pat_count()
-        dataloader_curr = utils_functions.prepare_dataloader(dataset_curr, batch_size=None, num_workers=num_dataloader_workers)
-        dataloader_curr.sampler.set_epoch(self.epoch) # Ensure new file order is pulled
 
         # Update the Barycenter (average between empiric latent distriubution and given prior (e.g. Gamma) for this epoch
         self._update_barycenter(
@@ -838,8 +862,9 @@ class Trainer:
                 observed = observed_samples, 
                 prior = barycenter_samples, # From Barycenter
                 weight = self.reg_weight,
-                tail_penalty_lambda=self.tail_penalty_lambda,
-                **kwargs)
+                sinkhorn_blur = self.sinkhorn_blur,
+                wasserstein_order = self.wasserstein_order,
+                tail_penalty_lambda=self.tail_penalty_lambda)
 
             adversarial_loss = loss_functions.adversarial_loss_function(
                 probs=class_probs_mean_of_latent, 
@@ -982,8 +1007,6 @@ class Trainer:
 
         print(f"[GPU{str(self.gpu_id)}] at end of epoch")
         # barrier()
-        # for worker in dataloader_curr._workers: worker.terminate()
-        del dataloader_curr
         # gc.collect()
         # torch.cuda.empty_cache()
             

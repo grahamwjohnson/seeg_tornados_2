@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 import sys
 from utilities import utils_functions
 import random
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
  
 pd.set_option('display.max_rows', None)
 
@@ -33,9 +35,7 @@ class SEEG_Tornado_Dataset(Dataset):
             autoencode_samples,
             periictal_augmentation_perc,
             preictal_augmentation_seconds,
-            random_pats_in_batch,
-            random_files_per_pat,
-            random_epochs_per_file,
+            random_pulls_in_batch,
             num_rand_hashes, 
             padded_channels,
             latent_dim,
@@ -53,9 +53,7 @@ class SEEG_Tornado_Dataset(Dataset):
 
         self.num_windows = int((self.num_samples - self.autoencode_samples)/self.autoencode_samples) - 2
         
-        self.random_pats_in_batch = random_pats_in_batch
-        self.random_files_per_pat = random_files_per_pat
-        self.random_epochs_per_file = random_epochs_per_file
+        self.random_pulls_in_batch = random_pulls_in_batch
 
         self.num_rand_hashes = num_rand_hashes
         self.latent_dim = latent_dim
@@ -123,16 +121,43 @@ class SEEG_Tornado_Dataset(Dataset):
     def get_pat_curr(self):
         return self.pat_curr, self.pat_ids[self.pat_curr], self.pat_dirs[self.pat_curr], self.pat_fnames[self.pat_curr]
 
-    def rand_start_idxs(self):
+    def rand_start_idx(self):
 
         last_possible_start_idx = self.num_samples - (self.transformer_seq_length + 1) * self.autoencode_samples 
 
-        start_idxs = np.zeros(self.random_epochs_per_file, dtype=int)
-        for i in range(self.random_epochs_per_file):
-            np.random.seed(seed=None) 
-            start_idxs[i] = np.random.randint(0, last_possible_start_idx+1)
+        np.random.seed(seed=None) 
+        start_idx = np.random.randint(0, last_possible_start_idx+1)
         
-        return start_idxs
+        return start_idx
+
+    # Modified function to load a single sample (pat/file/epoch)
+    def load_data_sample(self, pat_idx, file_idx, start_idx, pat_fnames, pat_ids, latent_dim, transformer_seq_length, padded_channels, autoencode_samples, num_rand_hashes):
+
+        # initialize data tensor
+        data_tensor_np = np.zeros((transformer_seq_length, padded_channels, autoencode_samples), dtype=np.float32)
+
+        # Load the file's pickle
+        with open(pat_fnames[pat_idx][file_idx], 'rb') as file:
+            data = pickle.load(file)
+
+        # Generate hashes for feedforward conditioning
+        rand_modifier = int(random.uniform(0, num_rand_hashes - 1))
+        hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
+            input_string=pat_ids[pat_idx], 
+            num_channels=data.shape[0], 
+            latent_dim=latent_dim, 
+            modifier=rand_modifier)
+
+        # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times
+        for embedding_idx in range(0, transformer_seq_length):
+            end_idx = start_idx + autoencode_samples * embedding_idx + autoencode_samples
+            data_tensor_np[embedding_idx, :len(hash_channel_order), :] = data[hash_channel_order, end_idx - autoencode_samples : end_idx]  # Padding implicit in zeros initialization
+
+        # Add file info
+        file_name = pat_fnames[pat_idx][file_idx].split("/")[-1].split(".")[0]
+        file_class = pat_idx
+
+        return data_tensor_np, file_name, file_class, hash_channel_order, hash_pat_embedding
 
     def __len__(self):
 
@@ -159,8 +184,7 @@ class SEEG_Tornado_Dataset(Dataset):
             return data_tensor, file_name, file_class_label
 
         else:
-            # Calculate batchsize
-            self.batchsize = self.random_pats_in_batch * self.random_files_per_pat * self.random_epochs_per_file 
+            self.batchsize = self.random_pulls_in_batch 
             data_tensor_np = np.zeros((self.batchsize, self.transformer_seq_length, self.padded_channels, self.autoencode_samples), dtype=np.float32)
             file_name = [-1]*self.batchsize
             file_class = torch.empty(self.batchsize, dtype=torch.long)
@@ -169,52 +193,110 @@ class SEEG_Tornado_Dataset(Dataset):
 
             # Random samplings of pat/file/epoch
             np.random.seed(seed=None)
-            pat_idxs = np.random.choice(self.get_pat_count(), self.random_pats_in_batch, replace=True)
-            file_idxs = [np.random.choice(len(self.pat_fnames[pi]), self.random_files_per_pat, replace=True) for pi in pat_idxs]
-            start_idxs = self.rand_start_idxs()
+            pat_idxs = np.random.choice(self.get_pat_count(), self.random_pulls_in_batch, replace=True)
+            file_idxs = [int(np.random.choice(len(self.pat_fnames[pi]), 1, replace=True)) for pi in pat_idxs]
+            start_idxs = [self.rand_start_idx() for pi in pat_idxs]
 
             idx_output = -1
-            for i in range(len(pat_idxs)):
-                p_curr = pat_idxs[i]
-                for j in range(len(file_idxs[i])):
-                    f_curr = file_idxs[i][j]
+            with ThreadPoolExecutor() as executor:
+                # Create a partial function that passes the shared arguments
+                load_data_partial = partial(self.load_data_sample, pat_fnames=self.pat_fnames, pat_ids=self.pat_ids, latent_dim=self.latent_dim, 
+                                        transformer_seq_length=self.transformer_seq_length, padded_channels=self.padded_channels, autoencode_samples=self.autoencode_samples, 
+                                        num_rand_hashes=self.num_rand_hashes)
 
-                    # Load the file's pickle
-                    file = open(self.pat_fnames[p_curr][f_curr],'rb')
-                    data = pickle.load(file) 
-                    file.close()
+                futures = []
+                for i in range(len(pat_idxs)):
+                    # Submit tasks for parallel loading of data samples
+                    futures.append(executor.submit(load_data_partial, pat_idxs[i], file_idxs[i], start_idxs[i]))
 
-                    # Pull out epoch's from this file
-                    for k in range(len(start_idxs)):
-                        idx_output = idx_output + 1
+                # Collect results from all futures
+                for future in futures:
+                    data_tensor_np_i, file_name_i, file_class_i, hash_channel_order_i, hash_pat_embedding_i = future.result()
 
-                        start_idx_curr = start_idxs[k]
-
-                        file_name[idx_output] = self.pat_fnames[p_curr][f_curr].split("/")[-1].split(".")[0]
-                        file_class[idx_output] = p_curr
-
-                        # print(f"p_curr: {p_curr}, f_curr: {f_curr}, e_curr: {e_curr}, idx_output: {idx_output}")
-
-                        # e_curr = start_idxs[k]
-
-                        # Generate hashes for feedforward conditioning
-                        np.random.seed(seed=None) 
-                        rand_modifer = int(random.uniform(0, self.num_rand_hashes -1))
-                        hash_pat_embedding[idx_output], hash_channel_order[idx_output] = utils_functions.hash_to_vector(
-                            input_string=self.pat_ids[p_curr], 
-                            num_channels=data.shape[0], 
-                            latent_dim=self.latent_dim, 
-                            modifier=rand_modifer)
-
-                        # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
-                        for embedding_idx in range(0, self.transformer_seq_length):
-                            # Pull out data for this window
-                            end_idx = start_idx_curr + self.autoencode_samples * embedding_idx + self.autoencode_samples 
-                            data_tensor_np[idx_output, embedding_idx, :len(hash_channel_order[idx_output]), :] = data[hash_channel_order[idx_output], end_idx-self.autoencode_samples : end_idx] # Padding implicit in zeros intitilization
+                    # Append results to the final variables
+                    idx_output += 1
+                    data_tensor_np[idx_output] = data_tensor_np_i
+                    file_name[idx_output] = file_name_i
+                    file_class[idx_output] = file_class_i
+                    hash_channel_order[idx_output] = hash_channel_order_i
+                    hash_pat_embedding[idx_output] = hash_pat_embedding_i
 
             # Convert to Torch Tensor
             data_tensor = torch.Tensor(data_tensor_np)
 
             return data_tensor, file_name, file_class, hash_channel_order, hash_pat_embedding
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            # # Calculate batchsize
+            # self.batchsize = self.random_pats_in_batch * self.random_files_per_pat * self.random_epochs_per_file 
+            # data_tensor_np = np.zeros((self.batchsize, self.transformer_seq_length, self.padded_channels, self.autoencode_samples), dtype=np.float32)
+            # file_name = [-1]*self.batchsize
+            # file_class = torch.empty(self.batchsize, dtype=torch.long)
+            # hash_channel_order = [-1]*self.batchsize
+            # hash_pat_embedding = torch.empty((self.batchsize, self.latent_dim), dtype=torch.float32)
+
+            # # Random samplings of pat/file/epoch
+            # np.random.seed(seed=None)
+            # pat_idxs = np.random.choice(self.get_pat_count(), self.random_pats_in_batch, replace=True)
+            # file_idxs = [np.random.choice(len(self.pat_fnames[pi]), self.random_files_per_pat, replace=True) for pi in pat_idxs]
+            # start_idxs = self.rand_start_idxs()
+
+            # idx_output = -1
+            # for i in range(len(pat_idxs)):
+            #     p_curr = pat_idxs[i]
+            #     for j in range(len(file_idxs[i])):
+            #         f_curr = file_idxs[i][j]
+
+            #         # Load the file's pickle
+            #         file = open(self.pat_fnames[p_curr][f_curr],'rb')
+            #         data = pickle.load(file) 
+            #         file.close()
+
+            #         # Pull out epoch's from this file
+            #         for k in range(len(start_idxs)):
+            #             idx_output = idx_output + 1
+
+            #             start_idx_curr = start_idxs[k]
+
+            #             file_name[idx_output] = self.pat_fnames[p_curr][f_curr].split("/")[-1].split(".")[0]
+            #             file_class[idx_output] = p_curr
+
+            #             # print(f"p_curr: {p_curr}, f_curr: {f_curr}, e_curr: {e_curr}, idx_output: {idx_output}")
+
+            #             # e_curr = start_idxs[k]
+
+            #             # Generate hashes for feedforward conditioning
+            #             np.random.seed(seed=None) 
+            #             rand_modifer = int(random.uniform(0, self.num_rand_hashes -1))
+            #             hash_pat_embedding[idx_output], hash_channel_order[idx_output] = utils_functions.hash_to_vector(
+            #                 input_string=self.pat_ids[p_curr], 
+            #                 num_channels=data.shape[0], 
+            #                 latent_dim=self.latent_dim, 
+            #                 modifier=rand_modifer)
+
+            #             # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
+            #             for embedding_idx in range(0, self.transformer_seq_length):
+            #                 # Pull out data for this window
+            #                 end_idx = start_idx_curr + self.autoencode_samples * embedding_idx + self.autoencode_samples 
+            #                 data_tensor_np[idx_output, embedding_idx, :len(hash_channel_order[idx_output]), :] = data[hash_channel_order[idx_output], end_idx-self.autoencode_samples : end_idx] # Padding implicit in zeros intitilization
+
+            # # Convert to Torch Tensor
+            # data_tensor = torch.Tensor(data_tensor_np)
+
+            # return data_tensor, file_name, file_class, hash_channel_order, hash_pat_embedding
         
+
+
 

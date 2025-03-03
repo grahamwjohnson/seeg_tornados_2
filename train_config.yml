@@ -45,7 +45,7 @@ crattn_dropout: 0.1
 transformer_dim: kwargs['transformer_dim'] = kwargs['crattn_embed_dim'] * kwargs['autoencode_samples']
 transformer_seq_length: 256
 max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
-max_batch_size: kwargs['max_batch_size'] = kwargs['random_pats_in_batch'] * kwargs['random_files_per_pat'] * kwargs['random_epochs_per_file'] * kwargs['inference_batch_mult']
+max_batch_size: kwargs['max_batch_size'] = kwargs['random_pulls_in_batch'] * kwargs['inference_batch_mult']
 n_layers: 4
 n_heads: 128
 multiple_of: 256 
@@ -86,9 +86,7 @@ val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that mo
 
 # Training variables
 optimizer_forward_passes: 1 # How often to step optimizier 
-random_pats_in_batch: 16 # Random data pull when pat_curr = -1
-random_files_per_pat: 1 # Random data pull when pat_curr = -1
-random_epochs_per_file: 1 # Random data pull when pat_curr = -1
+random_pulls_in_batch: 32 # Random data pull when pat_curr = -1
 
 train_forward_passes: 1024
 valfinetune_forward_passes: 500
@@ -114,7 +112,7 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 ### Dynamic Weights ###
 
 # Beta WAE controls
-Reg_max: kwargs['Reg_max'] = 1e-2
+Reg_max: kwargs['Reg_max'] = 1
 Reg_min: kwargs['Reg_min'] = 0
 Reg_stall_epochs: 0 # No Reg weight rise until stall is complete
 Reg_epochs_AT_max: 99999
@@ -122,16 +120,14 @@ Reg_epochs_TO_max: 0
 
 # GAMMA distribution params  TODO: consider assymetric cost to prenalize moving mass out of tail
 running_reg_passes: 8192
-barycenter_batch_sampling: 64
+barycenter_batch_sampling: 256
 gamma_shape: 1.1
 gamma_scale: 0.75
 num_barycenter_iters: 10
-# sinkhorn_batch_blur: 1.0  # This is the BATCH/SMALL scale blur updates
-sinkhorn_blur: kwargs['sinkhorn_blur'] = 10 # 1e-3
+sinkhorn_blur: kwargs['sinkhorn_blur'] = 10 # 1e-3 # This is the BATCH/SMALL scale blur updates
 random_barycenter_numplots: 4
-# batch_sinkhorn_asymmetry_lambda_factor: 2 # How much more expensive to move mass backwards out of tail compared to forward into tail
 wasserstein_order: 1
-max_sinkhorn_iters: 100  # batch level loss
+# max_sinkhorn_iters: 100  # batch level loss
 tail_penalty_lambda: 2.0  # Makes it costly to move mass out of tail
 
 # Sparsity weight control

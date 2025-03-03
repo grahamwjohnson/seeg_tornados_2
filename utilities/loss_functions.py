@@ -25,7 +25,7 @@ def adversarial_loss_function(probs, labels, classifier_weight):
     adversarial_loss = nn.functional.cross_entropy(probs, labels) / torch.log(torch.tensor(probs.shape[1]))
     return classifier_weight * adversarial_loss
 
-def sinkhorn_loss(observed, prior, weight, sinkhorn_blur, wasserstein_order, tail_penalty_lambda, max_sinkhorn_iters, **kwargs):
+def sinkhorn_loss(observed, prior, weight, sinkhorn_blur, wasserstein_order, tail_penalty_lambda):
     
     """
     Compute an asymmetric Sinkhorn divergence where movements from the tail 
@@ -49,7 +49,9 @@ def sinkhorn_loss(observed, prior, weight, sinkhorn_blur, wasserstein_order, tai
     loss_fn = SamplesLoss(loss="sinkhorn", p=wasserstein_order, blur=sinkhorn_blur)
     loss = loss_fn(observed_scaled, prior)  # Use modified observed distribution
 
-    return loss * weight
+    norm_loss = loss * (sinkhorn_blur ** wasserstein_order) # To compare across blur/order settings
+
+    return norm_loss * weight  # Manual re-weighting
     
     # OLD
     # criterion = SamplesLoss(loss="sinkhorn", p=wasserstein_order, blur=sinkhorn_blur)
