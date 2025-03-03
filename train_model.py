@@ -559,8 +559,8 @@ class Trainer:
         if num_new == self.barycenter_batch_sampling:
             return mean_latent
 
-        elif num_new < self.barycenter_batch_sampling:
-            raise Exception(f"mean_latent.shape[0] < self.barycenter_batch_sampling ({num_new} < {self.barycenter_batch_sampling})")
+        elif num_new > self.barycenter_batch_sampling:
+            raise Exception(f"mean_latent.shape[0] > self.barycenter_batch_sampling ({num_new} > {self.barycenter_batch_sampling})")
 
         else:
             num_past = self.barycenter_batch_sampling - num_new
@@ -570,29 +570,32 @@ class Trainer:
             return torch.cat([past_samples, mean_latent])
 
     def _update_barycenter(self, gamma_shape, gamma_scale, num_barycenter_iters, plot, savedir, **kwargs):
-
-        # Sample from gamma
+        
+        # # Sample from gamma
         x1 = torch.distributions.Gamma(gamma_shape, 1/gamma_scale).sample((self.accumulated_z.shape[0], self.accumulated_z.shape[1])).to(self.accumulated_z).cpu().numpy()
         x2 = self.accumulated_z.cpu().numpy()
         
-        measures_locations = [x1, x2]
-        measures_weights = [ot.unif(x1.shape[0]), ot.unif(x2.shape[0])]
+        # measures_locations = [x1, x2]
+        # measures_weights = [ot.unif(x1.shape[0]), ot.unif(x2.shape[0])]
 
-        k, d = self.accumulated_z.shape
-        X_init = np.random.normal(0.0, 1.0, (k, d))  # initial Dirac locations
-        b = (np.ones((k,)) / k)  # weights of the barycenter (it will not be optimized, only the locations are optimized)
+        # k, d = self.accumulated_z.shape
+        # X_init = np.random.normal(0.0, 1.0, (k, d))  # initial Dirac locations
+        # b = (np.ones((k,)) / k)  # weights of the barycenter (it will not be optimized, only the locations are optimized)
 
-        X = ot.lp.free_support_barycenter(
-            measures_locations, 
-            measures_weights, 
-            X_init, 
-            b,
-            numItermax=num_barycenter_iters,
-            verbose=True)
+        # X = ot.lp.free_support_barycenter(
+        #     measures_locations, 
+        #     measures_weights, 
+        #     X_init, 
+        #     b,
+        #     numItermax=num_barycenter_iters,
+        #     verbose=True)
 
-        self.barycenter = torch.tensor(X).to(self.gpu_id).float()
+        # self.barycenter = torch.tensor(X).to(self.gpu_id).float()
 
-        print(f"[GPU{self.gpu_id}] Barycenter updated: {self.barycenter.shape}")
+        # print(f"[GPU{self.gpu_id}] Barycenter updated: {self.barycenter.shape}")
+
+        # Pure Gamma barycenter
+        self.barycenter = torch.distributions.Gamma(gamma_shape, 1/gamma_scale).sample((self.accumulated_z.shape[0], self.accumulated_z.shape[1])).to(self.gpu_id)
 
         # Plot the barycenter if desired
         if plot & (self.gpu_id == 0):
@@ -824,10 +827,18 @@ class Trainer:
                 recon_weight=self.recon_weight)
 
             reg_loss = loss_functions.sinkhorn_loss( # Just on this local batch compared to Barycenter
-                z_real = observed_samples, 
-                z_fake = barycenter_samples, # From Barycenter
+                observed = observed_samples, 
+                prior = barycenter_samples, # From Barycenter
                 weight = self.reg_weight,
-                sinkhorn_blur = self.sinkhorn_batch_blur)
+                sinkhorn_blur = self.sinkhorn_batch_blur,
+                **kwargs)
+
+            # reg_loss = loss_functions.sinkhorn_asymmetric_loss( # Just on this local batch compared to Barycenter, ASYMMETRIC!
+            #     x = observed_samples, 
+            #     y = barycenter_samples, # From Barycenter
+            #     weight = self.reg_weight,
+            #     sinkhorn_blur = self.sinkhorn_batch_blur,
+            #     **kwargs)
 
             adversarial_loss = loss_functions.adversarial_loss_function(
                 probs=class_probs_mean_of_latent, 
@@ -965,12 +976,12 @@ class Trainer:
                                 file_name = file_name,
                                 **kwargs)
 
-        # print(f"[GPU{str(self.gpu_id)}] at end of epoch")
+        print(f"[GPU{str(self.gpu_id)}] at end of epoch")
         # barrier()
-        # # for worker in dataloader_curr._workers: worker.terminate()
-        # del dataloader_curr
+        # for worker in dataloader_curr._workers: worker.terminate()
+        del dataloader_curr
         # gc.collect()
-        # # torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
             
 if __name__ == "__main__":
 
