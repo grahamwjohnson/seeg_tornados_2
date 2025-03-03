@@ -10,6 +10,7 @@ def sinkhorn(x: torch.Tensor, y: torch.Tensor, p: float = 2,
              w_y: Union[torch.Tensor, None] = None,
              eps: float = 1e-3,
              max_iters: int = 100, stop_thresh: float = 1e-5,
+             tail_penalty_lambda: float = 0.0, # >0 means harder to move out of Gamma tail
              verbose=False):
     """
     Compute the Entropy-Regularized p-Wasserstein Distance between two d-dimensional point clouds
@@ -87,6 +88,10 @@ def sinkhorn(x: torch.Tensor, y: torch.Tensor, p: float = 2,
         M_ij = ((x_i - y_j) ** p).abs().sum(dim=2) # [n, m]
     else:
         M_ij = ((x_i - y_j) ** p).sum(dim=2) ** (1.0 / p)  # [n, m]
+
+    # # **Apply Asymmetric Cost Penalization**
+    # penalty_factor = 1 + tail_penalty_lambda * (x_i > y_j).float()
+    # M_ij = M_ij * penalty_factor
 
     # Weights [n,] and [m,]
     if w_x is None and w_y is None:

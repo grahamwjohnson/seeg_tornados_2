@@ -414,6 +414,8 @@ class Trainer:
         running_reg_passes: int,
         barycenter_batch_sampling: int,
         classifier_num_pats: int,
+        gamma_shape: float,
+        gamma_scale: float,
         sinkhorn_eps: int,
         optimizer_forward_passes: int,
         barycenter,
@@ -451,6 +453,8 @@ class Trainer:
         self.running_reg_passes = running_reg_passes
         self.barycenter_batch_sampling = barycenter_batch_sampling
         self.classifier_num_pats = classifier_num_pats
+        self.gamma_shape = gamma_shape
+        self.gamma_scale = gamma_scale
         self.sinkhorn_eps = sinkhorn_eps
         self.optimizer_forward_passes = optimizer_forward_passes
         self.barycenter = barycenter
@@ -470,7 +474,8 @@ class Trainer:
                     
         # Running Regulizer window for latent data
         if self.barycenter == []:
-            self.accumulated_z = torch.randn(self.running_reg_passes, self.latent_dim).to(self.gpu_id)
+            # self.accumulated_z = torch.randn(self.running_reg_passes, self.latent_dim).to(self.gpu_id)
+            self.accumulated_z = torch.distributions.Gamma(self.gamma_shape, 1/self.gamma_scale).sample((self.running_reg_passes, self.latent_dim)).to(self.gpu_id)
         
         else:
             self.barycenter = self.barycenter.to(self.gpu_id)
@@ -546,7 +551,7 @@ class Trainer:
             utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch, **kwargs)
             print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
 
-    def _sample_barycenter(self, num_barycenter_samples, gamma_shape, gamma_scale, **kwargs):
+    def _sample_barycenter(self, num_barycenter_samples, **kwargs):
         # Randomly select indices from the barycenter samples
         indices = torch.randint(0, self.barycenter.shape[0], (num_barycenter_samples,))
 
@@ -569,33 +574,33 @@ class Trainer:
 
             return torch.cat([past_samples, mean_latent])
 
-    def _update_barycenter(self, gamma_shape, gamma_scale, num_barycenter_iters, plot, savedir, **kwargs):
+    def _update_barycenter(self, num_barycenter_iters, plot, savedir, **kwargs):
         
         # # Sample from gamma
-        x1 = torch.distributions.Gamma(gamma_shape, 1/gamma_scale).sample((self.accumulated_z.shape[0], self.accumulated_z.shape[1])).to(self.accumulated_z).cpu().numpy()
+        x1 = torch.distributions.Gamma(self.gamma_shape, 1/self.gamma_scale).sample((self.accumulated_z.shape[0], self.accumulated_z.shape[1])).to(self.accumulated_z).cpu().numpy()
         x2 = self.accumulated_z.cpu().numpy()
         
-        # measures_locations = [x1, x2]
-        # measures_weights = [ot.unif(x1.shape[0]), ot.unif(x2.shape[0])]
+        measures_locations = [x1, x2]
+        measures_weights = [ot.unif(x1.shape[0]), ot.unif(x2.shape[0])]
 
-        # k, d = self.accumulated_z.shape
-        # X_init = np.random.normal(0.0, 1.0, (k, d))  # initial Dirac locations
-        # b = (np.ones((k,)) / k)  # weights of the barycenter (it will not be optimized, only the locations are optimized)
+        k, d = self.accumulated_z.shape
+        X_init = np.random.normal(0.0, 1.0, (k, d))  # initial Dirac locations
+        b = (np.ones((k,)) / k)  # weights of the barycenter (it will not be optimized, only the locations are optimized)
 
-        # X = ot.lp.free_support_barycenter(
-        #     measures_locations, 
-        #     measures_weights, 
-        #     X_init, 
-        #     b,
-        #     numItermax=num_barycenter_iters,
-        #     verbose=True)
+        X = ot.lp.free_support_barycenter(
+            measures_locations, 
+            measures_weights, 
+            X_init, 
+            b,
+            numItermax=num_barycenter_iters,
+            verbose=True)
 
-        # self.barycenter = torch.tensor(X).to(self.gpu_id).float()
+        self.barycenter = torch.tensor(X).to(self.gpu_id).float()
 
-        # print(f"[GPU{self.gpu_id}] Barycenter updated: {self.barycenter.shape}")
+        print(f"[GPU{self.gpu_id}] Barycenter updated: {self.barycenter.shape}")
 
-        # Pure Gamma barycenter
-        self.barycenter = torch.distributions.Gamma(gamma_shape, 1/gamma_scale).sample((self.accumulated_z.shape[0], self.accumulated_z.shape[1])).to(self.gpu_id)
+        # # DEBUGGING: Pure Gamma barycenter
+        # self.barycenter = torch.distributions.Gamma(self.gamma_shape, 1/self.gamma_scale).sample((self.accumulated_z.shape[0], self.accumulated_z.shape[1])).to(self.gpu_id)
 
         # Plot the barycenter if desired
         if plot & (self.gpu_id == 0):
@@ -767,8 +772,6 @@ class Trainer:
         val_unseen,
         realtime_latent_printing,
         realtime_printing_interval,
-        gamma_shape,
-        gamma_scale,
         **kwargs):
 
         '''
@@ -788,8 +791,6 @@ class Trainer:
         self._update_barycenter(
             plot=True, 
             savedir = self.model_dir + f"/realtime_plots/{dataset_string}/barycenters",
-            gamma_shape=gamma_shape,
-            gamma_scale=gamma_scale,
             **kwargs)
         
         iter_curr = 0
@@ -822,8 +823,8 @@ class Trainer:
 
             # Sample from the recent observed & Barycenter (otherwise batch would be ripple in ocean, but without some past info, batch cannot capure meaningful shape of latent)
             observed_samples = self._sample_observed(mean_latent) # Will require grad
-            # barycenter_samples = self._sample_barycenter(self.barycenter_batch_sampling) # Not require grad
-            barycenter_samples = torch.distributions.Gamma(gamma_shape, 1/gamma_scale).sample((observed_samples.shape[0], self.latent_dim)).to(self.gpu_id)
+            barycenter_samples = self._sample_barycenter(self.barycenter_batch_sampling) # Not require grad
+            # barycenter_samples = torch.distributions.Gamma(self.gamma_shape, 1/self.gamma_scale).sample((observed_samples.shape[0], self.latent_dim)).to(self.gpu_id)
 
             # LOSSES
             recon_loss = loss_functions.recon_loss_function(
@@ -835,15 +836,7 @@ class Trainer:
                 observed = observed_samples, 
                 prior = barycenter_samples, # From Barycenter
                 weight = self.reg_weight,
-                sinkhorn_eps = self.sinkhorn_eps,
                 **kwargs)
-
-            # reg_loss = loss_functions.sinkhorn_asymmetric_loss( # Just on this local batch compared to Barycenter, ASYMMETRIC!
-            #     x = observed_samples, 
-            #     y = barycenter_samples, # From Barycenter
-            #     weight = self.reg_weight,
-            #     sinkhorn_blur = self.sinkhorn_batch_blur,
-            #     **kwargs)
 
             adversarial_loss = loss_functions.adversarial_loss_function(
                 probs=class_probs_mean_of_latent, 
