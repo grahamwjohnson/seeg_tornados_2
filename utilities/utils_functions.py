@@ -4,7 +4,8 @@ Created on Mon Feb  6 22:05:34 2023
 
 @author: grahamwjohnson
 """
-
+import string
+import subprocess
 import time
 import hashlib
 import random
@@ -3203,6 +3204,36 @@ def montage_filter_pickle_edfs(pat_id: str, dir_edf: str, save_dir: str, desired
 
 
 # INITIALIZATIONS
+
+def random_filename_string(length=10):
+    characters = string.ascii_letters + string.digits
+    return ''.join(random.choice(characters) for i in range(length))
+
+def run_script_from_shell(script_path, *args):
+    """
+    Runs a Python script using the shell.
+
+    Args:
+        script_path (str): Path to the Python script.
+        *args: Arguments to pass to the script.
+
+    Returns:
+        tuple: A tuple containing the return code, standard output, and standard error.
+    """
+    try:
+        command = ['python', script_path, args[0], args[1], args[2]] # args: tmp_dir, fnames.csv, num_rand_hashes
+        # Run the command and suppress output
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        # print("DEBUGGING SLEEP!!!")
+        # time.sleep(9999999)
+
+        return process
+
+    except subprocess.CalledProcessError as e:
+        return e.returncode, e.stdout, e.stderr
+    except FileNotFoundError:
+        return -1, "", "File not found"
 
 def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_workers=0):
 

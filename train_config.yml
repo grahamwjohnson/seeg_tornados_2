@@ -21,6 +21,12 @@ rand_name_json: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/ut
 periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if enabled
 preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
+# Random data generator (seperate subprocess)
+random_gen_script_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/gen_random_data.py'
+num_buffer_batches: 64 # How many files to keep in random genertaor directry at all times
+num_data_threads: 16 # How many threads to start for each data generator (by each GPU)
+nested_max_workers: 16
+
 # Training settings
 continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 print_dataset_bargraphs: False # Typically set to False if not the first run of model, but may want true if adding new patients

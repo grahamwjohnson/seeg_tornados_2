@@ -113,6 +113,7 @@ def load_train_objs(
             hour_dataset_range=val_finetune_hour_dataset_range,
             num_rand_hashes=val_num_rand_hashes,
             num_forward_passes=valfinetune_forward_passes,
+            initiate_random_generator=False,
             **kwargs)
 
         print(f"[GPU{str(gpu_id)}] Generating VALIDATION UNSEEN dataset")
@@ -125,6 +126,7 @@ def load_train_objs(
             hour_dataset_range=val_unseen_hour_dataset_range,
             num_rand_hashes=val_num_rand_hashes,
             num_forward_passes=valunseen_forward_passes,
+            initiate_random_generator=False,
             **kwargs)
 
     else: # If no val, just make a train dataset
@@ -146,6 +148,7 @@ def load_train_objs(
         hour_dataset_range=train_hour_dataset_range,
         num_rand_hashes=train_num_rand_hashes,
         num_forward_passes=train_forward_passes,
+        initiate_random_generator=True,
         **kwargs)
 
 
@@ -507,7 +510,7 @@ class Trainer:
             self.barycenter = self.barycenter.to(self.gpu_id)
             if self.accumulated_z == []: raise Exception("Error, accumulated_z is [], should be filled if barycenter was passed in")
 
-        # Ensure on proper device
+        # Ensure on proper device because loading from pickle
         self.accumulated_z = self.accumulated_z.to(self.gpu_id)
 
         # Running class labels for classifier
