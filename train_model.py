@@ -414,7 +414,7 @@ class Trainer:
         running_reg_passes: int,
         barycenter_batch_sampling: int,
         classifier_num_pats: int,
-        sinkhorn_batch_blur: int,
+        sinkhorn_eps: int,
         optimizer_forward_passes: int,
         barycenter,
         accumulated_z,
@@ -451,7 +451,7 @@ class Trainer:
         self.running_reg_passes = running_reg_passes
         self.barycenter_batch_sampling = barycenter_batch_sampling
         self.classifier_num_pats = classifier_num_pats
-        self.sinkhorn_batch_blur = sinkhorn_batch_blur
+        self.sinkhorn_eps = sinkhorn_eps
         self.optimizer_forward_passes = optimizer_forward_passes
         self.barycenter = barycenter
         self.accumulated_z = accumulated_z
@@ -546,7 +546,7 @@ class Trainer:
             utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch, **kwargs)
             print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
 
-    def _sample_barycenter(self, num_barycenter_samples):
+    def _sample_barycenter(self, num_barycenter_samples, gamma_shape, gamma_scale, **kwargs):
         # Randomly select indices from the barycenter samples
         indices = torch.randint(0, self.barycenter.shape[0], (num_barycenter_samples,))
 
@@ -767,6 +767,8 @@ class Trainer:
         val_unseen,
         realtime_latent_printing,
         realtime_printing_interval,
+        gamma_shape,
+        gamma_scale,
         **kwargs):
 
         '''
@@ -786,6 +788,8 @@ class Trainer:
         self._update_barycenter(
             plot=True, 
             savedir = self.model_dir + f"/realtime_plots/{dataset_string}/barycenters",
+            gamma_shape=gamma_shape,
+            gamma_scale=gamma_scale,
             **kwargs)
         
         iter_curr = 0
@@ -818,7 +822,8 @@ class Trainer:
 
             # Sample from the recent observed & Barycenter (otherwise batch would be ripple in ocean, but without some past info, batch cannot capure meaningful shape of latent)
             observed_samples = self._sample_observed(mean_latent) # Will require grad
-            barycenter_samples = self._sample_barycenter(self.barycenter_batch_sampling) # Not require grad
+            # barycenter_samples = self._sample_barycenter(self.barycenter_batch_sampling) # Not require grad
+            barycenter_samples = torch.distributions.Gamma(gamma_shape, 1/gamma_scale).sample((observed_samples.shape[0], self.latent_dim)).to(self.gpu_id)
 
             # LOSSES
             recon_loss = loss_functions.recon_loss_function(
@@ -830,7 +835,7 @@ class Trainer:
                 observed = observed_samples, 
                 prior = barycenter_samples, # From Barycenter
                 weight = self.reg_weight,
-                sinkhorn_blur = self.sinkhorn_batch_blur,
+                sinkhorn_eps = self.sinkhorn_eps,
                 **kwargs)
 
             # reg_loss = loss_functions.sinkhorn_asymmetric_loss( # Just on this local batch compared to Barycenter, ASYMMETRIC!
@@ -889,7 +894,7 @@ class Trainer:
                         train_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                         train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                         train_reg_Beta=self.reg_weight, 
-                        train_sinkhorn_batch_blur=self.sinkhorn_batch_blur,
+                        train_sinkhorn_eps=self.sinkhorn_eps,
                         train_running_reg_passes=self.running_reg_passes,
                         train_ReconWeight=self.recon_weight,
                         train_AdversarialWeight=self.classifier_weight,
@@ -908,7 +913,7 @@ class Trainer:
                         val_finetune_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                         val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                         val_finetune_reg_Beta=self.reg_weight, 
-                        val_finetune_sinkhorn_batch_blur=self.sinkhorn_batch_blur,
+                        val_finetune_sinkhorn_eps=self.sinkhorn_eps,
                         val_finetune_ReconWeight=self.recon_weight,
                         val_finetune_AdversarialWeight=self.classifier_weight,
                         val_finetune_AdversarialAlpha=self.classifier_alpha,
@@ -926,7 +931,7 @@ class Trainer:
                         val_unseen_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                         val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                         val_unseen_reg_Beta=self.reg_weight, 
-                        val_unseen_sinkhorn_batch_blur=self.sinkhorn_batch_blur,
+                        val_unseen_sinkhorn_eps=self.sinkhorn_eps,
                         val_unseen_ReconWeight=self.recon_weight,
                         val_unseen_AdversarialWeight=self.classifier_weight,
                         val_unseen_AdversarialAlpha=self.classifier_alpha,

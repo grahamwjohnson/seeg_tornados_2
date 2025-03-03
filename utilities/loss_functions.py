@@ -26,7 +26,7 @@ def adversarial_loss_function(probs, labels, classifier_weight):
     adversarial_loss = nn.functional.cross_entropy(probs, labels) / torch.log(torch.tensor(probs.shape[1]))
     return classifier_weight * adversarial_loss
 
-def sinkhorn_loss(observed, prior, weight, sinkhorn_blur, wasserstein_order, **kwargs):
+def sinkhorn_loss(observed, prior, weight, sinkhorn_eps, wasserstein_order, max_sinkhorn_iters, **kwargs):
     # sinkhorn = SamplesLoss(loss="sinkhorn", p=wasserstein_order, blur=sinkhorn_blur)  # Blur controls entropy strength, if potentials is True, returns Transport plan
     # loss = sinkhorn(z_real, z_fake) 
 
@@ -36,8 +36,8 @@ def sinkhorn_loss(observed, prior, weight, sinkhorn_blur, wasserstein_order, **k
         p = wasserstein_order,
         w_x = None,
         w_y = None,
-        eps = 1e-3,
-        max_iters = 100, 
+        eps = sinkhorn_eps,
+        max_iters = max_sinkhorn_iters, 
         stop_thresh = 1e-5,
         verbose=False)
 
