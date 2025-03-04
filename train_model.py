@@ -482,6 +482,7 @@ class Trainer:
         self.wandb_run = wandb_run
         self.kwargs = kwargs
 
+        # Check variables that will cause delayed crashes 
         assert len(self.inference_window_sec_list) == len(self.inference_stride_sec_list)
 
         self.reg_weight = -1 # dummy variable, only needed when debugging and training is skipped

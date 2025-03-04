@@ -588,34 +588,68 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier, hash_output
 
 def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycenter_numplots, bins=200, alpha=0.2, **kwargs):
     
-    barycenter_meanSample = np.mean(barycenter, axis=0)
-    barycenter_meanDim = np.mean(barycenter, axis=1)
-    prior_meanSample = np.mean(prior, axis=0)
-    prior_meanDim = np.mean(prior, axis=1)
-    observed_meanSample = np.mean(observed, axis=0)
-    observed_meanDim = np.mean(observed, axis=1)
-    
-
     N,D = barycenter.shape
+    
+    # Across SAMPLES - Sort along dim before
+    sorted1_barycenter = np.sort(barycenter, axis=1, kind='quicksort', order=None)
+    sorted1_prior = np.sort(prior, axis=1, kind='quicksort', order=None)
+    sorted1_observed = np.sort(observed, axis=1, kind='quicksort', order=None)
+    
+    barycenter_meanSample = np.mean(sorted1_barycenter, axis=0)
+    prior_meanSample = np.mean(sorted1_prior, axis=0)
+    observed_meanSample = np.mean(sorted1_observed, axis=0)
+    
+    # barycenter_stdSample = np.std(sorted1_barycenter, axis=0)
+    # prior_stdSample = np.std(sorted1_prior, axis=0)
+    # observed_stdSample = np.std(sorted1_observed, axis=0)
+    
+    # Across DIMENSIONS - Sort along samples before
+    sorted0_barycenter = np.sort(barycenter, axis=0, kind='quicksort', order=None)
+    sorted0_prior = np.sort(prior, axis=0, kind='quicksort', order=None)
+    sorted0_observed = np.sort(observed, axis=0, kind='quicksort', order=None)
+    
+    barycenter_meanDim = np.mean(sorted0_barycenter, axis=1)
+    prior_meanDim = np.mean(sorted0_prior, axis=1)
+    observed_meanDim = np.mean(sorted0_observed, axis=1)
+
+    # barycenter_stdDim = np.std(sorted0_barycenter, axis=1)
+    # prior_stdDim = np.std(sorted0_prior, axis=1)
+    # observed_stdDim = np.std(sorted0_observed, axis=1)
 
     gs = gridspec.GridSpec(2, random_barycenter_numplots)
-    fig = pl.figure(figsize=(20, 14))
+    fig = pl.figure(figsize=(24, 12))
 
-    # Plot mean of samples (i.e. shows dims)
+    # Plot MEAN of samples (i.e. shows dims)
     ax0 = fig.add_subplot(gs[0, :int(random_barycenter_numplots/2)])
     sns.histplot(barycenter_meanSample, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax0)
     sns.histplot(prior_meanSample, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax0)
     sns.histplot(observed_meanSample, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax0)
-    ax0.set_title(f"Meaned Across Samples")
+    ax0.set_title(f"MEAN Across Samples")
     pl.legend()
 
-    # Plot mean of dims (i.e. shows samples)
+    # Plot MEAN of dims (i.e. shows samples)
     ax1 = fig.add_subplot(gs[0, int(random_barycenter_numplots/2):])
     sns.histplot(barycenter_meanDim, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax1)
     sns.histplot(prior_meanDim, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax1)
     sns.histplot(observed_meanDim, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax1)
-    ax1.set_title(f"Meaned Across Dimensions")
+    ax1.set_title(f"MEAN Across Dimensions")
     pl.legend()
+
+    # # Plot STD of samples (i.e. shows dims)
+    # ax2 = fig.add_subplot(gs[1, :int(random_barycenter_numplots/2)])
+    # sns.histplot(barycenter_stdSample, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax2)
+    # sns.histplot(prior_stdSample, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax2)
+    # sns.histplot(observed_stdSample, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax2)
+    # ax2.set_title(f"STD Across Samples")
+    # pl.legend()
+
+    # # Plot STD of dims (i.e. shows samples)
+    # ax3 = fig.add_subplot(gs[1, int(random_barycenter_numplots/2):])
+    # sns.histplot(barycenter_stdDim, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax3)
+    # sns.histplot(prior_stdDim, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax3)
+    # sns.histplot(observed_stdDim, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax3)
+    # ax3.set_title(f"STD Across Dimensions")
+    # pl.legend()
 
     # Add random dimensions in to plot 
     for i in range(random_barycenter_numplots):
