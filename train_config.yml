@@ -23,9 +23,9 @@ preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
 # Random data generator (seperate subprocess)
 random_gen_script_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/gen_random_data.py'
-num_buffer_batches: 64 # How many files to keep in random genertaor directry at all times
-num_data_threads: 16 # How many threads to start for each data generator (by each GPU)
-nested_max_workers: 16
+num_buffer_batches: 512 # Max files to keep in random generator tmp directry 
+num_data_threads: 1 # How many threads to start for each data generator (by each GPU)
+nested_max_workers: 32 # For the get batch subprocess
 
 # Training settings
 continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
@@ -34,7 +34,7 @@ cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/re
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### WAE ###
-autoencode_samples: 2 # 8
+autoencode_samples: 4 # 8
 
 # Cross atttention embedder
 padded_channels: 256 #input padded to allow for different number of channels, also the top level embed dim
@@ -92,7 +92,7 @@ val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that mo
 
 # Training variables
 optimizer_forward_passes: 1 # How often to step optimizier 
-random_pulls_in_batch: 32 # Random data pull when pat_curr = -1
+random_pulls_in_batch: 8 # Random data pull when pat_curr = -1
 
 train_forward_passes: 1024
 valfinetune_forward_passes: 500

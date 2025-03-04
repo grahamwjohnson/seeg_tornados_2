@@ -3312,6 +3312,12 @@ def run_setup(**kwargs):
     mp.set_start_method('spawn', force=True)
     mp_lock = mp.Lock()
 
+    # Clean tmp directories
+    tmp_dirs = glob.glob('/dev/shm/tornado_tmp_*')
+    for t in tmp_dirs: 
+        shutil.rmtree(t)
+        print(f"Deleted tmp directory: {t}")
+
     # All Time Data file to get event timestamps
     kwargs['root_save_dir'] = assemble_model_save_path(**kwargs)
     # kwargs['data_dir'] = kwargs['root_save_dir'] + kwargs['data_dir_subfolder']

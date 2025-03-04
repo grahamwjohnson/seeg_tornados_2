@@ -151,8 +151,6 @@ def load_train_objs(
         initiate_random_generator=True,
         **kwargs)
 
-
-
     ### Random DataLoaders ###
     train_dataset.set_pat_curr(-1) # -1 sets to random generation
     train_dataloader = utils_functions.prepare_dataloader(train_dataset, batch_size=None, num_workers=num_dataloader_workers)

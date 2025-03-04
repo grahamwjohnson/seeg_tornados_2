@@ -114,7 +114,7 @@ class SEEG_Tornado_Dataset(Dataset):
         # Launches a seperate thread that will randomly generate forward pass ready data from little pickles
         # Wayyyy faster than pulling in little pickles just to pull ~1 second from it. 
         if initiate_random_generator:
-            self.tmp_dir = f"{model_dir}/{utils_functions.random_filename_string()}"
+            self.tmp_dir = f"/dev/shm/tornado_tmp_{utils_functions.random_filename_string()}"
             self.fname_csv = f"{self.tmp_dir}/fnames.csv"
             if not os.path.exists(self.tmp_dir): os.makedirs(self.tmp_dir)
             with open(self.fname_csv, 'w', newline='') as file:
@@ -175,7 +175,7 @@ class SEEG_Tornado_Dataset(Dataset):
 
                     pkl_idxs = [int(pkls_curr[i].split("/")[-1].split(".")[0].split("_")[-1]) for i in range(len(pkls_curr))]
                     min_idx = min(pkl_idxs)
-                    the_one = glob.glob(f"{self.tmp_dir}/{min_idx}.pkl")[0]
+                    the_one = glob.glob(f"{self.tmp_dir}/T*_{min_idx}.pkl")[0] # From any thread
 
                     with open(the_one, "rb") as f: data = pickle.load(f)
                     data_tensor = data['data_tensor']
@@ -187,10 +187,13 @@ class SEEG_Tornado_Dataset(Dataset):
                     # Delete the used batch pickle
                     os.remove(the_one)
 
+                    # Convert data_tensor to float32
+                    data_tensor = data_tensor.to(torch.float32)
+
                     return data_tensor, file_name, file_class, hash_channel_order, hash_pat_embedding
                 
                 else:
-                    print("Random Generator not fast enough")
+                    # print("Random Generator not fast enough")
                     time.sleep(1)
 
 

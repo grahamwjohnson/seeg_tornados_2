@@ -30,9 +30,6 @@ def rand_start_idx(num_samples, transformer_seq_length, autoencode_samples):
 # Modified function to load a single sample (pat/file/epoch)
 def load_data_sample(pat_idx, file_idx, start_idx, pat_fnames, pat_ids, latent_dim, transformer_seq_length, padded_channels, autoencode_samples, num_rand_hashes):
 
-    # initialize data tensor
-    data_tensor_np = np.zeros((transformer_seq_length, padded_channels, autoencode_samples), dtype=np.float32)
-
     # Load the file's pickle
     with open(pat_fnames[pat_idx][file_idx], 'rb') as file:
         data = pickle.load(file)
@@ -45,10 +42,16 @@ def load_data_sample(pat_idx, file_idx, start_idx, pat_fnames, pat_ids, latent_d
         latent_dim=latent_dim, 
         modifier=rand_modifier)
 
-    # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times
-    for embedding_idx in range(0, transformer_seq_length):
-        end_idx = start_idx + autoencode_samples * embedding_idx + autoencode_samples
-        data_tensor_np[embedding_idx, :len(hash_channel_order), :] = data[hash_channel_order, end_idx - autoencode_samples : end_idx]  # Padding implicit in zeros initialization
+    # data_tensor_np = np.zeros((transformer_seq_length, padded_channels, autoencode_samples ), dtype=np.float16)
+    # # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times
+    # for embedding_idx in range(0, transformer_seq_length):
+    #     end_idx = start_idx + autoencode_samples * embedding_idx + autoencode_samples
+    #     data_tensor_np[embedding_idx, :len(hash_channel_order), :] = data[hash_channel_order, end_idx - autoencode_samples : end_idx]  # Padding implicit in zeros initialization
+
+    # initialize & fill the data tensor
+    data_tensor_np = np.zeros((padded_channels, transformer_seq_length * autoencode_samples ), dtype=np.float16)
+    data_tensor_np[ :len(hash_channel_order), :] = data[hash_channel_order, start_idx : start_idx +  autoencode_samples * transformer_seq_length]  # [Seq, padded_channels, autoencode_sample]
+    data_tensor_np = np.swapaxes(data_tensor_np.reshape(data_tensor_np.shape[0], transformer_seq_length, autoencode_samples), 0,1)
 
     # Add file info
     file_name = pat_fnames[pat_idx][file_idx].split("/")[-1].split(".")[0]
@@ -68,12 +71,12 @@ def thread_task(thread_num, nested_max_workers, tmp_dir, pat_fnames, num_buffer_
 
         if len(pkls_curr) < num_buffer_batches:
 
-            # Initialize parallell pull variables
-            data_tensor_np = np.zeros((batchsize, transformer_seq_length, padded_channels, autoencode_samples), dtype=np.float32)
+            # Initialize parallel pull variables
+            data_tensor_np = np.zeros((batchsize, transformer_seq_length, padded_channels, autoencode_samples), dtype=np.float16)
             file_name = [-1]*batchsize
             file_class = torch.empty(batchsize, dtype=torch.long)
             hash_channel_order = [-1]*batchsize
-            hash_pat_embedding = torch.empty((batchsize, latent_dim), dtype=torch.float32)
+            hash_pat_embedding = torch.empty((batchsize, latent_dim), dtype=torch.float16)
 
             C = start_time - time.time()
 
@@ -112,21 +115,21 @@ def thread_task(thread_num, nested_max_workers, tmp_dir, pat_fnames, num_buffer_
             D = start_time - time.time()
 
             # Convert to Torch Tensor
-            data_tensor = torch.Tensor(data_tensor_np)
+            data_tensor = torch.Tensor(data_tensor_np).to(torch.float16)
 
-            batch_pickle = {
+            batch_dict = {
                 "data_tensor": data_tensor, 
                 "file_name": file_name,
                 "file_class": file_class,
                 "hash_channel_order": hash_channel_order,
                 "hash_pat_embedding": hash_pat_embedding}
 
-            # Save the batch as one batch pickle
+            # # Save the batch as one batch pickle
             batch_path = f"{tmp_dir}/T{thread_num}_{file_idx_next}.pkl"
             output_obj = open(batch_path, 'wb')
-            pickle.dump(batch_pickle, output_obj)
+            pickle.dump(batch_dict, output_obj)
             output_obj.close()
-
+            
             E = start_time - time.time()
 
             # if file_idx_next == 0: print("Random data generator first cycle complete")
@@ -164,15 +167,19 @@ if __name__ == "__main__":
     num_pats = len(pat_fnames)
     pat_ids = [pat_fnames[i][0].split("/")[-1].split("_")[0] for i in range(len(pat_fnames))]
 
-    # Start threads
-    threads = []
-    for i in range(num_data_threads):
-        thread = threading.Thread(target=thread_task, args=(i, nested_max_workers, tmp_dir, pat_fnames, num_buffer_batches, pat_ids, latent_dim, batchsize, num_samples, transformer_seq_length, padded_channels, autoencode_samples))
-        threads.append(thread)
-        thread.start()
+    if num_data_threads > 1:
+        # Start threads
+        threads = []
+        for i in range(num_data_threads):
+            thread = threading.Thread(target=thread_task, args=(i, nested_max_workers, tmp_dir, pat_fnames, num_buffer_batches, pat_ids, latent_dim, batchsize, num_samples, transformer_seq_length, padded_channels, autoencode_samples))
+            threads.append(thread)
+            thread.start()
 
-    for thread in threads:
-        thread.join()
+        for thread in threads:
+            thread.join()
+
+    else: # Only run one thread
+        thread_task(0, nested_max_workers, tmp_dir, pat_fnames, num_buffer_batches, pat_ids, latent_dim, batchsize, num_samples, transformer_seq_length, padded_channels, autoencode_samples)
 
 
 
