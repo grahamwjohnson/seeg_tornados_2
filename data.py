@@ -16,6 +16,12 @@ from functools import partial
 import csv
 import time
  
+'''
+@author: grahamwjohnson
+2023-2025
+
+'''
+
 pd.set_option('display.max_rows', None)
 
 # Seizure based datset curation

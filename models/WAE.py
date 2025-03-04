@@ -10,6 +10,12 @@ from torchinfo import summary
 from .Transformer import ModelArgs, Transformer, RMSNorm
 from utilities.loss_functions import adversarial_loss_function
 
+'''
+@author: grahamwjohnson
+2023-2025
+
+'''
+
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()

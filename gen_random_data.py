@@ -14,7 +14,10 @@ import random
 import threading
 
 '''
-To be run continously to generate adequate random data to keep the Trainer DataLoader happy
+@author: grahamwjohnson
+March 2025
+
+To be run continously as a subprocess to generate adequate random data to keep the Trainer DataLoader happy
 
 '''
 

@@ -43,6 +43,13 @@ from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
 from models.WAE import WAE
 
+'''
+@author: grahamwjohnson
+Developed between 2023-2025
+
+Main script to train the Brain State Embedder (BSE)
+'''
+
 ######
 torch.autograd.set_detect_anomaly(False)
 
@@ -198,7 +205,6 @@ def main(
     start_epoch: int,
     LR_val_wae: float,
     finetune_inference: bool, 
-    PaCMAP_model_to_infer = [],
     wae_state_dict_prev_path = [],
     wae_opt_state_dict_prev_path = [],
     cls_opt_state_dict_prev_path = [],
@@ -269,7 +275,6 @@ def main(
         valfinetune_dataloader=valfinetune_dataloader,
         valunseen_dataset=valunseen_dataset,
         valunseen_dataloader=valunseen_dataloader,
-        PaCMAP_model_to_infer=PaCMAP_model_to_infer,
         wandb_run=wandb_run,
         finetune_inference=finetune_inference,
         barycenter=barycenter,
@@ -302,11 +307,12 @@ def main(
                     num_rand_hashes = val_num_rand_hashes,
                     **kwargs)
 
+                # Finetuned, so setup inference for all datasets
                 dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
                 dataset_strs = ["train", "valfinetune", "valunseen"]
 
-            # No finetune, only run data for Train dataset
-            else:   
+            
+            else: # No finetune, only run data for Train dataset
                 dataset_list = [trainer.train_dataset]
                 dataset_strs = ["train"]
             
@@ -319,19 +325,6 @@ def main(
                         dataset_string = dataset_strs[d],
                         num_rand_hashes = -1,
                         **kwargs)
-
-            # # After inferenece, run the PACMAP
-            # # Only initiate for one GPU process - but calculations are done on CPU
-            # if (gpu_id == 0): 
-            #     # New pacmap run for every win/stride combination
-            #     for i in range(len(trainer.inference_window_sec_list)):
-            #         utils_functions.run_pacmap(
-            #             dataset_strs=dataset_strs, 
-            #             epoch=epoch, 
-            #             win_sec=trainer.inference_window_sec_list[i], 
-            #             stride_sec=trainer.inference_stride_sec_list[i], 
-            #             latent_subdir=f"/latent_files/Epoch{epoch}", 
-            #             **kwargs)
 
             # Restore model/opt weights to pre-finetune
             if finetune_inference:
@@ -358,8 +351,7 @@ def main(
         barrier()
 
         # VALIDATE 
-        # (skip if it's a pacmap epoch because it will already have been done)
-        if ((trainer.epoch + 1) % trainer.val_every == 0) & ((trainer.epoch + 1) % trainer.inference_every != 0):
+        if ((trainer.epoch + 1) % trainer.val_every == 0):
             # Save pre-finetune model/opt weights
             wae_dict = trainer.wae.module.state_dict()
             wae_opt_dict = trainer.opt_wae.state_dict()
@@ -428,7 +420,6 @@ class Trainer:
         # transformer_weight: float,
         recon_weight: float,
         atd_file: str,
-        PaCMAP_model_to_infer,
         inference_window_sec_list: list,
         inference_stride_sec_list: list,
         recent_display_iters: int,
@@ -472,7 +463,6 @@ class Trainer:
         self.curr_LR_core = -1
         self.recon_weight = recon_weight
         self.atd_file = atd_file
-        self.PaCMAP_model_to_infer = PaCMAP_model_to_infer
         self.inference_window_sec_list = inference_window_sec_list
         self.inference_stride_sec_list = inference_stride_sec_list
         self.recent_display_iters = recent_display_iters
@@ -577,7 +567,7 @@ class Trainer:
 
         if delete_old_checkpoints:
             utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch, **kwargs)
-            print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
+            print("Deleted old checkpoints, except epochs at end of reguaization annealing period")
 
     def _sample_barycenter(self, num_barycenter_samples, **kwargs):
         # Randomly select indices from the barycenter samples
@@ -613,7 +603,10 @@ class Trainer:
         measures_weights = [ot.unif(x1.shape[0]), ot.unif(x2.shape[0])]
 
         k, d = self.accumulated_z.shape
-        X_init = self.barycenter.detach().cpu().numpy() # Initialize based on previous barycenter 
+        if self.epoch > 0: 
+            X_init = self.barycenter.detach().cpu().numpy() # Initialize based on previous barycenter 
+        else:
+            X_init = x1
         b = (np.ones((k,)) / k)  # weights of the barycenter (it will not be optimized, only the locations are optimized)
 
         X = ot.lp.free_support_barycenter(
@@ -687,11 +680,11 @@ class Trainer:
         **kwargs):
 
         '''
-        This will run inference (ONLY encoder) and save the latent space per file to a pkl
+        This will run inference (ONLY encoder) and save the latent space per file to a .pkl
 
-        Unlike _run_train_epoch (which is random data pulls), this function will sequentially iterate through entire file
+        Unlike _run_train_epoch (which is random data pulls), this function will sequentially iterate through entire file (one patient at a time)
 
-        IMPORTANT: Takes in a Dataset, NOT a Dataloader (used in _run_train_epoch)
+        IMPORTANT: This function takes in a *Dataset*, NOT a *Dataloader* like in _run_train_epoch
 
         '''
 

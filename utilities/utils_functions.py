@@ -3258,8 +3258,6 @@ def assemble_model_save_path(base_path: str,
 def initialize_directories(
         run_notes,
         cont_train_model_dir,
-        pic_sub_dirs,
-        pic_types,
         **kwargs):
 
     # *** CONTINUE EXISTING RUN initialization ***

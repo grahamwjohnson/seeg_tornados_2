@@ -1,35 +1,35 @@
-'''
-Ad-hoc script to run PaCMAP/PHATE/Histograms on latent files
-'''
-
 import os, glob
 import pickle
 from  utilities import utils_functions
 import numpy as np
 
+'''
+@author: grahamwjohnson
+March 2025
+
+Ad-hoc script to run UMAP/PaCMAP/PHATE/Histograms on latent files
+'''
+
 if __name__ == "__main__":
 
-    kwargs = {}
-    kwargs['seiz_type_list'] = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Focal unknown awareness', 'Unknown', 'Subclinical', 'Non-electrographic'] # Leftward overwites rightward
-    kwargs['seiz_plot_mult'] = [1,       3,     5,              7,    9,                           11,        13,            15] # Assuming increasing order, NOTE: base value of 3 is added in the code
-
+    # Master formatted timestamp file - "All Time Data (ATD)"
     atd_file = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/pangolin_ripple/trained_models/all_time_data_01092023_112957.csv'
 
     # Source data selection
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025'
     model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/gar_Tue_Feb_18_13_39_07_2025'
-    single_pat = [] # 'Spat18' # [] #'Epat35'  # if [] will do all pats
+    single_pat = [] # 'Spat18' # [] #'Epat35'  # if [] will do all pats  # TODO: modify to take a selection of patients
     epoch = 165 # 39 # 141 , 999 to debug
     latent_subdir = f'latent_files/Epoch{epoch}'
-    win_sec = 60 # 60, 10
+    win_sec = 60 # 60, 10  # Must match strings in directory name exactly (e.g. 1.0 not 1)
     stride_sec = 30 # 30, 10 
 
     # build_strs = ['train', 'valfinetune']
     # eval_strs = ['valunseen']
-    build_strs = ['train']
+    build_strs = ['train']  # build selections will be use to train/construct/fit the manifold models
     eval_strs = ['valfinetune', 'valunseen'] # Typically will use valfinetune in build...?
     
-    FS = 512 
+    FS = 512 # Currently hardcoded in many places
 
     # HDBSCAN Settings
     HDBSCAN_min_cluster_size = 200
@@ -65,17 +65,22 @@ if __name__ == "__main__":
 
     # PHATE Settings
     custom_nn_bool = False
-    precomputed_nn_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025/phate/Epoch141/60SecondWindow_30SecondStride/all_pats/phate_gen/nn_pickles/Window60_Stride30_epoch141_angular_knn5_KNN_INDICES.pkl' # []
-    precomputed_dist_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025/phate/Epoch141/60SecondWindow_30SecondStride/all_pats/phate_gen/nn_pickles/Window60_Stride30_epoch141_angular_knn5_KNN_DISTANCES.pkl' #[]
+    precomputed_nn_path = [] #'/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025/phate/Epoch141/60SecondWindow_30SecondStride/all_pats/phate_gen/nn_pickles/Window60_Stride30_epoch141_angular_knn5_KNN_INDICES.pkl' # []
+    precomputed_dist_path = [] #'/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025/phate/Epoch141/60SecondWindow_30SecondStride/all_pats/phate_gen/nn_pickles/Window60_Stride30_epoch141_angular_knn5_KNN_DISTANCES.pkl' #[]
     precomputed_nn = [] # dummy
     precomputed_dist = [] # dummy
-    phate_annoy_tree_size = 20
+    phate_annoy_tree_size = 20 # For NN approximations
     phate_knn = 5
-    phate_decay = 40
+    phate_decay = 40 # Bigger means more local diffusion structure
     phate_metric = 'angular' # 'angular', 'euclidean' # Used by custom ANNOY function, angular=cosine for ANNOY
-    phate_solver = 'smacof'  # 'smacof', 'sgd' 
-    rand_subset_pat_bool = False # False plots all pats in their own row of plots
+    phate_solver = 'smacof'  # 'smacof' (longer), 'sgd' 
+    rand_subset_pat_bool = False # False plots all pats in their own row of plots, if more than ~5 pats, should probably set to True
     num_rand_pats_plot = 4 # Only applicable if 'rand_subset_pat_bool' is True
+
+    # Plotting variables
+    kwargs = {}
+    kwargs['seiz_type_list'] = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Focal unknown awareness', 'Unknown', 'Subclinical', 'Non-electrographic'] # Leftward overwites rightward
+    kwargs['seiz_plot_mult'] = [1,       3,     5,              7,    9,                           11,        13,            15] # Assuming increasing order, NOTE: base value of 3 is added in the code
 
     # Create paths and create pacmap directory for saving dim reduction models and outputs
     umap_dir = f"{model_dir}/umap/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
@@ -286,7 +291,7 @@ if __name__ == "__main__":
         **kwargs)
 
 
-    ### PAHTE SAVE OBJECTS ###
+    ### PAHTE SAVE OBJECTS ### TODO code up
     # utils_functions.save_phate_objects(
     #     savedir=phate_savedir,
     #     epoch=epoch,

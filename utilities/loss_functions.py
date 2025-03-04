@@ -4,6 +4,10 @@ import heapq
 import torch.nn.functional as F
 from geomloss import SamplesLoss
 
+'''
+@author: grahamwjohnson
+'''
+
 def recon_loss_function(x, x_hat, recon_weight):
     # recon_loss = LogCosh_weight * LogCosh_loss_fn(x, x_hat) 
     loss_fn = nn.MSELoss(reduction='mean')
