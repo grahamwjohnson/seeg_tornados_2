@@ -31,7 +31,7 @@ def rand_start_idx(num_samples, transformer_seq_length, autoencode_samples):
     return start_idx
 
 # Modified function to load a single sample (pat/file/epoch)
-def load_data_sample(pat_idx, file_idx, start_idx, pat_fnames, pat_ids, latent_dim, transformer_seq_length, padded_channels, autoencode_samples, num_rand_hashes):
+def load_data_sample(pat_idx, file_idx, start_idx, pat_fnames, pat_ids, latent_dim, transformer_seq_length, padded_channels, autoencode_samples, num_rand_hashes, hash_output_range):
 
     # Load the file's pickle
     with open(pat_fnames[pat_idx][file_idx], 'rb') as file:
@@ -43,7 +43,8 @@ def load_data_sample(pat_idx, file_idx, start_idx, pat_fnames, pat_ids, latent_d
         input_string=pat_ids[pat_idx], 
         num_channels=data.shape[0], 
         latent_dim=latent_dim, 
-        modifier=rand_modifier)
+        modifier=rand_modifier,
+        hash_output_range=hash_output_range)
 
     # data_tensor_np = np.zeros((transformer_seq_length, padded_channels, autoencode_samples ), dtype=np.float16)
     # # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times
@@ -62,7 +63,7 @@ def load_data_sample(pat_idx, file_idx, start_idx, pat_fnames, pat_ids, latent_d
 
     return data_tensor_np, file_name, file_class, hash_channel_order, hash_pat_embedding
 
-def thread_task(thread_num, nested_max_workers, tmp_dir, pat_fnames, num_buffer_batches, pat_ids, latent_dim, batchsize, num_samples, transformer_seq_length, padded_channels, autoencode_samples):
+def thread_task(thread_num, nested_max_workers, tmp_dir, pat_fnames, num_buffer_batches, pat_ids, latent_dim, batchsize, num_samples, transformer_seq_length, padded_channels, autoencode_samples, num_rand_hashes, hash_output_range):
     
     file_idx_next = 0
     while True:
@@ -96,7 +97,7 @@ def thread_task(thread_num, nested_max_workers, tmp_dir, pat_fnames, num_buffer_
                     load_data_sample, 
                     pat_fnames=pat_fnames, pat_ids=pat_ids, latent_dim=latent_dim, 
                     transformer_seq_length=transformer_seq_length, padded_channels=padded_channels, autoencode_samples=autoencode_samples, 
-                    num_rand_hashes=num_rand_hashes)
+                    num_rand_hashes=num_rand_hashes, hash_output_range=hash_output_range)
 
                 futures = []
                 for i in range(len(pat_idxs)):
@@ -155,6 +156,7 @@ if __name__ == "__main__":
     num_buffer_batches = kwargs['num_buffer_batches']
     num_data_threads = kwargs['num_data_threads']
     nested_max_workers = kwargs['nested_max_workers']
+    hash_output_range = kwargs['hash_output_range']
 
     # Passed as args
     tmp_dir = sys.argv[1]
@@ -174,7 +176,7 @@ if __name__ == "__main__":
         # Start threads
         threads = []
         for i in range(num_data_threads):
-            thread = threading.Thread(target=thread_task, args=(i, nested_max_workers, tmp_dir, pat_fnames, num_buffer_batches, pat_ids, latent_dim, batchsize, num_samples, transformer_seq_length, padded_channels, autoencode_samples))
+            thread = threading.Thread(target=thread_task, args=(i, nested_max_workers, tmp_dir, pat_fnames, num_buffer_batches, pat_ids, latent_dim, batchsize, num_samples, transformer_seq_length, padded_channels, autoencode_samples, num_rand_hashes, hash_output_range))
             threads.append(thread)
             thread.start()
 
@@ -182,7 +184,7 @@ if __name__ == "__main__":
             thread.join()
 
     else: # Only run one thread
-        thread_task(0, nested_max_workers, tmp_dir, pat_fnames, num_buffer_batches, pat_ids, latent_dim, batchsize, num_samples, transformer_seq_length, padded_channels, autoencode_samples)
+        thread_task(0, nested_max_workers, tmp_dir, pat_fnames, num_buffer_batches, pat_ids, latent_dim, batchsize, num_samples, transformer_seq_length, padded_channels, autoencode_samples, num_rand_hashes, hash_output_range)
 
 
 

@@ -530,7 +530,21 @@ def pseudobatch_raw_data(x, token_samples):
     
     return x_batched
 
-def hash_to_vector(input_string, num_channels, latent_dim, modifier):
+def hash_to_vector(input_string, num_channels, latent_dim, modifier, hash_output_range):
+    """
+    Generates a vector from a hash of the input string, scaled to an arbitrary range.
+
+    Args:
+        input_string (str): The input string to hash.
+        num_channels (int): The number of channels (used for generating the ordered vector).
+        latent_dim (int): The dimensionality of the output vector.
+        modifier (str or int): A modifier to vary the output for the same input string.
+        hash_output_range (tuple): The desired output range (e.g., (0, 2)).
+
+    Returns:
+        torch.Tensor: A vector of size latent_dim, scaled to the specified range.
+        list: A shuffled list of numbers from 0 to num_channels-1.
+    """
     # Incorporate the modifier into the input string to vary the output
     modified_input = f"{input_string}_{modifier}"
 
@@ -541,15 +555,21 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier):
     # If latent_dim > 256, repeat the hash digest to ensure we have enough data
     extended_hash = (hash_digest * ((latent_dim // 32) + 1))[:latent_dim]  # Repeat and slice to exactly latent_dim bytes
     
-    # Generate a vector of size latent_dim with values from -1 to 1
+    # Generate a vector of size latent_dim
     hashed_vector = np.zeros(latent_dim)
+
+    # Define the output range
+    a, b = hash_output_range
 
     for i in range(latent_dim):
         # Use the i-th byte from the extended hash digest
         byte_value = extended_hash[i]
         
-        # Normalize the byte value to the range [-1, 1]
-        hashed_vector[i] = (byte_value / 127.5) - 1  # Normalize to [-1, 1]
+        # Normalize the byte value to the range [0, 1]
+        normalized_value = byte_value / 255.0  # Normalize to [0, 1]
+        
+        # Scale the normalized value to the desired range [a, b]
+        hashed_vector[i] = a + (b - a) * normalized_value
 
     # Convert hashed_vector to a PyTorch tensor
     hashed_vector_tensor = torch.tensor(hashed_vector, dtype=torch.float32)

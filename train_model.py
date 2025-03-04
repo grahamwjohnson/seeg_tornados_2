@@ -416,6 +416,7 @@ class Trainer:
         num_encode_concat_transformer_tokens: int,
         transformer_start_pos: int,
         FS: int,
+        hash_output_range: tuple,
         intrapatient_dataset_style: list,
         # transformer_weight: float,
         recon_weight: float,
@@ -426,11 +427,11 @@ class Trainer:
         running_reg_passes: int,
         barycenter_batch_sampling: int,
         classifier_num_pats: int,
-        gamma_shape: float,
-        gamma_scale: float,
+        multimodal_shapes: list,
+        multimodal_scales: list,
+        multimodal_weights: list,
         sinkhorn_blur: int,
         wasserstein_order: float,
-        tail_penalty_lambda: float,
         optimizer_forward_passes: int,
         barycenter,
         accumulated_z,
@@ -459,6 +460,7 @@ class Trainer:
         self.num_encode_concat_transformer_tokens = num_encode_concat_transformer_tokens
         self.transformer_start_pos = transformer_start_pos
         self.FS = FS
+        self.hash_output_range = hash_output_range
         self.intrapatient_dataset_style = intrapatient_dataset_style
         self.curr_LR_core = -1
         self.recon_weight = recon_weight
@@ -469,11 +471,11 @@ class Trainer:
         self.running_reg_passes = running_reg_passes
         self.barycenter_batch_sampling = barycenter_batch_sampling
         self.classifier_num_pats = classifier_num_pats
-        self.gamma_shape = gamma_shape
-        self.gamma_scale = gamma_scale
+        self.multimodal_shapes = multimodal_shapes
+        self.multimodal_scales = multimodal_scales
+        self.multimodal_weights = multimodal_weights
         self.sinkhorn_blur = sinkhorn_blur
         self.wasserstein_order = wasserstein_order
-        self.tail_penalty_lambda = tail_penalty_lambda
         self.optimizer_forward_passes = optimizer_forward_passes
         self.barycenter = barycenter
         self.accumulated_z = accumulated_z
@@ -492,15 +494,14 @@ class Trainer:
                     
         # Running Regulizer window for latent data
         if self.barycenter == []:
-            # self.accumulated_z = torch.randn(self.running_reg_passes, self.latent_dim).to(self.gpu_id)
-            self.accumulated_z = torch.distributions.Gamma(self.gamma_shape, 1/self.gamma_scale).sample((self.running_reg_passes, self.latent_dim)).to(self.gpu_id)
-        
-        else:
-            self.barycenter = self.barycenter.to(self.gpu_id)
-            if self.accumulated_z == []: raise Exception("Error, accumulated_z is [], should be filled if barycenter was passed in")
-
-        # Ensure on proper device because loading from pickle
-        self.accumulated_z = self.accumulated_z.to(self.gpu_id)
+            # If first initialziing, then start off with observed & barycenter is ideal distributions from pure prior
+            self.accumulated_z = self._sample_multimodal(self.running_reg_passes).to(self.gpu_id)
+            self.barycenter = self._sample_multimodal(self.running_reg_passes).to(self.gpu_id)
+        else: 
+            # Ensure on proper device because loading from pickle
+            self.barycenter = self.barycenter.to(self.gpu_id) 
+            self.accumulated_z = self.accumulated_z.to(self.gpu_id)
+            if self.accumulated_z == []: raise Exception("Error, accumulated_z is [], should be loaded/filled if barycenter was passed in")
 
         # Running class labels for classifier
         self.accumulated_labels = torch.zeros(self.running_reg_passes, dtype=torch.int64).to(self.gpu_id)
@@ -569,6 +570,57 @@ class Trainer:
             utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch, **kwargs)
             print("Deleted old checkpoints, except epochs at end of reguaization annealing period")
 
+    def _sample_multimodal(self, num_samps):
+        """
+        Generates high-dimensional samples from a multimodal distribution using Gamma distributions.
+        The same shape and scale parameters are used for every latent dimension within a mode.
+
+        Args:
+            num_samps (int): Number of samples to generate.
+            self.multimodal_shapes (list or torch.Tensor): List or tensor of shape parameters (k) for the modes.
+            self.multimodal_scales (list or torch.Tensor): List or tensor of scale parameters (θ) for the modes.
+            self.multimodal_weights (list or torch.Tensor): List or tensor of weights for the modes, summing to 1.
+            self.latent_dim (int): Dimensionality of the latent space (e.g., 2048).
+
+        Returns:
+            torch.Tensor: High-dimensional samples from the multimodal Gamma distribution, of shape (num_samps, self.latent_dim).
+
+        Example usage:
+            num_samps = 1000
+            self.multimodal_shapes = [2, 5, 1]  # Shape parameters (k) for 3 modes
+            self.multimodal_scales = [1, 2, 0.5]  # Scale parameters (θ) for 3 modes
+            self.multimodal_weights = [0.2, 0.5, 0.3]  # Weights for the 3 modes, adds to 1
+            self.latent_dim = 2048  # High-dimensional latent space
+
+            samples = self._sample_multimodal(num_samps)
+        """
+        # Convert inputs to tensors if they are not already
+        if not isinstance(self.multimodal_shapes, torch.Tensor):
+            self.multimodal_shapes = torch.tensor(self.multimodal_shapes, dtype=torch.float32)
+        if not isinstance(self.multimodal_scales, torch.Tensor):
+            self.multimodal_scales = torch.tensor(self.multimodal_scales, dtype=torch.float32)
+        if not isinstance(self.multimodal_weights, torch.Tensor):
+            self.multimodal_weights = torch.tensor(self.multimodal_weights, dtype=torch.float32)
+
+        # Determine which mode to sample from for each sample in the batch
+        mode_indices = torch.multinomial(self.multimodal_weights, num_samples=num_samps, replacement=True)
+
+        # Generate samples from the chosen modes
+        samples = torch.zeros((num_samps, self.latent_dim))  # Shape: (num_samps, latent_dim)
+        for i in range(len(self.multimodal_weights)):
+            mask = mode_indices == i
+            num_samples_from_mode = mask.sum()
+            if num_samples_from_mode > 0:
+                # Sample from a Gamma distribution for the current mode
+                # Use the same shape and scale for all latent dimensions
+                gamma_samples = torch.distributions.Gamma(
+                    concentration=self.multimodal_shapes[i],  # Shape parameter (k)
+                    rate=1 / self.multimodal_scales[i]       # Rate parameter (1/θ)
+                ).sample((num_samples_from_mode, self.latent_dim))
+                samples[mask] = gamma_samples
+        
+        return samples
+        
     def _sample_barycenter(self, num_barycenter_samples, **kwargs):
         # Randomly select indices from the barycenter samples
         indices = torch.randint(0, self.barycenter.shape[0], (num_barycenter_samples,))
@@ -594,8 +646,8 @@ class Trainer:
 
     def _update_barycenter(self, num_barycenter_iters, plot, savedir, blur=0.05, n_iter=100, **kwargs):
         
-        # # Sample from gamma
-        x1 = torch.distributions.Gamma(self.gamma_shape, 1/self.gamma_scale).sample((self.accumulated_z.shape[0], self.accumulated_z.shape[1])).to(self.accumulated_z).cpu().numpy()
+        # Sample from multimodal gamma
+        x1 = self._sample_multimodal(self.accumulated_z.shape[0]).cpu().numpy()
         # Use observations for other distribution
         x2 = self.accumulated_z.cpu().numpy()
         
@@ -606,7 +658,7 @@ class Trainer:
         if self.epoch > 0: 
             X_init = self.barycenter.detach().cpu().numpy() # Initialize based on previous barycenter 
         else:
-            X_init = x1
+            X_init = x1 # No previous barycenter - use pure prior
         b = (np.ones((k,)) / k)  # weights of the barycenter (it will not be optimized, only the locations are optimized)
 
         X = ot.lp.free_support_barycenter(
@@ -620,9 +672,6 @@ class Trainer:
         self.barycenter = torch.tensor(X).to(self.gpu_id).float()
 
         print(f"[GPU{self.gpu_id}] Barycenter updated: {self.barycenter.shape}")
-
-        # # DEBUGGING: Pure Gamma barycenter
-        # self.barycenter = torch.distributions.Gamma(self.gamma_shape, 1/self.gamma_scale).sample((self.accumulated_z.shape[0], self.accumulated_z.shape[1])).to(self.gpu_id)
 
         # Plot the barycenter if desired
         if plot & (self.gpu_id == 0):
@@ -734,7 +783,8 @@ class Trainer:
                         input_string=dataset_curr.pat_ids[pat_idx], 
                         num_channels=num_channels_curr, 
                         latent_dim=self.latent_dim, 
-                        modifier=rand_modifer)
+                        modifier=rand_modifer,
+                        hash_output_range=self.hash_output_range)
                     
                     # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
                     x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, padded_channels, self.autoencode_samples).to(self.gpu_id)
@@ -808,12 +858,6 @@ class Trainer:
         '''
 
         print(f"[GPU{self.gpu_id}] Autoencode_samples: {self.autoencode_samples}")
-
-        # Update the Barycenter (average between empiric latent distriubution and given prior (e.g. Gamma) for this epoch
-        self._update_barycenter(
-            plot=True, 
-            savedir = self.model_dir + f"/realtime_plots/{dataset_string}/barycenters",
-            **kwargs)
         
         iter_curr = 0
         total_iters = len(dataloader_curr)
@@ -859,8 +903,7 @@ class Trainer:
                 prior = barycenter_samples, # From Barycenter
                 weight = self.reg_weight,
                 sinkhorn_blur = self.sinkhorn_blur,
-                wasserstein_order = self.wasserstein_order,
-                tail_penalty_lambda=self.tail_penalty_lambda)
+                wasserstein_order = self.wasserstein_order)
 
             adversarial_loss = loss_functions.adversarial_loss_function(
                 probs=class_probs_mean_of_latent, 
@@ -912,7 +955,6 @@ class Trainer:
                         train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                         train_reg_Beta=self.reg_weight, 
                         train_sinkhorn_blur=self.sinkhorn_blur,
-                        train_tail_penalty_lambda=self.tail_penalty_lambda,
                         train_running_reg_passes=self.running_reg_passes,
                         train_ReconWeight=self.recon_weight,
                         train_AdversarialWeight=self.classifier_weight,
@@ -932,7 +974,6 @@ class Trainer:
                         val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                         val_finetune_reg_Beta=self.reg_weight, 
                         val_finetune_sinkhorn_blur=self.sinkhorn_blur,
-                        val_finetune_tail_penalty_lambda=self.tail_penalty_lambda,
                         val_finetune_ReconWeight=self.recon_weight,
                         val_finetune_AdversarialWeight=self.classifier_weight,
                         val_finetune_AdversarialAlpha=self.classifier_alpha,
@@ -951,7 +992,6 @@ class Trainer:
                         val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                         val_unseen_reg_Beta=self.reg_weight, 
                         val_unseen_sinkhorn_blur=self.sinkhorn_blur,
-                        val_unseen_tail_penalty_lambda=self.tail_penalty_lambda,
                         val_unseen_ReconWeight=self.recon_weight,
                         val_unseen_AdversarialWeight=self.classifier_weight,
                         val_unseen_AdversarialAlpha=self.classifier_alpha,
@@ -1001,6 +1041,12 @@ class Trainer:
                                 file_name = file_name,
                                 **kwargs)
 
+        # Update the Barycenter (average between empiric latent distriubution and given prior (e.g. Gamma) for this epoch
+        self._update_barycenter(
+            plot=True, 
+            savedir = self.model_dir + f"/realtime_plots/{dataset_string}/barycenters",
+            **kwargs)
+        
         print(f"[GPU{str(self.gpu_id)}] at end of epoch")
         # barrier()
         # gc.collect()

@@ -305,8 +305,6 @@ if __name__ == "__main__":
     # if eval_filepaths != []:
 
 
-
-
     ### HISTOGRAM LATENT ###
     
     # Generation data
