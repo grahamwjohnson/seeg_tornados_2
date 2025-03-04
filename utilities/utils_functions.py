@@ -2494,7 +2494,7 @@ def filename_to_datetimes(list_file_names):
 
 def delete_old_checkpoints(dir: str, curr_epoch: int, Reg_stall_epochs, Reg_epochs_AT_max, Reg_epochs_TO_max, **kwargs):
 
-    SAVE_KEYWORDS = ["hdbscan", "pacmap"]
+    # SAVE_KEYWORDS = ["hdbscan", "pacmap"]
 
     all_dir_names = glob.glob(f"{dir}/Epoch*")
 
@@ -2929,28 +2929,6 @@ def get_files_spanning_datetimes(search_dir, start_dt, stop_dt):
 
     return files_in_range
 
-def assemble_model_save_path(base_path: str,
-                        bipole_or_monopole: str,
-                        channel_scale_style: str,
-                        freq_bands_str: str,
-                        scale_type: str,
-                        scale_epoch_str: str,
-                        duration_stride_str: str,
-                        # pat_id: str,
-                        **kwargs):
-    
-    # Check that strings fall within acceptable options
-    if (bipole_or_monopole != 'Bipole_datasets') & (bipole_or_monopole != 'Monopole_datasets'):
-        raise Exception("Assemble path error: 'bipole_or_monopole' must equal: 'Bipole_datasets' or 'Monopole_datasets' ")
-    
-    if (channel_scale_style != 'Same_Scale_For_All_Channels') & (channel_scale_style != 'By_Channel_Scale'):
-        raise Exception("Assemble path error: 'channel_scale_style' must equal: 'Same_Scale_For_All_Channels' or 'By_Channel_Scale' ")
-    
-    if (scale_type != 'LinearScale') & (scale_type != 'HyperTanScaling') & (scale_type != 'CubeRootScale') & (scale_type != 'HistEqualScale'):
-        raise Exception("Assemble path error: 'scale_type' must equal: 'LinearScale', 'HyperTanScaling', 'CubeRootScale' or 'HistEqualScale'")
-    
-    return base_path + '/' + bipole_or_monopole + '/' + channel_scale_style + '/' + scale_type + '/' + scale_epoch_str + f'/{freq_bands_str}/' + duration_stride_str # + '/' + pat_id
-
 def append_timestamp(filename):
     ts = time.asctime(time.localtime(time.time()))
     ts = ts.replace(" ", "_")
@@ -3254,6 +3232,28 @@ def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_wo
         drop_last=droplast,
         persistent_workers=persistent_workers
     )
+
+def assemble_model_save_path(base_path: str,
+                        bipole_or_monopole: str,
+                        channel_scale_style: str,
+                        freq_bands_str: str,
+                        scale_type: str,
+                        scale_epoch_str: str,
+                        duration_stride_str: str,
+                        # pat_id: str,
+                        **kwargs):
+    
+    # Check that strings fall within acceptable options
+    if (bipole_or_monopole != 'Bipole_datasets') & (bipole_or_monopole != 'Monopole_datasets'):
+        raise Exception("Assemble path error: 'bipole_or_monopole' must equal: 'Bipole_datasets' or 'Monopole_datasets' ")
+    
+    if (channel_scale_style != 'Same_Scale_For_All_Channels') & (channel_scale_style != 'By_Channel_Scale'):
+        raise Exception("Assemble path error: 'channel_scale_style' must equal: 'Same_Scale_For_All_Channels' or 'By_Channel_Scale' ")
+    
+    if (scale_type != 'LinearScale') & (scale_type != 'HyperTanScaling') & (scale_type != 'CubeRootScale') & (scale_type != 'HistEqualScale'):
+        raise Exception("Assemble path error: 'scale_type' must equal: 'LinearScale', 'HyperTanScaling', 'CubeRootScale' or 'HistEqualScale'")
+    
+    return base_path + '/' + bipole_or_monopole + '/' + channel_scale_style + '/' + scale_type + '/' + scale_epoch_str + f'/{freq_bands_str}/' + duration_stride_str # + '/' + pat_id
 
 def initialize_directories(
         run_notes,

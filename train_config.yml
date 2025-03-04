@@ -7,7 +7,8 @@ num_samples: kwargs['num_samples'] = 1024*512 # MATCH TO FILE SELECTION 'duratio
 FS: 512             
 atd_file: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/all_time_data_01092023_112957.csv'
 data_dir_subfolder: '/scaled_data_epochs'
-base_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results'
+# base_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results'
+base_path: '/media/glommy1/model_runs'
 scale_type: 'HistEqualScale'  # 'LinearScale', 'HyperTanScaling', 'CubeRootScale', 'HistEqualScale'
 channel_scale_style: 'By_Channel_Scale' # 'Same_Scale_For_All_Channels' # By_Channel_Scale # If using multiple freq bands, the preprocessing script rescaales, so be careful and should use 'by channel' scaling 
 bipole_or_monopole: 'Bipole_datasets'
@@ -28,13 +29,13 @@ num_data_threads: 1 # How many threads to start for each data generator (by each
 nested_max_workers: 32 # For the get batch subprocess
 
 # Training settings
-continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 print_dataset_bargraphs: False # Typically set to False if not the first run of model, but may want true if adding new patients
-cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/coqui_Sun_Mar__2_23_09_21_2025' 
+cont_train_model_dir: '/media/glommy1/model_runs/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/ulyssesbutterfly_Tue_Mar__4_00_05_43_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### WAE ###
-autoencode_samples: 4 # 8
+autoencode_samples: 8 # 8
 
 # Cross atttention embedder
 padded_channels: 256 #input padded to allow for different number of channels, also the top level embed dim
@@ -49,7 +50,7 @@ crattn_dropout: 0.1
 
 ### Transformer Encoder
 transformer_dim: kwargs['transformer_dim'] = kwargs['crattn_embed_dim'] * kwargs['autoencode_samples']
-transformer_seq_length: 256
+transformer_seq_length: 128
 max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
 max_batch_size: kwargs['max_batch_size'] = kwargs['random_pulls_in_batch'] * kwargs['inference_batch_mult']
 n_layers: 4
@@ -64,11 +65,11 @@ num_encode_concat_transformer_tokens: 8
 transformer_start_pos: 0 # Not currently coded up to work if > 0
 top_dims: kwargs['top_dims'] = kwargs['num_encode_concat_transformer_tokens'] * kwargs['transformer_dim']
 hidden_dims: 4096 # 4096
-latent_dim: 1024 # 2048
+latent_dim: 2048 # 2048
 
 ### DECOCDER
 # Non-autoregressive transformer
-decoder_base_dims: kwargs['decoder_base_dims'] = kwargs['latent_dim'] # after this layer, it will be connected into FC to [batch, padded_channels * seq_len] to prepare for decoder transformer input
+decoder_base_dims: 1024 # kwargs['decoder_base_dims'] = kwargs['latent_dim'] # after this layer, it will be connected into FC to [batch, padded_channels * seq_len] to prepare for decoder transformer input
 
 ### Classifier
 classifier_hidden_dims: [1024, 1024, 512, 256]
@@ -118,11 +119,11 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 ### Dynamic Weights ###
 
 # Beta WAE controls
-Reg_max: kwargs['Reg_max'] = 1
+Reg_max: kwargs['Reg_max'] = 1e-2
 Reg_min: kwargs['Reg_min'] = 0
-Reg_stall_epochs: 0 # No Reg weight rise until stall is complete
+Reg_stall_epochs: 1 # No Reg weight rise until stall is complete
 Reg_epochs_AT_max: 99999
-Reg_epochs_TO_max: 0
+Reg_epochs_TO_max: 1
 
 # GAMMA distribution params  TODO: consider assymetric cost to prenalize moving mass out of tail
 running_reg_passes: 8192

@@ -165,9 +165,9 @@ class Decoder_MLP(nn.Module):
             nn.Linear(latent_dim, decoder_base_dims * decode_samples),
             nn.SiLU(),
             RMSNorm(decoder_base_dims * decode_samples),
-            nn.Linear(decoder_base_dims * decode_samples, decoder_base_dims * decode_samples * 2),
+            nn.Linear(decoder_base_dims * decode_samples, decoder_base_dims * decode_samples),
             nn.SiLU(),
-            RMSNorm(decoder_base_dims * decode_samples * 2),
+            RMSNorm(decoder_base_dims * decode_samples),
             # nn.Linear(decoder_base_dims * decode_samples * 2, decoder_base_dims * decode_samples * 4),
             # nn.SiLU(),
             # RMSNorm(decoder_base_dims * decode_samples * 4),
@@ -180,14 +180,14 @@ class Decoder_MLP(nn.Module):
             )        
         # Now FC without norms, after reshaping so that each token is seperated
         self.non_autoregressive_output = nn.Sequential(
-            nn.Linear(decoder_base_dims * 2, output_channels),
+            nn.Linear(decoder_base_dims, output_channels),
             nn.Tanh())
             
     def forward(self, z):
         batch_size = z.size(0)
         
         # Step 1: Non-autoregressive generation 
-        h_na = self.non_autoregressive_fc(z).view(batch_size, self.decode_samples, self.decoder_base_dims * 2)
+        h_na = self.non_autoregressive_fc(z).view(batch_size, self.decode_samples, self.decoder_base_dims)
         x_na = self.non_autoregressive_output(h_na)  # (batch_size, seq_length, output_channels)
         
         return x_na

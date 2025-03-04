@@ -33,6 +33,7 @@ import math
 import ot
 from ot.lp import wasserstein_1d
 from ot.utils import proj_simplex
+from geomloss import SamplesLoss
 # from torch.utils.data._utils import shared_memory_cleanup
 
 # Local Imports
@@ -352,9 +353,9 @@ def main(
         
         # CHECKPOINT
         # After every train epoch, optionally delete old checkpoints
-        print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
-        barrier()
         if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, **kwargs)
+        print(f"GPU{str(trainer.gpu_id)} at post checkpoint save barrier")
+        barrier()
 
         # VALIDATE 
         # (skip if it's a pacmap epoch because it will already have been done)
@@ -601,17 +602,18 @@ class Trainer:
 
             return torch.cat([past_samples, mean_latent])
 
-    def _update_barycenter(self, num_barycenter_iters, plot, savedir, **kwargs):
+    def _update_barycenter(self, num_barycenter_iters, plot, savedir, blur=0.05, n_iter=100, **kwargs):
         
         # # Sample from gamma
         x1 = torch.distributions.Gamma(self.gamma_shape, 1/self.gamma_scale).sample((self.accumulated_z.shape[0], self.accumulated_z.shape[1])).to(self.accumulated_z).cpu().numpy()
+        # Use observations for other distribution
         x2 = self.accumulated_z.cpu().numpy()
         
         measures_locations = [x1, x2]
         measures_weights = [ot.unif(x1.shape[0]), ot.unif(x2.shape[0])]
 
         k, d = self.accumulated_z.shape
-        X_init = np.random.normal(0.0, 1.0, (k, d))  # initial Dirac locations
+        X_init = self.barycenter.detach().cpu().numpy() # Initialize based on previous barycenter 
         b = (np.ones((k,)) / k)  # weights of the barycenter (it will not be optimized, only the locations are optimized)
 
         X = ot.lp.free_support_barycenter(
