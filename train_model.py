@@ -122,6 +122,8 @@ def load_train_objs(
             num_rand_hashes=val_num_rand_hashes,
             num_forward_passes=valfinetune_forward_passes,
             initiate_random_generator=False,
+            data_logger_enabled=True,
+            data_logger_file=f"{kwargs['log_dir']}/data_forward_pass_log_Valfinetune_GPU{gpu_id}.jsonl.gz",
             **kwargs)
 
         print(f"[GPU{str(gpu_id)}] Generating VALIDATION UNSEEN dataset")
@@ -135,6 +137,8 @@ def load_train_objs(
             num_rand_hashes=val_num_rand_hashes,
             num_forward_passes=valunseen_forward_passes,
             initiate_random_generator=False,
+            data_logger_enabled=True,
+            data_logger_file=f"{kwargs['log_dir']}/data_forward_pass_log_Valunseen_GPU{gpu_id}.jsonl.gz",
             **kwargs)
 
     else: # If no val, just make a train dataset
@@ -157,6 +161,8 @@ def load_train_objs(
         num_rand_hashes=train_num_rand_hashes,
         num_forward_passes=train_forward_passes,
         initiate_random_generator=True,
+        data_logger_enabled=True,
+        data_logger_file=f"{kwargs['log_dir']}/data_forward_pass_log_Train_GPU{gpu_id}.jsonl.gz",
         **kwargs)
 
     ### Random DataLoaders ###
@@ -215,7 +221,7 @@ def main(
     **kwargs):
 
     '''
-    Highest level loop to run train epochs, validate, pacmap... etc. 
+    Highest level loop to build training objects, run train epochs, validate, inference on whole files to save embeddings... etc. 
 
     '''
 
@@ -855,7 +861,7 @@ class Trainer:
         This function is for training the model. 
         It will pull: random pats/random files/random portions of file
 
-        Takes in a DataLoader, not a Dataset
+        IMPORTANT: Takes in a *DataLoader*, not a *Dataset*
         '''
 
         print(f"[GPU{self.gpu_id}] Autoencode_samples: {self.autoencode_samples}")

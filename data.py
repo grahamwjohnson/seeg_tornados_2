@@ -15,6 +15,9 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import csv
 import time
+import json
+import gzip
+from datetime import datetime
  
 '''
 @author: grahamwjohnson
@@ -24,55 +27,76 @@ import time
 
 pd.set_option('display.max_rows', None)
 
+class JSONLinesLogger:
+    def __init__(self, filename):
+        self.filename = filename
+        self.initialize_file()
+
+    def initialize_file(self):
+        """Initialize the file if it doesn't exist."""
+        if not os.path.isfile(self.filename):
+            header = ['file_class', 'random_hash_modifier', 'start_idx', 'autoencode_samples', 'end_idx', 'file_name']
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_entry = {"timestamp": timestamp, "data": header}
+            with gzip.open(self.filename, 'wt', encoding='UTF-8') as f:
+                f.write(json.dumps(log_entry) + '\n')
+
+    def log(self, data):
+        """Log data with a timestamp, appending to the file."""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_entry = {"timestamp": timestamp, "data": data}
+
+        # Append the log entry as a new line
+        with gzip.open(self.filename, 'at', encoding='UTF-8') as f:
+            f.write(json.dumps(log_entry) + '\n')
+
 # Seizure based datset curation
 class SEEG_Tornado_Dataset(Dataset):
     def __init__(
-            self,
-            gpu_id,
-            pat_list,
-            pat_dirs,
-            model_dir,
-            FS,
-            atd_file, 
-            pat_num_channels_LUT, 
-            data_dir_subfolder,
-            intrapatient_dataset_style, 
-            hour_dataset_range,
-            dataset_pic_dir, 
-            num_samples,
-            transformer_seq_length,
-            autoencode_samples,
-            periictal_augmentation_perc,
-            preictal_augmentation_seconds,
-            random_pulls_in_batch,
-            num_rand_hashes, 
-            padded_channels,
-            latent_dim,
-            num_forward_passes,
-            random_gen_script_path,
-            initiate_random_generator=False,
-            **kwargs):
+        self,
+        gpu_id,
+        pat_list,
+        pat_dirs,
+        model_dir,
+        FS,
+        atd_file, 
+        pat_num_channels_LUT, 
+        data_dir_subfolder,
+        intrapatient_dataset_style, 
+        hour_dataset_range,
+        dataset_pic_dir, 
+        num_samples,
+        transformer_seq_length,
+        autoencode_samples,
+        periictal_augmentation_perc,
+        preictal_augmentation_seconds,
+        random_pulls_in_batch,
+        num_rand_hashes, 
+        padded_channels,
+        latent_dim,
+        num_forward_passes,
+        random_gen_script_path,
+        data_logger_enabled,
+        data_logger_file,
+        initiate_random_generator=False,
+        **kwargs):
 
         self.gpu_id = gpu_id
         self.num_samples = num_samples
         self.autoencode_samples = autoencode_samples
         self.FS = FS
-        self.kwargs = kwargs
-
         self.periictal_augmentation_perc = periictal_augmentation_perc
         self.preictal_augmentation_seconds = preictal_augmentation_seconds
-
         self.num_windows = int((self.num_samples - self.autoencode_samples)/self.autoencode_samples) - 2
-        
         self.random_pulls_in_batch = random_pulls_in_batch
-
         self.num_rand_hashes = num_rand_hashes
         self.latent_dim = latent_dim
         self.padded_channels = padded_channels
-        
         self.transformer_seq_length = transformer_seq_length
-
         self.num_forward_passes = num_forward_passes
+        self.data_logger_enabled = data_logger_enabled
+        self.data_logger_file = data_logger_file
+        self.kwargs = kwargs
     
         # Get ONLY the .pkl file names in the subdirectories of choice
         # self.data_dir = data_dir
@@ -118,7 +142,7 @@ class SEEG_Tornado_Dataset(Dataset):
             self.pat_fnames[i] = utils_functions.sort_filenames(self.pat_fnames[i])
 
         # Launches a seperate thread that will randomly generate forward pass ready data from little pickles
-        # Wayyyy faster than pulling in little pickles just to pull ~1 second from it. 
+        # Actually a bit slower than pulling in little pickles directly, but can always be running in background
         if initiate_random_generator:
             self.tmp_dir = f"/dev/shm/tornado_tmp_{utils_functions.random_filename_string()}"
             self.fname_csv = f"{self.tmp_dir}/fnames.csv"
@@ -129,6 +153,8 @@ class SEEG_Tornado_Dataset(Dataset):
             
             # Start the generator
             self.rand_generator_process = utils_functions.run_script_from_shell(random_gen_script_path, self.tmp_dir, 'fnames.csv', f"{self.num_rand_hashes}")
+
+        if self.data_logger_enabled:  self.data_logger = JSONLinesLogger(self.data_logger_file) # Initiate
 
     def get_script_filename(self):
         return __file__
@@ -170,8 +196,7 @@ class SEEG_Tornado_Dataset(Dataset):
             return data_tensor, file_name, file_class_label
 
         else:
-            
-            # Must wait for 
+            # Sometimes must wait for the subprocess to generate data
             while True:
 
                 # Merely need to pull from the top of the random generator tmp_dir
@@ -189,6 +214,10 @@ class SEEG_Tornado_Dataset(Dataset):
                     file_class = data['file_class']
                     hash_channel_order = data['hash_channel_order']
                     hash_pat_embedding = data['hash_pat_embedding']
+                    random_hash_modifier = data['random_hash_modifier']
+                    start_idx = data['start_idx']
+                    autoencode_samps = data['autoencode_samps']
+                    end_idx = data['end_idx']
 
                     # Delete the used batch pickle
                     os.remove(the_one)
@@ -196,83 +225,14 @@ class SEEG_Tornado_Dataset(Dataset):
                     # Convert data_tensor to float32
                     data_tensor = data_tensor.to(torch.float32)
 
+                    # If logger is enabled, save pat_idx & what file was pulled 
+                    if self.data_logger_enabled: 
+                        for i in range(len(file_name)):
+                            self.data_logger.log([int(file_class[i]), random_hash_modifier[i], start_idx[i], autoencode_samps[i], end_idx[i], file_name[i]])
+
                     return data_tensor, file_name, file_class, hash_channel_order, hash_pat_embedding
                 
                 else:
                     # print("Random Generator not fast enough")
-                    time.sleep(1)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-            # # Calculate batchsize
-            # self.batchsize = self.random_pats_in_batch * self.random_files_per_pat * self.random_epochs_per_file 
-            # data_tensor_np = np.zeros((self.batchsize, self.transformer_seq_length, self.padded_channels, self.autoencode_samples), dtype=np.float32)
-            # file_name = [-1]*self.batchsize
-            # file_class = torch.empty(self.batchsize, dtype=torch.long)
-            # hash_channel_order = [-1]*self.batchsize
-            # hash_pat_embedding = torch.empty((self.batchsize, self.latent_dim), dtype=torch.float32)
-
-            # # Random samplings of pat/file/epoch
-            # np.random.seed(seed=None)
-            # pat_idxs = np.random.choice(self.get_pat_count(), self.random_pats_in_batch, replace=True)
-            # file_idxs = [np.random.choice(len(self.pat_fnames[pi]), self.random_files_per_pat, replace=True) for pi in pat_idxs]
-            # start_idxs = self.rand_start_idxs()
-
-            # idx_output = -1
-            # for i in range(len(pat_idxs)):
-            #     p_curr = pat_idxs[i]
-            #     for j in range(len(file_idxs[i])):
-            #         f_curr = file_idxs[i][j]
-
-            #         # Load the file's pickle
-            #         file = open(self.pat_fnames[p_curr][f_curr],'rb')
-            #         data = pickle.load(file) 
-            #         file.close()
-
-            #         # Pull out epoch's from this file
-            #         for k in range(len(start_idxs)):
-            #             idx_output = idx_output + 1
-
-            #             start_idx_curr = start_idxs[k]
-
-            #             file_name[idx_output] = self.pat_fnames[p_curr][f_curr].split("/")[-1].split(".")[0]
-            #             file_class[idx_output] = p_curr
-
-            #             # print(f"p_curr: {p_curr}, f_curr: {f_curr}, e_curr: {e_curr}, idx_output: {idx_output}")
-
-            #             # e_curr = start_idxs[k]
-
-            #             # Generate hashes for feedforward conditioning
-            #             np.random.seed(seed=None) 
-            #             rand_modifer = int(random.uniform(0, self.num_rand_hashes -1))
-            #             hash_pat_embedding[idx_output], hash_channel_order[idx_output] = utils_functions.hash_to_vector(
-            #                 input_string=self.pat_ids[p_curr], 
-            #                 num_channels=data.shape[0], 
-            #                 latent_dim=self.latent_dim, 
-            #                 modifier=rand_modifer)
-
-            #             # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
-            #             for embedding_idx in range(0, self.transformer_seq_length):
-            #                 # Pull out data for this window
-            #                 end_idx = start_idx_curr + self.autoencode_samples * embedding_idx + self.autoencode_samples 
-            #                 data_tensor_np[idx_output, embedding_idx, :len(hash_channel_order[idx_output]), :] = data[hash_channel_order[idx_output], end_idx-self.autoencode_samples : end_idx] # Padding implicit in zeros intitilization
-
-            # # Convert to Torch Tensor
-            # data_tensor = torch.Tensor(data_tensor_np)
-
-            # return data_tensor, file_name, file_class, hash_channel_order, hash_pat_embedding
-        
-
-
+                    time.sleep(0.5)
 

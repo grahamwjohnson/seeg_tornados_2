@@ -3351,6 +3351,8 @@ def initialize_directories(
         os.makedirs(kwargs['model_dir'])
         kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs'
         os.makedirs(kwargs['pic_dataset_dir'])
+        kwargs['log_dir'] =  kwargs['model_dir'] + '/data_logs'
+        os.makedirs(kwargs['log_dir'])
 
         # Fresh run 
         kwargs['start_epoch'] = 0

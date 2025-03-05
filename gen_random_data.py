@@ -53,15 +53,16 @@ def load_data_sample(pat_idx, file_idx, start_idx, pat_fnames, pat_ids, latent_d
     #     data_tensor_np[embedding_idx, :len(hash_channel_order), :] = data[hash_channel_order, end_idx - autoencode_samples : end_idx]  # Padding implicit in zeros initialization
 
     # initialize & fill the data tensor
+    end_idx = start_idx +  autoencode_samples * transformer_seq_length
     data_tensor_np = np.zeros((padded_channels, transformer_seq_length * autoencode_samples ), dtype=np.float16)
-    data_tensor_np[ :len(hash_channel_order), :] = data[hash_channel_order, start_idx : start_idx +  autoencode_samples * transformer_seq_length]  # [Seq, padded_channels, autoencode_sample]
+    data_tensor_np[ :len(hash_channel_order), :] = data[hash_channel_order, start_idx : end_idx]  # [Seq, padded_channels, autoencode_sample]
     data_tensor_np = np.swapaxes(data_tensor_np.reshape(data_tensor_np.shape[0], transformer_seq_length, autoencode_samples), 0,1)
 
     # Add file info
     file_name = pat_fnames[pat_idx][file_idx].split("/")[-1].split(".")[0]
     file_class = pat_idx
 
-    return data_tensor_np, file_name, file_class, hash_channel_order, hash_pat_embedding
+    return data_tensor_np, file_name, file_class, hash_channel_order, hash_pat_embedding, rand_modifier, start_idx, end_idx
 
 def thread_task(thread_num, nested_max_workers, tmp_dir, pat_fnames, num_buffer_batches, pat_ids, latent_dim, batchsize, num_samples, transformer_seq_length, padded_channels, autoencode_samples, num_rand_hashes, hash_output_range):
     
@@ -81,6 +82,10 @@ def thread_task(thread_num, nested_max_workers, tmp_dir, pat_fnames, num_buffer_
             file_class = torch.empty(batchsize, dtype=torch.long)
             hash_channel_order = [-1]*batchsize
             hash_pat_embedding = torch.empty((batchsize, latent_dim), dtype=torch.float16)
+            random_hash_modifier = [-1]*batchsize
+            start_idx = [-1]*batchsize
+            autoencode_samps = [-1]*batchsize
+            end_idx = [-1]*batchsize
 
             C = start_time - time.time()
 
@@ -106,7 +111,7 @@ def thread_task(thread_num, nested_max_workers, tmp_dir, pat_fnames, num_buffer_
 
                 # Collect results from all futures
                 for future in futures:
-                    data_tensor_np_i, file_name_i, file_class_i, hash_channel_order_i, hash_pat_embedding_i = future.result()
+                    data_tensor_np_i, file_name_i, file_class_i, hash_channel_order_i, hash_pat_embedding_i, random_hash_modifier_i, start_idx_i, end_idx_i = future.result()
 
                     # Append results to the final variables
                     idx_output += 1
@@ -115,6 +120,10 @@ def thread_task(thread_num, nested_max_workers, tmp_dir, pat_fnames, num_buffer_
                     file_class[idx_output] = file_class_i
                     hash_channel_order[idx_output] = hash_channel_order_i
                     hash_pat_embedding[idx_output] = hash_pat_embedding_i
+                    random_hash_modifier[idx_output] = random_hash_modifier_i
+                    start_idx[idx_output] = start_idx_i
+                    autoencode_samps[idx_output] = autoencode_samples # Do not need to return dynamically
+                    end_idx[idx_output] = end_idx_i
 
             D = start_time - time.time()
 
@@ -126,7 +135,11 @@ def thread_task(thread_num, nested_max_workers, tmp_dir, pat_fnames, num_buffer_
                 "file_name": file_name,
                 "file_class": file_class,
                 "hash_channel_order": hash_channel_order,
-                "hash_pat_embedding": hash_pat_embedding}
+                "hash_pat_embedding": hash_pat_embedding,
+                "random_hash_modifier": random_hash_modifier,
+                "start_idx": start_idx,
+                "autoencode_samps": autoencode_samps,
+                "end_idx": end_idx}
 
             # # Save the batch as one batch pickle
             batch_path = f"{tmp_dir}/T{thread_num}_{file_idx_next}.pkl"
