@@ -105,7 +105,7 @@ valfinetune_forward_passes: 500
 valunseen_forward_passes: 500
 
 # VAl and Inference Frequency
-inference_every: 99999
+inference_every: 1
 inference_batch_mult: 2 # With current architecture/hardware, max batch size > 4 runs out of RAM
 finetune_inference: False  
 val_every: 99999
@@ -191,8 +191,10 @@ subprocess_num_threads: 1
 num_dataloader_workers: 0 # persistent workers will be True if >0
 
 # Inference file saves
-inference_window_sec_list: [60, 20] # [60, 10]
-inference_stride_sec_list: [30, 5] #[30, 5] 
+# Both window and stride must be multiple of input seconds to encoder 
+# (i.e. autoencode_samples * transformer_seq_length / FS)
+inference_window_sec_list: [60, 16, 16, 8] 
+inference_stride_sec_list: [30, 16, 4,  2] 
 
 
 # PaCMAP and HDBSCAN settings

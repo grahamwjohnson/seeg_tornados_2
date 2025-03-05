@@ -736,23 +736,26 @@ class Trainer:
 
         '''
         This will run inference (ONLY encoder) and save the latent space per file to a .pkl
-
         Unlike _run_train_epoch (which is random data pulls), this function will sequentially iterate through entire file (one patient at a time)
+        NOTE: This function takes in a *Dataset*, NOT a *Dataloader* like in _run_train_epoch
 
-        IMPORTANT: This function takes in a *Dataset*, NOT a *Dataloader* like in _run_train_epoch
-
+        OUTPUT
+        The output files will be smoothed according to the following variables:
+        inference_window_sec_list: e.g. [60, 20] 
+        inference_stride_sec_list: e.g. [30, 5] 
+    
         '''
 
         print(f"[GPU{self.gpu_id}] Autoencode_samples: {self.autoencode_samples}")
 
         ### ALL/FULL FILES - LATENT ONLY - FULL TRANSFORMER CONTEXT ### 
-        print("WARNING: Setting alpha = 1")
-        self.classifier_alpha = 1
+        print("WARNING: Setting alpha = 0")
+        self.classifier_alpha = 0
 
         # Go through every subject in this dataset
         for pat_idx in range(0,len(dataset_curr.pat_ids)):
             dataset_curr.set_pat_curr(pat_idx)
-            dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=max_batch_size * inference_batch_mult, num_workers=num_dataloader_workers)
+            dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=max_batch_size, num_workers=num_dataloader_workers)
 
             # Go through every file in dataset
             file_count = 0
@@ -834,7 +837,6 @@ class Trainer:
 
                     # Save each windowed latent in a pickle for each file
                     for b in range(data_tensor.shape[0]):
-
                         filename_curr = file_name[b]
                         save_dir = f"{self.model_dir}/latent_files/Epoch{self.epoch}/{win_sec_curr}SecondWindow_{stride_sec_curr}SecondStride/{dataset_string}"
                         if not os.path.exists(save_dir): os.makedirs(save_dir)
