@@ -644,10 +644,9 @@ class Trainer:
         elif num_new > self.barycenter_batch_sampling:
             raise Exception(f"mean_latent.shape[0] > self.barycenter_batch_sampling ({num_new} > {self.barycenter_batch_sampling})")
 
-        else:
+        else: # NOT RANDOM
             num_past = self.barycenter_batch_sampling - num_new
-            past_indices = torch.randint(0, self.accumulated_z.shape[0], (num_past,))
-            past_samples = self.accumulated_z[past_indices]
+            past_samples = self.accumulated_z[self.next_update_index - num_past : self.next_update_index, :] # Use the next update index to know where the latest past samples are
 
             return torch.cat([past_samples, mean_latent])
 

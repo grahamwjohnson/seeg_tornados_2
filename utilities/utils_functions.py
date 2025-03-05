@@ -3320,6 +3320,7 @@ def initialize_directories(
 
         kwargs['model_dir'] = cont_train_model_dir
         kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs'
+        kwargs['log_dir'] =  kwargs['model_dir'] + '/data_logs'
 
         # Find the epoch to start training
         check_dir = kwargs['model_dir'] + "/checkpoints"
