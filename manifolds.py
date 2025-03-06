@@ -85,7 +85,19 @@ if __name__ == "__main__":
     prpacmap_num_workers = 8
 
     # PaCMAP Settings (unless random override below)
-    # TODO take in previously calculated NN
+    # NN local, MN: global, FP global and local
+    # Phase 1:
+    # w_MN = (1 - itr/phase_1_iters) * w_MN_init + itr/phase_1_iters * 3.0     Starts high, goes down to 3
+    # w_neighbors = 2.0
+    # w_FP = 1.0
+    # Phase 2:
+    # w_MN = 3.0
+    # w_neighbors = 3
+    # w_FP = 1
+    # Phase 3:
+    # w_MN = 0.0
+    # w_neighbors = 1.
+    # w_FP = 1.
     apply_pca = True # Before PaCMAP
     pacmap_LR = 0.1 #0.05
     pacmap_NumIters = (500,500,500)

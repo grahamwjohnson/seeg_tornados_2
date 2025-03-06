@@ -1,23 +1,19 @@
+# Standard Python Libraries
 from __future__ import print_function, division
-import os
+import os, sys, time, pickle, glob, random, csv, json, gzip
+from datetime import datetime, timedelta
+from functools import partial
+from concurrent.futures import ThreadPoolExecutor
+
+# Third-Party Libraries
 import torch
 import pandas as pd
+import numpy as np
 from torch.utils.data import Dataset
 import torch.nn.functional as F
-import numpy as np
-import pickle
-import glob
-from datetime import datetime, timedelta
-import sys
+
+# Local Imports
 from utilities import utils_functions
-import random
-from concurrent.futures import ThreadPoolExecutor
-from functools import partial
-import csv
-import time
-import json
-import gzip
-from datetime import datetime
  
 '''
 @author: grahamwjohnson
@@ -68,8 +64,6 @@ class SEEG_Tornado_Dataset(Dataset):
         num_samples,
         transformer_seq_length,
         autoencode_samples,
-        periictal_augmentation_perc,
-        preictal_augmentation_seconds,
         random_pulls_in_batch,
         num_rand_hashes, 
         padded_channels,
@@ -85,8 +79,6 @@ class SEEG_Tornado_Dataset(Dataset):
         self.num_samples = num_samples
         self.autoencode_samples = autoencode_samples
         self.FS = FS
-        self.periictal_augmentation_perc = periictal_augmentation_perc
-        self.preictal_augmentation_seconds = preictal_augmentation_seconds
         self.num_windows = int((self.num_samples - self.autoencode_samples)/self.autoencode_samples) - 2
         self.random_pulls_in_batch = random_pulls_in_batch
         self.num_rand_hashes = num_rand_hashes

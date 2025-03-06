@@ -3,7 +3,6 @@ from torch import nn
 import heapq
 import torch.nn.functional as F
 from geomloss import SamplesLoss
-# import ot
 
 '''
 @author: grahamwjohnson

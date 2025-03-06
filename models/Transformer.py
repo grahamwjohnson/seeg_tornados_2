@@ -1,5 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# This software may be used and distributed in accordance with the terms of the Llama 3 Community License Agreement.
 
 import math
 from dataclasses import dataclass
@@ -15,6 +13,13 @@ import torch.nn.functional as F
 
 from torch import nn
 
+'''
+Modified from LLaMa3 by @author: grahamwjoshnson
+
+Copyright (c) Meta Platforms, Inc. and affiliates.
+This software may be used and distributed in accordance with the terms of the Llama 3 Community License Agreement.
+
+'''
 
 @dataclass
 class ModelArgs:

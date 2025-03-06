@@ -23,8 +23,6 @@ freq_bands_str: 'wholeband' # 1to12Hz_12to59Hz_61to179Hz, wholeband
 intrapatient_dataset_style: 2 # 1 all data (no SPES), 2 all data (with SPES), 3 ONLY SPES
 train_hour_dataset_range: kwargs['train_hour_dataset_range'] = [-1, -1]  # [-1, -1] means all, [X, -1] means from X to end
 rand_name_json: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/utilities/animals.json'
-periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if enabled
-preictal_augmentation_seconds: 1800 # NOT CURRENTLY BEING USED
 
 # Random data generator (seperate subprocess)
 random_gen_script_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/gen_random_data.py'
@@ -38,7 +36,7 @@ print_dataset_bargraphs: False # Typically set to False if not the first run of 
 cont_train_model_dir: '/media/glommy1/model_runs/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/africanfisheagle_Tue_Mar__4_22_51_33_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
-### WAE ###
+### WAE Model Params ###
 autoencode_samples: 2 # 8
 
 # Cross atttention embedder
@@ -52,7 +50,7 @@ crattn_max_seq_len: kwargs['crattn_max_seq_len'] = kwargs['autoencode_samples']
 crattn_cnn_kernel_size: 3
 crattn_dropout: 0.1
 
-### Transformer Encoder
+# Transformer Encoder
 transformer_dim: kwargs['transformer_dim'] = kwargs['crattn_embed_dim'] * kwargs['autoencode_samples']
 transformer_seq_length: 512
 max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
@@ -64,18 +62,18 @@ ffn_dim_multiplier: 0.4 # 0.2  # Default is 1 to make FF layers account for 2/3 
 attention_dropout: 0.1          # 0.8 is very aggressive     
 encoder_transformer_activation: "silu"
 
-### WAE-Layers Encoder
+# WAE-Layers Encoder
 num_encode_concat_transformer_tokens: 8
 transformer_start_pos: 0 # Not currently coded up to work if > 0
 top_dims: kwargs['top_dims'] = kwargs['num_encode_concat_transformer_tokens'] * kwargs['transformer_dim']
 hidden_dims: 4096 # 4096
 latent_dim: 2048 # 2048
 
-### DECODER
+# DECODER
 # Non-autoregressive transformer
 decoder_base_dims: 1024 # kwargs['decoder_base_dims'] = kwargs['latent_dim'] # after this layer, it will be connected into FC to [batch, padded_channels * seq_len] to prepare for decoder transformer input
 
-### Classifier
+# Classifier
 classifier_hidden_dims: [1024, 1024, 512, 256]
 classifier_num_pats: 40 #       Hardcoded  ########
 classifier_dropout: 0.1
@@ -99,7 +97,6 @@ val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that mo
 # Training variables
 optimizer_forward_passes: 1 # How often to step optimizier 
 random_pulls_in_batch: 8 # Random data pull when pat_curr = -1
-
 train_forward_passes: 1024
 valfinetune_forward_passes: 500
 valunseen_forward_passes: 500
@@ -183,9 +180,6 @@ manual_gamma_val_core: 0.5
 
 delete_old_checkpoints: True   
 
-# Previous model initial params
-tmp_file_dir: '/tmp_files'
-
 # Multiprocessing 
 subprocess_num_threads: 1 
 num_dataloader_workers: 0 # persistent workers will be True if >0
@@ -193,48 +187,7 @@ num_dataloader_workers: 0 # persistent workers will be True if >0
 # Inference file saves
 # Both window and stride must be multiple of input seconds to encoder 
 # (i.e. autoencode_samples * transformer_seq_length / FS)
-inference_window_sec_list: [60, 16, 16, 8] 
+inference_window_sec_list: [60, 16, 16, 4] 
 inference_stride_sec_list: [30, 16, 4,  2] 
 
-
-# PaCMAP and HDBSCAN settings
-# TODO: Decouple this and leave for manifolds.py
-# NN local, MN: global, FP global and local
-# Phase 1:
-  # w_MN = (1 - itr/phase_1_iters) * w_MN_init + itr/phase_1_iters * 3.0     Starts high, goes down to 3
-  # w_neighbors = 2.0
-  # w_FP = 1.0
-# Phase 2:
-  # w_MN = 3.0
-  # w_neighbors = 3
-  # w_FP = 1
-# Phase 3:
-  # w_MN = 0.0
-  # w_neighbors = 1.
-  # w_FP = 1.
-# # Work toward seperating out
-# apply_pca: True
-# pca_comp: 100
-# pacmap_build_strs: kwargs['pacmap_build_strs'] = ['train', "valfinetune"]
-# pacmap_eval_strs: kwargs['pacmap_eval_strs'] = ["valunseen"]
-# pacmap_LR: 1 # 0.5                                                                                              #################
-# pacmap_NumIters: kwargs['pacmap_NumIters'] = (300,150,300) # (Phase 1,2,3), default (100, 100, 250) ##################################
-# pacmap_NN: kwargs['pacmap_NN'] = None
-# pacmap_MN_ratio: 0.5 # 2.0 # 2.0 # Default 0.5
-# pacmap_FP_ratio: 2.0 # 0.5 # Default 2.0
-# pacmap_MedDim_numdims: 10
-# HDBSCAN_min_cluster_size: 200 # e.g. value of 50: 10 seconds avg window with 1 second stride would be ~1 min
-# HDBSCAN_min_samples: 100 # Closer to min_cluster_size --> more conservative
-# delete_latent_files: False # If false, will not delete the latent files after building pacmap (takes up lots of disk space)
-
-
-# # Plotting variables
-# plot_alpha: 0.5
-# plot_preictal_color_sec: 3600
-# plot_postictal_color_sec: 3600
-# s_plot: 5
-# seiz_type_list: kwargs['seiz_type_list'] = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Focal unknown awareness', 'Unknown', 'Subclinical', 'Non-electrographic'] # Leftward overwites rightward
-# seiz_plot_mult: kwargs['seiz_plot_mult'] = [1,       3,     5,              7,    9,                           11,        13,            15] # Assuming increasing order, NOTE: base value of 3 is added in the code
-# pic_sub_dirs: kwargs['pic_sub_dirs'] = [] #['MeanLogvar_Train_SEQUENTIAL', 'MeanLogvar_Val_SEQUENTIAL','Recon_Train_SEQUENTIAL' ,'Recon_Val_SEQUENTIAL','Recon_Inference','PaCMAP_EpochWide_Train', 'PaCMAP_EpochWide_Val','PaCMAP_SingleFile_Inference', 'Cluster_Timeline_Train', 'Cluster_Timeline_Val','Cluster_Timeline_Inference'] 
-# pic_types: kwargs['pic_types'] = ['JPEGs','SVGs']
 

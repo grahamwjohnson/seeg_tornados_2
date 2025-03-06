@@ -1,17 +1,15 @@
-import sys
-import yaml
+# Standard Python Libraries
+import sys, os, time, csv, glob, pickle, random, threading
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from utilities import utils_functions
-import time
-import os
-import csv
-import glob
+
+# Third-Party Libraries
+import yaml
 import numpy as np
 import torch
-import pickle
-import random
-import threading
+
+# Local Imports
+from utilities import utils_functions
 
 '''
 @author: grahamwjohnson

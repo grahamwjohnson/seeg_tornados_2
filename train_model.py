@@ -1,3 +1,7 @@
+# Standard Python Libraries
+import sys, os, shutil, copy, random, time, datetime, pickle, gc, heapq, traceback, glob, math
+
+# Third-Party Libraries
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -6,35 +10,19 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group, barrier
 from torch.utils.data import Dataset, DataLoader
 from torch.distributions.gamma import Gamma
-import sys  
-import os
-import shutil
 import matplotlib.pylab as pl
 import matplotlib.gridspec as gridspec
-import os
 import wandb
-import copy
 import pandas as pd
-import random
 import numpy as np
-import time
-import datetime
-import pickle
 import joblib
-import gc
-import heapq
-import traceback
-import glob
 import pacmap
 import yaml
 import auraloss
-import wandb
-import math
 import ot
 from ot.lp import wasserstein_1d
 from ot.utils import proj_simplex
 from geomloss import SamplesLoss
-# from torch.utils.data._utils import shared_memory_cleanup
 
 # Local Imports
 from utilities import latent_plotting
