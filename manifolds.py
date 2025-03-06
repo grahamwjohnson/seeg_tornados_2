@@ -2,6 +2,7 @@ import os, glob
 import pickle
 from  utilities import manifold_utilities
 import numpy as np
+import random
 
 '''
 @author: grahamwjohnson
@@ -12,14 +13,27 @@ Ad-hoc script to run UMAP/PR-PaCMAP/PaCMAP/PHATE/Histograms on latent files
 
 def custom_paramrep_weight_schedule(epoch: int):
     """Weight schedule for ParamRepulsor."""
-    if epoch < 1000: # Default 200
-        w_nn = 4.0
-        w_fp = 8.0
-        w_mn = 0.0
+    # Dynamic
+    if epoch < 300: # Default 200
+        w_nn = 4.0 # Default 4
+        w_fp = 8.0 # Default 8
+        w_mn = 0 # Default 0
+
+    # elif epoch < 500: # this pahse does not exist in default
+    #     w_nn = 8.0 
+    #     w_fp = 2.0 
+    #     w_mn = -1 
+
     else:
-        w_nn = 1.0
-        w_fp = 8.0
-        w_mn = -12.0
+        w_nn = 1.0 # Default 1
+        w_fp = 8.0 # Default 8
+        w_mn = -12.0 # Default -12
+
+    # # Static
+    # w_nn = 1.0
+    # w_fp = 10.0
+    # w_mn = 1.0
+
     weight = np.array([w_nn, w_fp, w_mn])
     return weight
 
@@ -55,19 +69,29 @@ if __name__ == "__main__":
     HDBSCAN_min_samples = 100
 
     # Plotting Settings
-    plot_preictal_color_sec = 60*30
+    plot_preictal_color_sec = 60*30 #60*60*4
     plot_postictal_color_sec = 60*10 #60*60*4
 
-    # ParamRepulsor Settings
+    # ParamRepulsor Settings (unless random override below)
+    prpacmap_metric='angular' # default 'euclidean', 'angular'
     pr_apply_pca = True # Before PaCMAP
     prpacmap_LR = 1e-5 # Default 1e-3
-    prpacmap_batchsize = 8192 # Default 1024
-    prpacmap_NumEpochs = 1500 # Default 450
+    prpacmap_batchsize = 512 # Default 1024
+    prpacmap_NumEpochs = 500 # Default 450
     prpacmap_weight_schedule = custom_paramrep_weight_schedule
     prpacmap_NN = 10 # Default 10
     prpacmap_n_MN = 20 # Default 20
-    prpacmap_n_FP = 40 # Default 5
+    prpacmap_n_FP = 5 # Default 5
     prpacmap_num_workers = 8
+
+    # PaCMAP Settings (unless random override below)
+    # TODO take in previously calculated NN
+    apply_pca = True # Before PaCMAP
+    pacmap_LR = 0.1 #0.05
+    pacmap_NumIters = (500,500,500)
+    pacmap_NN = None
+    pacmap_MN_ratio = 7 # 7 #0.5
+    pacmap_FP_ratio = 11 # 11 #2.0
 
     # UMAP settings
     umap_output_metric = 'euclidean' # 'euclidean', 'hyperboloid'
@@ -81,16 +105,6 @@ if __name__ == "__main__":
     umap_local_connectivity = 1 # 1 default, can go higher
     umap_repulsion_strength = 1 # 1 default, can go higher
     pca_comp=100
-
-    # PaCMAP Settings
-    # TODO take in previously calculated NN
-    apply_pca = True # Before PaCMAP
-    pacmap_MedDim_numdims = 6
-    pacmap_LR = 0.1 #0.05
-    pacmap_NumIters = (500,500,500)
-    pacmap_NN = None
-    pacmap_MN_ratio = 7 # 7 #0.5
-    pacmap_FP_ratio = 11 # 11 #2.0
 
     # PHATE Settings
     custom_nn_bool = False
@@ -158,37 +172,47 @@ if __name__ == "__main__":
                 latent_data_windowed_eval[i] = pickle.load(f)
     else: print(f"WARNING: no evaluation data for {single_pat} in these categories: {eval_strs}")
 
-    if run_prpacmap:
-    ### ParamRepulsor (PR) PaCMAP GENERATION ###
-        # Call the subfunction to create/use pr-pacmap and plot
-        if single_pat == []: pr_savedir = f"{pr_dir}/all_pats/nn{prpacmap_NN}_mn{prpacmap_n_MN}_fp{prpacmap_n_FP}_lr{prpacmap_LR}/prpacmap_generation"
-        else: pr_savedir = f"{pr_dir}/{single_pat}/nn{prpacmap_NN}_mn{prpacmap_n_MN}_fp{prpacmap_n_FP}_lr{prpacmap_LR}/prpacmap_generation"
-        axis_20, reducer, hdb, xy_lims = manifold_utilities.prpacmap_subfunction(
-            atd_file = atd_file,
-            pat_ids_list=build_pat_ids_list,
-            latent_data_windowed=latent_data_windowed_generation, 
-            start_datetimes_epoch=build_start_datetimes,  
-            stop_datetimes_epoch=build_stop_datetimes,
-            epoch=epoch, 
-            win_sec=win_sec, 
-            stride_sec=stride_sec, 
-            savedir=pr_savedir,
-            FS = FS,
+    ##### RANDOM OVERRIDE #####
+    for _ in range(1000):
+        prpacmap_LR = 10 ** (-random.uniform(1, 7))
+        prpacmap_batchsize = 2 ** random.randint(4,8)
+        prpacmap_NN = random.randint(2, 40)
+        prpacmap_n_MN = random.randint(2, 120)
+        prpacmap_n_FP = random.randint(2, 120)
 
-            # Specific to PR-PACMAP
-            prpacmap_num_workers=prpacmap_num_workers,
-            apply_pca=pr_apply_pca,
-            prpacmap_LR = prpacmap_LR,
-            prpacmap_NumEpochs = prpacmap_NumEpochs,
-            prpacmap_weight_schedule=prpacmap_weight_schedule,
-            prpacmap_NN = prpacmap_NN,
-            prpacmap_n_MN = prpacmap_n_MN,
-            prpacmap_n_FP = prpacmap_n_FP,
-            HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
-            HDBSCAN_min_samples = HDBSCAN_min_samples,
-            plot_preictal_color_sec = plot_preictal_color_sec,
-            plot_postictal_color_sec = plot_postictal_color_sec,
-            **kwargs)
+        if run_prpacmap:
+        ### ParamRepulsor (PR) PaCMAP GENERATION ###
+            # Call the subfunction to create/use pr-pacmap and plot
+            if single_pat == []: pr_savedir = f"{pr_dir}/all_pats/generation"
+            else: pr_savedir = f"{pr_dir}/{single_pat}/generation"
+            axis_20, reducer, hdb, xy_lims = manifold_utilities.prpacmap_subfunction(
+                atd_file = atd_file,
+                pat_ids_list=build_pat_ids_list,
+                latent_data_windowed=latent_data_windowed_generation, 
+                start_datetimes_epoch=build_start_datetimes,  
+                stop_datetimes_epoch=build_stop_datetimes,
+                epoch=epoch, 
+                win_sec=win_sec, 
+                stride_sec=stride_sec, 
+                savedir=pr_savedir,
+                FS = FS,
+
+                # Specific to PR-PACMAP
+                prpacmap_num_workers=prpacmap_num_workers,
+                prpacmap_metric=prpacmap_metric,
+                prpacmap_batchsize=prpacmap_batchsize,
+                apply_pca=pr_apply_pca,
+                prpacmap_LR = prpacmap_LR,
+                prpacmap_NumEpochs = prpacmap_NumEpochs,
+                prpacmap_weight_schedule=prpacmap_weight_schedule,
+                prpacmap_NN = prpacmap_NN,
+                prpacmap_n_MN = prpacmap_n_MN,
+                prpacmap_n_FP = prpacmap_n_FP,
+                HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
+                HDBSCAN_min_samples = HDBSCAN_min_samples,
+                plot_preictal_color_sec = plot_preictal_color_sec,
+                plot_postictal_color_sec = plot_postictal_color_sec,
+                **kwargs)
 
         # # SAVE OBJECTS
         # manifold_utilities.save_prpacmap_objects(
@@ -236,12 +260,18 @@ if __name__ == "__main__":
         #         **kwargs)
 
 
+    # for _ in range(1000):
+    #     pacmap_LR = random.uniform(1e-3, 0.5)
+    #     papacmap_NN = random.randint(3,50)
+    #     pacmap_MN_ratio = random.uniform(0.1, 20.0)
+    #     pacmap_FP_ratio = random.uniform(0.1, 20.0)
+
     if run_pacmap:
     ### PACMAP GENERATION ###
         # Call the subfunction to create/use pacmap and plot
-        if single_pat == []: pacmap_savedir = f"{pacmap_dir}/all_pats/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_generation"
-        else: pacmap_savedir = f"{pacmap_dir}/{single_pat}/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_generation"
-        axis_20, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = manifold_utilities.pacmap_subfunction(
+        if single_pat == []: pacmap_savedir = f"{pacmap_dir}/all_pats/generation"
+        else: pacmap_savedir = f"{pacmap_dir}/{single_pat}/generation"
+        axis_20, reducer, hdb, xy_lims, xy_lims_RAW_DIMS = manifold_utilities.pacmap_subfunction(
             atd_file = atd_file,
             pat_ids_list=build_pat_ids_list,
             latent_data_windowed=latent_data_windowed_generation, 
@@ -253,7 +283,6 @@ if __name__ == "__main__":
             savedir=pacmap_savedir,
             FS = FS,
             apply_pca=apply_pca,
-            pacmap_MedDim_numdims = pacmap_MedDim_numdims,
             pacmap_LR = pacmap_LR,
             pacmap_NumIters = pacmap_NumIters,
             pacmap_NN = pacmap_NN,
@@ -281,8 +310,8 @@ if __name__ == "__main__":
         ## PACMAP EVAL ONLY ###
         if eval_filepaths != []:
             # Call the subfunction to create/use pacmap and plot
-            if single_pat == []: pacmap_savedir = f"{pacmap_dir}/all_pats/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_eval"
-            else: pacmap_savedir = f"{pacmap_dir}/{single_pat}/nn{pacmap_NN}_mn{pacmap_MN_ratio}_fp{pacmap_FP_ratio}_lr{pacmap_LR}/pacmap_eval"
+            if single_pat == []: pacmap_savedir = f"{pacmap_dir}/all_pats/eval"
+            else: pacmap_savedir = f"{pacmap_dir}/{single_pat}/eval"
             manifold_utilities.pacmap_subfunction(
                 atd_file=atd_file,
                 pat_ids_list=eval_pat_ids_list,

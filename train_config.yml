@@ -105,7 +105,7 @@ valfinetune_forward_passes: 500
 valunseen_forward_passes: 500
 
 # VAl and Inference Frequency
-inference_every: 1
+inference_every: 99999
 inference_batch_mult: 2 # With current architecture/hardware, max batch size > 4 runs out of RAM
 finetune_inference: False  
 val_every: 99999
