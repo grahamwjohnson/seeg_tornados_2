@@ -152,6 +152,8 @@ def thread_task(thread_num, nested_max_workers, tmp_dir, pat_fnames, num_buffer_
             # if file_idx_next == 0: print("Random data generator first cycle complete")
             file_idx_next = file_idx_next + 1
 
+        else:
+            time.sleep(1) # To prevent unecessary looping while buffer is full
 
 if __name__ == "__main__":
 

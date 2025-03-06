@@ -31,7 +31,7 @@ num_data_threads: 1 # How many threads to start for each data generator (by each
 nested_max_workers: 16 # For the get batch subprocess
 
 # Training settings
-continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 print_dataset_bargraphs: False # Typically set to False if not the first run of model, but may want true if adding new patients
 cont_train_model_dir: '/media/glommy1/model_runs/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/africanfisheagle_Tue_Mar__4_22_51_33_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
@@ -74,7 +74,7 @@ latent_dim: 2048 # 2048
 decoder_base_dims: 1024 # kwargs['decoder_base_dims'] = kwargs['latent_dim'] # after this layer, it will be connected into FC to [batch, padded_channels * seq_len] to prepare for decoder transformer input
 
 # Classifier
-classifier_hidden_dims: [1024, 1024, 512, 256]
+classifier_hidden_dims: [2048, 1024, 512, 256]
 classifier_num_pats: 40 #    ########   Hardcoded  ########
 classifier_dropout: 0.1
 
@@ -110,7 +110,7 @@ LR_val_wae: kwargs['LR_val_wae'] = 1e-6
 LR_val_cls: kwargs['LR_val_cls'] = 1e-4
 
 # Inference settings
-finetune_inference: True # If False, will just run inference on model trained on only train patients 
+finetune_inference: False # If False, will just run inference on model trained on only train patients 
 inference_every: 999999 # Currently the data generators will slow inference if doing inferemce at beginning of fresh run
 inference_batch_mult: 2 
 
@@ -135,7 +135,7 @@ Reg_epochs_AT_max: 99999
 Reg_epochs_TO_max: 0
 
 # Miltimodal GAMMA distribution params  
-running_reg_passes: kwargs['running_reg_passes'] = int(kwargs['random_pulls_in_batch'] * (kwargs['train_forward_passes'] / kwargs['num_gpus']))   # e.g. 4096 # Batch forward passes
+running_reg_passes: kwargs['running_reg_passes'] = int(kwargs['random_pulls_in_batch'] * (kwargs['train_forward_passes'] / kwargs['num_gpus']))   # Equals an epoch's worth of passes in DDP context
 barycenter_batch_sampling: 128  # The past samples (IMMEDIATE/SEQUENTIAL past samples) from running window of 'running_reg_passes' to incorporate into batch loss (in addition to actual forward pass batch)
 multimodal_shapes: [10, 30]
 multimodal_scales: [0.05, 0.05]
@@ -143,7 +143,7 @@ multimodal_weights: [0.5, 0.5]
 num_barycenter_iters: 10
 sinkhorn_blur: kwargs['sinkhorn_blur'] = 0.05 # This is the BATCH/SMALL scale blur updates
 random_barycenter_numplots: 4
-wasserstein_order: 2
+wasserstein_order: 1  # africanfisheagle was trained on p=2 which appeared overly focused on means of each gamma peak, trying EMD (i.e. p=1)
 
 # Sparsity weight control
 Sparse_max: kwargs['Sparse_max'] = 1e-7 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############

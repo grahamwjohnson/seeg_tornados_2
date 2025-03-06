@@ -1,6 +1,6 @@
 # Standard Python Libraries
 from __future__ import print_function, division
-import os, sys, time, pickle, glob, random, csv, json, gzip
+import os, sys, time, pickle, glob, random, csv, json, gzip, shutil
 from datetime import datetime, timedelta
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor
@@ -72,7 +72,6 @@ class SEEG_Tornado_Dataset(Dataset):
         random_gen_script_path,
         data_logger_enabled,
         data_logger_file,
-        initiate_random_generator=False,
         **kwargs):
 
         self.gpu_id = gpu_id
@@ -89,6 +88,7 @@ class SEEG_Tornado_Dataset(Dataset):
         self.data_logger_enabled = data_logger_enabled
         self.data_logger_file = data_logger_file
         self.kwargs = kwargs
+        self.random_gen_script_path = random_gen_script_path
     
         # Get ONLY the .pkl file names in the subdirectories of choice
         # self.data_dir = data_dir
@@ -133,20 +133,25 @@ class SEEG_Tornado_Dataset(Dataset):
             # Sort the filenames
             self.pat_fnames[i] = utils_functions.sort_filenames(self.pat_fnames[i])
 
+        if self.data_logger_enabled: self.data_logger = JSONLinesLogger(self.data_logger_file) # Initiate
+
+    def initiate_generator(self):
         # Launches a seperate thread that will randomly generate forward pass ready data from little pickles
         # Actually a bit slower than pulling in little pickles directly, but can always be running in background
-        if initiate_random_generator:
-            self.tmp_dir = f"/dev/shm/tornado_tmp_{utils_functions.random_filename_string()}"
-            self.fname_csv = f"{self.tmp_dir}/fnames.csv"
-            if not os.path.exists(self.tmp_dir): os.makedirs(self.tmp_dir)
-            with open(self.fname_csv, 'w', newline='') as file:
-                writer = csv.writer(file, delimiter = ',')
-                writer.writerows(self.pat_fnames)
-            
-            # Start the generator
-            self.rand_generator_process = utils_functions.run_script_from_shell(random_gen_script_path, self.tmp_dir, 'fnames.csv', f"{self.num_rand_hashes}")
+        self.tmp_dir = f"/dev/shm/tornado_tmp_{utils_functions.random_filename_string()}"
+        self.fname_csv = f"{self.tmp_dir}/fnames.csv"
+        if not os.path.exists(self.tmp_dir): os.makedirs(self.tmp_dir)
+        with open(self.fname_csv, 'w', newline='') as file:
+            writer = csv.writer(file, delimiter = ',')
+            writer.writerows(self.pat_fnames)
+        
+        # Start the generator
+        self.rand_generator_process = utils_functions.run_script_from_shell(self.random_gen_script_path, self.tmp_dir, 'fnames.csv', f"{self.num_rand_hashes}")
 
-        if self.data_logger_enabled:  self.data_logger = JSONLinesLogger(self.data_logger_file) # Initiate
+    def kill_generator(self):
+        # To kill the generator, just delete the tmp dir path
+        if os.path.exists(self.tmp_dir):
+            shutil.rmtree(self.tmp_dir)
 
     def get_script_filename(self):
         return __file__
@@ -157,8 +162,13 @@ class SEEG_Tornado_Dataset(Dataset):
     def set_pat_curr(self, idx):
         self.pat_curr = idx
         
-        if idx < 0: self.single_pat_seq = False # resets back to all pats with random generation
-        else: self.single_pat_seq = True # mandated if setting current pat
+        if idx < 0: 
+            self.single_pat_seq = False # resets back to all pats with random generation
+            self.initiate_generator() # Starts the random generator
+
+        else: 
+            self.single_pat_seq = True # mandated if setting current pat
+            self.kill_generator()
 
     def get_pat_curr(self):
         return self.pat_curr, self.pat_ids[self.pat_curr], self.pat_dirs[self.pat_curr], self.pat_fnames[self.pat_curr]

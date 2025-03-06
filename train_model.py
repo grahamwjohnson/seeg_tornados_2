@@ -121,7 +121,6 @@ def load_train_objs(
             hour_dataset_range=val_finetune_hour_dataset_range,
             num_rand_hashes=val_num_rand_hashes,
             num_forward_passes=valfinetune_forward_passes,
-            initiate_random_generator=True,
             data_logger_enabled=True,
             data_logger_file=f"{kwargs['log_dir']}/data_forward_pass_log_Valfinetune_GPU{gpu_id}.jsonl.gz",
             **kwargs)
@@ -136,7 +135,6 @@ def load_train_objs(
             hour_dataset_range=val_unseen_hour_dataset_range,
             num_rand_hashes=val_num_rand_hashes,
             num_forward_passes=valunseen_forward_passes,
-            initiate_random_generator=True,
             data_logger_enabled=True,
             data_logger_file=f"{kwargs['log_dir']}/data_forward_pass_log_Valunseen_GPU{gpu_id}.jsonl.gz",
             **kwargs)
@@ -160,19 +158,18 @@ def load_train_objs(
         hour_dataset_range=train_hour_dataset_range,
         num_rand_hashes=train_num_rand_hashes,
         num_forward_passes=train_forward_passes,
-        initiate_random_generator=True,
         data_logger_enabled=True,
         data_logger_file=f"{kwargs['log_dir']}/data_forward_pass_log_Train_GPU{gpu_id}.jsonl.gz",
         **kwargs)
 
     ### Random DataLoaders ###
-    train_dataset.set_pat_curr(-1) # -1 sets to random generation
+    train_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
     train_dataloader = utils_functions.prepare_dataloader(train_dataset, batch_size=None, num_workers=num_dataloader_workers)
 
-    valfinetune_dataset.set_pat_curr(-1) # -1 sets to random generation
+    valfinetune_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
     valfinetune_dataloader = utils_functions.prepare_dataloader(valfinetune_dataset, batch_size=None, num_workers=num_dataloader_workers)
 
-    valunseen_dataset.set_pat_curr(-1) # -1 sets to random generation
+    valunseen_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
     valunseen_dataloader = utils_functions.prepare_dataloader(valunseen_dataset, batch_size=None, num_workers=num_dataloader_workers)
          
     ### WAE ###
@@ -330,8 +327,11 @@ def main(
                 dataset_list = [trainer.train_dataset, trainer.valunseen_dataset]
                 dataset_strs = ["train", "valunseen"]
             
-            # INFERENCE on all selected datasets
+            # INFERENCE on all selected datasets, kill all data generators
             trainer._set_to_eval()
+            trainer.train_dataset.kill_generator()
+            trainer.valfinetune_dataset.kill_generator()
+            trainer.valunseen_dataset.kill_generator()
             with torch.inference_mode():
                 for d in range(0, len(dataset_list)):
                     trainer._run_export_embeddings(
@@ -340,7 +340,7 @@ def main(
                         num_rand_hashes = -1,
                         **kwargs)
 
-            # Restore model/opt weights to pre-finetune
+            # Restore model/opt weights to pre-finetune, and restart data generators
             if finetune_inference:
                 trainer.wae.module.load_state_dict(wae_dict)
                 trainer.opt_wae.load_state_dict(wae_opt_dict)
@@ -349,6 +349,9 @@ def main(
                 trainer.accumulated_z = accumulated_z
                 trainer.accumulated_labels = accumulated_labels
                 trainer.accumulated_class_probs = accumulated_class_probs
+                trainer.train_dataset.initiate_generator()
+                trainer.valfinetune_dataset.initiate_generator()
+                trainer.valunseen_dataset.initiate_generator()
 
             print(f"GPU{str(trainer.gpu_id)} at post inference barrier")
             barrier()
