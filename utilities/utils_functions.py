@@ -4,57 +4,61 @@ Created on Mon Feb  6 22:05:34 2023
 
 @author: grahamwjohnson
 """
-# Standard library imports
-import os, sys, time, math, re, string, random, datetime, pickle, json, codecs, shutil, heapq, multiprocessing as mp
-from functools import partial
-from tkinter import filedialog
-from collections import defaultdict
-
-# Data manipulation and analysis
-import numpy as np
+import string
+import subprocess
+import time
+import hashlib
+import random
+import datetime
 import pandas as pd
+import gc
+import glob
+import pyedflib
+import numpy as np
 import scipy
-from scipy.stats import norm
-from scipy.sparse import csr_matrix
-
-# Machine learning and data processing
-from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
-from sklearn.datasets import load_iris
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score, confusion_matrix
-import hdbscan
+import pickle
 import joblib
-import chardet
-
-# Deep learning and neural networks
-import torch
-from torch.utils.data import Dataset, DataLoader
-from torch.utils.data.distributed import DistributedSampler
-from torchinfo import summary
-import auraloss
-
-# Visualization
+import json
+import os
+import sys
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.patches as mpatches
-import matplotlib.colors as colors
-from matplotlib.colors import LinearSegmentedColormap
-import seaborn as sns
+from .latent_plotting import plot_latent
 import matplotlib.pylab as pl
 pl.switch_backend('agg')
+from torchinfo import summary
+from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data import Dataset, DataLoader
+import chardet
+import codecs
+import torch
+import shutil
+import hdbscan
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+import seaborn as sns
+import multiprocessing as mp
+import heapq
+from sklearn.datasets import load_iris
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
+import math
+from scipy.stats import norm
+import matplotlib.colors as colors
+import auraloss
+from tkinter import filedialog
+import re
+from functools import partial
+from matplotlib.colors import LinearSegmentedColormap
+from annoy import AnnoyIndex
+from scipy.sparse import csr_matrix
+from sklearn.metrics import confusion_matrix
 
-# File handling and EDF processing
-import glob
-import pyedflib
 
 # Local imports
 from models.WAE import print_models_flow
-from .latent_plotting import plot_latent
-
-# Other utilities
-from annoy import AnnoyIndex
 
 def fill_hist_by_channel(data_in: np.ndarray, histo_bin_edges: np.ndarray, zero_island_delete_idxs: list):
 
@@ -659,8 +663,8 @@ def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycent
         ax_curr.set_title(f"Dim {dim_idx}")
         pl.legend()
 
-    if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = f"{savedir}/Barycenter_epoch{epoch}.jpg"
+    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    savename_jpg = f"{savedir}/JPEGs/Barycenter_epoch{epoch}.jpg"
     pl.savefig(savename_jpg)
     pl.close(fig)    
 
@@ -691,8 +695,8 @@ def print_latent_realtime(latent, barycenter, savedir, epoch, iter_curr, file_na
     ylim = g1.ax_joint.get_ylim()
     fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
 
-    if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = f"{savedir}/RealtimeLatent_epoch{epoch}_iter{iter_curr}_colorbyDIM.jpg"
+    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_colorbyDIM.jpg"
     pl.savefig(savename_jpg)
     pl.close(fig)    
 
@@ -714,8 +718,8 @@ def print_latent_realtime(latent, barycenter, savedir, epoch, iter_curr, file_na
     # g2.ax_joint.get_legend().remove()
     # fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
 
-    # if not os.path.exists(savedir): os.makedirs(savedir)
-    # savename_jpg = f"{savedir}/RealtimeLatent_epoch{epoch}_iter{iter_curr}_colorbyPAT.jpg"
+    # if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    # savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_colorbyPAT.jpg"
     # pl.savefig(savename_jpg)
     # pl.close(fig)    
 
@@ -795,9 +799,12 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_rea
                 subplot_iter = subplot_iter + 1
             
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
-    if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = f"{savedir}/RealtimeRecon_epoch{epoch}_iter{iter_curr}_allbatch.jpg"
+    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+    savename_jpg = f"{savedir}/JPEGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_allbatch.jpg"
+    # savename_svg = f"{savedir}/SVGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{pat_id}_allbatch.svg"
     pl.savefig(savename_jpg)
+    # pl.savefig(savename_svg)
     pl.close(fig)   
 
     pl.close('all') 
@@ -846,9 +853,12 @@ def print_classprobs_realtime(class_probs, class_labels, savedir, epoch, iter_cu
         pl.tight_layout()
         pl.ylim(0, 1) # Set y-axis limit to 1
 
-        if not os.path.exists(savedir): os.makedirs(savedir)
-        savename_jpg = f"{savedir}/RealtimeClassProb_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch{b}.jpg"
+        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+        # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+        savename_jpg = f"{savedir}/JPEGs/RealtimeClassProb_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch{b}.jpg"
+        # savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch_{b}.svg"
         pl.savefig(savename_jpg)
+        # pl.savefig(savename_svg)
         pl.close(fig)    
 
         pl.close('all') 
@@ -872,12 +882,189 @@ def print_confusion_realtime(class_probs, class_labels, savedir, epoch, iter_cur
     pl.ylabel("True Labels")
     pl.title("Confusion Matrix")
     
-    if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = f"{savedir}/RealtimeConfusion_epoch{epoch}_iter{iter_curr}.jpg"
+    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    savename_jpg = f"{savedir}/JPEGs/RealtimeConfusion_epoch{epoch}_iter{iter_curr}.jpg"
     pl.savefig(savename_jpg)
     pl.close(fig)    
 
     pl.close('all') 
+
+def print_autoreg_raw_predictions(gpu_id, epoch, pat_id, rand_file_count, raw_context, raw_pred, raw_target, autoreg_channels, savedir, num_realtime_dims, **kwargs):
+
+    raw_context = raw_context.detach().cpu().numpy()
+    raw_pred = raw_pred.detach().cpu().numpy()
+    raw_target = raw_target.detach().cpu().numpy()
+
+    batchsize = raw_context.shape[0]
+
+    np.random.seed(seed=None) 
+    r = np.arange(0,raw_context.shape[1])
+    np.random.shuffle(r)
+    random_ch_idxs = r[0:autoreg_channels]
+
+    # Make new grid/fig for every batch
+    for b in range(0, batchsize):
+        gs = gridspec.GridSpec(autoreg_channels, 1) 
+        fig = pl.figure(figsize=(20, 14))
+        palette = sns.cubehelix_palette(n_colors=2, start=3, rot=1) 
+        for c in range(0,len(random_ch_idxs)):
+            context_plot = raw_context[b, random_ch_idxs[c], :]
+            prediction_plot = raw_pred[b, random_ch_idxs[c], :]
+            target_plot = raw_target[b, random_ch_idxs[c], :]
+
+            contextTarget_plot = np.concatenate((context_plot, target_plot), axis=0)
+            prediction_buffered_plot = np.zeros_like(contextTarget_plot)
+            prediction_buffered_plot[-len(prediction_plot):] = prediction_plot
+                
+            df = pd.DataFrame({
+                "Target": contextTarget_plot,
+                "Prediction": prediction_buffered_plot
+            })
+
+            ax = fig.add_subplot(gs[c, 0]) 
+            sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
+            ax.set_title(f"Ch:{random_ch_idxs[c]}")
+            
+        fig.suptitle(f"Ch:{random_ch_idxs}")
+        if gpu_id == 0: time.sleep(0.1)
+        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+        if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+        savename_jpg = f"{savedir}/JPEGs/AutoregressiveRecon_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.jpg"
+        savename_svg = f"{savedir}/SVGs/AutoregressiveRecon_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.svg"
+        pl.savefig(savename_jpg)
+        pl.savefig(savename_svg)
+        pl.close(fig)   
+
+    pl.close('all') 
+
+def print_autoreg_AttentionScores_AlongSeq(gpu_id, epoch, pat_id, rand_file_count, scores_allSeq_firstLayer_meanHeads_lastRow, savedir, **kwargs):
+
+    scores_allSeq_firstLayer_meanHeads_lastRow = scores_allSeq_firstLayer_meanHeads_lastRow.detach().cpu().numpy()
+
+    batchsize = scores_allSeq_firstLayer_meanHeads_lastRow.shape[0]
+
+    # Make new grid/fig for every batch
+    for b in range(0, batchsize):
+        gs = gridspec.GridSpec(1, 1) 
+        fig = pl.figure(figsize=(20, 14))
+
+        scores_row_plot = scores_allSeq_firstLayer_meanHeads_lastRow[b, :, :].swapaxes(0,1)
+            
+        # df = pd.DataFrame({
+        #     "scores_row": scores_row_plot,
+        #     "scores_col": scores_col_plot
+        # }, columns=np.arange(0, scores_row_plot.shape[0]))
+
+        ax1 = fig.add_subplot(gs[0]) 
+        sns.heatmap(scores_row_plot, cmap=sns.cubehelix_palette(as_cmap=True))
+        ax1.set_title(f"Score Rows, First Transformer Layer - Average of Heads, Batch:{b}")
+        ax1.set_xlabel("Autoregression Step")
+        ax1.set_ylabel("Attention Weight by Current Past Index")
+            
+        fig.suptitle(f"Attention Weights")
+        if gpu_id == 0: time.sleep(0.1)
+        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+        if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+        savename_jpg = f"{savedir}/JPEGs/AutoregressiveAttention_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.jpg"
+        savename_svg = f"{savedir}/SVGs/AutoregressiveAttention_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.svg"
+        pl.savefig(savename_jpg)
+        pl.savefig(savename_svg)
+        pl.close(fig)   
+
+    pl.close('all') 
+
+def plot_MeanStd(plot_mean, plot_std, plot_dict, file_name, epoch, savedir, gpu_id, pat_id, iter): # plot_weights
+
+    mean_mean = np.mean(plot_mean, axis=2)
+    plot_std = np.mean(plot_std, axis=2)
+    # weight_mean = np.mean(plot_weights, axis=2)
+    num_dims = mean_mean.shape[1]
+    x=np.linspace(0,num_dims-1,num_dims)
+
+    df = pd.DataFrame({
+        'mean': np.mean(mean_mean, axis=0),
+        'std': np.mean(plot_std, axis=0),
+    })
+
+    gs = gridspec.GridSpec(2, 5)
+    fig = pl.figure(figsize=(20, 14))
+    
+    # Plot Means
+    ax1 = pl.subplot(gs[0, :])
+    sns.barplot(df, ax=ax1, x=x, y="mean", native_scale=True, errorbar=None,)
+
+    # Plot Logvar
+    ax1 = pl.subplot(gs[1, :])
+    sns.barplot(df, ax=ax1, x=x, y="std", native_scale=True, errorbar=None,)
+
+    # Pull out toaken start times because it's plotting whole batch at once
+    fig.suptitle(file_name + create_metadata_subtitle(plot_dict))
+
+    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+    if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+    savename_jpg = savedir + f"/JPEGs/MeanLogvarWeights_batch{str(plot_mean.shape[0])}_" + "epoch" + str(epoch) + "_iter" + str(iter) + "_" + pat_id + "_gpu" + str(gpu_id) + ".jpg"
+    savename_svg = savedir + f"/SVGs/MeanLogvarWeights_batch{str(plot_mean.shape[0])}_" + "epoch" + str(epoch) + "_iter" + str(iter) + "_" + pat_id + "_gpu" + str(gpu_id) + ".svg"
+    pl.savefig(savename_jpg)
+    pl.savefig(savename_svg)
+    pl.close(fig)    
+
+    mean_of_mean_mean = np.mean(np.abs(mean_mean))
+    std_of_mean_mean = np.std(np.abs(mean_mean))
+    mean_zscores = np.mean((np.abs(mean_mean) - mean_of_mean_mean)/std_of_mean_mean , axis=0)
+
+    mean_of_plot_std = np.mean(plot_std)
+    std_of_plot_std = np.std(plot_std)
+    std_zscores = np.mean((plot_std - mean_of_plot_std)/std_of_plot_std , axis=0)
+
+    pl.close('all') 
+
+    return mean_zscores, std_zscores
+
+def plot_recon(x, x_hat, plot_dict, batch_file_names, epoch, savedir, gpu_id, pat_id, iter, FS, num_rand_recon_plots, recon_sec=4, **kwargs):
+
+    num_loops = num_rand_recon_plots
+
+    all_starts = plot_dict['start_dt']
+    all_stops = plot_dict['stop_dt']
+
+    if gpu_id == 0: time.sleep(1) # Avoid file collision 
+
+    for i in range(num_loops):
+
+        np.random.seed(seed=None) # should replace with Generator for newer code
+        ch_idx = np.random.randint(0, x.shape[1])
+        
+        # Pick a random starting point within timeseries
+        sample_duration = recon_sec * FS
+        np.random.seed(seed=None) # should replace with Generator for newer code
+        start_idx = np.random.randint(0, x.shape[2] - sample_duration - 1)
+
+        # Pick a random starting point within batch
+        np.random.seed(seed=None) # should replace with Generator for newer code
+        batch_idx = np.random.randint(0, x.shape[0])
+
+        gs = gridspec.GridSpec(1, 5)
+        fig = pl.figure(figsize=(30, 14))
+        
+        # Plot X
+        ax1 = pl.subplot(gs[0, :])
+        ax1.plot(x[batch_idx, ch_idx, start_idx:(start_idx + sample_duration)])
+
+        # Plot X_HAT
+        ax1.plot(x_hat[batch_idx, ch_idx, start_idx:(start_idx + sample_duration)])
+
+        ax1.legend(['Original', 'Reconstruction'])
+        plot_dict['start_dt'] = all_starts[batch_idx]
+        plot_dict['stop_dt'] = all_stops[batch_idx]
+        fig.suptitle(batch_file_names[batch_idx] + create_metadata_subtitle(plot_dict))
+
+        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
+        if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
+        savename_jpg = savedir + f"/JPEGs/Recon_epoch{str(epoch)}_iter_{str(iter)}_{pat_id}_batchIdx{str(batch_idx)}_chIdx{str(ch_idx)}_duration{str(recon_sec)}sec_startIdx{str(start_idx)}_gpu{str(gpu_id)}.jpg"
+        savename_svg = savedir + f"/SVGs/Recon_epoch{str(epoch)}_iter_{str(iter)}_{pat_id}_batchIdx{str(batch_idx)}_chIdx{str(ch_idx)}_duration{str(recon_sec)}sec_startIdx{str(start_idx)}_gpu{str(gpu_id)}.svg"
+        pl.savefig(savename_jpg)
+        pl.savefig(savename_svg)
+        pl.close(fig) 
 
 def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, atd_file, pre_ictal_taper_sec=120, post_ictal_taper_sec=120, **kwargs):
 
@@ -1097,6 +1284,7 @@ def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
         'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
         cmap(np.linspace(minval, maxval, n)))
     return new_cmap
+
 
 
 # FILE I/O

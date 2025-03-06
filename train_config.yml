@@ -26,9 +26,9 @@ rand_name_json: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/ut
 
 # Random data generator (seperate subprocess)
 random_gen_script_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/gen_random_data.py'
-num_buffer_batches: 512 # Max files to keep in random generator tmp directry 
+num_buffer_batches: kwargs['num_buffer_batches'] = int(kwargs['train_forward_passes'] / kwargs['num_gpus'])   # 512 # Max files to keep in random generator tmp directry 
 num_data_threads: 1 # How many threads to start for each data generator (by each GPU)
-nested_max_workers: 32 # For the get batch subprocess
+nested_max_workers: 16 # For the get batch subprocess
 
 # Training settings
 continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
@@ -75,7 +75,7 @@ decoder_base_dims: 1024 # kwargs['decoder_base_dims'] = kwargs['latent_dim'] # a
 
 # Classifier
 classifier_hidden_dims: [1024, 1024, 512, 256]
-classifier_num_pats: 40 #       Hardcoded  ########
+classifier_num_pats: 40 #    ########   Hardcoded  ########
 classifier_dropout: 0.1
 
 # WAE Optimizer hyperparameters
@@ -94,26 +94,33 @@ train_num_rand_hashes: 4096  # Number of random channel orders, with determinist
 autoreg_num_rand_hashes: 1 # Need to be only one to work? in theory should work with many?
 val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
 
-# Training variables
-optimizer_forward_passes: 1 # How often to step optimizier 
-random_pulls_in_batch: 8 # Random data pull when pat_curr = -1
-train_forward_passes: 1024
-valfinetune_forward_passes: 500
-valunseen_forward_passes: 500
-
-# VAl and Inference Frequency
-inference_every: 99999
-inference_batch_mult: 2 # With current architecture/hardware, max batch size > 4 runs out of RAM
-finetune_inference: False  
-val_every: 99999
-num_rand_recon_plots: 4
+# Training settings
+random_pulls_in_batch: 8 # BATCHSIZE
+train_forward_passes: 1024 # Independent of batchsize
+valfinetune_forward_passes: 1024 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes
+valunseen_forward_passes: 1024 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes
 epochs_to_train: 999999 
+
+# Validating settings
+val_finetine_bool: True # If False, will skip finetuning and just validate on unseen portion of validation patients 
+val_every: 10 # Will only do one epoch, so update 'valfinetune_forward_passes' if want to finetune longer
+val_finetune_hour_dataset_range: kwargs['val_finetune_hour_dataset_range'] = [2, 50]
+val_unseen_hour_dataset_range: kwargs['val_unseen_hour_dataset_range'] = [50, -1]
+LR_val_wae: kwargs['LR_val_wae'] = 1e-6
+LR_val_cls: kwargs['LR_val_cls'] = 1e-4
+
+# Inference settings
+finetune_inference: True # If False, will just run inference on model trained on only train patients 
+inference_every: 999999 # Currently the data generators will slow inference if doing inferemce at beginning of fresh run
+inference_batch_mult: 2 
 
 # Realtime plotting
 realtime_latent_printing: True
 num_realtime_channels_recon: 1 # Will be batch * this plotted
-realtime_printing_interval: 50
+realtime_printing_interval_train: 50
+realtime_printing_interval_val: 25
 num_recon_samples: 512 # this will limit how much is shown in recon plots, ERROR if not enough samples, pulls from START and END of transformer sequence 
+num_rand_recon_plots: 4
 num_realtime_dims: 5
 recent_display_iters: 5 # How often to print to console when training & how often to log to WandB
 
@@ -169,25 +176,16 @@ manual_step_size_core: 99999
 LR_min_classifier: kwargs['LR_min_classifier'] = 1e-4 # 5e-7
 # TODO implement scheduler 
 
-# Val FineTune controls
-val_finetune_hour_dataset_range: kwargs['val_finetune_hour_dataset_range'] = [2, 50]
-val_unseen_hour_dataset_range: kwargs['val_unseen_hour_dataset_range'] = [50, -1]
-epochs_val_finetune: 1
-LR_val_wae: kwargs['LR_val_wae'] = 1e-8
-LR_val_cls: 1e-4
-manual_step_size_val_core: 10
-manual_gamma_val_core: 0.5
-
 delete_old_checkpoints: True   
 
 # Multiprocessing 
 subprocess_num_threads: 1 
-num_dataloader_workers: 0 # persistent workers will be True if >0
+num_dataloader_workers: 0 # persistent workers will be True if >0, DDP observed to be unstable if != 0
 
 # Inference file saves
 # Both window and stride must be multiple of input seconds to encoder 
 # (i.e. autoencode_samples * transformer_seq_length / FS)
-inference_window_sec_list: [60, 16, 16, 4] 
-inference_stride_sec_list: [30, 16, 4,  2] 
+inference_window_sec_list: [60, 60, 60, 16, 16, 4, 2] 
+inference_stride_sec_list: [60, 30, 10, 16, 4,  2, 2] 
 
 

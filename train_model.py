@@ -1,7 +1,3 @@
-# Standard Python Libraries
-import sys, os, shutil, copy, random, time, datetime, pickle, gc, heapq, traceback, glob, math
-
-# Third-Party Libraries
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,19 +6,35 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group, barrier
 from torch.utils.data import Dataset, DataLoader
 from torch.distributions.gamma import Gamma
+import sys  
+import os
+import shutil
 import matplotlib.pylab as pl
 import matplotlib.gridspec as gridspec
+import os
 import wandb
+import copy
 import pandas as pd
+import random
 import numpy as np
+import time
+import datetime
+import pickle
 import joblib
+import gc
+import heapq
+import traceback
+import glob
 import pacmap
 import yaml
 import auraloss
+import wandb
+import math
 import ot
 from ot.lp import wasserstein_1d
 from ot.utils import proj_simplex
 from geomloss import SamplesLoss
+# from torch.utils.data._utils import shared_memory_cleanup
 
 # Local Imports
 from utilities import latent_plotting
@@ -109,7 +121,7 @@ def load_train_objs(
             hour_dataset_range=val_finetune_hour_dataset_range,
             num_rand_hashes=val_num_rand_hashes,
             num_forward_passes=valfinetune_forward_passes,
-            initiate_random_generator=False,
+            initiate_random_generator=True,
             data_logger_enabled=True,
             data_logger_file=f"{kwargs['log_dir']}/data_forward_pass_log_Valfinetune_GPU{gpu_id}.jsonl.gz",
             **kwargs)
@@ -124,7 +136,7 @@ def load_train_objs(
             hour_dataset_range=val_unseen_hour_dataset_range,
             num_rand_hashes=val_num_rand_hashes,
             num_forward_passes=valunseen_forward_passes,
-            initiate_random_generator=False,
+            initiate_random_generator=True,
             data_logger_enabled=True,
             data_logger_file=f"{kwargs['log_dir']}/data_forward_pass_log_Valunseen_GPU{gpu_id}.jsonl.gz",
             **kwargs)
@@ -198,7 +210,11 @@ def main(
     timestamp_id: int,
     start_epoch: int,
     LR_val_wae: float,
+    LR_val_cls: float,
+    val_finetine_bool: bool,
     finetune_inference: bool, 
+    realtime_printing_interval_val,
+    realtime_printing_interval_train,
     wae_state_dict_prev_path = [],
     wae_opt_state_dict_prev_path = [],
     cls_opt_state_dict_prev_path = [],
@@ -287,6 +303,10 @@ def main(
                 wae_dict = trainer.wae.module.state_dict()
                 wae_opt_dict = trainer.opt_wae.state_dict()
                 cls_opt_dict = trainer.opt_cls.state_dict()
+                barycenter = trainer.barycenter
+                accumulated_z = trainer.accumulated_z
+                accumulated_labels = trainer.accumulated_labels
+                accumulated_class_probs = trainer.accumulated_class_probs
 
                 # FINETUNE on beginning of validation patients (currently only one epoch)
                 # Set to train and change LR to validate settings
@@ -299,20 +319,20 @@ def main(
                     val_finetune = True,
                     val_unseen = False,
                     num_rand_hashes = val_num_rand_hashes,
+                    realtime_printing_interval = realtime_printing_interval_val,
                     **kwargs)
 
                 # Finetuned, so setup inference for all datasets
                 dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
                 dataset_strs = ["train", "valfinetune", "valunseen"]
 
-            
-            else: # No finetune, only run data for Train dataset
-                dataset_list = [trainer.train_dataset]
-                dataset_strs = ["train"]
+            else: # No finetune, only run data for Train and ValUnseen datasets
+                dataset_list = [trainer.train_dataset, trainer.valunseen_dataset]
+                dataset_strs = ["train", "valunseen"]
             
             # INFERENCE on all selected datasets
             trainer._set_to_eval()
-            with torch.no_grad():
+            with torch.inference_mode():
                 for d in range(0, len(dataset_list)):
                     trainer._run_export_embeddings(
                         dataset_curr = dataset_list[d],  # Takes in a Dataset, NOT a DataLoader
@@ -325,6 +345,10 @@ def main(
                 trainer.wae.module.load_state_dict(wae_dict)
                 trainer.opt_wae.load_state_dict(wae_opt_dict)
                 trainer.opt_cls.load_state_dict(cls_opt_dict)
+                trainer.barycenter = barycenter
+                trainer.accumulated_z = accumulated_z
+                trainer.accumulated_labels = accumulated_labels
+                trainer.accumulated_class_probs = accumulated_class_probs
 
             print(f"GPU{str(trainer.gpu_id)} at post inference barrier")
             barrier()
@@ -336,6 +360,7 @@ def main(
             dataset_string = "train",
             val_finetune = False,
             val_unseen = False,
+            realtime_printing_interval = realtime_printing_interval_train,
             **kwargs)
         
         # CHECKPOINT
@@ -346,37 +371,50 @@ def main(
 
         # VALIDATE 
         if ((trainer.epoch + 1) % trainer.val_every == 0):
-            # Save pre-finetune model/opt weights
-            wae_dict = trainer.wae.module.state_dict()
-            wae_opt_dict = trainer.opt_wae.state_dict()
-            cls_opt_dict = trainer.opt_cls.state_dict()
+            
+            if val_finetine_bool:
+                # Save pre-finetune model/opt weights
+                wae_dict = trainer.wae.module.state_dict()
+                wae_opt_dict = trainer.opt_wae.state_dict()
+                cls_opt_dict = trainer.opt_cls.state_dict()
+                barycenter = trainer.barycenter
+                accumulated_z = trainer.accumulated_z
+                accumulated_labels = trainer.accumulated_labels
+                accumulated_class_probs = trainer.accumulated_class_probs
 
-            # FINETUNE on beginning of validation patients (currently only one epoch)
-            # Set to train and change LR to validate settings
-            trainer._set_to_train()
-            trainer.opt_wae.param_groups[0]['lr'] = LR_val_wae
-            trainer.opt_cls.param_groups[0]['lr'] = LR_val_cls
-            trainer._run_train_epoch(
-                dataloader_curr = trainer.valfinetune_dataloader, 
-                dataset_string = "valfinetune",
-                val_finetune = True,
-                val_unseen = False,
-                **kwargs)
+                # FINETUNE on beginning of validation patients (currently only one epoch)
+                # Set to train and change LR to validate settings
+                trainer._set_to_train()
+                trainer.opt_wae.param_groups[0]['lr'] = LR_val_wae
+                trainer.opt_cls.param_groups[0]['lr'] = LR_val_cls
+                trainer._run_train_epoch(
+                    dataloader_curr = trainer.valfinetune_dataloader, 
+                    dataset_string = "valfinetune",
+                    val_finetune = True,
+                    val_unseen = False,
+                    realtime_printing_interval = realtime_printing_interval_val,
+                    **kwargs)
 
             # UNSEEN portion of validation patients 
             trainer._set_to_eval()
-            with torch.no_grad():
+            with torch.inference_mode():
                 trainer._run_train_epoch(
                     dataloader_curr = trainer.valunseen_dataloader, 
                     dataset_string = "valunseen",
                     val_finetune = False,
                     val_unseen = True,
+                    realtime_printing_interval = realtime_printing_interval_val,
                     **kwargs)
 
             # Restore model/opt weights to pre-finetune
-            trainer.wae.module.load_state_dict(wae_dict)
-            trainer.opt_wae.load_state_dict(wae_opt_dict)
-            trainer.opt_cls.load_state_dict(cls_opt_dict)
+            if val_finetine_bool:
+                trainer.wae.module.load_state_dict(wae_dict)
+                trainer.opt_wae.load_state_dict(wae_opt_dict)
+                trainer.opt_cls.load_state_dict(cls_opt_dict)
+                trainer.barycenter = barycenter
+                trainer.accumulated_z = accumulated_z
+                trainer.accumulated_labels = accumulated_labels
+                trainer.accumulated_class_probs = accumulated_class_probs
 
     # Kill the process after training loop completes
     print(f"[GPU{gpu_id}]: End of train loop, killing subprocess")
@@ -426,7 +464,6 @@ class Trainer:
         multimodal_weights: list,
         sinkhorn_blur: int,
         wasserstein_order: float,
-        optimizer_forward_passes: int,
         barycenter,
         accumulated_z,
         **kwargs
@@ -470,7 +507,6 @@ class Trainer:
         self.multimodal_weights = multimodal_weights
         self.sinkhorn_blur = sinkhorn_blur
         self.wasserstein_order = wasserstein_order
-        self.optimizer_forward_passes = optimizer_forward_passes
         self.barycenter = barycenter
         self.accumulated_z = accumulated_z
         self.wandb_run = wandb_run
@@ -624,8 +660,9 @@ class Trainer:
         return self.barycenter[indices]
 
     def _sample_observed(self, mean_latent):
+        self.accumulated_z = self.accumulated_z.detach() # Detach before sampling
         num_new = mean_latent.shape[0]
-
+        
         if num_new == self.barycenter_batch_sampling:
             return mean_latent
 
@@ -634,11 +671,23 @@ class Trainer:
 
         else: # NOT RANDOM
             num_past = self.barycenter_batch_sampling - num_new
-            past_samples = self.accumulated_z[self.next_update_index - num_past : self.next_update_index, :] # Use the next update index to know where the latest past samples are
+
+            # Must check for rollover
+            if (self.next_update_index - num_past) >= 0:
+                past_samples = self.accumulated_z[self.next_update_index - num_past : self.next_update_index, :] # Use the next update index to know where the latest past samples are
+
+            else: # Straddles end/start of indexes
+                num_past_from_start = self.next_update_index
+                num_past_from_end = num_past - num_past_from_start
+
+                past_samples_from_start = self.accumulated_z[:num_past_from_start, :]
+                past_samples_from_end = self.accumulated_z[-num_past_from_end:, :]
+
+                past_samples = torch.cat([past_samples_from_end, past_samples_from_start])
 
             return torch.cat([past_samples, mean_latent])
 
-    def _update_barycenter(self, num_barycenter_iters, plot, savedir, blur=0.05, n_iter=100, **kwargs):
+    def _update_barycenter(self, num_barycenter_iters, plot, plot_savedir, blur=0.05, n_iter=100, **kwargs):
         
         # Sample from multimodal gamma
         x1 = self._sample_multimodal(self.accumulated_z.shape[0]).cpu().numpy()
@@ -673,7 +722,7 @@ class Trainer:
                 barycenter = self.barycenter.cpu().detach().numpy(), 
                 prior = x1,
                 observed = x2,
-                savedir = savedir,
+                savedir = plot_savedir,
                 epoch = self.epoch,
                 **kwargs)
         
@@ -867,9 +916,14 @@ class Trainer:
             # For Training: Update the Regulizer multiplier (BETA), and Learning Rate according for Heads Models and Core Model
             self.reg_weight, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
+            
             if (not val_finetune) & (not val_unseen): 
                 self.opt_wae.param_groups[0]['lr'] = self.curr_LR_core
                 self.opt_cls.param_groups[0]['lr'] = self.curr_LR_cls
+            
+            else: # For validation, do not consider classifier
+                self.classifier_alpha = 0
+                self.opt_cls.param_groups[0]['lr'] = 0
 
             # Check for NaNs
             if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
@@ -880,13 +934,16 @@ class Trainer:
             ### WAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
             x_hat = self.wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
 
-            # Average the latents to get single embedding per encoder forward pass (batch preserved of course)
+            # Average the latents to get single embedding per encoder forward pass (still batch preserved of course)
             mean_latent = torch.mean(latent, dim=1)
 
             # Sample from the recent observed & Barycenter (otherwise batch would be ripple in ocean, but without some past info, batch cannot capure meaningful shape of latent)
-            observed_samples = self._sample_observed(mean_latent) # Will require grad
-            barycenter_samples = self._sample_barycenter(self.barycenter_batch_sampling) # Not require grad
-            # barycenter_samples = torch.distributions.Gamma(self.gamma_shape, 1/self.gamma_scale).sample((observed_samples.shape[0], self.latent_dim)).to(self.gpu_id)
+            if not val_unseen:
+                observed_samples = self._sample_observed(mean_latent) # Will require grad now that blended in mean_latent
+                barycenter_samples = self._sample_barycenter(self.barycenter_batch_sampling) # Never requires grad
+            else: # For val_unseen, do not do a running window
+                observed_samples = mean_latent
+                barycenter_samples = self._sample_barycenter(mean_latent.shape[0])
 
             # LOSSES
             recon_loss = loss_functions.recon_loss_function(
@@ -895,7 +952,7 @@ class Trainer:
                 recon_weight=self.recon_weight)
 
             reg_loss = loss_functions.sinkhorn_loss( # Just on this local batch compared to Barycenter
-                observed = observed_samples, 
+                observed = observed_samples, # From accumulated_z
                 prior = barycenter_samples, # From Barycenter
                 weight = self.reg_weight,
                 sinkhorn_blur = self.sinkhorn_blur,
@@ -906,20 +963,19 @@ class Trainer:
                 labels=file_class_label,
                 classifier_weight=self.classifier_weight)
 
-            # Not currently used
+            loss = recon_loss + reg_loss + adversarial_loss 
+
+            # Not currently used, but is nice to see
             sparse_loss = loss_functions.sparse_l1_reg(
                 z=latent, 
                 sparse_weight=self.sparse_weight, 
                 **kwargs)
 
-            # AFTER EACH FORWARD PASS
-            self._zero_all_grads()
-            loss = recon_loss + reg_loss + adversarial_loss 
-            loss.backward()    
-            self._update_reg_window(mean_latent, file_class_label, class_probs_mean_of_latent) # Update the buffers & detach()
-
-            # Step optimizer at desired number of froward passes
-            if (iter_curr%self.optimizer_forward_passes==0):
+            # Do not backprop for pure validation (i.e. val unseen), but do for training & finetuning
+            if not val_unseen: 
+                self._zero_all_grads()
+                loss.backward()    
+                self._update_reg_window(mean_latent, file_class_label, class_probs_mean_of_latent) # Update the buffers & detach()
                 self.opt_wae.step()
                 self.opt_cls.step()
 
@@ -953,7 +1009,6 @@ class Trainer:
                         train_sinkhorn_blur=self.sinkhorn_blur,
                         train_running_reg_passes=self.running_reg_passes,
                         train_ReconWeight=self.recon_weight,
-                        train_AdversarialWeight=self.classifier_weight,
                         train_AdversarialAlpha=self.classifier_alpha,
                         train_Sparse_weight=self.sparse_weight,
                         train_epoch=self.epoch)
@@ -964,14 +1019,12 @@ class Trainer:
                         val_finetune_loss=loss, 
                         val_finetune_recon_loss=recon_loss, 
                         val_finetune_reg_loss=reg_loss, 
-                        val_finetune_adversarial_loss=adversarial_loss,
                         val_finetune_sparse_loss=sparse_loss,
                         val_finetune_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                         val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                         val_finetune_reg_Beta=self.reg_weight, 
                         val_finetune_sinkhorn_blur=self.sinkhorn_blur,
                         val_finetune_ReconWeight=self.recon_weight,
-                        val_finetune_AdversarialWeight=self.classifier_weight,
                         val_finetune_AdversarialAlpha=self.classifier_alpha,
                         val_finetune_Sparse_weight=self.sparse_weight,
                         val_finetune_epoch=self.epoch)
@@ -982,22 +1035,17 @@ class Trainer:
                         val_unseen_loss=loss, 
                         val_unseen_recon_loss=recon_loss, 
                         val_unseen_reg_loss=reg_loss, 
-                        val_unseen_adversarial_loss=adversarial_loss,
                         val_unseen_sparse_loss=sparse_loss,
                         val_unseen_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                         val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                         val_unseen_reg_Beta=self.reg_weight, 
                         val_unseen_sinkhorn_blur=self.sinkhorn_blur,
                         val_unseen_ReconWeight=self.recon_weight,
-                        val_unseen_AdversarialWeight=self.classifier_weight,
                         val_unseen_AdversarialAlpha=self.classifier_alpha,
                         val_unseen_Sparse_weight=self.sparse_weight,
                         val_unseen_epoch=self.epoch)
 
             wandb.log({**metrics, 'Steps': train_step})
-
-            # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
-            iter_curr = iter_curr + 1
 
             # Realtime latent visualizations
             if realtime_latent_printing & ((iter_curr + 1) % realtime_printing_interval == 0):
@@ -1021,27 +1069,35 @@ class Trainer:
                                 iter_curr = iter_curr,
                                 file_name = file_name,
                                 **kwargs)
-                            utils_functions.print_confusion_realtime(
-                                class_probs = self.accumulated_class_probs,
-                                class_labels = self.accumulated_labels,
-                                savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_confusion",
-                                epoch = self.epoch,
-                                iter_curr = iter_curr,
-                                **kwargs)
-                            utils_functions.print_classprobs_realtime(
-                                class_probs = class_probs_mean_of_latent,
-                                class_labels = file_class_label,
-                                savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_classprobs",
-                                epoch = self.epoch,
-                                iter_curr = iter_curr,
-                                file_name = file_name,
-                                **kwargs)
+
+                            # NOTE: for finetuning, will still be guess the training patients, and TODO: idxs in dataset are wrong for class labels anyway
+                            if (not val_unseen) & (not val_finetune): # Will not have accumulated for val_unseen
+                                utils_functions.print_confusion_realtime(
+                                    class_probs = self.accumulated_class_probs,
+                                    class_labels = self.accumulated_labels,
+                                    savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_confusion",
+                                    epoch = self.epoch,
+                                    iter_curr = iter_curr,
+                                    **kwargs)
+
+                                utils_functions.print_classprobs_realtime(
+                                    class_probs = class_probs_mean_of_latent,
+                                    class_labels = file_class_label,
+                                    savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_classprobs",
+                                    epoch = self.epoch,
+                                    iter_curr = iter_curr,
+                                    file_name = file_name,
+                                    **kwargs)
+
+            # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
+            iter_curr = iter_curr + 1
 
         # Update the Barycenter (average between empiric latent distriubution and given prior (e.g. Gamma) for this epoch
-        self._update_barycenter(
-            plot=True, 
-            savedir = self.model_dir + f"/realtime_plots/{dataset_string}/barycenters",
-            **kwargs)
+        if (not val_unseen) & (not val_finetune):
+            self._update_barycenter(
+                plot=True, 
+                plot_savedir = self.model_dir + f"/realtime_plots/{dataset_string}/barycenters",
+                **kwargs)
         
         print(f"[GPU{str(self.gpu_id)}] at end of epoch")
         # barrier()
