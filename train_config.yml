@@ -96,17 +96,17 @@ val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that mo
 
 # Training settings
 random_pulls_in_batch: 8 # BATCHSIZE
-train_forward_passes: 1024 # Independent of batchsize
-valfinetune_forward_passes: 1024 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes
-valunseen_forward_passes: 1024 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes
+train_forward_passes: 2048 # Independent of batchsize
+valfinetune_forward_passes: 2048 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes
+valunseen_forward_passes: 2048 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes
 epochs_to_train: 999999 
 
 # Validating settings
 val_finetine_bool: True # If False, will skip finetuning and just validate on unseen portion of validation patients 
-val_every: 10 # Will only do one epoch, so update 'valfinetune_forward_passes' if want to finetune longer
+val_every: 20 # Will only do one epoch, so update 'valfinetune_forward_passes' if want to finetune longer
 val_finetune_hour_dataset_range: kwargs['val_finetune_hour_dataset_range'] = [2, 50]
 val_unseen_hour_dataset_range: kwargs['val_unseen_hour_dataset_range'] = [50, -1]
-LR_val_wae: kwargs['LR_val_wae'] = 1e-6
+LR_val_wae: kwargs['LR_val_wae'] = 1e-7
 LR_val_cls: kwargs['LR_val_cls'] = 1e-4
 
 # Inference settings
@@ -128,7 +128,7 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 ### Dynamic Weights ###
 
 # Beta WAE controls
-Reg_max: kwargs['Reg_max'] = 1
+Reg_max: kwargs['Reg_max'] = 3
 Reg_min: kwargs['Reg_min'] = 0
 Reg_stall_epochs: 0 # No Reg weight rise until stall is complete
 Reg_epochs_AT_max: 99999
@@ -136,12 +136,12 @@ Reg_epochs_TO_max: 0
 
 # Miltimodal GAMMA distribution params  
 running_reg_passes: kwargs['running_reg_passes'] = int(kwargs['random_pulls_in_batch'] * (kwargs['train_forward_passes'] / kwargs['num_gpus']))   # Equals an epoch's worth of passes in DDP context
-barycenter_batch_sampling: 128  # The past samples (IMMEDIATE/SEQUENTIAL past samples) from running window of 'running_reg_passes' to incorporate into batch loss (in addition to actual forward pass batch)
+barycenter_batch_sampling: 256  # The past samples (IMMEDIATE/SEQUENTIAL past samples) from running window of 'running_reg_passes' to incorporate into batch loss (in addition to actual forward pass batch)
 multimodal_shapes: [10, 30]
 multimodal_scales: [0.05, 0.05]
 multimodal_weights: [0.5, 0.5]
 num_barycenter_iters: 10
-sinkhorn_blur: kwargs['sinkhorn_blur'] = 0.05 # This is the BATCH/SMALL scale blur updates
+sinkhorn_blur: kwargs['sinkhorn_blur'] = 0.2 # This is the BATCH/SMALL scale blur updates
 random_barycenter_numplots: 4
 wasserstein_order: 1  # africanfisheagle was trained on p=2 which appeared overly focused on means of each gamma peak, trying EMD (i.e. p=1)
 
@@ -165,8 +165,8 @@ recon_weight: 3 # 3
 ### Dynamic Learning Rates ###
 
 # WAE learning rate controls
-LR_max_core: kwargs['LR_max_core'] = 1e-5 # 5e-7
-LR_min_core: kwargs['LR_min_core'] = 1e-5 # 1e-8 
+LR_max_core: kwargs['LR_max_core'] = 1e-6 # 5e-7
+LR_min_core: kwargs['LR_min_core'] = 1e-6 # 1e-8 
 LR_epochs_TO_max_core: 1
 LR_epochs_AT_max_core: 1
 manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'

@@ -12,7 +12,7 @@ from utilities.loss_functions import adversarial_loss_function
 
 '''
 @author: grahamwjohnson
-2023-2025
+2023-2025 
 
 '''
 
@@ -355,7 +355,7 @@ class WAE(nn.Module):
             y = torch.stack(y, dim=0)
 
             # TRANSFORMER
-            y = self.transformer_encoder(y, start_pos=self.transformer_start_pos)
+            y, attW = self.transformer_encoder(y, start_pos=self.transformer_start_pos, return_attW = True)
 
             # WAE CORE
             y = self.concat_past_tokens(y) # Sliding window over transformer output: [batch, token, latent_dim] --> [batch, token_prime, latent_dim * num_encode_concat_transformer_tokens]
@@ -373,7 +373,7 @@ class WAE(nn.Module):
             mean_of_latent = torch.mean(latent, dim=1)
             class_probs_mean_of_latent = self.adversarial_classifier(mean_of_latent, alpha)
             
-            return latent, class_probs_mean_of_latent
+            return latent, class_probs_mean_of_latent, attW
 
         elif reverse == True:
 
@@ -408,11 +408,12 @@ def print_models_flow(x, **kwargs):
     # Run through Encoder
     print(f"INPUT TO <ENC>\n"
     f"x:{x.shape}")
-    latent, class_probs = wae(x, reverse=False, alpha=1)  
+    latent, class_probs, attW = wae(x, reverse=False, alpha=1)  
     summary(wae, input_size=(x.shape), depth=999, device="cpu")
     print(
     f"latent:{latent.shape}\n"
-    f"class_probs:{class_probs.shape}\n")
+    f"class_probs:{class_probs.shape}\n"
+    f"attW:{attW.shape}\n")
 
     # Adversarial loss
     adversarial_loss = adversarial_loss_function(class_probs, file_class_label, classifier_weight = 1)

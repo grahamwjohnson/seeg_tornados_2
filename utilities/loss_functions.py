@@ -10,7 +10,8 @@ from geomloss import SamplesLoss
 
 def recon_loss_function(x, x_hat, recon_weight):
     # recon_loss = LogCosh_weight * LogCosh_loss_fn(x, x_hat) 
-    loss_fn = nn.MSELoss(reduction='mean')
+    # loss_fn = nn.MSELoss(reduction='mean')
+    loss_fn = nn.L1Loss(reduction='mean')
     recon_loss = loss_fn(x, x_hat) 
     return recon_weight * recon_loss
 
@@ -19,7 +20,7 @@ def recon_loss_function(x, x_hat, recon_weight):
 #     transformer_loss = 1 - criterion(target_embeddings, out_embeddings).mean()
 #     # loss_fn = nn.MSELoss(reduction='mean')
 #     # transformer_loss = transformer_weight * loss_fn(target_embeddings, out_embeddings) 
-#     return transformer_weight * transformer_loss #/ in_embeddings.shape[0] / in_embeddings.shape[1] # normalize by batch size and seq length
+#     return transformer_weight * transformer_loss #/ in_embeddings.shape[0] / in_embeddings.shape[1] # normalize by batch size and seq length 
 
 def sparse_l1_reg(z, sparse_weight, **kwargs):
     l1_penalty = torch.sum(torch.abs(z))  # L1 norm

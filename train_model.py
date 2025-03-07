@@ -845,7 +845,7 @@ class Trainer:
 
                     ### WAE ENCODER
                     # Forward pass in stacked batch through WAE encoder
-                    latent, _ = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
+                    latent, _, _ = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
                     files_latents[:, w, :] = torch.mean(latent, dim=1)
 
                 # After file complete, pacmap_window/stride the file and save each file from batch seperately
@@ -932,7 +932,7 @@ class Trainer:
             if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
 
             ### WAE ENCODER: 1-shifted
-            latent, class_probs_mean_of_latent = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
+            latent, class_probs_mean_of_latent, attW = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
             
             ### WAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
             x_hat = self.wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
@@ -1071,6 +1071,13 @@ class Trainer:
                                 epoch = self.epoch,
                                 iter_curr = iter_curr,
                                 file_name = file_name,
+                                **kwargs)
+                            utils_functions.print_attention_realtime(
+                                epoch = self.epoch, 
+                                iter_curr = iter_curr,
+                                pat_idxs = file_class_label, 
+                                scores_firstLayer_meanHeads = attW, 
+                                savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_attention", 
                                 **kwargs)
 
                             # NOTE: for finetuning, will still be guess the training patients, and TODO: idxs in dataset are wrong for class labels anyway

@@ -21,7 +21,7 @@ This software may be used and distributed in accordance with the terms of the Ll
 
 '''
 
-@dataclass
+@dataclass 
 class ModelArgs:
     def __init__(
         self, 
@@ -227,8 +227,8 @@ class Attention(nn.Module):
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
         
         if return_attW:
-            scores_meanHeads_lastRow = torch.mean(scores[:, :, -1, :], dim=1) # How much does i attend to j, so last row is how much does last token attend to all previous tokens... right?
-            return self.wo(output), scores_meanHeads_lastRow
+            scores_meanHeads = torch.mean(scores, dim=1) # How much does i attend to j, so last row is how much does last token attend to all previous tokens... right?
+            return self.wo(output), scores_meanHeads
         else:
             return self.wo(output)
 
@@ -313,7 +313,6 @@ class TransformerBlock(nn.Module):
             out = h + self.feed_forward(self.ffn_norm(h))
             return out            
 
-
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
         super().__init__()
@@ -383,8 +382,8 @@ class Transformer(nn.Module):
         if return_attW:
             layer_count = 0
             for layer in self.layers:
-                if layer_count == 0:
-                    h, scores_firstLayer_meanHeads_lastRow = layer(h, start_pos, freqs_cis, mask, return_attW=True)
+                if layer_count == 0: # Only return the first layer's attention
+                    h, scores_firstLayer_meanHeads = layer(h, start_pos, freqs_cis, mask, return_attW=True)
                 else:
                     h = layer(h, start_pos, freqs_cis, mask, return_attW=False)
                 layer_count = layer_count + 1
@@ -392,9 +391,8 @@ class Transformer(nn.Module):
 
             # output = self.output_mlp(h)
             output = h
-            # output = self.tanh(h)          ##################################### Added tanh #########################################
 
-            return output, scores_firstLayer_meanHeads_lastRow
+            return output, scores_firstLayer_meanHeads
 
         else:
             for layer in self.layers:
@@ -403,7 +401,6 @@ class Transformer(nn.Module):
 
             # output = self.output_mlp(h)
             output = h
-            # output = self.tanh(h)          ##################################### Added tanh #########################################
 
             return output
 
