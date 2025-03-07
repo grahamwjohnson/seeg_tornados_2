@@ -934,17 +934,16 @@ def print_attention_realtime(epoch, iter_curr, pat_idxs, scores_byLayer_meanHead
     scores_byLayer_meanHeads = scores_byLayer_meanHeads.detach().cpu().numpy()
 
     batchsize, n_layers, rows, cols = scores_byLayer_meanHeads.shape
-    subplot_dim = int(np.ceil(np.sqrt(n_layers)))
 
     # Make new grid/fig for every batch
     for b in range(0, batchsize):
-        gs = gridspec.GridSpec(subplot_dim, subplot_dim) 
+        gs = gridspec.GridSpec(1, 2) 
         fig = pl.figure(figsize=(20, 14))
 
-        subplot_count = 0
+        # Only plotting First and Last layer
         for l in range(n_layers):
 
-            ax_curr = fig.add_subplot(gs[int(subplot_count/subplot_dim), int(subplot_count%subplot_dim)]) 
+            ax_curr = fig.add_subplot(gs[0, l]) 
             scores_plot = scores_byLayer_meanHeads[b, l, :, :] # Add small amount to avoid log error when scaling
 
             # Create a mask for the lower-left triangle
@@ -956,10 +955,10 @@ def print_attention_realtime(epoch, iter_curr, pat_idxs, scores_byLayer_meanHead
                 lower_triangle[i, :i+1] *= (i + 1)  # Multiply by row index (1-based)
 
             # Plot the heatmap
-            sns.heatmap(lower_triangle, cmap=sns.cubehelix_palette(as_cmap=True), ax=ax_curr, cbar_kws={'label': 'Row-Weighted Attention'})
-            ax_curr.set_title(f"Layer {l} - Mean of Heads")
-
-            subplot_count = subplot_count + 1
+            sns.heatmap(lower_triangle, cmap=sns.cubehelix_palette(as_cmap=True), ax=ax_curr, cbar_kws={'label': 'Row-Weighted Attention', 'orientation': 'horizontal'}) 
+            if l == 0: ax_curr.set_title(f"First Layer - Mean of Heads")
+            else: ax_curr.set_title(f"Last Layer - Mean of Heads")
+            ax_curr.set_aspect('equal', adjustable='box')
 
         fig.suptitle(f"Attention Weights - Batch:{b}")
         if not os.path.exists(savedir): os.makedirs(savedir)

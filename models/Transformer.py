@@ -340,6 +340,9 @@ class Transformer(nn.Module):
 
         self.tanh = nn.Tanh()
 
+        # For storing weights of FIRST and LAST layer
+        self.scores_FirstLastLayer_meanHeads = torch.empty((params.max_batch_size, 2, params.max_seq_len, params.max_seq_len), dtype=torch.float16).to(params.device)
+
     # @torch.inference_mode()
     def forward(
         self, 
@@ -381,16 +384,23 @@ class Transformer(nn.Module):
 
         if return_attW:
             layer_count = 0
-            scores_byLayer_meanHeads = torch.empty((h.shape[0], self.n_layers, seqlen, seqlen), dtype=torch.float32).to(h)
             for layer in self.layers:
-                h, scores_byLayer_meanHeads[:, layer_count, :, :] = layer(h, start_pos, freqs_cis, mask, return_attW=True)
+
+                if layer_count == 0:
+                    h, self.scores_FirstLastLayer_meanHeads[:h.shape[0], 0, :seqlen, :seqlen] = layer(h, start_pos, freqs_cis, mask, return_attW=True)
+                    
+                elif layer_count == (len(self.layers) - 1):
+                    h, self.scores_FirstLastLayer_meanHeads[:h.shape[0], -1, :seqlen, :seqlen] = layer(h, start_pos, freqs_cis, mask, return_attW=True)
+
+                else: h = layer(h, start_pos, freqs_cis, mask, return_attW=False)
+
                 layer_count = layer_count + 1
-            
+
             h = self.norm(h)
             # output = self.output_mlp(h)
             output = h
 
-            return output, scores_byLayer_meanHeads
+            return output, self.scores_FirstLastLayer_meanHeads[:h.shape[0], :, :seqlen, :seqlen]
 
         else:
             for layer in self.layers:
