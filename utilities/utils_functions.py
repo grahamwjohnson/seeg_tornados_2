@@ -55,6 +55,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from annoy import AnnoyIndex
 from scipy.sparse import csr_matrix
 from sklearn.metrics import confusion_matrix
+from matplotlib.colors import LogNorm
 
 
 # Local imports
@@ -620,7 +621,7 @@ def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycent
     sns.histplot(barycenter_meanSample, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax0)
     sns.histplot(prior_meanSample, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax0)
     sns.histplot(observed_meanSample, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax0)
-    ax0.set_title(f"MEAN Across Samples")
+    ax0.set_title(f"MEAN Across Samples [{N}]")
     pl.legend()
 
     # Plot MEAN of dims (i.e. shows samples)
@@ -628,7 +629,7 @@ def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycent
     sns.histplot(barycenter_meanDim, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax1)
     sns.histplot(prior_meanDim, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax1)
     sns.histplot(observed_meanDim, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax1)
-    ax1.set_title(f"MEAN Across Dimensions")
+    ax1.set_title(f"MEAN Across Dimensions [{D}]")
     pl.legend()
 
     # # Plot STD of samples (i.e. shows dims)
@@ -939,14 +940,21 @@ def print_attention_realtime(epoch, iter_curr, pat_idxs, scores_firstLayer_meanH
         gs = gridspec.GridSpec(1, 1) 
         fig = pl.figure(figsize=(20, 14))
 
-        scores_plot = scores_firstLayer_meanHeads[b, :, :]
-            
         ax1 = fig.add_subplot(gs[0]) 
-        sns.heatmap(scores_plot, cmap=sns.cubehelix_palette(as_cmap=True))
-        ax1.set_title(f"Score Rows, First Transformer Layer - Average of Heads, Batch:{b}")
-        ax1.set_xlabel("Autoregression Step")
-        ax1.set_ylabel("Attention Weight by Current Past Index")
-            
+        scores_plot = scores_firstLayer_meanHeads[b, :, :] + 1e-3 # Add small amount to avoid log error when scaling
+
+        # Create a mask for the lower-left triangle
+        mask = np.triu(np.ones_like(scores_plot, dtype=bool))  # Upper triangle mask
+        lower_triangle = np.where(mask, np.nan, scores_plot)   # Replace upper triangle with NaN
+
+        # Multiply each row of the lower-left triangle by its row index
+        for i in range(lower_triangle.shape[0]):
+            lower_triangle[i, :i+1] *= (i + 1)  # Multiply by row index (1-based)
+
+        # Plot the heatmap
+        sns.heatmap(lower_triangle, cmap=sns.cubehelix_palette(as_cmap=True), ax=ax1, cbar_kws={'label': 'Row-Weighted Attention'})
+        ax1.set_title(f"Scores, First Transformer Layer - Average of Heads, Batch:{b}")
+
         fig.suptitle(f"Attention Weights")
         if not os.path.exists(savedir): os.makedirs(savedir)
         savename_jpg = f"{savedir}/FirstLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_patidx{pat_idxs[b].cpu().numpy()}.jpg"

@@ -348,7 +348,7 @@ class WAE(nn.Module):
 
         if reverse == False:
 
-            # RAW CROSS-ATTENTION HEAD
+            # CROSS-ATTENTION HEAD across channels on raw data
             y = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]]) # [batch, token, channel, waveform] --> [batch x token, channel, waveform]
             y = self.encoder_head(y)
             y = torch.split(y, x.shape[1], dim=0) # [batch x token, latent_dim] --> [batch, token, latent_dim]

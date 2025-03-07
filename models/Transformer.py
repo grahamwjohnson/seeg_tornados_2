@@ -347,7 +347,7 @@ class Transformer(nn.Module):
         start_pos: int=-9999, 
         return_attW: bool=False,
         attention_dropout: float=0.0,
-        causal_mask_bool: bool=True
+        causal_mask_bool: bool=True # For brain-state embedder: should be True for training and inference (keeps temporal dependency)
         ):
         # _bsz, seqlen = tokens.shape
         # h = self.tok_embeddings(tokens)

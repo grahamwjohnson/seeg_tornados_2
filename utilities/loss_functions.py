@@ -10,8 +10,8 @@ from geomloss import SamplesLoss
 
 def recon_loss_function(x, x_hat, recon_weight):
     # recon_loss = LogCosh_weight * LogCosh_loss_fn(x, x_hat) 
-    # loss_fn = nn.MSELoss(reduction='mean')
-    loss_fn = nn.L1Loss(reduction='mean')
+    loss_fn = nn.MSELoss(reduction='mean')
+    # loss_fn = nn.L1Loss(reduction='mean')
     recon_loss = loss_fn(x, x_hat) 
     return recon_weight * recon_loss
 

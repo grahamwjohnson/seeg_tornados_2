@@ -157,50 +157,53 @@ def thread_task(thread_num, nested_max_workers, tmp_dir, pat_fnames, num_buffer_
 
 if __name__ == "__main__":
 
-    # Read in configuration file & setup the run
-    config_f = 'train_config.yml'
-    with open(config_f, "r") as f: kwargs = yaml.load(f,Loader=yaml.FullLoader)
-    kwargs = utils_functions.exec_kwargs(kwargs) # Execute the arithmatic build into kwargs and reassign kwargs
+    try: # Put in try clause to avoid debugging truggers when killing script purposefully by deleteing tmp directory 
 
-    transformer_seq_length = kwargs['transformer_seq_length']
-    num_samples = kwargs['num_samples'] # in one file
-    batchsize = kwargs['random_pulls_in_batch'] # Use as same value for how many files to pull at once
-    padded_channels = kwargs['padded_channels']
-    autoencode_samples = kwargs['autoencode_samples']
-    latent_dim = kwargs['latent_dim']
-    num_buffer_batches = kwargs['num_buffer_batches']
-    num_data_threads = kwargs['num_data_threads']
-    nested_max_workers = kwargs['nested_max_workers']
-    hash_output_range = kwargs['hash_output_range']
+        # Read in configuration file & setup the run
+        config_f = 'train_config.yml'
+        with open(config_f, "r") as f: kwargs = yaml.load(f,Loader=yaml.FullLoader)
+        kwargs = utils_functions.exec_kwargs(kwargs) # Execute the arithmatic build into kwargs and reassign kwargs
 
-    # Passed as args
-    tmp_dir = sys.argv[1]
-    fnames_csv = f"{tmp_dir}/{sys.argv[2]}"
-    num_rand_hashes = int(sys.argv[3])
+        transformer_seq_length = kwargs['transformer_seq_length']
+        num_samples = kwargs['num_samples'] # in one file
+        batchsize = kwargs['random_pulls_in_batch'] # Use as same value for how many files to pull at once
+        padded_channels = kwargs['padded_channels']
+        autoencode_samples = kwargs['autoencode_samples']
+        latent_dim = kwargs['latent_dim']
+        num_buffer_batches = kwargs['num_buffer_batches']
+        num_data_threads = kwargs['num_data_threads']
+        nested_max_workers = kwargs['nested_max_workers']
+        hash_output_range = kwargs['hash_output_range']
 
-    # Load the fnames
-    with open(fnames_csv, mode='r') as file:
-        csv_reader = csv.reader(file)
-        pat_fnames = [row for row in csv_reader]
+        # Passed as args
+        tmp_dir = sys.argv[1]
+        fnames_csv = f"{tmp_dir}/{sys.argv[2]}"
+        num_rand_hashes = int(sys.argv[3])
 
-    # Metadata
-    num_pats = len(pat_fnames)
-    pat_ids = [pat_fnames[i][0].split("/")[-1].split("_")[0] for i in range(len(pat_fnames))]
+        # Load the fnames
+        with open(fnames_csv, mode='r') as file:
+            csv_reader = csv.reader(file)
+            pat_fnames = [row for row in csv_reader]
 
-    if num_data_threads > 1:
-        # Start threads
-        threads = []
-        for i in range(num_data_threads):
-            thread = threading.Thread(target=thread_task, args=(i, nested_max_workers, tmp_dir, pat_fnames, num_buffer_batches, pat_ids, latent_dim, batchsize, num_samples, transformer_seq_length, padded_channels, autoencode_samples, num_rand_hashes, hash_output_range))
-            threads.append(thread)
-            thread.start()
+        # Metadata
+        num_pats = len(pat_fnames)
+        pat_ids = [pat_fnames[i][0].split("/")[-1].split("_")[0] for i in range(len(pat_fnames))]
 
-        for thread in threads:
-            thread.join()
+        if num_data_threads > 1:
+            # Start threads
+            threads = []
+            for i in range(num_data_threads):
+                thread = threading.Thread(target=thread_task, args=(i, nested_max_workers, tmp_dir, pat_fnames, num_buffer_batches, pat_ids, latent_dim, batchsize, num_samples, transformer_seq_length, padded_channels, autoencode_samples, num_rand_hashes, hash_output_range))
+                threads.append(thread)
+                thread.start()
 
-    else: # Only run one thread
-        thread_task(0, nested_max_workers, tmp_dir, pat_fnames, num_buffer_batches, pat_ids, latent_dim, batchsize, num_samples, transformer_seq_length, padded_channels, autoencode_samples, num_rand_hashes, hash_output_range)
+            for thread in threads:
+                thread.join()
 
+        else: # Only run one thread
+            thread_task(0, nested_max_workers, tmp_dir, pat_fnames, num_buffer_batches, pat_ids, latent_dim, batchsize, num_samples, transformer_seq_length, padded_channels, autoencode_samples, num_rand_hashes, hash_output_range)
 
+    finally:
+        print("End of script")
 
 

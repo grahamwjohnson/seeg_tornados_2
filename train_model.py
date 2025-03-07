@@ -287,6 +287,12 @@ def main(
         barycenter=barycenter,
         accumulated_z=accumulated_z,
         **kwargs)
+
+    # Kill the val data generators if val_every is set artificially high
+    if kwargs['val_every'] > 999:
+        print(f"GPU{str(trainer.gpu_id)}: WARNING val_every is {kwargs['val_every']}, whoch is over 999, thus going to kill val generators")
+        trainer.valfinetune_dataset.kill_generator()
+        trainer.valunseen_dataset.kill_generator()
     
     # Run through all epochs
     for epoch in range(start_epoch, epochs_to_train):
@@ -530,7 +536,7 @@ class Trainer:
         if self.barycenter == []:
             # If first initialziing, then start off with observed & barycenter is ideal distributions from pure prior
             self.accumulated_z = self._sample_multimodal(self.running_reg_passes).to(self.gpu_id)
-            self.barycenter = self._sample_multimodal(self.running_reg_passes).to(self.gpu_id)
+            self.barycenter = self._sample_multimodal(self.running_reg_passes * torch.distributed.get_world_size()).to(self.gpu_id)  # multiplied by DDPs
         else: 
             # Ensure on proper device because loading from pickle
             self.barycenter = self.barycenter.to(self.gpu_id) 
@@ -655,7 +661,7 @@ class Trainer:
         
         return samples
         
-    def _sample_barycenter(self, num_barycenter_samples, **kwargs):
+    def _sample_barycenter(self, num_barycenter_samples):
         # Randomly select indices from the barycenter samples
         indices = torch.randint(0, self.barycenter.shape[0], (num_barycenter_samples,))
 
@@ -691,40 +697,67 @@ class Trainer:
             return torch.cat([past_samples, mean_latent])
 
     def _update_barycenter(self, num_barycenter_iters, plot, plot_savedir, blur=0.05, n_iter=100, **kwargs):
-        
-        # Sample from multimodal gamma
-        x1 = self._sample_multimodal(self.accumulated_z.shape[0]).cpu().numpy()
-        # Use observations for other distribution
-        x2 = self.accumulated_z.cpu().numpy()
-        
-        measures_locations = [x1, x2]
-        measures_weights = [ot.unif(x1.shape[0]), ot.unif(x2.shape[0])]
 
-        k, d = self.accumulated_z.shape
-        if self.epoch > 0: 
-            X_init = self.barycenter.detach().cpu().numpy() # Initialize based on previous barycenter 
+        '''
+        This will gather observed latent embeddings from across GPUs, and calculate new barycenter, then re-braodcast to all GPUs
+
+        '''
+        
+        print(f"[GPU{self.gpu_id}] at PRE barycenter calculation barrier")
+        barrier() # To align before gathering across GPUs
+
+        # Gather all of the observed latents
+        if self.gpu_id == 0:
+            # On the root rank, prepare a list to store the gathered tensors
+            gathered_z = [torch.zeros_like(self.accumulated_z) for _ in range(torch.distributed.get_world_size())]
         else:
-            X_init = x1 # No previous barycenter - use pure prior
-        b = (np.ones((k,)) / k)  # weights of the barycenter (it will not be optimized, only the locations are optimized)
+            # On non-root ranks, gathered_z should be None
+            gathered_z = None
 
-        X = ot.lp.free_support_barycenter(
-            measures_locations, 
-            measures_weights, 
-            X_init, 
-            b,
-            numItermax=num_barycenter_iters,
-            verbose=True)
+        # Gather tensors from all ranks to rank 0
+        torch.distributed.gather(self.accumulated_z, gather_list=gathered_z, dst=0)
 
-        self.barycenter = torch.tensor(X).to(self.gpu_id).float()
+        # Only run the calculation on GPU0
+        if self.gpu_id == 0:
+            all_z = torch.cat(gathered_z) # Concatenate the gathered z's together
+            print(f"[GPU{self.gpu_id}] size of gathered latents across GPUs is: {all_z.shape}")
+            x1 = self._sample_multimodal(all_z.shape[0]).cpu().numpy()  # Sample from multimodal gamma
+            x2 = all_z.cpu().numpy() # Use observations for other distribution
+            measures_locations = [x1, x2]
+            measures_weights = [ot.unif(x1.shape[0]), ot.unif(x2.shape[0])]
+            k, d = all_z.shape
+            X_init = self._sample_barycenter(all_z.shape[0]).detach().cpu().numpy() # Initialize based on previous barycenter 
+            b = (np.ones((k,)) / k)  # weights of the barycenter (it will not be optimized, only the locations are optimized)
+            X = ot.lp.free_support_barycenter(
+                measures_locations, 
+                measures_weights, 
+                X_init, 
+                b,
+                numItermax=num_barycenter_iters,
+                verbose=True)
 
-        print(f"[GPU{self.gpu_id}] Barycenter updated: {self.barycenter.shape}")
+            self.barycenter = torch.tensor(X).to(self.gpu_id).float()
 
-        # Plot the barycenter if desired
-        if plot & (self.gpu_id == 0):
+        print(f"[GPU{self.gpu_id}] at POST barycenter calculation")
+        # Broadcast barycenter to all GPUs
+        if self.gpu_id == 0:
+            # On rank 0, ensure self.barycenter is a tensor on the correct device
+            self.barycenter = self.barycenter.to(f"cuda:{self.gpu_id}")  # Ensure it's on the correct GPU
+        else:
+            # On other ranks, initialize self.barycenter as an empty tensor on the correct device
+            self.barycenter = torch.zeros((self.running_reg_passes * torch.distributed.get_world_size(),self.barycenter.shape[1]), device=f"cuda:{self.gpu_id}")
+
+        # Broadcast the tensor from rank 0 to all other ranks
+        torch.distributed.broadcast(self.barycenter, src=0)
+        if self.barycenter.sum() == 0: raise Exception(f"ERROR: Boradcast failure, got all zeros on GPU{self.gpu_id}")
+        print(f"[GPU{self.gpu_id}] broadcasted shape of barycenter: {self.barycenter.shape}")
+
+        # Plot the barycenter if desired (plot on GPU 1 to ensure that it got the data)
+        if plot & (self.gpu_id == 1):
             utils_functions.plot_barycenter(
                 barycenter = self.barycenter.cpu().detach().numpy(), 
-                prior = x1,
-                observed = x2,
+                prior = self._sample_multimodal(self.accumulated_z.shape[0]).cpu().numpy(),
+                observed = self.accumulated_z.cpu().numpy(),
                 savedir = plot_savedir,
                 epoch = self.epoch,
                 **kwargs)
@@ -836,6 +869,8 @@ class Trainer:
                         hash_output_range=self.hash_output_range)
                     
                     # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
+
+                    # TODO: get rid of for loop like random data generator 
                     x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, padded_channels, self.autoencode_samples).to(self.gpu_id)
                     start_idx = w * num_samples_in_forward
                     for embedding_idx in range(0, self.transformer_seq_length):
