@@ -27,7 +27,7 @@ class ModelArgs:
         self, 
         dim: int = None,
         n_layers: int = 16,
-        n_heads: int = 16,
+        n_heads: int = None,
         n_kv_heads: Optional[int] = None,
         vocab_size: int = -1,
         multiple_of: int = 256, # make SwiGLU hidden layer size multiple of large power of 2
@@ -381,18 +381,16 @@ class Transformer(nn.Module):
 
         if return_attW:
             layer_count = 0
+            scores_byLayer_meanHeads = torch.empty((h.shape[0], self.n_layers, seqlen, seqlen), dtype=torch.float32).to(h)
             for layer in self.layers:
-                if layer_count == 0: # Only return the first layer's attention
-                    h, scores_firstLayer_meanHeads = layer(h, start_pos, freqs_cis, mask, return_attW=True)
-                else:
-                    h = layer(h, start_pos, freqs_cis, mask, return_attW=False)
+                h, scores_byLayer_meanHeads[:, layer_count, :, :] = layer(h, start_pos, freqs_cis, mask, return_attW=True)
                 layer_count = layer_count + 1
+            
             h = self.norm(h)
-
             # output = self.output_mlp(h)
             output = h
 
-            return output, scores_firstLayer_meanHeads
+            return output, scores_byLayer_meanHeads
 
         else:
             for layer in self.layers:

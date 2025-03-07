@@ -68,7 +68,6 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         crattn_num_lowdim_heads,
         crattn_num_lowdim_layers,
         crattn_max_seq_len,
-        crattn_cnn_kernel_size, 
         crattn_dropout, 
         **kwargs):
 
@@ -82,7 +81,6 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         self.num_lowdim_heads = crattn_num_lowdim_heads
         self.num_lowdim_layers = crattn_num_lowdim_layers
         self.max_seq_len = crattn_max_seq_len
-        # self.cnn_kernel_size = crattn_cnn_kernel_size
         self.dropout = crattn_dropout
 
         # Input Cross-attention Layer 
@@ -267,7 +265,7 @@ class WAE(nn.Module):
     '''
     def __init__(
         self, 
-        autoencode_samples,
+        encode_token_samples,
         padded_channels,
         crattn_embed_dim,
         transformer_seq_length,
@@ -285,7 +283,7 @@ class WAE(nn.Module):
         super(WAE, self).__init__()
 
         self.gpu_id = gpu_id
-        self.autoencode_samples = autoencode_samples
+        self.encode_token_samples = encode_token_samples
         self.padded_channels = padded_channels
         self.crattn_embed_dim = crattn_embed_dim
         self.num_encode_concat_transformer_tokens = num_encode_concat_transformer_tokens
@@ -324,7 +322,7 @@ class WAE(nn.Module):
             latent_dim = self.latent_dim,
             decoder_base_dims = self.decoder_base_dims,
             output_channels = self.padded_channels,
-            decode_samples = self.autoencode_samples)
+            decode_samples = self.encode_token_samples)
 
         # Adversarial Classifier
         self.adversarial_classifier = AdversarialClassifier(latent_dim=self.latent_dim, **kwargs) # the name 'adversarial_classifier' is tied to model parameter search to create seperate optimizer for classifier
@@ -395,8 +393,8 @@ class WAE(nn.Module):
 
 def print_models_flow(x, **kwargs):
     '''
-    Builds models on CPU and prints sizes of forward passes
-
+    Builds models on CPU and prints sizes of forward passes with random data as inputs
+    
     '''
 
     pat_num_channels = x.shape[2] 
@@ -447,7 +445,7 @@ if __name__ == "__main__":
     x = torch.rand(batchsize, in_channels, data_length, len(kernel_sizes))
 
     wae = WAE(
-        autoencode_samples=data_length,
+        encode_token_samples=data_length,
         in_channels=in_channels,
         kernel_sizes=kernel_sizes, 
         time_change=time_change,

@@ -31,7 +31,7 @@ class JSONLinesLogger:
     def initialize_file(self):
         """Initialize the file if it doesn't exist."""
         if not os.path.isfile(self.filename):
-            header = ['file_class', 'random_hash_modifier', 'start_idx', 'autoencode_samples', 'end_idx', 'file_name']
+            header = ['file_class', 'random_hash_modifier', 'start_idx', 'encode_token_samples', 'end_idx', 'file_name']
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             log_entry = {"timestamp": timestamp, "data": header}
             with gzip.open(self.filename, 'wt', encoding='UTF-8') as f:
@@ -63,7 +63,7 @@ class SEEG_Tornado_Dataset(Dataset):
         dataset_pic_dir, 
         num_samples,
         transformer_seq_length,
-        autoencode_samples,
+        encode_token_samples,
         random_pulls_in_batch,
         num_rand_hashes, 
         padded_channels,
@@ -76,9 +76,9 @@ class SEEG_Tornado_Dataset(Dataset):
 
         self.gpu_id = gpu_id
         self.num_samples = num_samples
-        self.autoencode_samples = autoencode_samples
+        self.encode_token_samples = encode_token_samples
         self.FS = FS
-        self.num_windows = int((self.num_samples - self.autoencode_samples)/self.autoencode_samples) - 2
+        self.num_windows = int((self.num_samples - self.encode_token_samples)/self.encode_token_samples) - 2
         self.random_pulls_in_batch = random_pulls_in_batch
         self.num_rand_hashes = num_rand_hashes
         self.latent_dim = latent_dim

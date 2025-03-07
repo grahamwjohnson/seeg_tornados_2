@@ -929,35 +929,41 @@ def print_autoreg_raw_predictions(gpu_id, epoch, pat_id, rand_file_count, raw_co
 
     pl.close('all') 
 
-def print_attention_realtime(epoch, iter_curr, pat_idxs, scores_firstLayer_meanHeads, savedir, **kwargs):
+def print_attention_realtime(epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, **kwargs):
 
-    scores_firstLayer_meanHeads = scores_firstLayer_meanHeads.detach().cpu().numpy()
+    scores_byLayer_meanHeads = scores_byLayer_meanHeads.detach().cpu().numpy()
 
-    batchsize = scores_firstLayer_meanHeads.shape[0]
+    batchsize, n_layers, rows, cols = scores_byLayer_meanHeads.shape
+    subplot_dim = int(np.ceil(np.sqrt(n_layers)))
 
     # Make new grid/fig for every batch
     for b in range(0, batchsize):
-        gs = gridspec.GridSpec(1, 1) 
+        gs = gridspec.GridSpec(subplot_dim, subplot_dim) 
         fig = pl.figure(figsize=(20, 14))
 
-        ax1 = fig.add_subplot(gs[0]) 
-        scores_plot = scores_firstLayer_meanHeads[b, :, :] + 1e-3 # Add small amount to avoid log error when scaling
+        subplot_count = 0
+        for l in range(n_layers):
 
-        # Create a mask for the lower-left triangle
-        mask = np.triu(np.ones_like(scores_plot, dtype=bool))  # Upper triangle mask
-        lower_triangle = np.where(mask, np.nan, scores_plot)   # Replace upper triangle with NaN
+            ax_curr = fig.add_subplot(gs[int(subplot_count/subplot_dim), int(subplot_count%subplot_dim)]) 
+            scores_plot = scores_byLayer_meanHeads[b, l, :, :] # Add small amount to avoid log error when scaling
 
-        # Multiply each row of the lower-left triangle by its row index
-        for i in range(lower_triangle.shape[0]):
-            lower_triangle[i, :i+1] *= (i + 1)  # Multiply by row index (1-based)
+            # Create a mask for the lower-left triangle
+            mask = np.triu(np.ones_like(scores_plot, dtype=bool))  # Upper triangle mask
+            lower_triangle = np.where(mask, np.nan, scores_plot)   # Replace upper triangle with NaN
 
-        # Plot the heatmap
-        sns.heatmap(lower_triangle, cmap=sns.cubehelix_palette(as_cmap=True), ax=ax1, cbar_kws={'label': 'Row-Weighted Attention'})
-        ax1.set_title(f"Scores, First Transformer Layer - Average of Heads, Batch:{b}")
+            # Multiply each row of the lower-left triangle by its row index
+            for i in range(lower_triangle.shape[0]):
+                lower_triangle[i, :i+1] *= (i + 1)  # Multiply by row index (1-based)
 
-        fig.suptitle(f"Attention Weights")
+            # Plot the heatmap
+            sns.heatmap(lower_triangle, cmap=sns.cubehelix_palette(as_cmap=True), ax=ax_curr, cbar_kws={'label': 'Row-Weighted Attention'})
+            ax_curr.set_title(f"Layer {l} - Mean of Heads")
+
+            subplot_count = subplot_count + 1
+
+        fig.suptitle(f"Attention Weights - Batch:{b}")
         if not os.path.exists(savedir): os.makedirs(savedir)
-        savename_jpg = f"{savedir}/FirstLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_patidx{pat_idxs[b].cpu().numpy()}.jpg"
+        savename_jpg = f"{savedir}/ByLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_patidx{pat_idxs[b].cpu().numpy()}.jpg"
         pl.savefig(savename_jpg)
         pl.close(fig)   
 
@@ -2175,7 +2181,7 @@ def run_setup(**kwargs):
     kwargs = initialize_directories(run_notes=run_notes, **kwargs)
 
     # Print the model forward pass sizes
-    fake_data = torch.rand(kwargs['max_batch_size'], kwargs['transformer_seq_length'] - 1, kwargs['padded_channels'], kwargs['autoencode_samples']) # 199 is just an example of number of patient channels
+    fake_data = torch.rand(kwargs['max_batch_size'], kwargs['transformer_seq_length'] - 1, kwargs['padded_channels'], kwargs['encode_token_samples']) # 199 is just an example of number of patient channels
     print_models_flow(x=fake_data, **kwargs)
 
     # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)
