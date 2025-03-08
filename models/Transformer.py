@@ -303,10 +303,10 @@ class TransformerBlock(nn.Module):
     ):
 
         if return_attW:
-            h, scores_meanHeads_lastRow = self.attention(self.attention_norm(x), start_pos, freqs_cis, mask, return_attW=True)
+            h, scores_meanHeads = self.attention(self.attention_norm(x), start_pos, freqs_cis, mask, return_attW=True)
             h = x + h
             out = h + self.feed_forward(self.ffn_norm(h))
-            return out, scores_meanHeads_lastRow
+            return out, scores_meanHeads
 
         else:
             h = x + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask, return_attW=False)
@@ -350,7 +350,8 @@ class Transformer(nn.Module):
         start_pos: int=-9999, 
         return_attW: bool=False,
         attention_dropout: float=0.0,
-        causal_mask_bool: bool=True # For brain-state embedder: should be True for training and inference (keeps temporal dependency)
+        causal_mask_bool: bool=False, 
+        self_mask: bool=True
         ):
         # _bsz, seqlen = tokens.shape
         # h = self.tok_embeddings(tokens)
@@ -366,7 +367,6 @@ class Transformer(nn.Module):
         mask = None
         if (seqlen > 1) & causal_mask_bool:
             mask = torch.full((seqlen, seqlen), float("-inf"), device=self.device)
-
             mask = torch.triu(mask, diagonal=1)
 
             # When performing key-value caching, we compute the attention scores
@@ -380,8 +380,25 @@ class Transformer(nn.Module):
             # Apply attention dropout
             if attention_dropout > 0:
                 mask = attention_mask_dropout(mask, attention_dropout)
-            
 
+        # Diagonal masking
+        elif (seqlen > 1) & self_mask:
+            mask = torch.zeros((seqlen, seqlen), device=self.device)  # Start with all zeros
+            mask = mask.masked_fill(torch.eye(seqlen, device=self.device).bool(), float("-inf"))  # Mask the diagonal
+
+
+            # When performing key-value caching, we compute the attention scores
+            # only for the new sequence. Thus, the matrix of scores is of size
+            # (seqlen, cache_len + seqlen), and the only masked entries are (i, j) for
+            # j > cache_len + i, since row i corresponds to token cache_len + i.
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=self.device), mask]
+            ).type_as(h)
+
+            # Apply attention dropout
+            if attention_dropout > 0:
+                mask = attention_mask_dropout(mask, attention_dropout)
+            
         if return_attW:
             layer_count = 0
             for layer in self.layers:

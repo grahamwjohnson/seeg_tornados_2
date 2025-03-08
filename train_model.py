@@ -454,7 +454,7 @@ class Trainer:
         encode_token_samples: int,
         num_samples: int,
         transformer_seq_length: int,
-        num_encode_concat_transformer_tokens: int,
+        # num_encode_concat_transformer_tokens: int,
         transformer_start_pos: int,
         FS: int,
         hash_output_range: tuple,
@@ -497,7 +497,7 @@ class Trainer:
         self.encode_token_samples = encode_token_samples
         self.num_samples = num_samples
         self.transformer_seq_length = transformer_seq_length
-        self.num_encode_concat_transformer_tokens = num_encode_concat_transformer_tokens
+        # self.num_encode_concat_transformer_tokens = num_encode_concat_transformer_tokens
         self.transformer_start_pos = transformer_start_pos
         self.FS = FS
         self.hash_output_range = hash_output_range
@@ -884,7 +884,8 @@ class Trainer:
 
                     ### WAE ENCODER
                     # Forward pass in stacked batch through WAE encoder
-                    latent, _, _ = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
+                    # latent, _, _ = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
+                    latent, _, _ = self.wae(x, reverse=False, alpha=self.classifier_alpha) # No shift if not causal masking
                     files_latents[:, w, :] = torch.mean(latent, dim=1)
 
                 # After file complete, pacmap_window/stride the file and save each file from batch seperately
@@ -971,7 +972,8 @@ class Trainer:
             if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
 
             ### WAE ENCODER: 1-shifted
-            latent, class_probs_mean_of_latent, attW = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
+            # latent, class_probs_mean_of_latent, attW = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
+            latent, class_probs_mean_of_latent, attW = self.wae(x, reverse=False, alpha=self.classifier_alpha) # No shift if not causal masking
             
             ### WAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
             x_hat = self.wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
@@ -989,7 +991,8 @@ class Trainer:
 
             # LOSSES
             recon_loss = loss_functions.recon_loss_function(
-                x=x[:, 1 + self.num_encode_concat_transformer_tokens :, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
+                # x=x[:, 1 + self.num_encode_concat_transformer_tokens :, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
+                x=x, # No shift if not causal masking
                 x_hat=x_hat,
                 recon_weight=self.recon_weight)
 
@@ -1104,7 +1107,8 @@ class Trainer:
                                 file_name = file_name,
                                 **kwargs)
                             utils_functions.print_recon_realtime(
-                                x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], 
+                                # x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], 
+                                x=x,
                                 x_hat=x_hat, 
                                 savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_recon",
                                 epoch = self.epoch,

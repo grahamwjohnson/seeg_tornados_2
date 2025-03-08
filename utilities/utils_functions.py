@@ -944,18 +944,20 @@ def print_attention_realtime(epoch, iter_curr, pat_idxs, scores_byLayer_meanHead
         for l in range(n_layers):
 
             ax_curr = fig.add_subplot(gs[0, l]) 
-            scores_plot = scores_byLayer_meanHeads[b, l, :, :] # Add small amount to avoid log error when scaling
+            plot_data = scores_byLayer_meanHeads[b, l, :, :] # Add small amount to avoid log error when scaling
 
-            # Create a mask for the lower-left triangle
-            mask = np.triu(np.ones_like(scores_plot, dtype=bool))  # Upper triangle mask
-            lower_triangle = np.where(mask, np.nan, scores_plot)   # Replace upper triangle with NaN
+            # Replace diagonal with NaN
 
-            # Multiply each row of the lower-left triangle by its row index
-            for i in range(lower_triangle.shape[0]):
-                lower_triangle[i, :i+1] *= (i + 1)  # Multiply by row index (1-based)
+            mask = np.eye(plot_data.shape[0], dtype=bool)
+            assert np.where(~mask, 0, plot_data).sum() == 0  # Make sure diaganal sums to 0, or masking was not done correctly
+            plot_data = np.where(mask, np.nan, plot_data)   
+
+            # # Multiply each row of the data by its row index
+            # for i in range(plot_data.shape[0]):
+            #     plot_data[i, :] *= (i + 1)  # Multiply by row index (1-based)
 
             # Plot the heatmap
-            sns.heatmap(lower_triangle, cmap=sns.cubehelix_palette(as_cmap=True), ax=ax_curr, cbar_kws={'label': 'Row-Weighted Attention', 'orientation': 'horizontal'}) 
+            sns.heatmap(plot_data, cmap=sns.cubehelix_palette(as_cmap=True), ax=ax_curr, cbar_kws={'label': 'Row-Weighted Attention', 'orientation': 'horizontal'}) 
             if l == 0: ax_curr.set_title(f"First Layer - Mean of Heads")
             else: ax_curr.set_title(f"Last Layer - Mean of Heads")
             ax_curr.set_aspect('equal', adjustable='box')
@@ -2180,7 +2182,8 @@ def run_setup(**kwargs):
     kwargs = initialize_directories(run_notes=run_notes, **kwargs)
 
     # Print the model forward pass sizes
-    fake_data = torch.rand(kwargs['max_batch_size'], kwargs['transformer_seq_length'] - 1, kwargs['padded_channels'], kwargs['encode_token_samples']) # 199 is just an example of number of patient channels
+    # fake_data = torch.rand(kwargs['max_batch_size'], kwargs['transformer_seq_length'] - 1, kwargs['padded_channels'], kwargs['encode_token_samples']) # 199 is just an example of number of patient channels
+    fake_data = torch.rand(kwargs['max_batch_size'], kwargs['transformer_seq_length'], kwargs['padded_channels'], kwargs['encode_token_samples']) 
     print_models_flow(x=fake_data, **kwargs)
 
     # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)

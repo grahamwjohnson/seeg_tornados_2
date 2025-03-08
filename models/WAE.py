@@ -269,7 +269,7 @@ class WAE(nn.Module):
         padded_channels,
         crattn_embed_dim,
         transformer_seq_length,
-        num_encode_concat_transformer_tokens,
+        # num_encode_concat_transformer_tokens,
         transformer_start_pos,
         transformer_dim,
         encoder_transformer_activation,
@@ -286,7 +286,7 @@ class WAE(nn.Module):
         self.encode_token_samples = encode_token_samples
         self.padded_channels = padded_channels
         self.crattn_embed_dim = crattn_embed_dim
-        self.num_encode_concat_transformer_tokens = num_encode_concat_transformer_tokens
+        # self.num_encode_concat_transformer_tokens = num_encode_concat_transformer_tokens
         self.transformer_seq_length = transformer_seq_length
         self.transformer_start_pos = transformer_start_pos
         self.transformer_dim = transformer_dim
@@ -330,17 +330,17 @@ class WAE(nn.Module):
         # Non-linearity as needed
         self.silu = nn.SiLU()
 
-    def concat_past_tokens(self, x):
-        '''
-        Sliding window with stride of 1 that collects N concat tokens at a time
-        '''
-        num_pulls = x.shape[1] - self.num_encode_concat_transformer_tokens - self.transformer_start_pos
-        y = torch.zeros([x.shape[0], num_pulls, self.top_dims]).to(x)
+    # def concat_past_tokens(self, x):
+    #     '''
+    #     Sliding window with stride of 1 that collects N concat tokens at a time
+    #     '''
+    #     num_pulls = x.shape[1] - self.num_encode_concat_transformer_tokens - self.transformer_start_pos
+    #     y = torch.zeros([x.shape[0], num_pulls, self.top_dims]).to(x)
 
-        for i in range(num_pulls):
-            y[:, i, :] = x[:, i:i+self.num_encode_concat_transformer_tokens, :].reshape(x.shape[0], self.num_encode_concat_transformer_tokens * x.shape[2])
+    #     for i in range(num_pulls):
+    #         y[:, i, :] = x[:, i:i+self.num_encode_concat_transformer_tokens, :].reshape(x.shape[0], self.num_encode_concat_transformer_tokens * x.shape[2])
 
-        return y
+    #     return y
 
     def forward(self, x, reverse=False, hash_pat_embedding=-1, alpha=None):
 
@@ -356,7 +356,7 @@ class WAE(nn.Module):
             y, attW = self.transformer_encoder(y, start_pos=self.transformer_start_pos, return_attW = True)
 
             # WAE CORE
-            y = self.concat_past_tokens(y) # Sliding window over transformer output: [batch, token, latent_dim] --> [batch, token_prime, latent_dim * num_encode_concat_transformer_tokens]
+            # y = self.concat_past_tokens(y) # Sliding window over transformer output: [batch, token, latent_dim] --> [batch, token_prime, latent_dim * num_encode_concat_transformer_tokens]
             y = y.reshape([y.shape[0]*y.shape[1], y.shape[2]]) # Batch the sliding windows for efficient decoding: [batch, token_prime, latent_dim * num_encode_concat_transformer_tokens] --> [batch x token_prime, latent_dim * num_encode_concat_transformer_tokens]
             y = self.top_to_hidden(y)
             y = self.silu(y)
@@ -365,7 +365,8 @@ class WAE(nn.Module):
 
             # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
             # NOTE: you lose the priming tokens needed by transformer
-            latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
+            # latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
+            latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length, dim=0), dim=0)
 
             # CLASSIFIER - on the mean of the means
             mean_of_latent = torch.mean(latent, dim=1)
@@ -386,7 +387,8 @@ class WAE(nn.Module):
             y = self.decoder(y).transpose(1,2)  # Comes out as [batch, waveform, num_channels] --> [batch, num_channels, waveform]
 
             # Index the correct output channels for each batch index
-            y = torch.split(y, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0)
+            # y = torch.split(y, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0)
+            y = torch.split(y, self.transformer_seq_length, dim=0)
             y = torch.stack(y, dim=0)
 
             return y
