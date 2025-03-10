@@ -290,11 +290,11 @@ def main(
 
     # Kill the val data generators if val_every is set artificially high
     if kwargs['val_every'] > 999:
-        print(f"[GPU{str(trainer.gpu_id)}] WARNING: val_every is {kwargs['val_every']}, which is over 999, thus going to kill val generators")
+        print(f"[GPU{str(trainer.gpu_id)}] WARNING: val_every is {kwargs['val_every']}, which is over articial arbitrary limit of 999, thus going to kill val generators")
         trainer.valfinetune_dataset.kill_generator()
         trainer.valunseen_dataset.kill_generator()
     
-    # Run through all epochs
+    # Main loop through all epochs
     for epoch in range(start_epoch, epochs_to_train):
         trainer.epoch = epoch
 
@@ -334,10 +334,12 @@ def main(
                 dataset_strs = ["train", "valunseen"]
             
             # INFERENCE on all selected datasets, kill all data generators
-            trainer._set_to_eval()
             trainer.train_dataset.kill_generator()
             trainer.valfinetune_dataset.kill_generator()
             trainer.valunseen_dataset.kill_generator()
+            print(f"[GPU{trainer.gpu_id}] Killed all random generators for inference mode")
+
+            trainer._set_to_eval()
             with torch.inference_mode():
                 for d in range(0, len(dataset_list)):
                     trainer._run_export_embeddings(
@@ -355,11 +357,11 @@ def main(
                 trainer.accumulated_z = accumulated_z
                 trainer.accumulated_labels = accumulated_labels
                 trainer.accumulated_class_probs = accumulated_class_probs
-                trainer.train_dataset.initiate_generator()
-                trainer.valfinetune_dataset.initiate_generator()
-                trainer.valunseen_dataset.initiate_generator()
-
-            print(f"GPU{str(trainer.gpu_id)} at post inference barrier")
+            
+            trainer.train_dataset.initiate_generator()
+            trainer.valfinetune_dataset.initiate_generator()
+            trainer.valunseen_dataset.initiate_generator()
+            print(f"GPU{str(trainer.gpu_id)} at post inference barrier - restarted random data generators")
             barrier()
         
         # TRAIN
@@ -426,7 +428,7 @@ def main(
                 trainer.accumulated_class_probs = accumulated_class_probs
 
     # Kill the process after training loop completes
-    print(f"[GPU{gpu_id}]: End of train loop, killing subprocess")
+    print(f"[GPU{gpu_id}]: End of train loop, killing 'main' subprocess")
     wandb.finish()
     destroy_process_group() 
 
@@ -906,7 +908,7 @@ class Trainer:
                     num_latents_in_win = int(num_latents_in_win)
 
                     num_latents_in_stride = stride_sec_curr / sec_in_forward
-                    assert (num_latents_in_stride % 1) == 0
+                    assert (num_latents_in_stride % 1) == 0 
                     num_latents_in_stride = int(num_latents_in_stride)
 
                     # May not go in evenly, that is ok

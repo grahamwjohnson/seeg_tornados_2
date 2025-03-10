@@ -623,7 +623,7 @@ def pacmap_subfunction(
             FP_ratio=pacmap_FP_ratio, # default 2.0,
             save_tree=True, # Save tree to enable 'transform" method
             apply_pca=apply_pca, 
-            verbose=verbose) 
+            verbose=verbose)  
 
         # fit the data (The index of transformed data corresponds to the index of the original data)
         latent_postPaCMAP_perfile = reducer.fit_transform(latent_PaCMAP_input, init='pca')
@@ -689,18 +689,18 @@ def pacmap_subfunction(
         seiz_start_dt_perfile[i], seiz_stop_dt_perfile[i], seiz_types_perfile[i] = get_pat_seiz_datetimes(pat_ids_list[i], atd_file=atd_file)
 
     # Intialize master figure 
-    fig = pl.figure(figsize=(30, 25))
-    gs = gridspec.GridSpec(2, 5, figure=fig)
+    fig = pl.figure(figsize=(40, 15))
+    gs = gridspec.GridSpec(1, 5, figure=fig)
 
 
     # **** PACMAP PLOTTING ****
 
     print(f"PaCMAP Plotting")
-    ax20 = fig.add_subplot(gs[1, 0]) 
-    ax21 = fig.add_subplot(gs[1, 1]) 
-    ax22 = fig.add_subplot(gs[1, 2]) 
-    ax23 = fig.add_subplot(gs[1, 3]) 
-    ax24 = fig.add_subplot(gs[1, 4]) 
+    ax20 = fig.add_subplot(gs[0, 0]) 
+    ax21 = fig.add_subplot(gs[0, 1]) 
+    ax22 = fig.add_subplot(gs[0, 2]) 
+    ax23 = fig.add_subplot(gs[0, 3]) 
+    ax24 = fig.add_subplot(gs[0, 4]) 
     ax20, ax21, ax22, ax23, ax24, xy_lims = plot_latent(
         ax=ax20, 
         interCont_ax=ax21,
@@ -787,45 +787,45 @@ def pacmap_subfunction(
     # ax11.title.set_text('Interictal Contour (no peri-ictal data)')
 
 
-    # **** INFO RAW DIM PLOTTING *****
+    # # **** INFO RAW DIM PLOTTING *****
 
-    raw_dims_to_plot = [0,1]
+    # raw_dims_to_plot = [0,1]
 
-    # Pull out the raw dims of interest and stack the data by file
-    latent_flat_RawDim_perfile = [latent_data_windowed[i][:, raw_dims_to_plot] for i in range(len(latent_data_windowed))]
+    # # Pull out the raw dims of interest and stack the data by file
+    # latent_flat_RawDim_perfile = [latent_data_windowed[i][:, raw_dims_to_plot] for i in range(len(latent_data_windowed))]
 
-    print(f"Raw Dims Plotting")
-    ax00 = fig.add_subplot(gs[0, 0]) 
-    ax01 = fig.add_subplot(gs[0, 1]) 
-    ax02 = fig.add_subplot(gs[0, 2]) 
-    ax03 = fig.add_subplot(gs[0, 3]) 
-    ax04 = fig.add_subplot(gs[0, 4])
-    ax00, ax01, ax02, ax03, ax04, xy_lims_RAW_DIMS = plot_latent(
-        ax=ax00, 
-        interCont_ax=ax01,
-        seiztype_ax=ax02,
-        time_ax=ax03,
-        cluster_ax=ax04,
-        latent_data=np.stack(latent_flat_RawDim_perfile,axis=0).swapaxes(1,2), # [epoch, 2, timesample]
-        modified_samp_freq=modified_FS,
-        start_datetimes=start_datetimes_epoch, 
-        stop_datetimes=stop_datetimes_epoch, 
-        win_sec=win_sec,
-        stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt_perfile, 
-        seiz_stop_dt=seiz_stop_dt_perfile, 
-        seiz_types=seiz_types_perfile,
-        preictal_dur=plot_preictal_color_sec,
-        postictal_dur=plot_postictal_color_sec,
-        plot_ictal=True,
-        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
-        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
-        hdb=hdb,
-        xy_lims=xy_lims_RAW_DIMS,
-        **kwargs)        
+    # print(f"Raw Dims Plotting")
+    # ax00 = fig.add_subplot(gs[0, 0]) 
+    # ax01 = fig.add_subplot(gs[0, 1]) 
+    # ax02 = fig.add_subplot(gs[0, 2]) 
+    # ax03 = fig.add_subplot(gs[0, 3]) 
+    # ax04 = fig.add_subplot(gs[0, 4])
+    # ax00, ax01, ax02, ax03, ax04, xy_lims_RAW_DIMS = plot_latent(
+    #     ax=ax00, 
+    #     interCont_ax=ax01,
+    #     seiztype_ax=ax02,
+    #     time_ax=ax03,
+    #     cluster_ax=ax04,
+    #     latent_data=np.stack(latent_flat_RawDim_perfile,axis=0).swapaxes(1,2), # [epoch, 2, timesample]
+    #     modified_samp_freq=modified_FS,
+    #     start_datetimes=start_datetimes_epoch, 
+    #     stop_datetimes=stop_datetimes_epoch, 
+    #     win_sec=win_sec,
+    #     stride_sec=stride_sec, 
+    #     seiz_start_dt=seiz_start_dt_perfile, 
+    #     seiz_stop_dt=seiz_stop_dt_perfile, 
+    #     seiz_types=seiz_types_perfile,
+    #     preictal_dur=plot_preictal_color_sec,
+    #     postictal_dur=plot_postictal_color_sec,
+    #     plot_ictal=True,
+    #     hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
+    #     hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
+    #     hdb=hdb,
+    #     xy_lims=xy_lims_RAW_DIMS,
+    #     **kwargs)        
 
-    ax00.title.set_text(f'Dims [{raw_dims_to_plot[0]},{raw_dims_to_plot[1]}], Window mean, dur/str=' + str(win_sec) + '/' + str(stride_sec) +' seconds,' )
-    ax01.title.set_text('Interictal Contour (no peri-ictal data)')
+    # ax00.title.set_text(f'Dims [{raw_dims_to_plot[0]},{raw_dims_to_plot[1]}], Window mean, dur/str=' + str(win_sec) + '/' + str(stride_sec) +' seconds,' )
+    # ax01.title.set_text('Interictal Contour (no peri-ictal data)')
 
     # **** Save entire figure *****
     if not os.path.exists(savedir): os.makedirs(savedir)
@@ -838,7 +838,7 @@ def pacmap_subfunction(
 
     # Bundle the save metrics together
     # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
-    return ax20, reducer, hdb, xy_lims, xy_lims_RAW_DIMS # save_tuple
+    return ax20, reducer, hdb, xy_lims # save_tuple
 
 def prpacmap_subfunction(  
     atd_file,
@@ -1268,6 +1268,7 @@ def get_pat_seiz_datetimes(
     focal_unknown_bool=True,
     unknown_bool=True, 
     non_electro_bool=False,
+    artifact_bool=False,
     **kwargs
     ):
 
@@ -1281,8 +1282,8 @@ def get_pat_seiz_datetimes(
     
     # Look for each seizure type individually & delete if not desired
     # seiz_type_list = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Subclinical', 'Focal, unknown awareness', 'Unknown', 'Non-electrographic']
-    seiz_type_list = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Subclinical', 'Focal unknown awareness', 'Unknown', 'Non-electrographic']
-    delete_seiz_type_bool_list = [FBTC_bool, FIAS_bool, FAS_to_FIAS_bool, FAS_bool, subclinical_bool, focal_unknown_bool, unknown_bool, non_electro_bool]
+    seiz_type_list = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Subclinical', 'Focal unknown awareness', 'Unknown', 'Non-electrographic', 'Artifact']
+    delete_seiz_type_bool_list = [FBTC_bool, FIAS_bool, FAS_to_FIAS_bool, FAS_bool, subclinical_bool, focal_unknown_bool, unknown_bool, non_electro_bool, artifact_bool]
     for i in range(0,len(seiz_type_list)):
         if delete_seiz_type_bool_list[i]==False:
             find_str = seiz_type_list[i]
@@ -1297,8 +1298,8 @@ def get_pat_seiz_datetimes(
     pat_seiz_types_str = df_subset.loc[:,'Seizure Type (FAS; FIAS; FBTC; Non-electrographic; Subclinical; Unknown)'].astype(str).values.tolist()
 
     # Skip any lines that have nan/none or unknown time entries
-    delete_list_A = [i for i, val in enumerate(pat_seiz_starttime_str) if (val=='nan' or val=='Unknown')]
-    delete_list_B = [i for i, val in enumerate(pat_seiz_stoptime_str) if (val=='nan' or val=='Unknown')]
+    delete_list_A = [i for i, val in enumerate(pat_seiz_starttime_str) if (val=='nan' or val=='Unknown' or val=='None')]
+    delete_list_B = [i for i, val in enumerate(pat_seiz_stoptime_str) if (val=='nan' or val=='Unknown' or val=='None')]
     delete_list = list(set(delete_list_A + delete_list_B))
     delete_list.sort()
     if len(delete_list) > 0:

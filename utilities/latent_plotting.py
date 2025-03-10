@@ -9,6 +9,8 @@ import multiprocessing as mp
 import functools
 import seaborn as sns
 import matplotlib as mpl
+from scipy.stats import gaussian_kde
+from matplotlib.colors import LinearSegmentedColormap
 
 # Turn of interactive polotting for speed
 plt.ioff()
@@ -274,10 +276,46 @@ def plot_latent(
 
         # *** COUNTOUR PLOT ***
             
+        # Interictal
         x_plot_contour = x_plot[np.abs(c_toplot) ==1]
         y_plot_contour = y_plot[np.abs(c_toplot) ==1]
         cbar_dict = {'location': 'bottom', 'orientation': 'horizontal', 'label': 'Interictal Density', 'format': '%.2e'}
-        s = sns.kdeplot(x=x_plot_contour, y=y_plot_contour, ax=interCont_ax, cmap="Greys", fill=True, bw_adjust=.5, cbar=True, cbar_kws=cbar_dict)
+        s = sns.kdeplot(x=x_plot_contour, y=y_plot_contour, ax=interCont_ax, cmap="Greys", fill=True, bw_adjust=.5, alpha=0.7, cbar=False, cbar_kws=cbar_dict)
+
+        # Pre-ictal
+        x_plot_contour_PREICTAL = x_plot[(c_toplot > -1) & (c_toplot < 0)]
+        y_plot_contour_PREICTAL = y_plot[(c_toplot > -1) & (c_toplot < 0)]
+
+        # preictal_data = lat_data_windowed_toplot[:, (c_toplot > -1) & (c_toplot < 0)]
+        # # Compute the KDE density values manually
+        # kde = gaussian_kde(preictal_data) 
+        # x, y = preictal_data[0,:], preictal_data[1,:]
+        # xgrid, ygrid = np.mgrid[x.min():x.max():500, y.min():y.max():500]
+        # positions = np.vstack([xgrid.ravel(), ygrid.ravel()])
+        # density = kde(positions).reshape(xgrid.shape)
+
+        # # Normalize the density values to [0, 1] for alpha mapping
+        # density_normalized = (density - density.min()) / (density.max() - density.min())
+
+        # # Create a custom colormap with alpha fading to 0 for lower densities
+        # cmap = LinearSegmentedColormap.from_list(
+        #     "custom_reds", [(1, 0, 0, alpha) for alpha in np.linspace(0, 1, 256)]  # Alpha starts at 0
+        # )
+
+        # # Plot the KDE with the custom colormap
+        # plt.imshow(
+        #     density_normalized.T,
+        #     extent=[x.min(), x.max(), y.min(), y.max()],
+        #     origin="lower",
+        #     cmap=cmap,
+        #     alpha=0.8,  # Overall transparency of the KDE
+        # )
+
+        cbar_levels = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+        cmap_preictal = sns.color_palette(palette='flare', as_cmap=True)
+        cbar_dict = {'location': 'bottom', 'orientation': 'horizontal', 'label': 'Pre-Ictal Density', 'format': '%.2e', 'ticks': cbar_levels}
+        s_pre = sns.kdeplot(x=x_plot_contour_PREICTAL, y=y_plot_contour_PREICTAL, ax=interCont_ax, cmap=cmap_preictal, fill=True, bw_adjust=.5, cbar=True, cbar_kws=cbar_dict, alpha=0.5, levels=cbar_levels)
+
         # plt.colorbar(shrink=0.7) 
         # Reset the limits based on peri-ictal plot
         interCont_ax.set_xlim(ax.get_xlim())
