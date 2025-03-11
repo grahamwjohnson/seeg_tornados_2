@@ -1,0 +1,190 @@
+# Grahamwjohnon
+
+num_gpus: 2
+
+# Dataset formation variables
+pat_dir: '/home/ghassanmakhoul/Documents/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/DurStr_1024s896s_epoched_datasets/' #   2pats'     # 10pats' 
+train_val_pat_perc: kwargs['train_val_pat_perc'] = [1.0, 0.0] #[0.5, 0.5] # [0.8, 0.2]
+num_freq_bands: 1
+pat_num_channels_LUT: '/home/ghassanmakhoul/Documents/data/pats_num_channels_LUT.csv'
+num_samples: kwargs['num_samples'] = 1024*512 # MATCH TO FILE SELECTION 'duration_stride_str' BELOW 512*512, 10*512 , 60*512    
+FS: 512             
+atd_file: '/home/ghassanmakhoul/Documents/Tornadoes_v1/all_time_data_01092023_112957.csv'
+data_dir_subfolder: '/scaled_data_epochs'
+# base_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results'
+base_path: '/home/ghassanmakhoul/Documents/results'
+scale_type: 'HistEqualScale'  # 'LinearScale', 'HyperTanScaling', 'CubeRootScale', 'HistEqualScale'
+channel_scale_style: 'By_Channel_Scale' # 'Same_Scale_For_All_Channels' # By_Channel_Scale # If using multiple freq bands, the preprocessing script rescaales, so be careful and should use 'by channel' scaling 
+bipole_or_monopole: 'Bipole_datasets'
+scale_epoch_str: 'data_normalized_to_first_24_hours' # 'data_normalized_to_first_24_hours' # 'data_normalized_to_first_seizure_centered_24_hours' # , 'Dictated by preprocessing: Should probably decide to have duration match 'train_hours_desired', but do not HAVE to
+# duration_stride_str: 'DurStr_1024s896s_epoched_datasets' # 'DurStr_1024s896s_epoched_datasets', 'DurStr_512s480s_epoched_datasets', 'DurStr_10s2s_epoched_datasets', 'DurStr_60s10s_epoched_datasets'
+duration_stride_str: 'DurStr_1024s896s_epoched_datasets'
+freq_bands_str: 'wholeband' # 1to12Hz_12to59Hz_61to179Hz, wholeband
+intrapatient_dataset_style: 2 # 1 all data (no SPES), 2 all data (with SPES), 3 ONLY SPES
+train_hour_dataset_range: kwargs['train_hour_dataset_range'] = [-1, -1]  # [-1, -1] means all, [X, -1] means from X to end
+rand_name_json: '/home/ghassanmakhoul/Documents/Tornadoes_v1/utilities/animals.json'
+
+# Random data generator (seperate subprocess)
+random_gen_script_path: '/home/ghassanmakhoul/Documents/Tornadoes_v1/gen_random_data.py'
+num_buffer_batches: kwargs['num_buffer_batches'] = int(kwargs['train_forward_passes'] / kwargs['num_gpus'])   # 512 # Max files to keep in random generator tmp directry 
+num_data_threads: 1 # How many threads to start for each data generator (by each GPU)
+nested_max_workers: 16 # For the get batch subprocess
+
+# Training settings
+continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+print_dataset_bargraphs: False # Typically set to False if not the first run of model, but may want true if adding new patients
+cont_train_model_dir:  '/home/ghassanmakhoul/Documents/trained_models/incatern' 
+inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
+
+### WAE Model Params ###
+encode_token_samples: 16 # 8
+
+# Cross atttention embedder
+padded_channels: 256 #input padded to allow for different number of channels, also the top level embed dim
+crattn_embed_dim: 256  # This times encode_token_samples will be transformer dims e.g. 32*32 = 1024
+crattn_num_highdim_heads: 8 # at padding dimension
+crattn_num_highdim_layers: 4 # at padding dimension
+crattn_num_lowdim_heads: 8 # at embed dim dimension
+crattn_num_lowdim_layers: 4 # at embed dim dimension
+crattn_max_seq_len: kwargs['crattn_max_seq_len'] = kwargs['encode_token_samples']
+crattn_dropout: 0.1 
+
+# Transformer Encoder
+transformer_dim: kwargs['transformer_dim'] = kwargs['crattn_embed_dim'] * kwargs['encode_token_samples']
+transformer_seq_length: 64
+max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
+max_batch_size: kwargs['max_batch_size'] = kwargs['random_pulls_in_batch'] * kwargs['inference_batch_mult']
+n_layers: 4
+n_heads: 64
+multiple_of: 256 
+ffn_dim_multiplier: 0.4 # Default is 1 to make FF layers account for ~2/3 of total parameter count
+attention_dropout: 0.1               
+encoder_transformer_activation: "silu"
+
+# WAE-Layers Encoder
+# num_encode_concat_transformer_tokens: 1
+transformer_start_pos: 0 # Not currently coded up to work if > 0
+top_dims: kwargs['top_dims'] = kwargs['transformer_dim'] # kwargs['num_encode_concat_transformer_tokens'] * kwargs['transformer_dim']
+hidden_dims: 8192 # 4096
+latent_dim: 4096 # 2048
+
+# DECODER
+# Non-autoregressive transformer
+decoder_base_dims: 512 # top im of decoder is [encode_token_samples * decoder_base_dims]
+
+# Classifier
+classifier_hidden_dims: [2048, 1024, 512, 256]
+classifier_num_pats: 40 #    ########   Hardcoded  ########
+classifier_dropout: 0.1
+
+# WAE Optimizer hyperparameters
+core_weight_decay: 0.1
+adamW_beta1: 0.9
+adamW_beta2: 0.95 
+
+# Classifier ptimizer hyperparameters
+classifier_weight_decay: 0
+classifier_adamW_beta1: 0.9
+classifier_adamW_beta2: 0.999
+
+# Patient hash embedding
+hash_output_range: kwargs['hash_output_range'] = (0, 2)  # tuple, modify based on approximate range of prior NOTE: hash2vector should be modified
+train_num_rand_hashes: 1  # Number of random channel orders, with deterministic hash embedding for each, a form of augmentation
+autoreg_num_rand_hashes: 1 # Need to be only one to work? in theory should work with many?
+val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
+
+# Training settings
+random_pulls_in_batch: 8 # BATCHSIZE
+train_forward_passes: 2048 # Independent of batchsize
+valfinetune_forward_passes: 2048 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes
+valunseen_forward_passes: 2048 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes
+epochs_to_train: 999999 
+
+# Validating settings
+val_finetine_bool: True # If False, will skip finetuning and just validate on unseen portion of validation patients 
+val_every: 99999 # Will only do one epoch, so update 'valfinetune_forward_passes' if want to finetune longer
+val_finetune_hour_dataset_range: kwargs['val_finetune_hour_dataset_range'] = [2, 50]
+val_unseen_hour_dataset_range: kwargs['val_unseen_hour_dataset_range'] = [50, -1]
+LR_val_wae: kwargs['LR_val_wae'] = 1e-7
+LR_val_cls: kwargs['LR_val_cls'] = 1e-4
+
+# Inference settings
+finetune_inference: False # If False, will just run inference on model trained on only train patients 
+inference_every: 99999 # Currently the data generators will slow inference if doing inferemce at beginning of fresh run
+inference_batch_mult: 2 
+
+# Realtime plotting
+realtime_latent_printing: True
+num_realtime_channels_recon: 1 # Will be batch * this plotted
+realtime_printing_interval_train: 50
+realtime_printing_interval_val: 25
+num_recon_samples: 512 # this will limit how much is shown in recon plots, ERROR if not enough samples, pulls from START and END of transformer sequence 
+num_rand_recon_plots: 4
+num_realtime_dims: 5
+recent_display_iters: 5 # How often to print to console when training & how often to log to WandB
+
+
+### Dynamic Weights ###
+
+# Beta WAE controls
+Reg_max: kwargs['Reg_max'] = 0.1 #0.1
+Reg_min: kwargs['Reg_min'] = 0
+Reg_stall_epochs: 0 # No Reg weight rise until stall is complete
+Reg_epochs_AT_max: 99999
+Reg_epochs_TO_max: 0
+
+# GAMMA multimodal distribution params  
+running_reg_passes: kwargs['running_reg_passes'] = int(kwargs['random_pulls_in_batch'] * (kwargs['train_forward_passes'] / kwargs['num_gpus']))   # Equals an epoch's worth of passes in DDP context
+barycenter_batch_sampling: 64  # The past samples (IMMEDIATE/SEQUENTIAL past samples) from running window of 'running_reg_passes' to incorporate into batch loss (in addition to actual forward pass batch)
+multimodal_shapes: [10, 30]
+multimodal_scales: [0.05, 0.05]
+multimodal_weights: [0.5, 0.5]
+num_barycenter_iters: 5
+sinkhorn_blur: kwargs['sinkhorn_blur'] = 0.1 # This is the BATCH/SMALL scale blur updates
+random_barycenter_numplots: 4
+wasserstein_order: 2  # africanfisheagle was trained on p=2 which appeared overly focused on means of each gamma peak, trying EMD (i.e. p=1)
+
+# Sparsity weight control
+Sparse_max: kwargs['Sparse_max'] = 1e-7 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
+Sparse_min: kwargs['Sparse_min'] = 0
+Sparse_epochs_AT_max: 99999
+Sparse_epochs_TO_max: 0
+
+# Classifier (Varies alpha of reverse gradient flow, not weight)
+classifier_weight: 1 # OVERALL ADVERSARIAL training: i.e. reverse gradient (WAE) AND classifier power. # Should probably get into same ballpark as recon and Reg
+classifier_max: kwargs['classifier_max'] = 0 # 1 # 
+classifier_min: kwargs['classifier_min'] = 0 # 0.001
+classifier_epochs_AT_max: 5
+classifier_epochs_TO_max: 5
+classifier_rise_first: False
+
+### Static Weights ###
+recon_weight: 3 # 3
+
+### Dynamic Learning Rates ###
+
+# WAE learning rate controls
+LR_max_core: kwargs['LR_max_core'] = 1e-5 # 5e-7
+LR_min_core: kwargs['LR_min_core'] = 1e-7 # 1e-8 
+LR_epochs_TO_max_core: 1
+LR_epochs_AT_max_core: 1
+manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
+manual_step_size_core: 99999
+
+# Classifier LR Controls
+LR_min_classifier: kwargs['LR_min_classifier'] = 1e-4 # 5e-7
+# TODO implement scheduler 
+
+delete_old_checkpoints: True   
+
+# Multiprocessing 
+subprocess_num_threads: 1 
+num_dataloader_workers: 0 # persistent workers will be True if >0, DDP observed to be unstable if != 0
+
+# Inference file saves
+# Both window and stride must be multiple of input seconds to encoder 
+# (i.e. encode_token_samples * transformer_seq_length / FS)
+inference_window_sec_list: [64, 64] # [64, 64, 64, 32, 16, 16, 8, 2] 
+inference_stride_sec_list: [64, 2] # [64, 32, 16, 16, 16, 8,  4, 2] 
+
+

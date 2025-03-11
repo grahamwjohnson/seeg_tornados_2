@@ -25,6 +25,7 @@ sys.path.append("/home/ghassanmakhoul/Documents/Tornadoes_v1/models")
 sys.path.append("/home/ghassanmakhoul/Documents/Tornadoes_v1/train")
 sys.path.append('/home/ghassanmakhoul/Documents/Tornadoes_v1/preprocess')
 from utilities.utils_functions import apply_wholeband_filter
+from models import WAE
 from scipy.signal import resample
 import gc
 from time import sleep
@@ -96,6 +97,7 @@ class LiveStreamBrainStateEmbedding:
         self.pacmap_win_size = 60 # size in seconds Hard coded for now, TODO review and make modular for future generation
         self.transformed_latent_space = []
         self.curr_prediction_count = 0
+        self.sz_risk = 0
         self.model_kwargs = dict()
         self.gpu_id = gpu_id
         self.config_f = config_f
@@ -229,7 +231,7 @@ class LiveStreamBrainStateEmbedding:
         import joblib
         with open(pre_proc_pkl, "rb") as f:
             linear_interp_by_ch = joblib.load(f)
-        self.hist_eq = linear_interp_by_ch
+        return linear_interp_by_ch
         
     
     def hist_equalize(self, filt_data):
@@ -260,16 +262,16 @@ class LiveStreamBrainStateEmbedding:
             self.gpu_id = 0
         else:
             self.gpu_id = 0
-        vae = VAE(gpu_id=self.gpu_id, **kwargs)
-        vae = vae.to(self.gpu_id)
-        vae.eval()
+        wae = WAE(gpu_id=self.gpu_id, **kwargs)
+        wae = wae.to(self.gpu_id)
+        wae.eval()
         map_location = {'cuda:%d' % 0: 'cuda:%d' % self.gpu_id}
-        vae_state_dict_prev = torch.load(self.model_file, map_location=map_location)
+        wae_state_dict_prev = torch.load(self.model_file, map_location=map_location)
         
         
-        vae.load_state_dict(vae_state_dict_prev,strict=False) 
+        wae.load_state_dict(wae_state_dict_prev,strict=False) 
 
-        return vae
+        return wae
     
 
     def setup_stream(self):
@@ -435,7 +437,7 @@ class LiveStreamBrainStateEmbedding:
                 data[w,ch_idx,:] = inp_stream[:,s:e]
                 s = e
                 e = (w+1)*num_samples_in_forward + num_samples_in_forward
-            # ipdb.set_trace()
+            
             # collect sequential embeddings for transformer to pseudo-batch
             # In this case num_windows_in_file will be used as the batch dimension
             # double check implementation 
@@ -445,15 +447,15 @@ class LiveStreamBrainStateEmbedding:
                 for embedding_idx in range(0,params['transformer_seq_length']):
                     end_idx = start_idx + params['autoencode_samples']*embedding_idx + params['autoencode_samples']
                     x[:,embedding_idx,:,:] = data[:,:,end_idx-params['autoencode_samples']: end_idx]
-                mean,_,_,_ = self.model.forward(x, reverse=False)
+                z, _, _ = self.model.forward(x[:,0:-1,:,:], reverse=False)
 
-                mean = mean.cpu().numpy()
-                # mean = torch.stack(\
-                #     torch.split(mean_batched, \
+                z = z.cpu().numpy()
+                # z = torch.stack(\
+                #     torch.split(z_batched, \
                 #         params['transformer_seq_length'] - params['num_encode_concat_transformer_tokens'], \
                 #         dim=0), dim=0)
                 # no longer have to handle, thanks to Graham-y:)
-                self.update_prediction(mean)
+                self.update_prediction(z)
             logger.info(f"Ran inference on {num_windows_in_file} windows ")
         gc.collect()
         return
@@ -488,30 +490,25 @@ class LiveStreamBrainStateEmbedding:
 
     def calc_seizure_risk(self, ts, sim_mode=SIM_MODE):
         """Calculates seizure risk and reports a live score for bar chart"""
-        def conv_datetime(row):
-            """converts our event csv format to datetime obj"""
-            format_string = "%m:%d:%Y %H:%M:%S"
-            day = row['Date (MM:DD:YYYY)'].values[0]
-            time_of_day = row['Onset String (HH:MM:SS)'].values[0]
-            date_str = day.values[0] + " " + time.values[0]
-            return  datetime.strptime(date_str, format_string)
-
-
         if sim_mode:
-            #shouldn't calc each time but for now okay            
-            prev_events = self.event_df.apply(conv_datetime, axis=0)
+            #shouldn't calc each time but for now okay        
+            ipdb.set_trace()
+            format_string = "%Y-%m-%d %H:%M:%S.%f"
+            prev_events = self.event_df.onset_datetime.apply(lambda x: datetime.strptime(x, format_string))
             time_diff = prev_events - ts
-
             any_below_2_hours = (time_diff.dt.total_seconds() < 2 * 3600).any()
+            
             if any_below_2_hours:
+                self.sz_risk = 2
                 logger.warning("WITHIN 2 hours of a seizure")
-                
                 return    
-
             any_below_4_hours = (time_diff.dt.total_seconds() < 4 * 3600).any()
             if any_below_4_hours:
+                self.sz_risk = 4
                 logger.warning("WITHIN 4 hours of a seizure")
                 return
+            
+            self.sz_risk = 1
             return
             #calculate based on time to nearest seizure
 
@@ -567,8 +564,7 @@ class LiveStreamBrainStateEmbedding:
             """
             assert  len(self.raw_sig) != 0 and len(self.clean_sig) != 0 and len(self.eq_sig) != 0, "Signals have not been added to plot vars"
             #update live pacmap
-            ipdb.set_trace()
-            self.pt_colors.append(self.my_colors[i%5])
+            self.pt_colors.append(self.my_colors[self.sz_risk])
             self.h_live.set_offsets(self.projections )
             self.h_live.set_facecolor(self.pt_colors)
             self.ax_live.autoscale_view()
@@ -586,7 +582,6 @@ class LiveStreamBrainStateEmbedding:
                 self.ax_raw.set_ylabel('uV')
                 self.ax_raw.set_xlabel('Time (s)')
                 
-
                 self.h_clean = self.ax_clean.plot(t_clean, self.clean_sig[ch,:])
                 self.ax_clean.set_title(f'Clean SEEG for  {self.subject} at Ch {ch_names}')
                 self.ax_clean.set_ylabel('uV ')
@@ -680,13 +675,13 @@ if __name__ == '__main__':
 
     n_ch = [a for a in range(N_CH)] # num of channels for Spat 113
     model_file = "/home/ghassanmakhoul/Documents/trained_models/pangolin_finetune/Epoch_297/core_checkpoints/checkpoint_epoch297_vae.pt"
-    hist_eq_pkl = '/home/ghassanmakhoul/Documents/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_eqalized_to_first_24_hours/wholeband/DurStr_1024s896s_epoched_datasets/Spat113/scaled_data_epochs/metadata/scaling_metadata/linear_interpolations_by_channel.pkl'
+    hist_eq_pkl = '/home/ghassanmakhoul/Documents/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/DurStr_1024s896s_epoched_datasets/Spat113/scaled_data_epochs/metadata/scaling_metadata/linear_interpolations_by_channel.pkl'
     pac_prefix = '/home/ghassanmakhoul/Documents/trained_models/pangolin_finetune/Epoch_297/pacmap_generation/epoch298_PaCMAP'
     config_f = '/home/ghassanmakhoul/Documents/Tornadoes_v1/config_live.yml'
     event_df = pd.read_csv("/home/ghassanmakhoul/Documents/Tornadoes_v1/all_time_data_01092023_112957.csv")
     bip_path = "/home/ghassanmakhoul/Documents/data/Resamp_512_Hz/bipole_filtered_wholeband_unscaled_big_pickles/Spat113/metadata/Spat113_bipolar_montage_names_and_indexes_from_rawEDF.csv"
     pat_id = 'Spat113'
-    pat_event_df = event_df['Pat ID'] = pat_id
+    pat_event_df = event_df[event_df['Pat ID'] == pat_id]
     processor = LiveStreamBrainStateEmbedding(pat_id,model_file, hist_eq_pkl, pac_prefix, config_f,  display_s=4, stream_ch=n_ch, event_df=pat_event_df, bip_path=bip_path)
     processor.live_data_loop()
     plt.show()

@@ -1,5 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# This software may be used and distributed in accordance with the terms of the Llama 3 Community License Agreement.
 
 import math
 from dataclasses import dataclass
@@ -15,14 +13,21 @@ import torch.nn.functional as F
 
 from torch import nn
 
+'''
+Modified from LLaMa3 by @author: grahamwjoshnson
 
-@dataclass
+Copyright (c) Meta Platforms, Inc. and affiliates.
+This software may be used and distributed in accordance with the terms of the Llama 3 Community License Agreement.
+
+'''
+
+@dataclass 
 class ModelArgs:
     def __init__(
         self, 
         dim: int = None,
         n_layers: int = 16,
-        n_heads: int = 16,
+        n_heads: int = None,
         n_kv_heads: Optional[int] = None,
         vocab_size: int = -1,
         multiple_of: int = 256, # make SwiGLU hidden layer size multiple of large power of 2
@@ -222,8 +227,8 @@ class Attention(nn.Module):
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
         
         if return_attW:
-            scores_meanHeads_lastRow = torch.mean(scores[:, :, -1, :], dim=1) # How much does i attend to j, so last row is how much does last token attend to all previous tokens... right?
-            return self.wo(output), scores_meanHeads_lastRow
+            scores_meanHeads = torch.mean(scores, dim=1) # How much does i attend to j, so last row is how much does last token attend to all previous tokens... right?
+            return self.wo(output), scores_meanHeads
         else:
             return self.wo(output)
 
@@ -298,16 +303,15 @@ class TransformerBlock(nn.Module):
     ):
 
         if return_attW:
-            h, scores_meanHeads_lastRow = self.attention(self.attention_norm(x), start_pos, freqs_cis, mask, return_attW=True)
+            h, scores_meanHeads = self.attention(self.attention_norm(x), start_pos, freqs_cis, mask, return_attW=True)
             h = x + h
             out = h + self.feed_forward(self.ffn_norm(h))
-            return out, scores_meanHeads_lastRow
+            return out, scores_meanHeads
 
         else:
             h = x + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask, return_attW=False)
             out = h + self.feed_forward(self.ffn_norm(h))
             return out            
-
 
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
@@ -336,6 +340,9 @@ class Transformer(nn.Module):
 
         self.tanh = nn.Tanh()
 
+        # For storing weights of FIRST and LAST layer
+        self.scores_FirstLastLayer_meanHeads = torch.empty((params.max_batch_size, 2, params.max_seq_len, params.max_seq_len), dtype=torch.float16).to(params.device)
+
     # @torch.inference_mode()
     def forward(
         self, 
@@ -343,7 +350,8 @@ class Transformer(nn.Module):
         start_pos: int=-9999, 
         return_attW: bool=False,
         attention_dropout: float=0.0,
-        causal_mask_bool: bool=True
+        causal_mask_bool: bool=False, 
+        self_mask: bool=True
         ):
         # _bsz, seqlen = tokens.shape
         # h = self.tok_embeddings(tokens)
@@ -359,7 +367,6 @@ class Transformer(nn.Module):
         mask = None
         if (seqlen > 1) & causal_mask_bool:
             mask = torch.full((seqlen, seqlen), float("-inf"), device=self.device)
-
             mask = torch.triu(mask, diagonal=1)
 
             # When performing key-value caching, we compute the attention scores
@@ -373,23 +380,44 @@ class Transformer(nn.Module):
             # Apply attention dropout
             if attention_dropout > 0:
                 mask = attention_mask_dropout(mask, attention_dropout)
-            
 
+        # Diagonal masking
+        elif (seqlen > 1) & self_mask:
+            mask = torch.zeros((seqlen, seqlen), device=self.device)  # Start with all zeros
+            mask = mask.masked_fill(torch.eye(seqlen, device=self.device).bool(), float("-inf"))  # Mask the diagonal
+
+
+            # When performing key-value caching, we compute the attention scores
+            # only for the new sequence. Thus, the matrix of scores is of size
+            # (seqlen, cache_len + seqlen), and the only masked entries are (i, j) for
+            # j > cache_len + i, since row i corresponds to token cache_len + i.
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=self.device), mask]
+            ).type_as(h)
+
+            # Apply attention dropout
+            if attention_dropout > 0:
+                mask = attention_mask_dropout(mask, attention_dropout)
+            
         if return_attW:
             layer_count = 0
             for layer in self.layers:
-                if layer_count == 0:
-                    h, scores_firstLayer_meanHeads_lastRow = layer(h, start_pos, freqs_cis, mask, return_attW=True)
-                else:
-                    h = layer(h, start_pos, freqs_cis, mask, return_attW=False)
-                layer_count = layer_count + 1
-            h = self.norm(h)
 
+                if layer_count == 0:
+                    h, self.scores_FirstLastLayer_meanHeads[:h.shape[0], 0, :seqlen, :seqlen] = layer(h, start_pos, freqs_cis, mask, return_attW=True)
+                    
+                elif layer_count == (len(self.layers) - 1):
+                    h, self.scores_FirstLastLayer_meanHeads[:h.shape[0], -1, :seqlen, :seqlen] = layer(h, start_pos, freqs_cis, mask, return_attW=True)
+
+                else: h = layer(h, start_pos, freqs_cis, mask, return_attW=False)
+
+                layer_count = layer_count + 1
+
+            h = self.norm(h)
             # output = self.output_mlp(h)
             output = h
-            # output = self.tanh(h)          ##################################### Added tanh #########################################
 
-            return output, scores_firstLayer_meanHeads_lastRow
+            return output, self.scores_FirstLastLayer_meanHeads[:h.shape[0], :, :seqlen, :seqlen]
 
         else:
             for layer in self.layers:
@@ -398,7 +426,6 @@ class Transformer(nn.Module):
 
             # output = self.output_mlp(h)
             output = h
-            # output = self.tanh(h)          ##################################### Added tanh #########################################
 
             return output
 

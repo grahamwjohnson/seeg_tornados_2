@@ -103,7 +103,7 @@ class RippleSim:
             self.edf_start_time = f.getStartdatetime() # Total samples in the channel
             duration = f.getFileDuration()
             self.edf_end_time = self.edf_start_time + datetime.timedelta(seconds=duration)
-            ipdb.set_trace()
+            
             # sample_rate = f.getSampleFrequency(channel)  # Sampling rate of the channel
             # data = f.readSignal(channel)  # Read full signal for the channel
             step_size = snippet_size - overlap

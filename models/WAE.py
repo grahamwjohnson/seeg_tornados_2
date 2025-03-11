@@ -9,7 +9,12 @@ from torchinfo import summary
 # Local imports
 from .Transformer import ModelArgs, Transformer, RMSNorm
 from utilities.loss_functions import adversarial_loss_function
-from loguru import logger
+
+'''
+@author: grahamwjohnson
+2023-2025 
+
+'''
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -63,7 +68,6 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         crattn_num_lowdim_heads,
         crattn_num_lowdim_layers,
         crattn_max_seq_len,
-        crattn_cnn_kernel_size, 
         crattn_dropout, 
         **kwargs):
 
@@ -77,7 +81,6 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         self.num_lowdim_heads = crattn_num_lowdim_heads
         self.num_lowdim_layers = crattn_num_lowdim_layers
         self.max_seq_len = crattn_max_seq_len
-        # self.cnn_kernel_size = crattn_cnn_kernel_size
         self.dropout = crattn_dropout
 
         # Input Cross-attention Layer 
@@ -134,7 +137,7 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         
         # Step 4: Reshape for multi-head attention (seq_len, batch_size, high_dim)
         x = x.permute(1, 0, 2)  # Shape: (seq_len, batch_size, padded_channels)
-        
+
         # Step 5: Apply Input Cross-Attention at PADDED dimension 
         for layer in self.highdim_attention_layers:
             x = layer(x, x, x)  # Cross-attention (q=k=v)
@@ -157,42 +160,38 @@ class Decoder_MLP(nn.Module):
         super(Decoder_MLP, self).__init__()
         self.gpu_id = gpu_id
         self.latent_dim = latent_dim
-        decoder_base_dims = int(decoder_base_dims / 2)
-        self.decoder_base_dims = decoder_base_dims# hacky add on to make live work
-        output_channels = int(output_channels)
-        
+        self.decoder_base_dims = decoder_base_dims
         self.output_channels = output_channels
         self.decode_samples = decode_samples
 
         # Non-autoregressive decoder 
-        logger.info(f"First layer shape should be: {latent_dim} x {decoder_base_dims * decode_samples}")
         self.non_autoregressive_fc = nn.Sequential(
             nn.Linear(latent_dim, decoder_base_dims * decode_samples),
             nn.SiLU(),
             RMSNorm(decoder_base_dims * decode_samples),
-            nn.Linear(decoder_base_dims * decode_samples, decoder_base_dims * decode_samples * 2),
+            nn.Linear(decoder_base_dims * decode_samples, decoder_base_dims * decode_samples),
             nn.SiLU(),
-            RMSNorm(decoder_base_dims * decode_samples * 2),
-            nn.Linear(decoder_base_dims * decode_samples * 2, decoder_base_dims * decode_samples * 4),
-            nn.SiLU(),
-            RMSNorm(decoder_base_dims * decode_samples * 4),
-            nn.Linear(decoder_base_dims * decode_samples * 4, decoder_base_dims * decode_samples * 4),
-            nn.SiLU(),
-            RMSNorm(decoder_base_dims * decode_samples * 4),
-            nn.Linear(decoder_base_dims * decode_samples * 4, decoder_base_dims * decode_samples * 4),
-            nn.SiLU(),
-            RMSNorm(decoder_base_dims * decode_samples * 4)
+            RMSNorm(decoder_base_dims * decode_samples),
+            # nn.Linear(decoder_base_dims * decode_samples * 2, decoder_base_dims * decode_samples * 4),
+            # nn.SiLU(),
+            # RMSNorm(decoder_base_dims * decode_samples * 4),
+            # nn.Linear(decoder_base_dims * decode_samples * 4, decoder_base_dims * decode_samples * 4),
+            # nn.SiLU(),
+            # RMSNorm(decoder_base_dims * decode_samples * 4),
+            # nn.Linear(decoder_base_dims * decode_samples * 4, decoder_base_dims * decode_samples * 4),
+            # nn.SiLU(),
+            # RMSNorm(decoder_base_dims * decode_samples * 4)
             )        
         # Now FC without norms, after reshaping so that each token is seperated
         self.non_autoregressive_output = nn.Sequential(
-            nn.Linear(decoder_base_dims * 2, output_channels),
+            nn.Linear(decoder_base_dims, output_channels),
             nn.Tanh())
             
     def forward(self, z):
         batch_size = z.size(0)
         
         # Step 1: Non-autoregressive generation 
-        h_na = self.non_autoregressive_fc(z).view(batch_size, self.decode_samples, self.decoder_base_dims * 4)
+        h_na = self.non_autoregressive_fc(z).view(batch_size, self.decode_samples, self.decoder_base_dims)
         x_na = self.non_autoregressive_output(h_na)  # (batch_size, seq_length, output_channels)
         
         return x_na
@@ -210,19 +209,30 @@ class GradientReversalLayer(torch.autograd.Function):
 
 # Wrapper for Gradient Reversal
 class GradientReversal(nn.Module):
-    def __init__(self, alpha):
+    def __init__(self):
         super(GradientReversal, self).__init__()
-        self.alpha = alpha
+
+    def forward(self, x, alpha):
+        return GradientReversalLayer.apply(x, alpha)
+
+class LinearWithDropout(nn.Module):
+    def __init__(self, input_dim, output_dim, dropout_prob=0.5):
+        super(LinearWithDropout, self).__init__()
+        self.linear = nn.Linear(input_dim, output_dim)
+        self.dropout = nn.Dropout(dropout_prob)
 
     def forward(self, x):
-        return GradientReversalLayer.apply(x, self.alpha)
+        x = self.linear(x)  # Apply linear transformation
+        x = self.dropout(x)  # Apply dropout internally
+        return x
 
 # Define the Adversarial Classifier with Gradient Reversal
 class AdversarialClassifier(nn.Module):
-    def __init__(self, latent_dim, classifier_hidden_dims, classifier_num_pats, classifier_alpha, **kwargs):
+    def __init__(self, latent_dim, classifier_hidden_dims, classifier_num_pats, classifier_dropout, **kwargs):
         super(AdversarialClassifier, self).__init__()
-        self.gradient_reversal = GradientReversal(classifier_alpha)
+        self.gradient_reversal = GradientReversal()
         
+        self.classifier_dropout = classifier_dropout
         self.mlp_layers = nn.ModuleList()
 
         # Input layer
@@ -232,7 +242,7 @@ class AdversarialClassifier(nn.Module):
 
         # Hidden layers
         for i in range(len(classifier_hidden_dims) - 1):
-            self.mlp_layers.append(nn.Linear(classifier_hidden_dims[i], classifier_hidden_dims[i + 1]))
+            self.mlp_layers.append(LinearWithDropout(classifier_hidden_dims[i], classifier_hidden_dims[i + 1], classifier_dropout))
             self.mlp_layers.append(nn.SiLU())
             # self.mlp_layers.append(RMSNorm(classifier_hidden_dims[i + 1]))
 
@@ -242,24 +252,24 @@ class AdversarialClassifier(nn.Module):
         # Softmax the output
         self.softmax = nn.Softmax(dim=1)
 
-    def forward(self, mu):
-        mu = self.gradient_reversal(mu)
+    def forward(self, mu, alpha):
+        mu = self.gradient_reversal(mu, alpha)
         for layer in self.mlp_layers:
             mu = layer(mu)
         return self.softmax(mu)
 
-class VAE(nn.Module):
+class WAE(nn.Module):
     '''
     The Reverseable Encoder/Decoder 
     Shares weights between Conv/TransConv layers, in addition to FC layers (except Mean/Logvar layers)
     '''
     def __init__(
         self, 
-        autoencode_samples,
+        encode_token_samples,
         padded_channels,
         crattn_embed_dim,
         transformer_seq_length,
-        num_encode_concat_transformer_tokens,
+        # num_encode_concat_transformer_tokens,
         transformer_start_pos,
         transformer_dim,
         encoder_transformer_activation,
@@ -270,13 +280,13 @@ class VAE(nn.Module):
         gpu_id=None,  
         **kwargs):
 
-        super(VAE, self).__init__()
+        super(WAE, self).__init__()
 
         self.gpu_id = gpu_id
-        self.autoencode_samples = autoencode_samples
+        self.encode_token_samples = encode_token_samples
         self.padded_channels = padded_channels
         self.crattn_embed_dim = crattn_embed_dim
-        self.num_encode_concat_transformer_tokens = num_encode_concat_transformer_tokens
+        # self.num_encode_concat_transformer_tokens = num_encode_concat_transformer_tokens
         self.transformer_seq_length = transformer_seq_length
         self.transformer_start_pos = transformer_start_pos
         self.transformer_dim = transformer_dim
@@ -302,17 +312,17 @@ class VAE(nn.Module):
         # Core Encoder
         self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=True)
         self.norm_hidden = RMSNorm(dim=self.hidden_dims)
-        
-        # Encoder variational layers (not shared between enc/dec)
-        self.mean_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
-        self.logvar_fc_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True) # bias=False
 
+        # Right before latent space
+        self.final_encode_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
+
+        # Decoder
         self.decoder = Decoder_MLP(
             gpu_id = self.gpu_id,
             latent_dim = self.latent_dim,
             decoder_base_dims = self.decoder_base_dims,
             output_channels = self.padded_channels,
-            decode_samples = self.autoencode_samples)
+            decode_samples = self.encode_token_samples)
 
         # Adversarial Classifier
         self.adversarial_classifier = AdversarialClassifier(latent_dim=self.latent_dim, **kwargs) # the name 'adversarial_classifier' is tied to model parameter search to create seperate optimizer for classifier
@@ -320,62 +330,49 @@ class VAE(nn.Module):
         # Non-linearity as needed
         self.silu = nn.SiLU()
 
-    def reparameterization(self, mean, logvar):
-        std = torch.exp(0.5 * logvar)  
-        epsilon = torch.randn_like(std).to(self.gpu_id) 
-        z = mean + std * epsilon
-        return z
+    # def concat_past_tokens(self, x):
+    #     '''
+    #     Sliding window with stride of 1 that collects N concat tokens at a time
+    #     '''
+    #     num_pulls = x.shape[1] - self.num_encode_concat_transformer_tokens - self.transformer_start_pos
+    #     y = torch.zeros([x.shape[0], num_pulls, self.top_dims]).to(x)
 
-    def concat_past_tokens(self, x):
-        '''
-        Sliding window with stride of 1 that collects N concat tokens at a time
-        '''
-        num_pulls = x.shape[1] - self.num_encode_concat_transformer_tokens - self.transformer_start_pos
-        y = torch.zeros([x.shape[0], num_pulls, self.top_dims]).to(x)
+    #     for i in range(num_pulls):
+    #         y[:, i, :] = x[:, i:i+self.num_encode_concat_transformer_tokens, :].reshape(x.shape[0], self.num_encode_concat_transformer_tokens * x.shape[2])
 
-        for i in range(num_pulls):
-            y[:, i, :] = x[:, i:i+self.num_encode_concat_transformer_tokens, :].reshape(x.shape[0], self.num_encode_concat_transformer_tokens * x.shape[2])
+    #     return y
 
-        return y
-
-    def forward(self, x, reverse=False, hash_pat_embedding=-1, hash_channel_order=-1):
+    def forward(self, x, reverse=False, hash_pat_embedding=-1, alpha=None):
 
         if reverse == False:
 
-            # RAW CROSS-ATTENTION HEAD
+            # CROSS-ATTENTION HEAD across channels on raw data
             y = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]]) # [batch, token, channel, waveform] --> [batch x token, channel, waveform]
             y = self.encoder_head(y)
             y = torch.split(y, x.shape[1], dim=0) # [batch x token, latent_dim] --> [batch, token, latent_dim]
             y = torch.stack(y, dim=0)
 
             # TRANSFORMER
-            y = self.transformer_encoder(y, start_pos=self.transformer_start_pos)
+            y, attW = self.transformer_encoder(y, start_pos=self.transformer_start_pos, return_attW = True)
 
-            # VAE CORE
-            y = self.concat_past_tokens(y) # Sliding window over transformer output: [batch, token, latent_dim] --> [batch, token_prime, latent_dim * num_encode_concat_transformer_tokens]
+            # WAE CORE
+            # y = self.concat_past_tokens(y) # Sliding window over transformer output: [batch, token, latent_dim] --> [batch, token_prime, latent_dim * num_encode_concat_transformer_tokens]
             y = y.reshape([y.shape[0]*y.shape[1], y.shape[2]]) # Batch the sliding windows for efficient decoding: [batch, token_prime, latent_dim * num_encode_concat_transformer_tokens] --> [batch x token_prime, latent_dim * num_encode_concat_transformer_tokens]
             y = self.top_to_hidden(y)
             y = self.silu(y)
             y = self.norm_hidden(y)
-            mean_batched, logvar_batched = self.mean_fc_layer(y), self.logvar_fc_layer(y)
-            latent_batched = self.reparameterization(mean_batched, logvar_batched)
+            latent_batched = self.final_encode_layer(y)
 
             # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
             # NOTE: you lose the priming tokens needed by transformer
-            # import ipdb
-            # ipdb.set_trace()
-            #TODO check with this off-by one with graham
-            # import ipdb
-            # ipdb.set_trace()
-            mean = torch.stack(torch.split(mean_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens -1, dim=0), dim=0)
-            logvar = torch.stack(torch.split(logvar_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens-1 , dim=0), dim=0)
-            latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens -1, dim=0), dim=0)
+            # latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
+            latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length, dim=0), dim=0)
 
             # CLASSIFIER - on the mean of the means
-            mean_of_means = torch.mean(mean, dim=1)
-            class_probs_mean_of_means = self.adversarial_classifier(mean_of_means)
+            mean_of_latent = torch.mean(latent, dim=1)
+            class_probs_mean_of_latent = self.adversarial_classifier(mean_of_latent, alpha)
             
-            return mean, logvar, latent, class_probs_mean_of_means
+            return latent, class_probs_mean_of_latent, attW
 
         elif reverse == True:
 
@@ -390,49 +387,49 @@ class VAE(nn.Module):
             y = self.decoder(y).transpose(1,2)  # Comes out as [batch, waveform, num_channels] --> [batch, num_channels, waveform]
 
             # Index the correct output channels for each batch index
-            y = torch.split(y, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0)
+            # y = torch.split(y, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0)
+            y = torch.split(y, self.transformer_seq_length, dim=0)
             y = torch.stack(y, dim=0)
 
             return y
 
 def print_models_flow(x, **kwargs):
     '''
-    Builds models on CPU and prints sizes of forward passes
-
+    Builds models on CPU and prints sizes of forward passes with random data as inputs
+    
     '''
 
     pat_num_channels = x.shape[2] 
     file_class_label = torch.tensor([0]*x.shape[0]) # dummy
 
-    # Build the VAE
-    vae = VAE(**kwargs) 
+    # Build the WAE
+    wae = WAE(**kwargs) 
 
-    # Run through Enc Head
+    # Run through Encoder
     print(f"INPUT TO <ENC>\n"
     f"x:{x.shape}")
-    mean, logvar, latent, class_probs = vae(x, reverse=False)  
-    summary(vae, input_size=(x.shape), depth=999, device="cpu")
+    latent, class_probs, attW = wae(x, reverse=False, alpha=1)  
+    summary(wae, input_size=(x.shape), depth=999, device="cpu")
     print(
-    f"mean:{mean.shape}\n"
-    f"logvar:{logvar.shape}\n"
     f"latent:{latent.shape}\n"
-    f"class_probs:{class_probs.shape}\n")
+    f"class_probs:{class_probs.shape}\n"
+    f"attW:{attW.shape}\n")
 
     # Adversarial loss
     adversarial_loss = adversarial_loss_function(class_probs, file_class_label, classifier_weight = 1)
     print(f"Adversarial Loss: {adversarial_loss}")
 
-    # Run through VAE decoder
+    # Run through WAE decoder
     hash_pat_embedding = torch.rand(x.shape[0], latent.shape[2])
     hash_channel_order = np.arange(0, 199).tolist()
-    print(f"\n\n\nINPUT TO <VAE - Decoder Mode> \n"
+    print(f"\n\n\nINPUT TO <WAE - Decoder Mode> \n"
     f"z:{latent.shape}\n"
     f"hash_pat_embedding:{hash_pat_embedding.shape}\n")
-    summary(vae, input_data=[latent, True, hash_pat_embedding, hash_channel_order], depth=999, device="cpu")
-    core_out = vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding, hash_channel_order=hash_channel_order)  
+    summary(wae, input_data=[latent, True, hash_pat_embedding, hash_channel_order], depth=999, device="cpu")
+    core_out = wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
     print(f"decoder_out:{core_out.shape}\n")
 
-    del vae
+    del wae
 
 if __name__ == "__main__":
 
@@ -449,8 +446,8 @@ if __name__ == "__main__":
 
     x = torch.rand(batchsize, in_channels, data_length, len(kernel_sizes))
 
-    vae = VAE(
-        autoencode_samples=data_length,
+    wae = WAE(
+        encode_token_samples=data_length,
         in_channels=in_channels,
         kernel_sizes=kernel_sizes, 
         time_change=time_change,
@@ -461,11 +458,11 @@ if __name__ == "__main__":
         **kwargs
     )
 
-    # mean,logvar,z = vae(x, reverse=False)
-    # x_hat = vae(z, reverse=True)
+    # mean,logvar,z = wae(x, reverse=False)
+    # x_hat = wae(z, reverse=True)
     # loss_fn = nn.MSELoss(reduction='mean')
     # recon_loss = loss_fn(x, x_hat) 
     # recon_loss.backward()
 
-    print(f"Are the weights of encoder and decoder tied? {torch.allclose(vae.top_to_hidden.weight.T, vae.hidden_to_top.weight)}")
+    print(f"Are the weights of encoder and decoder tied? {torch.allclose(wae.top_to_hidden.weight.T, wae.hidden_to_top.weight)}")
 

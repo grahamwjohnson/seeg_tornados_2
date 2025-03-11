@@ -1,0 +1,11 @@
+
+# Settings
+previous_big_pickles : False
+previous_scale_aquired : False
+micro_recordings : True
+micro_channels : ['C..']
+PROCESS_FILE_DEBUG_LIST : []
+user_dir : '/home/ghassanmakhoul/Documents'
+ignore_channel_units : False  # Need to bypass units check for NK aquisitions. TODO: updatr to check units after channels to ignore are deleted
+
+atd_file : '/home/ghassanmakhoul/Documents/tornadoes_v1/all_time_data_01092023_112957.csv'

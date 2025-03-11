@@ -12,8 +12,10 @@ import ipdb
 # TODO pull out usable channels e.g. Epat02...
 
 # Settings
-previous_big_pickles = True
+previous_big_pickles = False
 previous_scale_aquired = False
+micro_recordings = True
+micro_channels = []
 PROCESS_FILE_DEBUG_LIST = []
 user_dir = '/home/ghassanmakhoul/Documents'
 ignore_channel_units = False  # Need to bypass units check for NK aquisitions. TODO: updatr to check units after channels to ignore are deleted
@@ -23,12 +25,12 @@ atd_file = '/home/ghassanmakhoul/Documents/tornadoes_v1/all_time_data_01092023_1
 # Define the patient directory that contains all EDF files
 # All varliable defined here
 # ASSUMPTION: files will be named "<patname>_MMDDYYYY_HHMMSSss" where S = seconds, s = milliseconds
-pat_id = 'Spat113' 
+pat_id = 'Spat114' 
 montage = 'BIPOLE'
 freq_bands = [] # [[1, 12], [12, 59], [61, 179]], [] - LEave
 if freq_bands == []: freq_bands_str = 'wholeband'
 else: freq_bands_str = f"{freq_bands}".replace("], [", "Hz_").replace(", ", "to").replace("[[","").replace("]]","Hz")
-num_channels = 129  # BIPOLAR! - for Spat 113, remember that we got rid of channels for micro-recordings on this Spat
+num_channels = 167  # BIPOLAR! - for Spat 113, remember that we got rid of channels for micro-recordings on this Spat
 if freq_bands != []: num_channels = num_channels * len(freq_bands)
 bipole_or_monopole = 'Bipole_datasets'
 resamp_freq = 512
@@ -50,8 +52,9 @@ expected_unit = 'uV'
 desired_samp_freq = 512 # Hz
 dir_edf = os.path.join(user_dir, 'data',pat_id)
 
-ch_names_to_ignore = ['-', 'FP1', 'FP2', 'Fp1','F7','T7','P7','O1','Fp2','F8','T8','P8','O2','F3','C3','P3','F4','C4','P4','Fz','Cz','Pz','Fz','F8','T8','T2','F7','T7','T1','63', '64', 'DC01','DC02','DC03','DC04','E', 'EEGMark1', 'EEGMark2','EEG Mark1', 'EEG Mark2', 'Cz', 'Pz', 'EKG1', 'EKG2', 'EKG3', 'EKG4', 'Events/Markers', 'L56','L57','L58','L59','L60','L61','L62','L63','L64','B21','B22','B23','B24','B25','B26','B27','B28','B29','B30','B31','B32','B33','B34','B35','B36','B37','B38','B39','B40','B41','B42','B43','B44','B45','B46','B47','B48','B49','B50','B51','B52','B53','B54','B55','B56','B57','B58','B59','B60','B61','B62','B63','B64','C9','C10','C11','C12','C13','C14','C15','C16', 'TRIG']
-
+ch_names_to_ignore = ['-', 'FP1', 'FP2', 'Fp1','F7','T7','P7','O1','Fp2','F8','T8','P8','O2','F3','C3','P3','F4','C4','P4','Fz','Cz','Pz','Fz','F8','T8','T2','F7','T7','T1','63', '64', 'DC01','DC02','DC03','DC04','E', 'EEGMark1', 'EEGMark2','EEG Mark1', 'EEG Mark2', 'Cz', 'Pz', 'EKG1', 'EKG2', 'EKG3', 'EKG4', 'Events/Markers', 'L56','L57','L58','L59','L60','L61','L62','L63','L64','B21','B22','B23','B24','B25','B26','B27','B28','B29','B30','B31','B32','B33','B34','B35','B36','B37','B38','B39','B40','B41','B42','B43','B44','B45','B46','B47','B48','B49','B50','B51','B52','B53','B54','B55','B56','B57','B58','B59','B60','B61','B62','B63','B64', 'TRIG']
+if micro_recordings:
+    ch_names_to_ignore = ch_names_to_ignore + micro_channels
 # Histogram parameters (only used for 'HistEqualScale')
 #NOTE assumes that fs is multiple of 512!
 histo_min = -10000 # uV

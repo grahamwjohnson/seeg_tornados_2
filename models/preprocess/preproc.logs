@@ -1,0 +1,352 @@
+nohup: ignoring input
+2025-03-02 16:32:00.886 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3104 - Finding file without 'clabel' problem to make bipolar montage
+2025-03-02 16:32:00.886 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3109 - [0/8]: /home/ghassanmakhoul/Documents/data/Spat114/Spat114_02232025_07011409.EDF
+2025-03-02 16:32:00.886 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3111 - Found file [/home/ghassanmakhoul/Documents/data/Spat114/Spat114_02232025_07011409.EDF], calculating bipolar montage
+2025-03-02 16:32:02.244 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3117 - Montage created
+2025-03-02 16:32:02.244 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3125 - Processing all files:
+2025-03-02 16:32:02.244 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3128 - [0/8]: /home/ghassanmakhoul/Documents/data/Spat114/Spat114_02232025_07011409.EDF
+2025-03-02 16:32:02.244 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3129 - Reading in EDF
+2025-03-02 16:35:34.795 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3149 - Time read EDF in: 211.13368701934814
+2025-03-02 16:35:34.795 | SUCCESS  | utilities.utils_functions:montage_filter_pickle_edfs:3152 - EDF read in
+2025-03-02 16:35:34.795 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3171 - Sampling frequency confirmed to be 512.0 Hz
+2025-03-02 16:35:34.795 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3175 - Assigning bipolar montage
+2025-03-02 16:43:08.811 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3128 - [1/8]: /home/ghassanmakhoul/Documents/data/Spat114/Spat114_02212025_07012105.EDF
+2025-03-02 16:43:08.811 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3129 - Reading in EDF
+2025-03-02 16:46:43.830 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3149 - Time read EDF in: 209.03815007209778
+2025-03-02 16:46:43.830 | SUCCESS  | utilities.utils_functions:montage_filter_pickle_edfs:3152 - EDF read in
+2025-03-02 16:46:43.830 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3171 - Sampling frequency confirmed to be 512.0 Hz
+2025-03-02 16:46:43.830 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3175 - Assigning bipolar montage
+2025-03-02 16:54:17.982 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3128 - [2/8]: /home/ghassanmakhoul/Documents/data/Spat114/Spat114_02252025_07005009.EDF
+2025-03-02 16:54:17.982 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3129 - Reading in EDF
+2025-03-02 16:57:55.720 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3149 - Time read EDF in: 211.7126920223236
+2025-03-02 16:57:55.720 | SUCCESS  | utilities.utils_functions:montage_filter_pickle_edfs:3152 - EDF read in
+2025-03-02 16:57:55.720 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3171 - Sampling frequency confirmed to be 512.0 Hz
+2025-03-02 16:57:55.720 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3175 - Assigning bipolar montage
+2025-03-02 17:05:26.922 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3128 - [3/8]: /home/ghassanmakhoul/Documents/data/Spat114/Spat114_02192025_07005500.EDF
+2025-03-02 17:05:26.922 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3129 - Reading in EDF
+2025-03-02 17:09:04.687 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3149 - Time read EDF in: 211.78190064430237
+2025-03-02 17:09:04.687 | SUCCESS  | utilities.utils_functions:montage_filter_pickle_edfs:3152 - EDF read in
+2025-03-02 17:09:04.687 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3171 - Sampling frequency confirmed to be 512.0 Hz
+2025-03-02 17:09:04.688 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3175 - Assigning bipolar montage
+2025-03-02 17:16:35.076 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3128 - [4/8]: /home/ghassanmakhoul/Documents/data/Spat114/Spat114_02202025_07005308.EDF
+2025-03-02 17:16:35.076 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3129 - Reading in EDF
+2025-03-02 17:20:10.017 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3149 - Time read EDF in: 208.95778250694275
+2025-03-02 17:20:10.017 | SUCCESS  | utilities.utils_functions:montage_filter_pickle_edfs:3152 - EDF read in
+2025-03-02 17:20:10.018 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3171 - Sampling frequency confirmed to be 512.0 Hz
+2025-03-02 17:20:10.018 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3175 - Assigning bipolar montage
+2025-03-02 17:27:41.534 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3128 - [5/8]: /home/ghassanmakhoul/Documents/data/Spat114/Spat114_02222025_07010106.EDF
+2025-03-02 17:27:41.534 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3129 - Reading in EDF
+2025-03-02 17:31:19.357 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3149 - Time read EDF in: 211.77306962013245
+2025-03-02 17:31:19.357 | SUCCESS  | utilities.utils_functions:montage_filter_pickle_edfs:3152 - EDF read in
+2025-03-02 17:31:19.357 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3171 - Sampling frequency confirmed to be 512.0 Hz
+2025-03-02 17:31:19.357 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3175 - Assigning bipolar montage
+2025-03-02 17:38:49.355 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3128 - [6/8]: /home/ghassanmakhoul/Documents/data/Spat114/Spat114_02242025_07014504.EDF
+2025-03-02 17:38:49.355 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3129 - Reading in EDF
+2025-03-02 17:42:24.855 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3149 - Time read EDF in: 209.50127124786377
+2025-03-02 17:42:24.855 | SUCCESS  | utilities.utils_functions:montage_filter_pickle_edfs:3152 - EDF read in
+2025-03-02 17:42:24.855 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3171 - Sampling frequency confirmed to be 512.0 Hz
+2025-03-02 17:42:24.855 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3175 - Assigning bipolar montage
+2025-03-02 17:49:53.618 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3128 - [7/8]: /home/ghassanmakhoul/Documents/data/Spat114/Spat114_02182025_17202406_clabel.EDF
+2025-03-02 17:49:53.619 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3129 - Reading in EDF
+2025-03-02 17:51:58.276 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3149 - Time read EDF in: 121.25318813323975
+2025-03-02 17:51:58.276 | SUCCESS  | utilities.utils_functions:montage_filter_pickle_edfs:3152 - EDF read in
+2025-03-02 17:51:58.276 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3171 - Sampling frequency confirmed to be 512.0 Hz
+2025-03-02 17:51:58.276 | INFO     | utilities.utils_functions:montage_filter_pickle_edfs:3175 - Assigning bipolar montage
+Pickling the EDF files, this will take a very long time
+Bipolar montage assignment complete
+Filtering the data
+Data wholeband filtered, with line noise notch filters
+Big pickle saved
+Bipolar montage assignment complete
+Filtering the data
+Data wholeband filtered, with line noise notch filters
+Big pickle saved
+Bipolar montage assignment complete
+Filtering the data
+Data wholeband filtered, with line noise notch filters
+Big pickle saved
+Bipolar montage assignment complete
+Filtering the data
+Data wholeband filtered, with line noise notch filters
+Big pickle saved
+Bipolar montage assignment complete
+Filtering the data
+Data wholeband filtered, with line noise notch filters
+Big pickle saved
+Bipolar montage assignment complete
+Filtering the data
+Data wholeband filtered, with line noise notch filters
+Big pickle saved
+Bipolar montage assignment complete
+Filtering the data
+Data wholeband filtered, with line noise notch filters
+Big pickle saved
+WARNING: Current file's created bip montage does not exactly equal original file montage. Current file: /home/ghassanmakhoul/Documents/data/Spat114/Spat114_02182025_17202406_clabel.EDF
+Assuming that channels are in proper order, just with wrong names (i.e. bad Natus template)
+Bipolar montage assignment complete
+Filtering the data
+Data wholeband filtered, with line noise notch filters
+Big pickle saved
+
+Files will be processed with following selections:
+data_normalized_to_first X hours
+By_Channel_Scale
+HistEqualScale
+
+Following files COULD contain normalization range of 2.0-26.0 hours from start of EMU stay:
+[6/8]: /home/ghassanmakhoul/Documents/data/Resamp_512_Hz/bipole_filtered_wholeband_unscaled_big_pickles/Spat114/Spat114_02192025_07005500_resampled_512.0_Hz_bipole_filtered_[].pkl
+Computing histogram for channel ID: 0/166Computing histogram for channel ID: 1/166Computing histogram for channel ID: 2/166Computing histogram for channel ID: 3/166Computing histogram for channel ID: 4/166Computing histogram for channel ID: 5/166Computing histogram for channel ID: 6/166Computing histogram for channel ID: 7/166Computing histogram for channel ID: 8/166Computing histogram for channel ID: 9/166Computing histogram for channel ID: 10/166Computing histogram for channel ID: 11/166Computing histogram for channel ID: 12/166Computing histogram for channel ID: 13/166Computing histogram for channel ID: 14/166Computing histogram for channel ID: 15/166Computing histogram for channel ID: 16/166Computing histogram for channel ID: 17/166Computing histogram for channel ID: 18/166Computing histogram for channel ID: 19/166Computing histogram for channel ID: 20/166Computing histogram for channel ID: 21/166Computing histogram for channel ID: 22/166Computing histogram for channel ID: 23/166Computing histogram for channel ID: 24/166Computing histogram for channel ID: 25/166Computing histogram for channel ID: 26/166Computing histogram for channel ID: 27/166Computing histogram for channel ID: 28/166Computing histogram for channel ID: 29/166Computing histogram for channel ID: 30/166Computing histogram for channel ID: 31/166Computing histogram for channel ID: 32/166Computing histogram for channel ID: 33/166Computing histogram for channel ID: 34/166Computing histogram for channel ID: 35/166Computing histogram for channel ID: 36/166Computing histogram for channel ID: 37/166Computing histogram for channel ID: 38/166Computing histogram for channel ID: 39/166Computing histogram for channel ID: 40/166Computing histogram for channel ID: 41/166Computing histogram for channel ID: 42/166Computing histogram for channel ID: 43/166Computing histogram for channel ID: 44/166Computing histogram for channel ID: 45/166Computing histogram for channel ID: 46/166Computing histogram for channel ID: 47/166Computing histogram for channel ID: 48/166Computing histogram for channel ID: 49/166Computing histogram for channel ID: 50/166Computing histogram for channel ID: 51/166Computing histogram for channel ID: 52/166Computing histogram for channel ID: 53/166Computing histogram for channel ID: 54/166Computing histogram for channel ID: 55/166Computing histogram for channel ID: 56/166Computing histogram for channel ID: 57/166Computing histogram for channel ID: 58/166Computing histogram for channel ID: 59/166Computing histogram for channel ID: 60/166Computing histogram for channel ID: 61/166Computing histogram for channel ID: 62/166Computing histogram for channel ID: 63/166Computing histogram for channel ID: 64/166Computing histogram for channel ID: 65/166Computing histogram for channel ID: 66/166Computing histogram for channel ID: 67/166Computing histogram for channel ID: 68/166Computing histogram for channel ID: 69/166Computing histogram for channel ID: 70/166Computing histogram for channel ID: 71/166Computing histogram for channel ID: 72/166Computing histogram for channel ID: 73/166Computing histogram for channel ID: 74/166Computing histogram for channel ID: 75/166Computing histogram for channel ID: 76/166Computing histogram for channel ID: 77/166Computing histogram for channel ID: 78/166Computing histogram for channel ID: 79/166Computing histogram for channel ID: 80/166Computing histogram for channel ID: 81/166Computing histogram for channel ID: 82/166Computing histogram for channel ID: 83/166Computing histogram for channel ID: 84/166Computing histogram for channel ID: 85/166Computing histogram for channel ID: 86/166Computing histogram for channel ID: 87/166Computing histogram for channel ID: 88/166Computing histogram for channel ID: 89/166Computing histogram for channel ID: 90/166Computing histogram for channel ID: 91/166Computing histogram for channel ID: 92/166Computing histogram for channel ID: 93/166Computing histogram for channel ID: 94/166Computing histogram for channel ID: 95/166Computing histogram for channel ID: 96/166Computing histogram for channel ID: 97/166Computing histogram for channel ID: 98/166Computing histogram for channel ID: 99/166Computing histogram for channel ID: 100/166Computing histogram for channel ID: 101/166Computing histogram for channel ID: 102/166Computing histogram for channel ID: 103/166Computing histogram for channel ID: 104/166Computing histogram for channel ID: 105/166Computing histogram for channel ID: 106/166Computing histogram for channel ID: 107/166Computing histogram for channel ID: 108/166Computing histogram for channel ID: 109/166Computing histogram for channel ID: 110/166Computing histogram for channel ID: 111/166Computing histogram for channel ID: 112/166Computing histogram for channel ID: 113/166Computing histogram for channel ID: 114/166Computing histogram for channel ID: 115/166Computing histogram for channel ID: 116/166Computing histogram for channel ID: 117/166Computing histogram for channel ID: 118/166Computing histogram for channel ID: 119/166Computing histogram for channel ID: 120/166Computing histogram for channel ID: 121/166Computing histogram for channel ID: 122/166Computing histogram for channel ID: 123/166Computing histogram for channel ID: 124/166Computing histogram for channel ID: 125/166Computing histogram for channel ID: 126/166Computing histogram for channel ID: 127/166Computing histogram for channel ID: 128/166Computing histogram for channel ID: 129/166Computing histogram for channel ID: 130/166Computing histogram for channel ID: 131/166Computing histogram for channel ID: 132/166Computing histogram for channel ID: 133/166Computing histogram for channel ID: 134/166Computing histogram for channel ID: 135/166Computing histogram for channel ID: 136/166Computing histogram for channel ID: 137/166Computing histogram for channel ID: 138/166Computing histogram for channel ID: 139/166Computing histogram for channel ID: 140/166Computing histogram for channel ID: 141/166Computing histogram for channel ID: 142/166Computing histogram for channel ID: 143/166Computing histogram for channel ID: 144/166Computing histogram for channel ID: 145/166Computing histogram for channel ID: 146/166Computing histogram for channel ID: 147/166Computing histogram for channel ID: 148/166Computing histogram for channel ID: 149/166Computing histogram for channel ID: 150/166Computing histogram for channel ID: 151/166Computing histogram for channel ID: 152/166Computing histogram for channel ID: 153/166Computing histogram for channel ID: 154/166Computing histogram for channel ID: 155/166Computing histogram for channel ID: 156/166Computing histogram for channel ID: 157/166Computing histogram for channel ID: 158/166Computing histogram for channel ID: 159/166Computing histogram for channel ID: 160/166Computing histogram for channel ID: 161/166Computing histogram for channel ID: 162/166Computing histogram for channel ID: 163/166Computing histogram for channel ID: 164/166Computing histogram for channel ID: 165/166Computing histogram for channel ID: 166/166[7/8]: /home/ghassanmakhoul/Documents/data/Resamp_512_Hz/bipole_filtered_wholeband_unscaled_big_pickles/Spat114/Spat114_02182025_17202406_clabel_resampled_512.0_Hz_bipole_filtered_[].pkl
+Computing histogram for channel ID: 0/166Computing histogram for channel ID: 1/166Computing histogram for channel ID: 2/166Computing histogram for channel ID: 3/166Computing histogram for channel ID: 4/166Computing histogram for channel ID: 5/166Computing histogram for channel ID: 6/166Computing histogram for channel ID: 7/166Computing histogram for channel ID: 8/166Computing histogram for channel ID: 9/166Computing histogram for channel ID: 10/166Computing histogram for channel ID: 11/166Computing histogram for channel ID: 12/166Computing histogram for channel ID: 13/166Computing histogram for channel ID: 14/166Computing histogram for channel ID: 15/166Computing histogram for channel ID: 16/166Computing histogram for channel ID: 17/166Computing histogram for channel ID: 18/166Computing histogram for channel ID: 19/166Computing histogram for channel ID: 20/166Computing histogram for channel ID: 21/166Computing histogram for channel ID: 22/166Computing histogram for channel ID: 23/166Computing histogram for channel ID: 24/166Computing histogram for channel ID: 25/166Computing histogram for channel ID: 26/166Computing histogram for channel ID: 27/166Computing histogram for channel ID: 28/166Computing histogram for channel ID: 29/166Computing histogram for channel ID: 30/166Computing histogram for channel ID: 31/166Computing histogram for channel ID: 32/166Computing histogram for channel ID: 33/166Computing histogram for channel ID: 34/166Computing histogram for channel ID: 35/166Computing histogram for channel ID: 36/166Computing histogram for channel ID: 37/166Computing histogram for channel ID: 38/166Computing histogram for channel ID: 39/166Computing histogram for channel ID: 40/166Computing histogram for channel ID: 41/166Computing histogram for channel ID: 42/166Computing histogram for channel ID: 43/166Computing histogram for channel ID: 44/166Computing histogram for channel ID: 45/166Computing histogram for channel ID: 46/166Computing histogram for channel ID: 47/166Computing histogram for channel ID: 48/166Computing histogram for channel ID: 49/166Computing histogram for channel ID: 50/166Computing histogram for channel ID: 51/166Computing histogram for channel ID: 52/166Computing histogram for channel ID: 53/166Computing histogram for channel ID: 54/166Computing histogram for channel ID: 55/166Computing histogram for channel ID: 56/166Computing histogram for channel ID: 57/166Computing histogram for channel ID: 58/166Computing histogram for channel ID: 59/166Computing histogram for channel ID: 60/166Computing histogram for channel ID: 61/166Computing histogram for channel ID: 62/166Computing histogram for channel ID: 63/166Computing histogram for channel ID: 64/166Computing histogram for channel ID: 65/166Computing histogram for channel ID: 66/166Computing histogram for channel ID: 67/166Computing histogram for channel ID: 68/166Computing histogram for channel ID: 69/166Computing histogram for channel ID: 70/166Computing histogram for channel ID: 71/166Computing histogram for channel ID: 72/166Computing histogram for channel ID: 73/166Computing histogram for channel ID: 74/166Computing histogram for channel ID: 75/166Computing histogram for channel ID: 76/166Computing histogram for channel ID: 77/166Computing histogram for channel ID: 78/166Computing histogram for channel ID: 79/166Computing histogram for channel ID: 80/166Computing histogram for channel ID: 81/166Computing histogram for channel ID: 82/166Computing histogram for channel ID: 83/166Computing histogram for channel ID: 84/166Computing histogram for channel ID: 85/166Computing histogram for channel ID: 86/166Computing histogram for channel ID: 87/166Computing histogram for channel ID: 88/166Computing histogram for channel ID: 89/166Computing histogram for channel ID: 90/166Computing histogram for channel ID: 91/166Computing histogram for channel ID: 92/166Computing histogram for channel ID: 93/166Computing histogram for channel ID: 94/166Computing histogram for channel ID: 95/166Computing histogram for channel ID: 96/166Computing histogram for channel ID: 97/166Computing histogram for channel ID: 98/166Computing histogram for channel ID: 99/166Computing histogram for channel ID: 100/166Computing histogram for channel ID: 101/166Computing histogram for channel ID: 102/166Computing histogram for channel ID: 103/166Computing histogram for channel ID: 104/166Computing histogram for channel ID: 105/166Computing histogram for channel ID: 106/166Computing histogram for channel ID: 107/166Computing histogram for channel ID: 108/166Computing histogram for channel ID: 109/166Computing histogram for channel ID: 110/166Computing histogram for channel ID: 111/166Computing histogram for channel ID: 112/166Computing histogram for channel ID: 113/166Computing histogram for channel ID: 114/166Computing histogram for channel ID: 115/166Computing histogram for channel ID: 116/166Computing histogram for channel ID: 117/166Computing histogram for channel ID: 118/166Computing histogram for channel ID: 119/166Computing histogram for channel ID: 120/166Computing histogram for channel ID: 121/166Computing histogram for channel ID: 122/166Computing histogram for channel ID: 123/166Computing histogram for channel ID: 124/166Computing histogram for channel ID: 125/166Computing histogram for channel ID: 126/166Computing histogram for channel ID: 127/166Computing histogram for channel ID: 128/166Computing histogram for channel ID: 129/166Computing histogram for channel ID: 130/166Computing histogram for channel ID: 131/166Computing histogram for channel ID: 132/166Computing histogram for channel ID: 133/166Computing histogram for channel ID: 134/166Computing histogram for channel ID: 135/166Computing histogram for channel ID: 136/166Computing histogram for channel ID: 137/166Computing histogram for channel ID: 138/166Computing histogram for channel ID: 139/166Computing histogram for channel ID: 140/166Computing histogram for channel ID: 141/166Computing histogram for channel ID: 142/166Computing histogram for channel ID: 143/166Computing histogram for channel ID: 144/166Computing histogram for channel ID: 145/166Computing histogram for channel ID: 146/166Computing histogram for channel ID: 147/166Computing histogram for channel ID: 148/166Computing histogram for channel ID: 149/166Computing histogram for channel ID: 150/166Computing histogram for channel ID: 151/166Computing histogram for channel ID: 152/166Computing histogram for channel ID: 153/166Computing histogram for channel ID: 154/166Computing histogram for channel ID: 155/166Computing histogram for channel ID: 156/166Computing histogram for channel ID: 157/166Computing histogram for channel ID: 158/166Computing histogram for channel ID: 159/166Computing histogram for channel ID: 160/166Computing histogram for channel ID: 161/166Computing histogram for channel ID: 162/166Computing histogram for channel ID: 163/166Computing histogram for channel ID: 164/166Computing histogram for channel ID: 165/166Computing histogram for channel ID: 166/166Channel ID: 0 --> TODO list commprehension with subprocess
+Channel ID: 1 --> TODO list commprehension with subprocess
+Channel ID: 2 --> TODO list commprehension with subprocess
+Channel ID: 3 --> TODO list commprehension with subprocess
+Channel ID: 4 --> TODO list commprehension with subprocess
+Channel ID: 5 --> TODO list commprehension with subprocess
+Channel ID: 6 --> TODO list commprehension with subprocess
+Channel ID: 7 --> TODO list commprehension with subprocess
+Channel ID: 8 --> TODO list commprehension with subprocess
+Channel ID: 9 --> TODO list commprehension with subprocess
+Channel ID: 10 --> TODO list commprehension with subprocess
+Channel ID: 11 --> TODO list commprehension with subprocess
+Channel ID: 12 --> TODO list commprehension with subprocess
+Channel ID: 13 --> TODO list commprehension with subprocess
+Channel ID: 14 --> TODO list commprehension with subprocess
+Channel ID: 15 --> TODO list commprehension with subprocess
+Channel ID: 16 --> TODO list commprehension with subprocess
+Channel ID: 17 --> TODO list commprehension with subprocess
+Channel ID: 18 --> TODO list commprehension with subprocess
+Channel ID: 19 --> TODO list commprehension with subprocess
+Channel ID: 20 --> TODO list commprehension with subprocess
+Channel ID: 21 --> TODO list commprehension with subprocess
+Channel ID: 22 --> TODO list commprehension with subprocess
+Channel ID: 23 --> TODO list commprehension with subprocess
+Channel ID: 24 --> TODO list commprehension with subprocess
+Channel ID: 25 --> TODO list commprehension with subprocess
+Channel ID: 26 --> TODO list commprehension with subprocess
+Channel ID: 27 --> TODO list commprehension with subprocess
+Channel ID: 28 --> TODO list commprehension with subprocess
+Channel ID: 29 --> TODO list commprehension with subprocess
+Channel ID: 30 --> TODO list commprehension with subprocess
+Channel ID: 31 --> TODO list commprehension with subprocess
+Channel ID: 32 --> TODO list commprehension with subprocess
+Channel ID: 33 --> TODO list commprehension with subprocess
+Channel ID: 34 --> TODO list commprehension with subprocess
+Channel ID: 35 --> TODO list commprehension with subprocess
+Channel ID: 36 --> TODO list commprehension with subprocess
+Channel ID: 37 --> TODO list commprehension with subprocess
+Channel ID: 38 --> TODO list commprehension with subprocess
+Channel ID: 39 --> TODO list commprehension with subprocess
+Channel ID: 40 --> TODO list commprehension with subprocess
+Channel ID: 41 --> TODO list commprehension with subprocess
+Channel ID: 42 --> TODO list commprehension with subprocess
+Channel ID: 43 --> TODO list commprehension with subprocess
+Channel ID: 44 --> TODO list commprehension with subprocess
+Channel ID: 45 --> TODO list commprehension with subprocess
+Channel ID: 46 --> TODO list commprehension with subprocess
+Channel ID: 47 --> TODO list commprehension with subprocess
+Channel ID: 48 --> TODO list commprehension with subprocess
+Channel ID: 49 --> TODO list commprehension with subprocess
+Channel ID: 50 --> TODO list commprehension with subprocess
+Channel ID: 51 --> TODO list commprehension with subprocess
+Channel ID: 52 --> TODO list commprehension with subprocess
+Channel ID: 53 --> TODO list commprehension with subprocess
+Channel ID: 54 --> TODO list commprehension with subprocess
+Channel ID: 55 --> TODO list commprehension with subprocess
+Channel ID: 56 --> TODO list commprehension with subprocess
+Channel ID: 57 --> TODO list commprehension with subprocess
+Channel ID: 58 --> TODO list commprehension with subprocess
+Channel ID: 59 --> TODO list commprehension with subprocess
+Channel ID: 60 --> TODO list commprehension with subprocess
+Channel ID: 61 --> TODO list commprehension with subprocess
+Channel ID: 62 --> TODO list commprehension with subprocess
+Channel ID: 63 --> TODO list commprehension with subprocess
+Channel ID: 64 --> TODO list commprehension with subprocess
+Channel ID: 65 --> TODO list commprehension with subprocess
+Channel ID: 66 --> TODO list commprehension with subprocess
+Channel ID: 67 --> TODO list commprehension with subprocess
+Channel ID: 68 --> TODO list commprehension with subprocess
+Channel ID: 69 --> TODO list commprehension with subprocess
+Channel ID: 70 --> TODO list commprehension with subprocess
+Channel ID: 71 --> TODO list commprehension with subprocess
+Channel ID: 72 --> TODO list commprehension with subprocess
+Channel ID: 73 --> TODO list commprehension with subprocess
+Channel ID: 74 --> TODO list commprehension with subprocess
+Channel ID: 75 --> TODO list commprehension with subprocess
+Channel ID: 76 --> TODO list commprehension with subprocess
+Channel ID: 77 --> TODO list commprehension with subprocess
+Channel ID: 78 --> TODO list commprehension with subprocess
+Channel ID: 79 --> TODO list commprehension with subprocess
+Channel ID: 80 --> TODO list commprehension with subprocess
+Channel ID: 81 --> TODO list commprehension with subprocess
+Channel ID: 82 --> TODO list commprehension with subprocess
+Channel ID: 83 --> TODO list commprehension with subprocess
+Channel ID: 84 --> TODO list commprehension with subprocess
+Channel ID: 85 --> TODO list commprehension with subprocess
+Channel ID: 86 --> TODO list commprehension with subprocess
+Channel ID: 87 --> TODO list commprehension with subprocess
+Channel ID: 88 --> TODO list commprehension with subprocess
+Channel ID: 89 --> TODO list commprehension with subprocess
+Channel ID: 90 --> TODO list commprehension with subprocess
+Channel ID: 91 --> TODO list commprehension with subprocess
+Channel ID: 92 --> TODO list commprehension with subprocess
+Channel ID: 93 --> TODO list commprehension with subprocess
+Channel ID: 94 --> TODO list commprehension with subprocess
+Channel ID: 95 --> TODO list commprehension with subprocess
+Channel ID: 96 --> TODO list commprehension with subprocess
+Channel ID: 97 --> TODO list commprehension with subprocess
+Channel ID: 98 --> TODO list commprehension with subprocess
+Channel ID: 99 --> TODO list commprehension with subprocess
+Channel ID: 100 --> TODO list commprehension with subprocess
+Channel ID: 101 --> TODO list commprehension with subprocess
+Channel ID: 102 --> TODO list commprehension with subprocess
+Channel ID: 103 --> TODO list commprehension with subprocess
+Channel ID: 104 --> TODO list commprehension with subprocess
+Channel ID: 105 --> TODO list commprehension with subprocess
+Channel ID: 106 --> TODO list commprehension with subprocess
+Channel ID: 107 --> TODO list commprehension with subprocess
+Channel ID: 108 --> TODO list commprehension with subprocess
+Channel ID: 109 --> TODO list commprehension with subprocess
+Channel ID: 110 --> TODO list commprehension with subprocess
+Channel ID: 111 --> TODO list commprehension with subprocess
+Channel ID: 112 --> TODO list commprehension with subprocess
+Channel ID: 113 --> TODO list commprehension with subprocess
+Channel ID: 114 --> TODO list commprehension with subprocess
+Channel ID: 115 --> TODO list commprehension with subprocess
+Channel ID: 116 --> TODO list commprehension with subprocess
+Channel ID: 117 --> TODO list commprehension with subprocess
+Channel ID: 118 --> TODO list commprehension with subprocess
+Channel ID: 119 --> TODO list commprehension with subprocess
+Channel ID: 120 --> TODO list commprehension with subprocess
+Channel ID: 121 --> TODO list commprehension with subprocess
+Channel ID: 122 --> TODO list commprehension with subprocess
+Channel ID: 123 --> TODO list commprehension with subprocess
+Channel ID: 124 --> TODO list commprehension with subprocess
+Channel ID: 125 --> TODO list commprehension with subprocess
+Channel ID: 126 --> TODO list commprehension with subprocess
+Channel ID: 127 --> TODO list commprehension with subprocess
+Channel ID: 128 --> TODO list commprehension with subprocess
+Channel ID: 129 --> TODO list commprehension with subprocess
+Channel ID: 130 --> TODO list commprehension with subprocess
+Channel ID: 131 --> TODO list commprehension with subprocess
+Channel ID: 132 --> TODO list commprehension with subprocess
+Channel ID: 133 --> TODO list commprehension with subprocess
+Channel ID: 134 --> TODO list commprehension with subprocess
+Channel ID: 135 --> TODO list commprehension with subprocess
+/home/ghassanmakhoul/Documents/Tornadoes_v1/models/preprocess/preprocess_aquire_params.py:262: RuntimeWarning: invalid value encountered in divide
+  cdf_by_channel_scaled[ch_idx, 0 : int((num_bins-1)/2)] = cdf_by_channel_scaled[ch_idx, 0 : int((num_bins-1)/2)] / (zero_bin_val - min_val)
+/home/ghassanmakhoul/Documents/Tornadoes_v1/models/preprocess/preprocess_aquire_params.py:263: RuntimeWarning: invalid value encountered in divide
+  cdf_by_channel_scaled[ch_idx, int((num_bins-1)/2) + 1 : ] = cdf_by_channel_scaled[ch_idx, int((num_bins-1)/2) + 1 : ] / (max_val - zero_bin_val)
+/home/ghassanmakhoul/Documents/Tornadoes_v1/models/preprocess/preprocess_aquire_params.py:262: RuntimeWarning: divide by zero encountered in divide
+  cdf_by_channel_scaled[ch_idx, 0 : int((num_bins-1)/2)] = cdf_by_channel_scaled[ch_idx, 0 : int((num_bins-1)/2)] / (zero_bin_val - min_val)
+Channel ID: 136 --> TODO list commprehension with subprocess
+Channel ID: 137 --> TODO list commprehension with subprocess
+Channel ID: 138 --> TODO list commprehension with subprocess
+Channel ID: 139 --> TODO list commprehension with subprocess
+Channel ID: 140 --> TODO list commprehension with subprocess
+Channel ID: 141 --> TODO list commprehension with subprocess
+Channel ID: 142 --> TODO list commprehension with subprocess
+Channel ID: 143 --> TODO list commprehension with subprocess
+Channel ID: 144 --> TODO list commprehension with subprocess
+Channel ID: 145 --> TODO list commprehension with subprocess
+Channel ID: 146 --> TODO list commprehension with subprocess
+Channel ID: 147 --> TODO list commprehension with subprocess
+Channel ID: 148 --> TODO list commprehension with subprocess
+Channel ID: 149 --> TODO list commprehension with subprocess
+Channel ID: 150 --> TODO list commprehension with subprocess
+Channel ID: 151 --> TODO list commprehension with subprocess
+Channel ID: 152 --> TODO list commprehension with subprocess
+Channel ID: 153 --> TODO list commprehension with subprocess
+Channel ID: 154 --> TODO list commprehension with subprocess
+Channel ID: 155 --> TODO list commprehension with subprocess
+Channel ID: 156 --> TODO list commprehension with subprocess
+Channel ID: 157 --> TODO list commprehension with subprocess
+Channel ID: 158 --> TODO list commprehension with subprocess
+Channel ID: 159 --> TODO list commprehension with subprocess
+Channel ID: 160 --> TODO list commprehension with subprocess
+Channel ID: 161 --> TODO list commprehension with subprocess
+Channel ID: 162 --> TODO list commprehension with subprocess
+Channel ID: 163 --> TODO list commprehension with subprocess
+Channel ID: 164 --> TODO list commprehension with subprocess
+Channel ID: 165 --> TODO list commprehension with subprocess
+Channel ID: 166 --> TODO list commprehension with subprocess
+
+Scaling params aquired: Employing scaling on following files and epoching into desired duration and stride
+
+[1/8]: /home/ghassanmakhoul/Documents/data/Resamp_512_Hz/bipole_filtered_wholeband_unscaled_big_pickles/Spat114/Spat114_02202025_07005308_resampled_512.0_Hz_bipole_filtered_[].pkl
+Loading big pickle
+Saving histogram for entire file data
+Saving normalization histograms for each channel in file
+Data scaled, now epoching the file data into Window Duration: 1024 seconds, Stride: 896 seconds
+Little pickles saved
+Garbage collected
+
+[2/8]: /home/ghassanmakhoul/Documents/data/Resamp_512_Hz/bipole_filtered_wholeband_unscaled_big_pickles/Spat114/Spat114_02222025_07010106_resampled_512.0_Hz_bipole_filtered_[].pkl
+Loading big pickle
+Saving histogram for entire file data
+Saving normalization histograms for each channel in file
+Data scaled, now epoching the file data into Window Duration: 1024 seconds, Stride: 896 seconds
+Little pickles saved
+Garbage collected
+
+[3/8]: /home/ghassanmakhoul/Documents/data/Resamp_512_Hz/bipole_filtered_wholeband_unscaled_big_pickles/Spat114/Spat114_02242025_07014504_resampled_512.0_Hz_bipole_filtered_[].pkl
+Loading big pickle
+Saving histogram for entire file data
+Saving normalization histograms for each channel in file
+Data scaled, now epoching the file data into Window Duration: 1024 seconds, Stride: 896 seconds
+Little pickles saved
+Garbage collected
+
+[4/8]: /home/ghassanmakhoul/Documents/data/Resamp_512_Hz/bipole_filtered_wholeband_unscaled_big_pickles/Spat114/Spat114_02252025_07005009_resampled_512.0_Hz_bipole_filtered_[].pkl
+Loading big pickle
+Saving histogram for entire file data
+Saving normalization histograms for each channel in file
+Data scaled, now epoching the file data into Window Duration: 1024 seconds, Stride: 896 seconds
+Little pickles saved
+Garbage collected
+
+[5/8]: /home/ghassanmakhoul/Documents/data/Resamp_512_Hz/bipole_filtered_wholeband_unscaled_big_pickles/Spat114/Spat114_02232025_07011409_resampled_512.0_Hz_bipole_filtered_[].pkl
+Loading big pickle
+Saving histogram for entire file data
+Saving normalization histograms for each channel in file
+Data scaled, now epoching the file data into Window Duration: 1024 seconds, Stride: 896 seconds
+Little pickles saved
+Garbage collected
+
+[6/8]: /home/ghassanmakhoul/Documents/data/Resamp_512_Hz/bipole_filtered_wholeband_unscaled_big_pickles/Spat114/Spat114_02192025_07005500_resampled_512.0_Hz_bipole_filtered_[].pkl
+Loading big pickle
+Saving histogram for entire file data
+Saving normalization histograms for each channel in file
+Data scaled, now epoching the file data into Window Duration: 1024 seconds, Stride: 896 seconds
+ZERO PADDED FILE FOUND: 1024 second epoch starting at 02/19/2025-18:59:43
+ZERO PADDED FILE FOUND: 1024 second epoch starting at 02/19/2025-19:14:39
+Little pickles saved
+Garbage collected
+
+[7/8]: /home/ghassanmakhoul/Documents/data/Resamp_512_Hz/bipole_filtered_wholeband_unscaled_big_pickles/Spat114/Spat114_02182025_17202406_clabel_resampled_512.0_Hz_bipole_filtered_[].pkl
+Loading big pickle
+Saving histogram for entire file data
+Saving normalization histograms for each channel in file
+Data scaled, now epoching the file data into Window Duration: 1024 seconds, Stride: 896 seconds
+ZERO PADDED FILE FOUND: 1024 second epoch starting at 02/18/2025-17:22:24
+ZERO PADDED FILE FOUND: 1024 second epoch starting at 02/18/2025-17:37:20
+ZERO PADDED FILE FOUND: 1024 second epoch starting at 02/18/2025-17:52:16
+ZERO PADDED FILE FOUND: 1024 second epoch starting at 02/18/2025-18:07:12
+ZERO PADDED FILE FOUND: 1024 second epoch starting at 02/18/2025-18:22:08
+ZERO PADDED FILE FOUND: 1024 second epoch starting at 02/18/2025-18:37:04
+ZERO PADDED FILE FOUND: 1024 second epoch starting at 02/18/2025-18:52:00
+ZERO PADDED FILE FOUND: 1024 second epoch starting at 02/18/2025-19:06:56
+ZERO PADDED FILE FOUND: 1024 second epoch starting at 02/18/2025-19:21:52
+ZERO PADDED FILE FOUND: 1024 second epoch starting at 02/18/2025-19:36:48
+ZERO PADDED FILE FOUND: 1024 second epoch starting at 02/18/2025-19:51:44
+ZERO PADDED FILE FOUND: 1024 second epoch starting at 02/18/2025-20:06:40
+Little pickles saved
+Garbage collected
+
+[8/8]: /home/ghassanmakhoul/Documents/data/Resamp_512_Hz/bipole_filtered_wholeband_unscaled_big_pickles/Spat114/Spat114_02212025_07012105_resampled_512.0_Hz_bipole_filtered_[].pkl
+Loading big pickle
+Saving histogram for entire file data
+Saving normalization histograms for each channel in file
+Data scaled, now epoching the file data into Window Duration: 1024 seconds, Stride: 896 seconds
+Little pickles saved
+Garbage collected
+Script complete
