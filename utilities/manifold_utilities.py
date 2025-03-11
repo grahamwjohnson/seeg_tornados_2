@@ -1135,7 +1135,182 @@ def save_pacmap_objects(pacmap_dir, epoch, axis, reducer, hdb, xy_lims):
     output_obj10.close()
     print("Saved plot axis")
 
-def kohenen_subfunction_pytorch(  
+# def kohonen_subfunction_pytorch(  
+#     atd_file,
+#     pat_ids_list,
+#     latent_data_windowed, 
+#     start_datetimes_epoch,  
+#     stop_datetimes_epoch,
+#     epoch, 
+#     FS, 
+#     win_sec, 
+#     stride_sec, 
+#     savedir,
+#     som_batch_size,
+#     som_lr,
+#     som_lr_epoch_decay,
+#     som_sigma,
+#     som_sigma_epoch_decay,
+#     som_epochs,
+#     som_gridsize,
+#     HDBSCAN_min_cluster_size,
+#     HDBSCAN_min_samples,
+#     plot_preictal_color_sec,
+#     plot_postictal_color_sec,
+#     interictal_contour=False,
+#     verbose=True,
+#     premade_SOM = None,
+#     premade_HDBSCAN = [],
+#     **kwargs):
+
+#     '''
+#     Goal of function:
+#     Run self-organizing maps (SOM) algorithm and plot results
+
+#     '''
+
+#     if not os.path.exists(savedir): os.makedirs(savedir)
+
+#     # Metadata
+#     latent_dim = latent_data_windowed[0].shape[1]
+#     num_timepoints_in_windowed_file = latent_data_windowed[0].shape[0]
+#     modified_FS = 1 / stride_sec
+
+#     # Check for NaNs in files
+#     delete_file_idxs = []
+#     for i in range(len(latent_data_windowed)):
+#         if np.sum(np.isnan(latent_data_windowed[i])) > 0:
+#             delete_file_idxs = delete_file_idxs + [i]
+#             print(f"WARNING: Deleted file {start_datetimes_epoch[i]} that had NaNs")
+
+#     # Delete entries/files in lists where there is NaN in latent space for that file
+#     latent_data_windowed = [item for i, item in enumerate(latent_data_windowed) if i not in delete_file_idxs]
+#     start_datetimes_epoch = [item for i, item in enumerate(start_datetimes_epoch) if i not in delete_file_idxs]  
+#     stop_datetimes_epoch = [item for i, item in enumerate(stop_datetimes_epoch) if i not in delete_file_idxs]
+#     pat_ids_list = [item for i, item in enumerate(pat_ids_list) if i not in delete_file_idxs]
+
+#     # Flatten data into [miniepoch, dim] to feed into PaCMAP, original data is [file, seq_miniepoch_in_file, latent_dim]
+#     latent_input = np.concatenate(latent_data_windowed, axis=0)
+#     pat_ids_input = [item for item in pat_ids_list for _ in range(latent_data_windowed[0].shape[0])]
+#     start_datetimes_input = [item + datetime.timedelta(seconds=stride_sec * i) for item in start_datetimes_epoch for i in range(latent_data_windowed[0].shape[0])]
+#     stop_datetimes_input = [item + datetime.timedelta(seconds=stride_sec * i) + datetime.timedelta(seconds=win_sec) for item in start_datetimes_epoch for i in range(latent_data_windowed[0].shape[0])]  # ITERATE FROM SHIFTED START using WINDOW_SEC, not from STOP datetimes
+
+#     # Make new Kohonen SOM
+#     if premade_SOM == None:
+
+#         # Initialize and train the SOM using pytorch
+#         print(f"Training new SOM: gridsize:{som_gridsize}, lr:{som_lr} w/ {som_lr_epoch_decay} decay per epoch, sigma:{som_sigma} w/ {som_sigma_epoch_decay} decay per epoch, num_features:{latent_input.shape[0]}, dims:{latent_input.shape[1]}, batchsize:{som_batch_size}")
+#         grid_size = (som_gridsize, som_gridsize)  # SOM grid size
+#         input_dim = latent_input.shape[1]  # Number of features
+#         som = SOM(grid_size=grid_size, input_dim=latent_input.shape[1], batch_size=som_batch_size, lr=som_lr, lr_epoch_decay=som_lr_epoch_decay, sigma=som_sigma, sigma_epoch_decay=som_sigma_epoch_decay, device='cuda')
+#         som.train(latent_input, num_epochs=som_epochs)
+
+#         # Save SOM
+#         ckp = som.state_dict()
+#         check_path = savedir + "/som_state_dict.pt"
+#         torch.save(ckp, check_path)
+#         print("SOM state dict saved")
+
+#         # print("Making new Kohonen SOM to use for visualization")
+#         # som = MiniSom(som_gridsize, som_gridsize, latent_input.shape[1], sigma=1.0, learning_rate=som_lr)  # Create a SOM grid (e.g., 10x10 grid)
+#         # som.train_random(latent_input, som_epochs)   # Train the SOM
+
+#     # Identify data points within pre-ictal buffers        
+#     preictal_bool_input = file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
+
+#     # Get the weights from the trained SOM (move to CPU for visualization)
+#     weights = som.get_weights()
+
+#     # Initialize a grid to count class assignments & Compute the hit map
+#     class_counts = np.zeros((grid_size[0], grid_size[1], 2))  # Shape: (grid_size[0], grid_size[1], num_classes)
+#     hit_map = np.zeros(grid_size) # initialize the hit map
+#     # Process data in batches
+#     for i in range(0, len(latent_input), som_batch_size):
+#         batch = latent_input[i:i + som_batch_size]  # Get a batch of inputs and labels
+#         batch_labels = preictal_bool_input[i:i + som_batch_size]
+#         batch = torch.tensor(batch, dtype=torch.float32, device='cuda') # Move batch to GPU
+#         bmu_rows, bmu_cols = som.find_bmu(batch) # Find BMUs for the entire batch
+#         bmu_rows = bmu_rows.cpu().numpy() # Move BMU indices to CPU and convert to NumPy
+#         bmu_cols = bmu_cols.cpu().numpy()
+#         np.add.at(hit_map, (bmu_rows, bmu_cols), 1) # Update the hit map using NumPy's advanced indexing
+
+#         # Update class counts for the batch
+#         for j, (bmu_row, bmu_col) in enumerate(zip(bmu_rows, bmu_cols)):
+#             label = int(batch_labels[j])  # Convert boolean label to int (0 or 1)
+#             class_counts[bmu_row, bmu_col, label] += 1  # Increment the count for the corresponding class
+
+#     # Compute class proportions for each neuron
+#     total_counts = np.sum(class_counts, axis=2, keepdims=True)  # Total counts per neuron
+#     class_proportions = np.divide(class_counts, total_counts, where=total_counts != 0)  # Shape: (grid_size[0], grid_size[1], 2)
+#     blended_colors = class_proportions[:, :, 1]  # Compute the blended colors for each neuron # Use proportion of class 1 (True) for blending
+        
+#     # Create a combined plot
+#     print("Plotting Kohonen")
+#     fig, axes = pl.subplots(2, 2, figsize=(12, 12))
+
+#     # 1. U-Matrix
+#     print("Plotting U-Matrix")
+#     # Compute the U-Matrix
+#     u_matrix = np.zeros((grid_size[0], grid_size[1]))  # Initialize U-Matrix
+#     for i in range(grid_size[0]):
+#         for j in range(grid_size[1]):
+#             neuron = weights[i, j] # Get the current neuron's weights
+#             distances = []  # Compute distances to all neighboring neurons
+#             for x in range(max(0, i - 1), min(grid_size[0], i + 2)):
+#                 for y in range(max(0, j - 1), min(grid_size[1], j + 2)):
+#                     if x == i and y == j:
+#                         continue  # Skip the current neuron
+#                     neighbor = weights[x, y]
+#                     distance = np.linalg.norm(neuron - neighbor)  # Euclidean distance
+#                     distances.append(distance)
+
+#             # Average the distances to get the U-Matrix value for this neuron
+#             u_matrix[i, j] = np.mean(distances)
+            
+#     axes[0, 0].pcolor(u_matrix.T, cmap='bone_r')
+#     axes[0, 0].set_title("U-Matrix")
+#     axes[0, 0].set_xlabel("Neuron X")
+#     axes[0, 0].set_ylabel("Neuron Y")
+
+#     # 2. Hit Map
+#     print("Plotting Hit Map")
+#     axes[0, 1].pcolor(hit_map.T, cmap='Blues')
+#     axes[0, 1].set_title("Hit Map")
+#     axes[0, 1].set_xlabel("Neuron X")
+#     axes[0, 1].set_ylabel("Neuron Y")
+
+#     # 3. Component Plane (Feature 0)
+#     print("Plotting Component Plane")
+#     compplane_feature = 0
+#     axes[1, 0].pcolor(weights[:, :, compplane_feature].T, cmap='coolwarm')
+#     axes[1, 0].set_title("Component Plane (Feature 0)")
+#     axes[1, 0].set_xlabel("Neuron X")
+#     axes[1, 0].set_ylabel("Neuron Y")
+
+#     # 4. Blended Class Distribution Across SOM
+#     blended_plot = axes[1, 1].pcolor(blended_colors.T, cmap='flare', edgecolors='k', linewidths=1, vmin=0, vmax=1)  # Transpose for correct orientation
+#     axes[1, 1].set_title("Blended Class Distribution Across SOM")
+#     axes[1, 1].set_xlabel("Neuron X")
+#     axes[1, 1].set_ylabel("Neuron Y")
+
+#     # Add a colorbar for the blended heatmap
+#     cbar = pl.colorbar(blended_plot, ax=axes[1, 1], ticks=[0, 0.5, 1])
+#     cbar.ax.set_yticklabels(['Class 0 (False)', '50% Class 0 / 50% Class 1', 'Class 1 (True)'])
+
+#     pl.tight_layout()
+
+#     # **** Save entire figure *****
+#     print("Exporting Kohonen to JPG")
+#     savename_jpg = savedir + f"/SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_epoch{epoch}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}.jpg"
+#     pl.savefig(savename_jpg, dpi=600)
+
+#     # TODO Upload to WandB
+
+#     pl.close(fig)
+
+#     return axes, som 
+
+def kohonen_subfunction_pytorch(  
     atd_file,
     pat_ids_list,
     latent_data_windowed, 
@@ -1159,15 +1334,9 @@ def kohenen_subfunction_pytorch(
     plot_postictal_color_sec,
     interictal_contour=False,
     verbose=True,
-    premade_SOM = None,
+    som_precomputed_path = None,
     premade_HDBSCAN = [],
     **kwargs):
-
-    '''
-    Goal of function:
-    Run self-organizing maps (SOM) algorithm and plot results
-
-    '''
 
     if not os.path.exists(savedir): os.makedirs(savedir)
 
@@ -1195,113 +1364,102 @@ def kohenen_subfunction_pytorch(
     start_datetimes_input = [item + datetime.timedelta(seconds=stride_sec * i) for item in start_datetimes_epoch for i in range(latent_data_windowed[0].shape[0])]
     stop_datetimes_input = [item + datetime.timedelta(seconds=stride_sec * i) + datetime.timedelta(seconds=win_sec) for item in start_datetimes_epoch for i in range(latent_data_windowed[0].shape[0])]  # ITERATE FROM SHIFTED START using WINDOW_SEC, not from STOP datetimes
 
-    # Make new Kohenen SOM
-    if premade_SOM == None:
+    
+    if premade_SOM is None:
+        
+        grid_size = (som_gridsize, som_gridsize)
+        som = SOM(grid_size=grid_size, input_dim=latent_input.shape[1], batch_size=som_batch_size, lr=som_lr, 
+                  lr_epoch_decay=som_lr_epoch_decay, sigma=som_sigma, sigma_epoch_decay=som_sigma_epoch_decay, device='cuda')
 
-        # Initialize and train the SOM using pytorch
-        print(f"Training new SOM: gridsize:{som_gridsize}, lr:{som_lr} w/ {som_lr_epoch_decay} decay per epoch, sigma:{som_sigma} w/ {som_sigma_epoch_decay} decay per epoch, num_features:{latent_input.shape[0]}, dims:{latent_input.shape[1]}, batchsize:{som_batch_size}")
-        grid_size = (som_gridsize, som_gridsize)  # SOM grid size
-        input_dim = latent_input.shape[1]  # Number of features
-        som = SOM(grid_size=grid_size, input_dim=latent_input.shape[1], batch_size=som_batch_size, lr=som_lr, lr_epoch_decay=som_lr_epoch_decay, sigma=som_sigma, sigma_epoch_decay=som_sigma_epoch_decay, device='cuda')
-        som.train(latent_input, num_epochs=som_epochs)
+        if som_precomputed_path is None # Make new Kohonen SOM
+            print(f"Training new SOM: gridsize:{som_gridsize}, lr:{som_lr} w/ {som_lr_epoch_decay} decay per epoch, sigma:{som_sigma} w/ {som_sigma_epoch_decay} decay per epoch")
+            som.train(latent_input, num_epochs=som_epochs)
+
+        else:
+            print(f"Loading SOM pretrained weights from: {som_precomputed_path}")
+            som.
 
         # Save SOM
-        ckp = som.state_dict()
-        check_path = savedir + "/som_state_dict.pt"
-        torch.save(ckp, check_path)
+        torch.save(som.state_dict(), savedir + "/som_state_dict.pt")
         print("SOM state dict saved")
-
-        # print("Making new Kohenen SOM to use for visualization")
-        # som = MiniSom(som_gridsize, som_gridsize, latent_input.shape[1], sigma=1.0, learning_rate=som_lr)  # Create a SOM grid (e.g., 10x10 grid)
-        # som.train_random(latent_input, som_epochs)   # Train the SOM
 
     # Identify data points within pre-ictal buffers        
     preictal_bool_input = file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
 
-    # Get the weights from the trained SOM (move to CPU for visualization)
+    # Get SOM weights
     weights = som.get_weights()
 
-    # Initialize a grid to count class assignments & Compute the hit map
-    class_counts = np.zeros((grid_size[0], grid_size[1], 2))  # Shape: (grid_size[0], grid_size[1], num_classes)
-    hit_map = np.zeros(grid_size) # initialize the hit map
-    # Process data in batches
+    # Initialize maps
+    class_counts = np.zeros((grid_size[0], grid_size[1], 2))
+    hit_map = np.zeros(grid_size)
+    patient_map = np.zeros(grid_size)
+
+    # Precompute patient index blending
+    unique_patients = np.unique(pat_ids_input)
+    patient_to_color = {pat: i / (len(unique_patients) - 1) for i, pat in enumerate(unique_patients)}
+    patient_colors = np.array([patient_to_color[pat] for pat in pat_ids_input])
+
+    # Process all data in batches
     for i in range(0, len(latent_input), som_batch_size):
-        batch = latent_input[i:i + som_batch_size]  # Get a batch of inputs and labels
+        batch = latent_input[i:i + som_batch_size]
+        batch_patients = patient_colors[i:i + som_batch_size]
         batch_labels = preictal_bool_input[i:i + som_batch_size]
-        batch = torch.tensor(batch, dtype=torch.float32, device='cuda') # Move batch to GPU
-        bmu_rows, bmu_cols = som.find_bmu(batch) # Find BMUs for the entire batch
-        bmu_rows = bmu_rows.cpu().numpy() # Move BMU indices to CPU and convert to NumPy
-        bmu_cols = bmu_cols.cpu().numpy()
-        np.add.at(hit_map, (bmu_rows, bmu_cols), 1) # Update the hit map using NumPy's advanced indexing
 
-        # Update class counts for the batch
-        for j, (bmu_row, bmu_col) in enumerate(zip(bmu_rows, bmu_cols)):
-            label = int(batch_labels[j])  # Convert boolean label to int (0 or 1)
-            class_counts[bmu_row, bmu_col, label] += 1  # Increment the count for the corresponding class
+        batch = torch.tensor(batch, dtype=torch.float32, device='cuda')
+        bmu_rows, bmu_cols = som.find_bmu(batch)
+        bmu_rows, bmu_cols = bmu_rows.cpu().numpy(), bmu_cols.cpu().numpy()
 
-    # Compute class proportions for each neuron
-    total_counts = np.sum(class_counts, axis=2, keepdims=True)  # Total counts per neuron
-    class_proportions = np.divide(class_counts, total_counts, where=total_counts != 0)  # Shape: (grid_size[0], grid_size[1], 2)
-    blended_colors = class_proportions[:, :, 1]  # Compute the blended colors for each neuron # Use proportion of class 1 (True) for blending
-        
-    # Create a combined plot
-    print("Plotting Kohenen")
-    fig, axes = pl.subplots(2, 2, figsize=(12, 12))
+        # Efficiently accumulate values using NumPy's `np.add.at`
+        np.add.at(hit_map, (bmu_rows, bmu_cols), 1)
+        np.add.at(patient_map, (bmu_rows, bmu_cols), batch_patients)
+        np.add.at(class_counts, (bmu_rows, bmu_cols, batch_labels.astype(int)), 1)
 
-    # 1. U-Matrix
-    print("Plotting U-Matrix")
-    # Compute the U-Matrix
-    u_matrix = np.zeros((grid_size[0], grid_size[1]))  # Initialize U-Matrix
+    # Normalize patient map
+    hit_map_nonzero = np.where(hit_map > 0, hit_map, 1)
+    patient_map /= hit_map_nonzero
+
+    # Compute blended class distribution
+    total_counts = np.sum(class_counts, axis=2, keepdims=True)
+    class_proportions = np.divide(class_counts, total_counts, where=total_counts != 0)
+    blended_colors = class_proportions[:, :, 1]
+
+    # Compute U-Matrix
+    u_matrix = np.zeros(grid_size)
     for i in range(grid_size[0]):
         for j in range(grid_size[1]):
-            neuron = weights[i, j] # Get the current neuron's weights
-            distances = []  # Compute distances to all neighboring neurons
-            for x in range(max(0, i - 1), min(grid_size[0], i + 2)):
-                for y in range(max(0, j - 1), min(grid_size[1], j + 2)):
-                    if x == i and y == j:
-                        continue  # Skip the current neuron
-                    neighbor = weights[x, y]
-                    distance = np.linalg.norm(neuron - neighbor)  # Euclidean distance
-                    distances.append(distance)
-
-            # Average the distances to get the U-Matrix value for this neuron
+            neuron = weights[i, j]
+            distances = [np.linalg.norm(neuron - weights[x, y]) for x in range(max(0, i-1), min(grid_size[0], i+2))
+                         for y in range(max(0, j-1), min(grid_size[1], j+2)) if (x, y) != (i, j)]
             u_matrix[i, j] = np.mean(distances)
-            
+
+    # Create a 2x3 plot layout
+    fig, axes = pl.subplots(2, 3, figsize=(18, 12))
+
+    # 1. U-Matrix
     axes[0, 0].pcolor(u_matrix.T, cmap='bone_r')
     axes[0, 0].set_title("U-Matrix")
-    axes[0, 0].set_xlabel("Neuron X")
-    axes[0, 0].set_ylabel("Neuron Y")
 
     # 2. Hit Map
-    print("Plotting Hit Map")
     axes[0, 1].pcolor(hit_map.T, cmap='Blues')
     axes[0, 1].set_title("Hit Map")
-    axes[0, 1].set_xlabel("Neuron X")
-    axes[0, 1].set_ylabel("Neuron Y")
 
     # 3. Component Plane (Feature 0)
-    print("Plotting Component Plane")
-    compplane_feature = 0
-    axes[1, 0].pcolor(weights[:, :, compplane_feature].T, cmap='coolwarm')
+    axes[1, 0].pcolor(weights[:, :, 0].T, cmap='coolwarm')
     axes[1, 0].set_title("Component Plane (Feature 0)")
-    axes[1, 0].set_xlabel("Neuron X")
-    axes[1, 0].set_ylabel("Neuron Y")
 
-    # 4. Blended Class Distribution Across SOM
-    blended_plot = axes[1, 1].pcolor(blended_colors.T, cmap='flare', edgecolors='k', linewidths=1, vmin=0, vmax=1)  # Transpose for correct orientation
-    axes[1, 1].set_title("Blended Class Distribution Across SOM")
-    axes[1, 1].set_xlabel("Neuron X")
-    axes[1, 1].set_ylabel("Neuron Y")
+    # 4. Patient Index Blended Map
+    patient_plot = axes[1, 1].pcolor(patient_map.T, cmap='viridis', edgecolors='k', linewidths=1, vmin=0, vmax=1)
+    axes[1, 1].set_title("Patient Index Blended Map")
+    pl.colorbar(patient_plot, ax=axes[1, 1])
 
-    # Add a colorbar for the blended heatmap
-    cbar = pl.colorbar(blended_plot, ax=axes[1, 1], ticks=[0, 0.5, 1])
-    cbar.ax.set_yticklabels(['Class 0 (False)', '50% Class 0 / 50% Class 1', 'Class 1 (True)'])
-
-    pl.tight_layout()
+    # 5. Blended Class Distribution
+    blended_plot = axes[1, 2].pcolor(blended_colors.T, cmap='flare', edgecolors='k', linewidths=1, vmin=0, vmax=1)
+    axes[1, 2].set_title("Blended Class Distribution")
+    pl.colorbar(blended_plot, ax=axes[1, 2])
 
     # **** Save entire figure *****
-    print("Exporting Kohenen to JPG")
-    savename_jpg = savedir + f"/SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_epoch{epoch}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}.jpg"
+    print("Exporting Kohonen to JPG")
+    savename_jpg = savedir + f"/SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_epoch{epoch}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
     pl.savefig(savename_jpg, dpi=600)
 
     # TODO Upload to WandB
@@ -1309,7 +1467,6 @@ def kohenen_subfunction_pytorch(
     pl.close(fig)
 
     return axes, som 
-
 
 def compute_histograms(data, min_val, max_val, B):
     """

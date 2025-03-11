@@ -53,7 +53,7 @@ if __name__ == "__main__":
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025'
     model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_incatern'
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_testing'
-    single_pats = ['Epat27'] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats  # TODO: modify to take a selection of patients
+    single_pats = [] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats  # TODO: modify to take a selection of patients
     epoch = 33 # 39 # 141 , 999 to debug
     latent_subdir = f'latent_files/Epoch{epoch}'
     win_sec = 64 # 60, 10  # Must match strings in directory name exactly (e.g. 1.0 not 1)
@@ -75,13 +75,14 @@ if __name__ == "__main__":
     plot_postictal_color_sec = 0 #60*10 #60*60*4
 
     # Kohenen Settings
+    som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_incatern/kohenen/Epoch33/64SecondWindow_64SecondStride/all_pats/generation/som_state_dict.pt'
     som_batch_size = 256
-    som_lr = 0.5
-    som_epochs = 10
-    som_gridsize = 20
-    som_lr_epoch_decay = 0.90
-    som_sigma = int(som_gridsize/2)
-    som_sigma_epoch_decay = 0.90
+    som_lr = 0.3
+    som_epochs = 100
+    som_gridsize = 10
+    som_lr_epoch_decay = 0.97
+    som_sigma = int(som_gridsize * 0.25)
+    som_sigma_epoch_decay = 0.98
 
     # ParamRepulsor Settings (unless random override below)
     prpacmap_metric='angular' # default 'euclidean', 'angular'
@@ -474,7 +475,7 @@ if __name__ == "__main__":
         ### Run the Self Organizing Maps (SOM) Algorith
         if single_pats == []: kohenen_savedir = f"{kohenen_dir}/all_pats/generation"
         else: kohenen_savedir = f"{kohenen_dir}/{'_'.join(single_pats)}/generation"
-        axes, som = manifold_utilities.kohenen_subfunction_pytorch(
+        axes, som = manifold_utilities.kohonen_subfunction_pytorch(
             atd_file = atd_file,
             pat_ids_list=build_pat_ids_list,
             latent_data_windowed=latent_data_windowed_generation, 
@@ -484,6 +485,7 @@ if __name__ == "__main__":
             win_sec=win_sec, 
             stride_sec=stride_sec, 
             savedir=kohenen_savedir,
+            som_precomputed_path=som_precomputed_path,
             som_batch_size=som_batch_size,
             som_lr=som_lr,
             som_epochs=som_epochs,
