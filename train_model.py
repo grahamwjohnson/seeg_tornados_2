@@ -139,13 +139,22 @@ def load_train_objs(
             data_logger_file=f"{kwargs['log_dir']}/data_forward_pass_log_Valunseen_GPU{gpu_id}.jsonl.gz",
             **kwargs)
 
+        # Random Dataloaders for Validation #
+        valfinetune_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
+        valfinetune_dataloader = utils_functions.prepare_dataloader(valfinetune_dataset, batch_size=None, num_workers=num_dataloader_workers)
+
+        valunseen_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
+        valunseen_dataloader = utils_functions.prepare_dataloader(valunseen_dataset, batch_size=None, num_workers=num_dataloader_workers)
+
     else: # If no val, just make a train dataset
         train_pats_dirs = all_pats_dirs
         train_pats_list = all_pats_list
 
         # Dummy
-        valfinetune_dataset = []
-        valunseen_dataset = []
+        valfinetune_dataset = None
+        valunseen_dataset = None
+        valfinetune_dataloader = None
+        valunseen_dataloader = None
 
     # Sequential dataset used to run inference on train data and build PaCMAP projection
     print(f"[GPU{str(gpu_id)}] Generating TRAIN dataset")
@@ -165,12 +174,6 @@ def load_train_objs(
     ### Random DataLoaders ###
     train_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
     train_dataloader = utils_functions.prepare_dataloader(train_dataset, batch_size=None, num_workers=num_dataloader_workers)
-
-    valfinetune_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
-    valfinetune_dataloader = utils_functions.prepare_dataloader(valfinetune_dataset, batch_size=None, num_workers=num_dataloader_workers)
-
-    valunseen_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
-    valunseen_dataloader = utils_functions.prepare_dataloader(valunseen_dataset, batch_size=None, num_workers=num_dataloader_workers)
          
     ### WAE ###
     wae = WAE(gpu_id=gpu_id, **kwargs) 
@@ -289,7 +292,7 @@ def main(
         **kwargs)
 
     # Kill the val data generators if val_every is set artificially high
-    if kwargs['val_every'] > 999:
+    if (kwargs['val_every'] > 999) & (trainer.valfinetune_dataset != None) & (trainer.valunseen_dataset != None):
         print(f"[GPU{str(trainer.gpu_id)}] WARNING: val_every is {kwargs['val_every']}, which is over articial arbitrary limit of 999, thus going to kill val generators")
         trainer.valfinetune_dataset.kill_generator()
         trainer.valunseen_dataset.kill_generator()

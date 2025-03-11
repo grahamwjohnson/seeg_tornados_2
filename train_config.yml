@@ -25,6 +25,7 @@ train_hour_dataset_range: kwargs['train_hour_dataset_range'] = [-1, -1]  # [-1, 
 rand_name_json: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/utilities/animals.json'
 
 # Random data generator (seperate subprocess)
+env_python_path: '/home/graham/anaconda3/envs/pytorch_env2/bin/python'
 random_gen_script_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/gen_random_data.py'
 num_buffer_batches: kwargs['num_buffer_batches'] = int(kwargs['train_forward_passes'] / kwargs['num_gpus'])   # 512 # Max files to keep in random generator tmp directry 
 num_data_threads: 1 # How many threads to start for each data generator (by each GPU)

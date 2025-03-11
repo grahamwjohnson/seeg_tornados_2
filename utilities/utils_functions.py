@@ -2035,7 +2035,7 @@ def random_filename_string(length=10):
     characters = string.ascii_letters + string.digits
     return ''.join(random.choice(characters) for i in range(length))
 
-def run_script_from_shell(script_path, *args):
+def run_script_from_shell(env_python_path, script_path, *args):
     """
     Runs a Python script using the shell.
 

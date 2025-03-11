@@ -70,6 +70,7 @@ class SEEG_Tornado_Dataset(Dataset):
         latent_dim,
         num_forward_passes,
         random_gen_script_path,
+        env_python_path,
         data_logger_enabled,
         data_logger_file,
         **kwargs):
@@ -89,6 +90,7 @@ class SEEG_Tornado_Dataset(Dataset):
         self.data_logger_file = data_logger_file
         self.kwargs = kwargs
         self.random_gen_script_path = random_gen_script_path
+        self.env_python_path = env_python_path
     
         # Get ONLY the .pkl file names in the subdirectories of choice
         # self.data_dir = data_dir
@@ -146,7 +148,7 @@ class SEEG_Tornado_Dataset(Dataset):
             writer.writerows(self.pat_fnames)
         
         # Start the generator
-        self.rand_generator_process = utils_functions.run_script_from_shell(self.random_gen_script_path, self.tmp_dir, 'fnames.csv', f"{self.num_rand_hashes}")
+        self.rand_generator_process = utils_functions.run_script_from_shell(self.env_python_path, self.random_gen_script_path, self.tmp_dir, 'fnames.csv', f"{self.num_rand_hashes}")
 
     def kill_generator(self):
         # To kill the generator, just delete the tmp dir path

@@ -12,7 +12,10 @@ import matplotlib.gridspec as gridspec
 from .latent_plotting import plot_latent
 import pandas as pd
 import numpy as np
+import pickle
 from sklearn.decomposition import PCA
+from minisom import MiniSom
+from SOM import SOM
 
 '''
 @author: grahamwjohnson
@@ -838,7 +841,7 @@ def pacmap_subfunction(
 
     # Bundle the save metrics together
     # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
-    return ax20, reducer, hdb, xy_lims # save_tuple
+    return ax21, reducer, hdb, xy_lims # save_tuple
 
 def prpacmap_subfunction(  
     atd_file,
@@ -1103,17 +1106,14 @@ def prpacmap_subfunction(
 #     output_obj.close()
 #     print("Saved PHATE plot axis object")
 
-def save_pacmap_objects(pacmap_dir, epoch, axis, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS):
+def save_pacmap_objects(pacmap_dir, epoch, axis, reducer, hdb, xy_lims):
 
     if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir) 
 
     # Save the PaCMAP model for use in inference
     PaCMAP_common_prefix = pacmap_dir + "/epoch" +str(epoch) + "_PaCMAP"
-    pacmap.save(reducer, PaCMAP_common_prefix)
-
-    PaCMAP_common_prefix_MedDim = pacmap_dir + "/epoch" +str(epoch) + "_PaCMAP_MedDim"
-    pacmap.save(reducer_MedDim, PaCMAP_common_prefix_MedDim)
-    print("Saved PaCMAP 2-dim and MedDim models")
+    pacmap.pacmap.save(reducer, PaCMAP_common_prefix)
+    print("Saved PaCMAP 2-dim model")
 
     hdbscan_path = pacmap_dir + "/epoch" +str(epoch) + "_hdbscan.pkl"
     output_obj4 = open(hdbscan_path, 'wb')
@@ -1121,35 +1121,156 @@ def save_pacmap_objects(pacmap_dir, epoch, axis, reducer, reducer_MedDim, hdb, p
     output_obj4.close()
     print("Saved HDBSCAN model")
 
-    pca_path = pacmap_dir + "/epoch" +str(epoch) + "_PCA.pkl"
-    output_obj5 = open(pca_path, 'wb')
-    pickle.dump(pca, output_obj5)
-    output_obj5.close()
-    print("Saved PCA model")
-
     xylim_path = pacmap_dir + "/epoch" +str(epoch) + "_xy_lims.pkl"
     output_obj7 = open(xylim_path, 'wb')
     pickle.dump(xy_lims, output_obj7)
     output_obj7.close()
     print("Saved xy_lims for PaCMAP")
 
-    xylims_RAWDIMS_path = pacmap_dir + "/epoch" +str(epoch) + "_xy_lims_RAW_DIMS.pkl"
-    output_obj8 = open(xylims_RAWDIMS_path, 'wb')
-    pickle.dump(xy_lims_RAW_DIMS, output_obj8)
-    output_obj8.close()
-    print("Saved xy_lims RAW DIMS")
-
-    xylims_PCA_path = pacmap_dir + "/epoch" +str(epoch) + "_xy_lims_PCA.pkl"
-    output_obj9 = open(xylims_PCA_path, 'wb')
-    pickle.dump(xy_lims_PCA, output_obj9)
-    output_obj9.close()
-    print("Saved xy_lims PCA")
-
     axis_path = pacmap_dir + "/epoch" +str(epoch) + "_plotaxis.pkl"
     output_obj10 = open(axis_path, 'wb')
     pickle.dump(axis, output_obj10)
     output_obj10.close()
     print("Saved plot axis")
+
+def kohenen_subfunction_pytorch(  
+    atd_file,
+    pat_ids_list,
+    latent_data_windowed, 
+    start_datetimes_epoch,  
+    stop_datetimes_epoch,
+    epoch, 
+    FS, 
+    win_sec, 
+    stride_sec, 
+    savedir,
+    som_lr,
+    som_iters,
+    som_gridsize,
+    HDBSCAN_min_cluster_size,
+    HDBSCAN_min_samples,
+    plot_preictal_color_sec,
+    plot_postictal_color_sec,
+    interictal_contour=False,
+    verbose=True,
+    premade_SOM = None,
+    premade_HDBSCAN = [],
+    **kwargs):
+
+    '''
+    Goal of function:
+    Run self-organizing maps (SOM) algorithm and plot results
+
+    '''
+
+    # Metadata
+    latent_dim = latent_data_windowed[0].shape[1]
+    num_timepoints_in_windowed_file = latent_data_windowed[0].shape[0]
+    modified_FS = 1 / stride_sec
+
+    # Check for NaNs in files
+    delete_file_idxs = []
+    for i in range(len(latent_data_windowed)):
+        if np.sum(np.isnan(latent_data_windowed[i])) > 0:
+            delete_file_idxs = delete_file_idxs + [i]
+            print(f"WARNING: Deleted file {start_datetimes_epoch[i]} that had NaNs")
+
+    # Delete entries/files in lists where there is NaN in latent space for that file
+    latent_data_windowed = [item for i, item in enumerate(latent_data_windowed) if i not in delete_file_idxs]
+    start_datetimes_epoch = [item for i, item in enumerate(start_datetimes_epoch) if i not in delete_file_idxs]  
+    stop_datetimes_epoch = [item for i, item in enumerate(stop_datetimes_epoch) if i not in delete_file_idxs]
+    pat_ids_list = [item for i, item in enumerate(pat_ids_list) if i not in delete_file_idxs]
+
+    # Flatten data into [miniepoch, dim] to feed into PaCMAP, original data is [file, seq_miniepoch_in_file, latent_dim]
+    latent_input = np.concatenate(latent_data_windowed, axis=0)
+    pat_ids_input = [item for item in pat_ids_list for _ in range(latent_data_windowed[0].shape[0])]
+    start_datetimes_input = [item + datetime.timedelta(seconds=stride_sec * i) for item in start_datetimes_epoch for i in range(latent_data_windowed[0].shape[0])]
+    stop_datetimes_input = [item + datetime.timedelta(seconds=stride_sec * i) + datetime.timedelta(seconds=win_sec) for item in start_datetimes_epoch for i in range(latent_data_windowed[0].shape[0])]  # ITERATE FROM SHIFTED START using WINDOW_SEC, not from STOP datetimes
+
+    # Make new Kohenen SOM
+    if premade_SOM == None:
+
+        # Initialize and train the SOM using pytorch
+        grid_size = (som_gridsize, som_gridsize)  # SOM grid size
+        input_dim = latent_input.shape[1]  # Number of features
+        som = SOM(grid_size, latent_input.shape[1], lr=som_lr, sigma=1.0, device='cuda')
+        som.train(latent_input, num_epochs=som_iters)
+
+        # print("Making new Kohenen SOM to use for visualization")
+        # som = MiniSom(som_gridsize, som_gridsize, latent_input.shape[1], sigma=1.0, learning_rate=som_lr)  # Create a SOM grid (e.g., 10x10 grid)
+        # som.train_random(latent_input, som_iters)   # Train the SOM
+
+    # Identify data points within pre-ictal buffers        
+    preictal_bool_input = file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
+
+    # Get the weights from the trained SOM (move to CPU for visualization)
+    weights = som.get_weights()
+
+    # Compute the hit map
+    hit_map = np.zeros(grid_size)
+    for x in latent_input:
+        x = torch.tensor(x, dtype=torch.float32, device='cuda')  # Move input to GPU
+        bmu_indices = som.find_bmu(x)
+        bmu_row, bmu_col = bmu_indices // grid_size[1], bmu_indices % grid_size[1]
+        hit_map[bmu_row, bmu_col] += 1
+
+    # Create a combined plot
+    print("Plotting Kohenen")
+    fig, axes = pl.subplots(2, 2, figsize=(12, 12))
+
+    # 1. U-Matrix
+    print("Plotting U-Matrix")
+    u_matrix = np.linalg.norm(weights[:, :, np.newaxis] - weights[np.newaxis, :], axis=3)
+    axes[0, 0].pcolor(u_matrix.T, cmap='bone_r')
+    axes[0, 0].set_title("U-Matrix")
+    axes[0, 0].set_xlabel("Neuron X")
+    axes[0, 0].set_ylabel("Neuron Y")
+
+    # 2. Hit Map
+    print("Plotting Hit Map")
+    axes[0, 1].pcolor(hit_map.T, cmap='Blues')
+    axes[0, 1].set_title("Hit Map")
+    axes[0, 1].set_xlabel("Neuron X")
+    axes[0, 1].set_ylabel("Neuron Y")
+
+    # 3. Component Plane (Feature 0)
+    print("Plotting Component Plane")
+    axes[1, 0].pcolor(weights[:, :, 0].T, cmap='coolwarm')
+    axes[1, 0].set_title("Component Plane (Feature 0)")
+    axes[1, 0].set_xlabel("Neuron X")
+    axes[1, 0].set_ylabel("Neuron Y")
+
+    # 4. Labels on SOM
+    print("Plotting Labels on SOM")
+    preictal_bool_input = np.random.randint(0, 2, size=(latent_input.shape[0], 1))  # Replace with your actual boolean labels
+    for i, (x, label) in enumerate(zip(latent_input, preictal_bool_input)):
+        x = torch.tensor(x, dtype=torch.float32, device='cuda')  # Move input to GPU
+        bmu_indices = som.find_bmu(x)
+        bmu_row, bmu_col = bmu_indices // grid_size[1], bmu_indices % grid_size[1]
+        color = 'red' if label == 1 else 'blue'
+        axes[1, 1].text(bmu_col + 0.5, bmu_row + 0.5, str(label),
+                        color=color, fontdict={'weight': 'bold', 'size': 11})
+    axes[1, 1].pcolor(u_matrix.T, cmap='bone_r', alpha=0.5)  # Overlay U-Matrix
+    axes[1, 1].set_title("Labels on SOM")
+    axes[1, 1].set_xlabel("Neuron X")
+    axes[1, 1].set_ylabel("Neuron Y")
+
+    pl.tight_layout()
+
+    # **** Save entire figure *****
+    print("Exporting Kohenen to JPG")
+    if not os.path.exists(savedir): os.makedirs(savedir)
+    savename_jpg = savedir + f"/SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_epoch{epoch}_LR{som_lr}_iters{som_iters}_gridsize{som_gridsize}.jpg"
+    pl.savefig(savename_jpg, dpi=600)
+
+    # TODO Upload to WandB
+
+    pl.close(fig)
+
+    # Bundle the save metrics together
+    # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
+    return ax21, reducer, hdb, xy_lims # save_tuple
+
 
 def compute_histograms(data, min_val, max_val, B):
     """
@@ -1340,3 +1461,48 @@ def get_pat_seiz_datetimes(
             pat_seiz_stop_datetimes[i] = datetime.datetime.combine(pat_seiz_start_datetimes[i] + datetime.timedelta(days=1), stop_time)
 
     return pat_seiz_start_datetimes, pat_seiz_stop_datetimes, pat_seiz_types_str
+
+def file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input):
+    
+    data_window_preictal_bool = np.zeros_like(pat_ids_input, dtype=bool)
+
+    # Generate numerical IDs for each unique patient, and give each datapoint an ID
+    unique_ids = list(set(pat_ids_input))
+    id_to_index = {id: idx for idx, id in enumerate(unique_ids)}  # Create mapping dictionary
+    pat_idxs = [id_to_index[id] for id in pat_ids_input]
+
+    pat_seiz_start_datetimes, pat_seiz_stop_datetimes, pat_seiz_types_str = [-1] * len(unique_ids), [-1] * len(unique_ids), [-1] * len(unique_ids)
+    for i in range(len(unique_ids)):
+        id_curr = unique_ids[i]
+        idx_curr = id_to_index[id_curr]
+        pat_seiz_start_datetimes[i], pat_seiz_stop_datetimes[i], pat_seiz_types_str[i] = get_pat_seiz_datetimes(id_curr, atd_file) 
+
+    for i in range(len(pat_idxs)):
+        seiz_starts_curr, seiz_stops_curr, seiz_types_curr = pat_seiz_start_datetimes[pat_idxs[i]], pat_seiz_stop_datetimes[pat_idxs[i]], pat_seiz_types_str[pat_idxs[i]]
+        data_window_start = start_datetimes_input[i]
+        data_window_stop = stop_datetimes_input[i]
+        for j in range(len(seiz_starts_curr)):
+            seiz_start = seiz_starts_curr[j]
+            buffered_preictal_start = seiz_start - datetime.timedelta(seconds=plot_preictal_color_sec)
+
+            # Case 1: data_window completely within preictal buffer
+            if (data_window_start > buffered_preictal_start) & (data_window_stop < seiz_start):
+                data_window_preictal_bool[i] = True
+                break
+            
+            # Case 2: data_window end is within preictal buffer (i.e. straddles buffer start)
+            elif (data_window_start < buffered_preictal_start) & (data_window_stop > buffered_preictal_start):
+                data_window_preictal_bool[i] = True
+                break
+
+            # Case 3: data_window start is within preictal buffer (i.e. straddles seizure start)
+            elif (data_window_stop > seiz_start) & (data_window_start < seiz_start):
+                data_window_preictal_bool[i] = True
+                break
+
+            # Case 4: data_window engulfs preictal buffer
+            elif (data_window_start < buffered_preictal_start) & (data_window_stop > seiz_start):
+                data_window_preictal_bool[i] = True
+                break
+
+    return data_window_preictal_bool

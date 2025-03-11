@@ -41,8 +41,9 @@ if __name__ == "__main__":
 
     run_prpacmap = False
     run_umap = False
-    run_pacmap = True
+    run_pacmap = False
     run_phate = False
+    run_kohenen = True
     run_histo = False
 
     # Master formatted timestamp file - "All Time Data (ATD)"
@@ -52,7 +53,7 @@ if __name__ == "__main__":
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025'
     model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_incatern'
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_testing'
-    single_pats = ['Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34'] # 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats  # TODO: modify to take a selection of patients
+    single_pats = ['Epat27'] #[] # [] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats  # TODO: modify to take a selection of patients
     epoch = 33 # 39 # 141 , 999 to debug
     latent_subdir = f'latent_files/Epoch{epoch}'
     win_sec = 64 # 60, 10  # Must match strings in directory name exactly (e.g. 1.0 not 1)
@@ -100,11 +101,11 @@ if __name__ == "__main__":
     # w_neighbors = 1.
     # w_FP = 1.
     apply_pca = True # Before PaCMAP
-    pacmap_LR = 0.1 #0.05
-    pacmap_NumIters = (1500,1500,1500)
-    pacmap_NN = None
-    pacmap_MN_ratio = 15 # 7 #0.5
-    pacmap_FP_ratio = 30 # 11 #2.0
+    pacmap_LR = 0.1 # 0.1 #0.05
+    pacmap_NumIters = (1500,1500,1500) # (1500,1500,1500)
+    pacmap_NN = 10
+    pacmap_MN_ratio = 30 # 7 #0.5
+    pacmap_FP_ratio = 60 # 11 #2.0
 
     # UMAP settings
     umap_output_metric = 'euclidean' # 'euclidean', 'hyperboloid'
@@ -133,6 +134,13 @@ if __name__ == "__main__":
     rand_subset_pat_bool = False # False plots all pats in their own row of plots, if more than ~5 pats, should probably set to True
     num_rand_pats_plot = 4 # Only applicable if 'rand_subset_pat_bool' is True
 
+
+    # Kohenen Settings
+    som_lr = 0.5
+    som_iters = 100
+    som_gridsize = 10
+
+
     # Plotting variables
     kwargs = {}
     kwargs['seiz_type_list'] = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Focal unknown awareness', 'Unknown', 'Subclinical', 'Non-electrographic'] # Leftward overwites rightward
@@ -152,6 +160,9 @@ if __name__ == "__main__":
     if run_umap: 
         umap_dir = f"{model_dir}/umap/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
         if not os.path.exists(umap_dir): os.makedirs(umap_dir)
+    if run_kohenen: 
+        kohenen_dir = f"{model_dir}/kohenen/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
+        if not os.path.exists(kohenen_dir): os.makedirs(kohenen_dir)
    
     ### GENERATION DATA ###
     build_filepaths = [] # Collect pacmap build files - i.e. what data is being used to construct data manifold approximator
@@ -291,7 +302,7 @@ if __name__ == "__main__":
     #     pacmap_FP_ratio = random.uniform(0.1, 20.0)
 
     if run_pacmap:
-    ### PACMAP GENERATION ###
+        ### PACMAP GENERATION ###
         # Call the subfunction to create/use pacmap and plot
         if single_pats == []: pacmap_savedir = f"{pacmap_dir}/all_pats/generation"
         else: pacmap_savedir = f"{pacmap_dir}/{'_'.join(single_pats)}/generation"
@@ -318,14 +329,14 @@ if __name__ == "__main__":
             plot_postictal_color_sec = plot_postictal_color_sec,
             **kwargs)
 
-        # # SAVE OBJECTS (# TODO: Save currently broken after new conda env, saying "pacmap does not have function save")
-        # manifold_utilities.save_pacmap_objects(
-        #     pacmap_dir=pacmap_savedir,
-        #     epoch=epoch,
-        #     axis=axis_20,
-        #     reducer=reducer, 
-        #     hdb=hdb, 
-        #     xy_lims=xy_lims)
+        # SAVE OBJECTS (# TODO: Save currently broken after new conda env, saying "pacmap does not have function save")
+        manifold_utilities.save_pacmap_objects(
+            pacmap_dir=pacmap_savedir,
+            epoch=epoch,
+            axis=axis_20,
+            reducer=reducer, 
+            hdb=hdb, 
+            xy_lims=xy_lims)
 
         ## PACMAP EVAL ONLY ###
         if eval_filepaths != []:
@@ -344,28 +355,22 @@ if __name__ == "__main__":
                 savedir=pacmap_savedir,
                 FS = FS,
                 apply_pca=apply_pca,
-                exclude_self_pat=exclude_self_pat,
-                pacmap_MedDim_numdims = pacmap_MedDim_numdims,
-                pacmap_LR = pacmap_LR,
-                pacmap_NumIters = pacmap_NumIters,
-                pacmap_NN = pacmap_NN,
-                pacmap_MN_ratio = pacmap_MN_ratio,
-                pacmap_FP_ratio = pacmap_FP_ratio,
-                HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
-                HDBSCAN_min_samples = HDBSCAN_min_samples,
+                pacmap_LR = None,
+                pacmap_NumIters = None,
+                pacmap_NN = None,
+                pacmap_MN_ratio = None,
+                pacmap_FP_ratio = None,
+                HDBSCAN_min_cluster_size = None,
+                HDBSCAN_min_samples = None,
                 plot_preictal_color_sec = plot_preictal_color_sec,
                 plot_postictal_color_sec = plot_postictal_color_sec,
                 xy_lims = xy_lims,
-                xy_lims_RAW_DIMS = xy_lims_RAW_DIMS,
-                xy_lims_PCA = xy_lims_PCA,
                 premade_PaCMAP = reducer,
-                premade_PaCMAP_MedDim = reducer_MedDim,
-                premade_PCA = pca,
                 premade_HDBSCAN = hdb,
                 **kwargs)
 
     if run_umap:
-    ### UMAP GENERATION ###
+        ### UMAP GENERATION ###
 
         # Call the subfunction to create/use umap and plot
         if single_pats == []: umap_savedir = f"{umap_dir}/all_pats/umap_generation"
@@ -400,7 +405,7 @@ if __name__ == "__main__":
             **kwargs)
 
     if run_phate:
-    ### PHATE GENERATION ###
+        ### PHATE GENERATION ###
         if single_pats == []: phate_savedir = f"{phate_dir}/all_pats/phate_gen"
         else: phate_savedir = f"{phate_dir}/{'_'.join(single_pats)}/phate_gen"
 
@@ -463,8 +468,33 @@ if __name__ == "__main__":
         # TODO
         # if eval_filepaths != []:
 
+    if run_kohenen:
+        ### Run the Self Organizing Maps (SOM) Algorith
+        if single_pats == []: kohenen_savedir = f"{kohenen_dir}/all_pats/generation"
+        else: kohenen_savedir = f"{kohenen_dir}/{'_'.join(single_pats)}/generation"
+        axis_20, som_model, hdb, xy_lims = manifold_utilities.kohenen_subfunction_pytorch(
+            atd_file = atd_file,
+            pat_ids_list=build_pat_ids_list,
+            latent_data_windowed=latent_data_windowed_generation, 
+            start_datetimes_epoch=build_start_datetimes,  
+            stop_datetimes_epoch=build_stop_datetimes,
+            epoch=epoch, 
+            win_sec=win_sec, 
+            stride_sec=stride_sec, 
+            savedir=kohenen_savedir,
+            som_lr=som_lr,
+            som_iters=som_iters,
+            som_gridsize=som_gridsize,
+            FS = FS,
+            HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
+            HDBSCAN_min_samples = HDBSCAN_min_samples,
+            plot_preictal_color_sec = plot_preictal_color_sec,
+            plot_postictal_color_sec = plot_postictal_color_sec,
+            **kwargs)
+
+
     if run_histo:
-    ### HISTOGRAM LATENT ###
+        ### HISTOGRAM LATENT ###
         # Generation data
         print("Histogram on generation data")
         if single_pats == []: histo_dir = f"{model_dir}/histo_latent/all_pats/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride/histo_generation"
