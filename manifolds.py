@@ -53,7 +53,7 @@ if __name__ == "__main__":
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025'
     model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_incatern'
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_testing'
-    single_pats = ['Epat27'] #[] # [] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats  # TODO: modify to take a selection of patients
+    single_pats = ['Epat27'] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats  # TODO: modify to take a selection of patients
     epoch = 33 # 39 # 141 , 999 to debug
     latent_subdir = f'latent_files/Epoch{epoch}'
     win_sec = 64 # 60, 10  # Must match strings in directory name exactly (e.g. 1.0 not 1)
@@ -73,6 +73,15 @@ if __name__ == "__main__":
     # Plotting Settings
     plot_preictal_color_sec = 60*60*1 #60*60*4
     plot_postictal_color_sec = 0 #60*10 #60*60*4
+
+    # Kohenen Settings
+    som_batch_size = 256
+    som_lr = 0.5
+    som_epochs = 10
+    som_gridsize = 20
+    som_lr_epoch_decay = 0.90
+    som_sigma = int(som_gridsize/2)
+    som_sigma_epoch_decay = 0.90
 
     # ParamRepulsor Settings (unless random override below)
     prpacmap_metric='angular' # default 'euclidean', 'angular'
@@ -133,13 +142,6 @@ if __name__ == "__main__":
     phate_solver = 'smacof'  # 'smacof' (longer), 'sgd' 
     rand_subset_pat_bool = False # False plots all pats in their own row of plots, if more than ~5 pats, should probably set to True
     num_rand_pats_plot = 4 # Only applicable if 'rand_subset_pat_bool' is True
-
-
-    # Kohenen Settings
-    som_lr = 0.5
-    som_iters = 100
-    som_gridsize = 10
-
 
     # Plotting variables
     kwargs = {}
@@ -472,7 +474,7 @@ if __name__ == "__main__":
         ### Run the Self Organizing Maps (SOM) Algorith
         if single_pats == []: kohenen_savedir = f"{kohenen_dir}/all_pats/generation"
         else: kohenen_savedir = f"{kohenen_dir}/{'_'.join(single_pats)}/generation"
-        axis_20, som_model, hdb, xy_lims = manifold_utilities.kohenen_subfunction_pytorch(
+        axes, som = manifold_utilities.kohenen_subfunction_pytorch(
             atd_file = atd_file,
             pat_ids_list=build_pat_ids_list,
             latent_data_windowed=latent_data_windowed_generation, 
@@ -482,9 +484,13 @@ if __name__ == "__main__":
             win_sec=win_sec, 
             stride_sec=stride_sec, 
             savedir=kohenen_savedir,
+            som_batch_size=som_batch_size,
             som_lr=som_lr,
-            som_iters=som_iters,
+            som_epochs=som_epochs,
             som_gridsize=som_gridsize,
+            som_lr_epoch_decay=som_lr_epoch_decay,
+            som_sigma=som_sigma,
+            som_sigma_epoch_decay=som_sigma_epoch_decay,
             FS = FS,
             HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
             HDBSCAN_min_samples = HDBSCAN_min_samples,
