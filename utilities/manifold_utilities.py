@@ -1310,6 +1310,49 @@ def save_pacmap_objects(pacmap_dir, epoch, axis, reducer, hdb, xy_lims):
 
 #     return axes, som 
 
+
+def save_som_model(som, grid_size, input_dim, lr, sigma, lr_epoch_decay, sigma_epoch_decay, epoch, save_path):
+    # Save the state_dict (model weights), weights, and relevant hyperparameters
+    torch.save({
+        'model_state_dict': som.state_dict(),
+        'weights': som.weights,  # Save the weights explicitly
+        'grid_size': grid_size,
+        'input_dim': input_dim,
+        'lr': lr,
+        'sigma': sigma,
+        'lr_epoch_decay': lr_epoch_decay,
+        'sigma_epoch_decay': sigma_epoch_decay,
+        'epoch': epoch
+    }, save_path)
+    print(f"SOM model saved at {save_path}")
+
+def load_som_model(load_path, gpu_id):
+    checkpoint = torch.load(load_path)
+    
+    # Retrieve the hyperparameters, decay parameters, and weights
+    grid_size = checkpoint['grid_size']
+    input_dim = checkpoint['input_dim']
+    lr = checkpoint['lr']
+    sigma = checkpoint['sigma']
+    lr_epoch_decay = checkpoint['lr_epoch_decay']
+    sigma_epoch_decay = checkpoint['sigma_epoch_decay']
+    epoch = checkpoint['epoch']
+    
+    # Create a new SOM instance with the same parameters
+    som = SOM(grid_size=(grid_size, grid_size), input_dim=input_dim, batch_size=32, 
+              lr=lr, lr_epoch_decay=lr_epoch_decay, sigma=sigma, 
+              sigma_epoch_decay=sigma_epoch_decay, device=gpu_id)
+    
+    # Load the saved state_dict into the model (for training parameters)
+    som.load_state_dict(checkpoint['model_state_dict'])
+    
+    # Restore the weights explicitly
+    som.weights = checkpoint['weights']
+    
+    print(f"SOM model loaded from {load_path}")
+    
+    return som
+
 def kohonen_subfunction_pytorch(  
     atd_file,
     pat_ids_list,
@@ -1336,6 +1379,7 @@ def kohonen_subfunction_pytorch(
     verbose=True,
     som_precomputed_path = None,
     premade_HDBSCAN = [],
+    gpu_id = 0,
     **kwargs):
 
     if not os.path.exists(savedir): os.makedirs(savedir)
@@ -1364,24 +1408,22 @@ def kohonen_subfunction_pytorch(
     start_datetimes_input = [item + datetime.timedelta(seconds=stride_sec * i) for item in start_datetimes_epoch for i in range(latent_data_windowed[0].shape[0])]
     stop_datetimes_input = [item + datetime.timedelta(seconds=stride_sec * i) + datetime.timedelta(seconds=win_sec) for item in start_datetimes_epoch for i in range(latent_data_windowed[0].shape[0])]  # ITERATE FROM SHIFTED START using WINDOW_SEC, not from STOP datetimes
 
+    # Build the SOM model        
+    grid_size = (som_gridsize, som_gridsize)
+    som = SOM(grid_size=grid_size, input_dim=latent_input.shape[1], batch_size=som_batch_size, lr=som_lr, 
+                lr_epoch_decay=som_lr_epoch_decay, sigma=som_sigma, sigma_epoch_decay=som_sigma_epoch_decay, device='cuda')
+
+    if som_precomputed_path is None: # Make new Kohonen SOM
+        print(f"Training new SOM: gridsize:{som_gridsize}, lr:{som_lr} w/ {som_lr_epoch_decay} decay per epoch, sigma:{som_sigma} w/ {som_sigma_epoch_decay} decay per epoch")
+        som.train(latent_input, num_epochs=som_epochs)
+        savepath = savedir + "/som_state_dict.pt"
+        save_som_model(som, grid_size=som_gridsize, input_dim=latent_input.shape[1], 
+            lr=som_lr, sigma=som_sigma, lr_epoch_decay=som_lr_epoch_decay, sigma_epoch_decay=som_sigma_epoch_decay, 
+            epoch=som_epochs, save_path=savepath)
     
-    if premade_SOM is None:
-        
-        grid_size = (som_gridsize, som_gridsize)
-        som = SOM(grid_size=grid_size, input_dim=latent_input.shape[1], batch_size=som_batch_size, lr=som_lr, 
-                  lr_epoch_decay=som_lr_epoch_decay, sigma=som_sigma, sigma_epoch_decay=som_sigma_epoch_decay, device='cuda')
-
-        if som_precomputed_path is None # Make new Kohonen SOM
-            print(f"Training new SOM: gridsize:{som_gridsize}, lr:{som_lr} w/ {som_lr_epoch_decay} decay per epoch, sigma:{som_sigma} w/ {som_sigma_epoch_decay} decay per epoch")
-            som.train(latent_input, num_epochs=som_epochs)
-
-        else:
-            print(f"Loading SOM pretrained weights from: {som_precomputed_path}")
-            som.
-
-        # Save SOM
-        torch.save(som.state_dict(), savedir + "/som_state_dict.pt")
-        print("SOM state dict saved")
+    else: # Load existing model weights
+        print(f"Loading SOM pretrained weights from: {som_precomputed_path}")
+        som = load_som_model(som_precomputed_path, gpu_id)
 
     # Identify data points within pre-ictal buffers        
     preictal_bool_input = file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
@@ -1459,7 +1501,7 @@ def kohonen_subfunction_pytorch(
 
     # **** Save entire figure *****
     print("Exporting Kohonen to JPG")
-    savename_jpg = savedir + f"/SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_epoch{epoch}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
+    savename_jpg = savedir + f"/SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_epoch{epoch}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
     pl.savefig(savename_jpg, dpi=600)
 
     # TODO Upload to WandB

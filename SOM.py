@@ -62,7 +62,7 @@ class SOM(nn.Module):
                 bmu_rows, bmu_cols = self.find_bmu(batch)  # Find BMUs
                 self.update_weights(batch, bmu_rows, bmu_cols)  # Efficiently update weights
 
-                print(f"\rSOM Epoch:{epoch}/{num_epochs-1}, Iter:{i}/{data.shape[0]-1}", end="")
+                print(f"\rSOM Epoch:{epoch}/{num_epochs-1}, Iter:{i}/{data.shape[0]-1}    ", end="")
 
             # Decay learning rate and sigma over time
             self.lr *= self.lr_epoch_decay
