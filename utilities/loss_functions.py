@@ -37,7 +37,7 @@ def sinkhorn_loss(observed, prior, weight, sinkhorn_blur, wasserstein_order):
     sinkhorn_loss = loss_fn(observed, prior)  # Standard Sinkhorn loss
 
     # **Normalize for Stability Across Blur Values**
-    norm_loss = sinkhorn_loss * (sinkhorn_blur ** wasserstein_order)
+    norm_loss = sinkhorn_loss 
 
     return norm_loss * weight  # Apply manual re-weighting
    

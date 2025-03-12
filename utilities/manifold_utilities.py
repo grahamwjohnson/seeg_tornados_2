@@ -1273,7 +1273,7 @@ def kohonen_subfunction_pytorch(
     # PLOT PREPARATION
 
     # Pre-Ictal Float values by data point
-    preictal_float_input = file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
+    preictal_float_input = preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
 
     weights = som.get_weights()
 
@@ -1326,6 +1326,7 @@ def kohonen_subfunction_pytorch(
                         for y in range(max(0, j-1), min(grid_size[1], j+2)) if (x, y) != (i, j)]
             u_matrix[i, j] = np.mean(distances)
 
+    
     # PLOTTING
 
     # Create a 2x3 plot layout
@@ -1643,52 +1644,7 @@ def get_pat_seiz_datetimes(
 
     return pat_seiz_start_datetimes, pat_seiz_stop_datetimes, pat_seiz_types_str
 
-# def file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input):
-    
-#     data_window_preictal_bool = np.zeros_like(pat_ids_input, dtype=bool)
-
-#     # Generate numerical IDs for each unique patient, and give each datapoint an ID
-#     unique_ids = list(set(pat_ids_input))
-#     id_to_index = {id: idx for idx, id in enumerate(unique_ids)}  # Create mapping dictionary
-#     pat_idxs = [id_to_index[id] for id in pat_ids_input]
-
-#     pat_seiz_start_datetimes, pat_seiz_stop_datetimes, pat_seiz_types_str = [-1] * len(unique_ids), [-1] * len(unique_ids), [-1] * len(unique_ids)
-#     for i in range(len(unique_ids)):
-#         id_curr = unique_ids[i]
-#         idx_curr = id_to_index[id_curr]
-#         pat_seiz_start_datetimes[i], pat_seiz_stop_datetimes[i], pat_seiz_types_str[i] = get_pat_seiz_datetimes(id_curr, atd_file) 
-
-#     for i in range(len(pat_idxs)):
-#         seiz_starts_curr, seiz_stops_curr, seiz_types_curr = pat_seiz_start_datetimes[pat_idxs[i]], pat_seiz_stop_datetimes[pat_idxs[i]], pat_seiz_types_str[pat_idxs[i]]
-#         data_window_start = start_datetimes_input[i]
-#         data_window_stop = stop_datetimes_input[i]
-#         for j in range(len(seiz_starts_curr)):
-#             seiz_start = seiz_starts_curr[j]
-#             buffered_preictal_start = seiz_start - datetime.timedelta(seconds=plot_preictal_color_sec)
-
-#             # Case 1: data_window completely within preictal buffer
-#             if (data_window_start > buffered_preictal_start) & (data_window_stop < seiz_start):
-#                 data_window_preictal_bool[i] = True
-#                 break
-            
-#             # Case 2: data_window end is within preictal buffer (i.e. straddles buffer start)
-#             elif (data_window_start < buffered_preictal_start) & (data_window_stop > buffered_preictal_start):
-#                 data_window_preictal_bool[i] = True
-#                 break
-
-#             # Case 3: data_window start is within preictal buffer (i.e. straddles seizure start)
-#             elif (data_window_stop > seiz_start) & (data_window_start < seiz_start):
-#                 data_window_preictal_bool[i] = True
-#                 break
-
-#             # Case 4: data_window engulfs preictal buffer
-#             elif (data_window_start < buffered_preictal_start) & (data_window_stop > seiz_start):
-#                 data_window_preictal_bool[i] = True
-#                 break
-
-#     return data_window_preictal_bool
-
-def file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input):
+def preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input):
     
     data_window_preictal_score = np.zeros_like(pat_ids_input, dtype=float)
 
@@ -1704,10 +1660,11 @@ def file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start
         pat_seiz_start_datetimes[i], pat_seiz_stop_datetimes[i], pat_seiz_types_str[i] = get_pat_seiz_datetimes(id_curr, atd_file) 
 
     for i in range(len(pat_idxs)):
-        seiz_starts_curr, seiz_stops_curr, seiz_types_curr = pat_seiz_start_datetimes[pat_idxs[i]], pat_seiz_stop_datetimes[pat_idxs[i]], pat_seiz_types_str[pat_idxs[i]]
         data_window_start = start_datetimes_input[i]
         data_window_stop = stop_datetimes_input[i]
         
+        seiz_starts_curr, seiz_stops_curr, seiz_types_curr = pat_seiz_start_datetimes[pat_idxs[i]], pat_seiz_stop_datetimes[pat_idxs[i]], pat_seiz_types_str[pat_idxs[i]]
+
         for j in range(len(seiz_starts_curr)):
             seiz_start = seiz_starts_curr[j]
             buffered_preictal_start = seiz_start - datetime.timedelta(seconds=plot_preictal_color_sec)
@@ -1715,17 +1672,18 @@ def file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start
             # Compute time difference from seizure start (0 at start, increasing as further away)
             if data_window_stop < seiz_start and data_window_start > buffered_preictal_start:
                 dist_to_seizure = (seiz_start - data_window_stop).total_seconds()
-                data_window_preictal_score[i] = 1.0 - (dist_to_seizure / plot_preictal_color_sec)
-                break
-            
+                new_score = 1.0 - (dist_to_seizure / plot_preictal_color_sec)
+                data_window_preictal_score[i] = max(data_window_preictal_score[i], new_score)  # Keep max score
+
             # Case where part of the window overlaps the preictal buffer
             elif data_window_stop > buffered_preictal_start and data_window_start < seiz_start:
                 overlap_start = max(data_window_start, buffered_preictal_start)
                 overlap_end = min(data_window_stop, seiz_start)
                 overlap_midpoint = (overlap_start + (overlap_end - overlap_start) / 2)  # Calculate the midpoint of the overlap range
-                avg_dist_to_seizure = (seiz_start - overlap_midpoint).total_seconds() # Calculate the distance from the midpoint to the seizure start time
-                data_window_preictal_score[i] = 1.0 - (avg_dist_to_seizure / plot_preictal_color_sec) # Update the preictal score based on the distance to seizure
-                break
+                avg_dist_to_seizure = (seiz_start - overlap_midpoint).total_seconds()  # Calculate the distance from the midpoint to the seizure start time
+                new_score = 1.0 - (avg_dist_to_seizure / plot_preictal_color_sec)
+                data_window_preictal_score[i] = max(data_window_preictal_score[i], new_score)  # Keep max score
 
+    # Ensure values remain between 0 and 1
     return np.clip(data_window_preictal_score, 0, 1)
 

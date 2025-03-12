@@ -137,12 +137,12 @@ Reg_epochs_TO_max: 0
 
 # GAMMA multimodal distribution params  
 running_reg_passes: kwargs['running_reg_passes'] = int(kwargs['random_pulls_in_batch'] * (kwargs['train_forward_passes'] / kwargs['num_gpus']))   # Equals an epoch's worth of passes in DDP context
-barycenter_batch_sampling: 64  # The past samples (IMMEDIATE/SEQUENTIAL past samples) from running window of 'running_reg_passes' to incorporate into batch loss (in addition to actual forward pass batch)
+barycenter_batch_sampling: 256  # The past samples (IMMEDIATE/SEQUENTIAL past samples) from running window of 'running_reg_passes' to incorporate into batch loss (in addition to actual forward pass batch)
 multimodal_shapes: [10, 30]
 multimodal_scales: [0.05, 0.05]
 multimodal_weights: [0.5, 0.5]
 num_barycenter_iters: 5
-sinkhorn_blur: kwargs['sinkhorn_blur'] = 0.1 # This is the BATCH/SMALL scale blur updates
+sinkhorn_blur: kwargs['sinkhorn_blur'] = 0.001 # This is the BATCH/SMALL scale blur updates
 random_barycenter_numplots: 4
 wasserstein_order: 1  # incatern was trained on p=2 which appeared overly focused on means of each gamma peak, trying EMD (i.e. p=1)
 

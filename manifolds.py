@@ -59,10 +59,8 @@ if __name__ == "__main__":
     win_sec = 64 # 60, 10  # Must match strings in directory name exactly (e.g. 1.0 not 1)
     stride_sec = 64 # 30, 10 
 
-    # build_strs = ['train', 'valfinetune']
-    # eval_strs = ['valunseen']
-    build_strs = ['train']  # build selections will be use to train/construct/fit the manifold models
-    eval_strs = ['valfinetune', 'valunseen'] # Typically will use valfinetune in build...?
+    build_strs = ['train', 'valfinetune']  # build selections will be use to train/construct/fit the manifold models
+    eval_strs = ['valunseen'] # Typically will use valfinetune in build...?
     
     FS = 512 # Currently hardcoded in many places
 
@@ -79,7 +77,7 @@ if __name__ == "__main__":
     som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_incatern/kohenen/Epoch33/64SecondWindow_64SecondStride/all_pats/generation/som_state_dict.pt'
     
     # GSM
-    som_device = 0 # GPU
+    som_device = 'cpu' # GPU
     som_batch_size = 256
     som_lr = 0.75
     som_lr_epoch_decay = 0.95
