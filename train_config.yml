@@ -144,7 +144,7 @@ multimodal_weights: [0.5, 0.5]
 num_barycenter_iters: 5
 sinkhorn_blur: kwargs['sinkhorn_blur'] = 0.1 # This is the BATCH/SMALL scale blur updates
 random_barycenter_numplots: 4
-wasserstein_order: 1  # africanfisheagle was trained on p=2 which appeared overly focused on means of each gamma peak, trying EMD (i.e. p=1)
+wasserstein_order: 1  # incatern was trained on p=2 which appeared overly focused on means of each gamma peak, trying EMD (i.e. p=1)
 
 # Sparsity weight control
 Sparse_max: kwargs['Sparse_max'] = 1e-7 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
