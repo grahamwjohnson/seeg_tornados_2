@@ -1669,20 +1669,25 @@ def preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_date
             seiz_start = seiz_starts_curr[j]
             buffered_preictal_start = seiz_start - datetime.timedelta(seconds=plot_preictal_color_sec)
 
-            # Compute time difference from seizure start (0 at start, increasing as further away)
-            if data_window_stop < seiz_start and data_window_start > buffered_preictal_start:
+            # Compute time difference from seizure start (0 at start of preictal buffer, increasing as closer to seizure)
+            # Assign value of 1 for in seizure
+
+            # Case where end of data window is in pre-ictal buffer (ignore start of preictal window)
+            if data_window_stop < seiz_start and data_window_stop > buffered_preictal_start:
                 dist_to_seizure = (seiz_start - data_window_stop).total_seconds()
                 new_score = 1.0 - (dist_to_seizure / plot_preictal_color_sec)
-                data_window_preictal_score[i] = max(data_window_preictal_score[i], new_score)  # Keep max score
+                data_window_preictal_score[i] = max(data_window_preictal_score[i], new_score)  
+                # Keep max score, and do NOT break because could find higher value
 
-            # Case where part of the window overlaps the preictal buffer
-            elif data_window_stop > buffered_preictal_start and data_window_start < seiz_start:
-                overlap_start = max(data_window_start, buffered_preictal_start)
-                overlap_end = min(data_window_stop, seiz_start)
-                overlap_midpoint = (overlap_start + (overlap_end - overlap_start) / 2)  # Calculate the midpoint of the overlap range
-                avg_dist_to_seizure = (seiz_start - overlap_midpoint).total_seconds()  # Calculate the distance from the midpoint to the seizure start time
-                new_score = 1.0 - (avg_dist_to_seizure / plot_preictal_color_sec)
-                data_window_preictal_score[i] = max(data_window_preictal_score[i], new_score)  # Keep max score
+            # Case where end of the window is in the seizure
+            elif data_window_stop > seiz_start and data_window_stop < seiz_stop:
+                data_window_preictal_score[i] = 1 
+                break # Cannot get higher value
+
+            # Case where start of the window overlaps the preictal/ictal buffer, but end is past seizure end
+            elif data_window_start > buffered_preictal_start and data_window_start < seiz_stop:
+                data_window_preictal_score[i] = 1 
+                break # Cannot get higher value
 
     # Ensure values remain between 0 and 1
     return np.clip(data_window_preictal_score, 0, 1)
