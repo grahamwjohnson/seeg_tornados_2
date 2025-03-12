@@ -24,6 +24,11 @@ class SOM(nn.Module):
             indexing="ij"
         ), dim=-1)  # Shape: (grid_size[0], grid_size[1], 2)
 
+    def reset_device(self, device):
+        self.coords = self.coords.to(device)
+        self.weights = self.weights.to(device)
+        self.device = device
+
     def forward(self, x):
         """ Compute distances from input x to all SOM neurons """
         x_expanded = x[:, None, None, :]  # Shape: (batch_size, 1, 1, input_dim)

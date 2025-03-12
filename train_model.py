@@ -213,6 +213,7 @@ def main(
     LR_val_cls: float,
     val_finetine_bool: bool,
     finetune_inference: bool, 
+    finetune_inference_epochs: int,
     realtime_printing_interval_val,
     realtime_printing_interval_train,
     wae_state_dict_prev_path = [],
@@ -292,7 +293,7 @@ def main(
         **kwargs)
 
     # Kill the val data generators if val_every is set artificially high
-    if (kwargs['val_every'] > 999) & (trainer.valfinetune_dataset != None) & (trainer.valunseen_dataset != None):
+    if (kwargs['val_every'] > 999) & (kwargs['inference_every'] > 999) & (trainer.valfinetune_dataset != None) & (trainer.valunseen_dataset != None):
         print(f"[GPU{str(trainer.gpu_id)}] WARNING: val_every is {kwargs['val_every']}, which is over articial arbitrary limit of 999, thus going to kill val generators")
         trainer.valfinetune_dataset.kill_generator()
         trainer.valunseen_dataset.kill_generator()
@@ -303,6 +304,10 @@ def main(
 
         # Full INFERENCE on all data
         if (epoch > 0) & ((trainer.epoch + 1) % trainer.inference_every == 0):
+
+            trainer.valunseen_dataset.kill_generator()
+            trainer.train_dataset.kill_generator()
+            print(f"[GPU{trainer.gpu_id}] Killed Train/ValUnseen random generators for inference mode")
 
             # Save pre-finetune model/opt weights
             if finetune_inference:
@@ -319,28 +324,27 @@ def main(
                 trainer._set_to_train()
                 trainer.opt_wae.param_groups[0]['lr'] = LR_val_wae
                 trainer.opt_cls.param_groups[0]['lr'] = LR_val_cls
-                trainer._run_train_epoch(
-                    dataloader_curr = trainer.valfinetune_dataloader, 
-                    dataset_string = "valfinetune",
-                    val_finetune = True,
-                    val_unseen = False,
-                    num_rand_hashes = val_num_rand_hashes,
-                    realtime_printing_interval = realtime_printing_interval_val,
-                    **kwargs)
+                for finetune_epoch in range(finetune_inference_epochs):
+                    trainer.epoch = epoch + finetune_epoch
+                    trainer._run_train_epoch(
+                        dataloader_curr = trainer.valfinetune_dataloader, 
+                        dataset_string = "valfinetune",
+                        val_finetune = True,
+                        val_unseen = False,
+                        realtime_printing_interval = realtime_printing_interval_val,
+                        **kwargs)
 
                 # Finetuned, so setup inference for all datasets
                 dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
                 dataset_strs = ["train", "valfinetune", "valunseen"]
 
-            else: # No finetune, only run data for Train and ValUnseen datasets
+            else: # No finetune, only run data for Train and ValUnseen datasets (running on val_finetune would just create confusion later when using embeddings)
                 dataset_list = [trainer.train_dataset, trainer.valunseen_dataset]
                 dataset_strs = ["train", "valunseen"]
             
-            # INFERENCE on all selected datasets, kill all data generators
-            trainer.train_dataset.kill_generator()
+            # INFERENCE on all selected datasets, kill finetune now that we also do not need it
             trainer.valfinetune_dataset.kill_generator()
-            trainer.valunseen_dataset.kill_generator()
-            print(f"[GPU{trainer.gpu_id}] Killed all random generators for inference mode")
+            print(f"[GPU{trainer.gpu_id}] Killed val_finetune for inference mode")
 
             trainer._set_to_eval()
             with torch.inference_mode():
@@ -348,7 +352,6 @@ def main(
                     trainer._run_export_embeddings(
                         dataset_curr = dataset_list[d],  # Takes in a Dataset, NOT a DataLoader
                         dataset_string = dataset_strs[d],
-                        num_rand_hashes = -1,
                         **kwargs)
 
             # Restore model/opt weights to pre-finetune, and restart data generators
@@ -701,7 +704,7 @@ class Trainer:
 
             return torch.cat([past_samples, mean_latent])
 
-    def _update_barycenter(self, num_barycenter_iters, plot, plot_savedir, blur=0.05, n_iter=100, **kwargs):
+    def _update_barycenter(self, num_barycenter_iters, plot, plot_savedir, **kwargs):
 
         '''
         This will gather observed latent embeddings from across GPUs, and calculate new barycenter, then re-braodcast to all GPUs

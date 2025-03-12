@@ -79,14 +79,14 @@ if __name__ == "__main__":
     som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_incatern/kohenen/Epoch33/64SecondWindow_64SecondStride/all_pats/generation/som_state_dict.pt'
     
     # GSM
-    som_device = 1 # GPU
+    som_device = 0 # GPU
     som_batch_size = 256
     som_lr = 0.75
-    som_lr_epoch_decay = 0.8
+    som_lr_epoch_decay = 0.95
     som_epochs = 100
     som_gridsize = 25
-    som_sigma = 2 # GSM 3 
-    som_sigma_epoch_decay = 0.85 # GSM 0.725
+    som_sigma = 5 # GSM 3 
+    som_sigma_epoch_decay = 0.95 # GSM 0.725
     som_sigma_min = 0.01
 
     # # GWJ
@@ -488,7 +488,7 @@ if __name__ == "__main__":
         # if eval_filepaths != []:
 
     if run_kohenen:
-        ### Run the Self Organizing Maps (SOM) Algorith
+        ### Run the Self Organizing Maps (SOM) Algorithm
         if single_pats == []: kohenen_savedir = f"{kohenen_dir}/all_pats/generation"
         else: kohenen_savedir = f"{kohenen_dir}/{'_'.join(single_pats)}/generation"
         axes, som = manifold_utilities.kohonen_subfunction_pytorch(
@@ -517,6 +517,38 @@ if __name__ == "__main__":
             plot_preictal_color_sec = plot_preictal_color_sec,
             plot_postictal_color_sec = plot_postictal_color_sec,
             **kwargs)
+
+        ## Konohen EVAL ONLY ###
+        if eval_filepaths != []:
+            if single_pats == []: kohenen_savedir = f"{kohenen_dir}/all_pats/eval"
+            else: kohenen_savedir = f"{kohenen_dir}/{'_'.join(single_pats)}/eval"
+            manifold_utilities.kohonen_subfunction_pytorch(
+                atd_file = atd_file,
+                pat_ids_list=eval_pat_ids_list,
+                latent_data_windowed=latent_data_windowed_eval, 
+                start_datetimes_epoch=eval_start_datetimes,  
+                stop_datetimes_epoch=eval_stop_datetimes,
+                epoch=epoch, 
+                win_sec=win_sec, 
+                stride_sec=stride_sec, 
+                savedir=kohenen_savedir,
+                som_precomputed_path=None,
+                som_object = som, # PASS IN SOM BUILT FROM TRAINING DATA
+                som_device=som_device,
+                som_batch_size=som_batch_size,
+                som_lr=som_lr,
+                som_epochs=som_epochs,
+                som_gridsize=som_gridsize,
+                som_lr_epoch_decay=som_lr_epoch_decay,
+                som_sigma=som_sigma,
+                som_sigma_epoch_decay=som_sigma_epoch_decay,
+                som_sigma_min=som_sigma_min,
+                FS = FS,
+                HDBSCAN_min_cluster_size = HDBSCAN_min_cluster_size,
+                HDBSCAN_min_samples = HDBSCAN_min_samples,
+                plot_preictal_color_sec = plot_preictal_color_sec,
+                plot_postictal_color_sec = plot_postictal_color_sec,
+                **kwargs)
 
     if run_histo:
         ### HISTOGRAM LATENT ###

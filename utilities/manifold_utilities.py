@@ -1179,6 +1179,9 @@ def load_som_model(load_path, gpu_id):
     
     # Restore the weights explicitly
     som.weights = checkpoint['weights']
+
+    # Reset the device
+    som.reset_device(gpu_id)
     
     print(f"SOM model loaded from {load_path}")
     
@@ -1210,6 +1213,7 @@ def kohonen_subfunction_pytorch(
     interictal_contour=False,
     verbose=True,
     som_precomputed_path = None,
+    som_object = None,
     premade_HDBSCAN = [],
     som_device = 0,
     **kwargs):
@@ -1245,22 +1249,25 @@ def kohonen_subfunction_pytorch(
 
     # TRAINING
 
-    # Build the SOM model        
-    grid_size = (som_gridsize, som_gridsize)
-    som = SOM(grid_size=grid_size, input_dim=latent_input.shape[1], batch_size=som_batch_size, lr=som_lr, 
-                lr_epoch_decay=som_lr_epoch_decay, sigma=som_sigma, sigma_epoch_decay=som_sigma_epoch_decay, sigma_min=som_sigma_min, device=som_device)
+    if som_object != None: # Object passed directly
+        print("SOM object passed directly into subfunction, using that as pretrained SOM")
+        som = som_object
+        som.reset_device(som_device) # Ensure on proper GPU
 
-    if som_precomputed_path is None: # Make new Kohonen SOM
-        print(f"Training new SOM: gridsize:{som_gridsize}, lr:{som_lr} w/ {som_lr_epoch_decay} decay per epoch, sigma:{som_sigma} w/ {som_sigma_epoch_decay} decay per epoch")
+    elif som_precomputed_path != None: # Load existing model weights from FILE
+        print(f"Loading SOM pretrained weights from FILE: {som_precomputed_path}")
+        som = load_som_model(som_precomputed_path, som_device)
+    
+    else: # Make new Kohonen SOM object and train it
+        print(f"Training brand new SOM: gridsize:{som_gridsize}, lr:{som_lr} w/ {som_lr_epoch_decay} decay per epoch, sigma:{som_sigma} w/ {som_sigma_epoch_decay} decay per epoch")     
+        som = SOM(grid_size=grid_size, input_dim=latent_input.shape[1], batch_size=som_batch_size, lr=som_lr, 
+                    lr_epoch_decay=som_lr_epoch_decay, sigma=som_sigma, sigma_epoch_decay=som_sigma_epoch_decay, sigma_min=som_sigma_min, device=som_device)
+        # Train SOM
         som.train(latent_input, num_epochs=som_epochs)
         savepath = savedir + "/som_state_dict.pt"
         save_som_model(som, grid_size=som_gridsize, input_dim=latent_input.shape[1], 
             lr=som_lr, sigma=som_sigma, lr_epoch_decay=som_lr_epoch_decay, sigma_epoch_decay=som_sigma_epoch_decay, sigma_min=som_sigma_min,
             epoch=som_epochs, batch_size=som_batch_size, save_path=savepath)
-    
-    else: # Load existing model weights
-        print(f"Loading SOM pretrained weights from: {som_precomputed_path}")
-        som = load_som_model(som_precomputed_path, som_device)
 
 
     # PLOT PREPARATION
@@ -1271,7 +1278,8 @@ def kohonen_subfunction_pytorch(
     weights = som.get_weights()
 
     # Initialize maps
-    preictal_sums = np.zeros((grid_size[0], grid_size[1]))  # To accumulate float values (class sums)
+    grid_size = (som_gridsize, som_gridsize)
+    preictal_sums = np.zeros(grid_size)  # To accumulate float values (class sums)
     hit_map = np.zeros(grid_size)
     neuron_patient_dict = {}  # Dictionary to track unique patients per neuron
 
@@ -1321,19 +1329,22 @@ def kohonen_subfunction_pytorch(
     # PLOTTING
 
     # Create a 2x3 plot layout
-    fig, axes = pl.subplots(2, 4, figsize=(24, 12))
+    fig, axes = pl.subplots(2, 4, figsize=(28, 12))
 
     # 1. U-Matrix
-    axes[0, 0].pcolor(u_matrix.T, cmap='bone_r')
+    u_plot = axes[0, 0].pcolor(u_matrix.T, cmap='bone_r')
     axes[0, 0].set_title("U-Matrix")
+    pl.colorbar(u_plot, ax=axes[0, 0])
 
     # 2. Hit Map
-    axes[0, 1].pcolor(hit_map.T, cmap='Blues')
+    hit_plot = axes[0, 1].pcolor(hit_map.T, cmap='Blues')
     axes[0, 1].set_title("Hit Map")
+    pl.colorbar(hit_plot, ax=axes[0, 1])
 
     # 3. Component Plane (Feature 0)
-    axes[1, 0].pcolor(weights[:, :, 0].T, cmap='coolwarm')
+    comp_plot = axes[1, 0].pcolor(weights[:, :, 0].T, cmap='coolwarm')
     axes[1, 0].set_title("Component Plane (Feature 0)")
+    pl.colorbar(comp_plot, ax=axes[1, 0])
 
     # 4. Patient Diversity Map (New)
     patient_plot = axes[1, 1].pcolor(patient_map.T, cmap='viridis', vmin=0, vmax=1)
@@ -1388,9 +1399,9 @@ def kohonen_subfunction_pytorch(
 
 
     # 3D surface plot of Pre-Ictal Density with multiple views
-    fig_3d = pl.figure(figsize=(14, 12)) # Create a figure with multiple 3D subplots
-    ax_3d_2 = fig_3d.add_subplot(131, projection='3d')
-    ax_3d_3 = fig_3d.add_subplot(132, projection='3d')
+    fig_3d = pl.figure(figsize=(20, 12)) # Create a figure with multiple 3D subplots
+    ax_3d_2 = fig_3d.add_subplot(121, projection='3d')
+    ax_3d_3 = fig_3d.add_subplot(122, projection='3d')
     x = np.linspace(0, grid_size[0] - 1, grid_size[0])
     y = np.linspace(0, grid_size[1] - 1, grid_size[1])
     X, Y = np.meshgrid(x, y) 
@@ -1414,9 +1425,9 @@ def kohonen_subfunction_pytorch(
 
 
     # 3D surface plot of Rescaled Pre-Ictal Density with multiple views
-    fig_3d = pl.figure(figsize=(14, 12)) # Create a figure with multiple 3D subplots
-    ax_3d_2 = fig_3d.add_subplot(131, projection='3d')
-    ax_3d_3 = fig_3d.add_subplot(132, projection='3d')
+    fig_3d = pl.figure(figsize=(20, 12)) # Create a figure with multiple 3D subplots
+    ax_3d_2 = fig_3d.add_subplot(121, projection='3d')
+    ax_3d_3 = fig_3d.add_subplot(122, projection='3d')
     x = np.linspace(0, grid_size[0] - 1, grid_size[0])
     y = np.linspace(0, grid_size[1] - 1, grid_size[1])
     X, Y = np.meshgrid(x, y) 
