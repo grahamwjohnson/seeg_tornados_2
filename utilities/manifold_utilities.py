@@ -1441,15 +1441,13 @@ def kohonen_subfunction_pytorch(
     hit_map = np.zeros(grid_size)
     patient_map = np.zeros(grid_size)
 
-    # Precompute patient index blending
-    unique_patients = np.unique(pat_ids_input)
-    patient_to_color = {pat: i / (len(unique_patients) - 1) for i, pat in enumerate(unique_patients)}
-    patient_colors = np.array([patient_to_color[pat] for pat in pat_ids_input])
+    # Dictionary to track unique patients per neuron
+    neuron_patient_dict = {}
 
     # Process all data in batches
     for i in range(0, len(latent_input), som_batch_size):
         batch = latent_input[i:i + som_batch_size]
-        batch_patients = patient_colors[i:i + som_batch_size]
+        batch_patients = pat_ids_input[i:i + som_batch_size]
         batch_labels = preictal_bool_input[i:i + som_batch_size]
 
         batch = torch.tensor(batch, dtype=torch.float32, device=som_device)
@@ -1458,17 +1456,21 @@ def kohonen_subfunction_pytorch(
 
         # Efficiently accumulate values using NumPy's `np.add.at`
         np.add.at(hit_map, (bmu_rows, bmu_cols), 1)
-        np.add.at(patient_map, (bmu_rows, bmu_cols), batch_patients)
         np.add.at(class_counts, (bmu_rows, bmu_cols, batch_labels.astype(int)), 1)
 
-    # Normalize patient map
-    hit_map_nonzero = np.where(hit_map > 0, hit_map, 1)
-    patient_map /= hit_map_nonzero
+        for j, (bmu_row, bmu_col) in enumerate(zip(bmu_rows, bmu_cols)):
+            if (bmu_row, bmu_col) not in neuron_patient_dict:
+                neuron_patient_dict[(bmu_row, bmu_col)] = set()
+            neuron_patient_dict[(bmu_row, bmu_col)].add(batch_patients[j])  # Track unique patients
 
     # Compute blended class distribution
     total_counts = np.sum(class_counts, axis=2, keepdims=True)
     class_proportions = np.divide(class_counts, total_counts, where=total_counts != 0)
     blended_colors = class_proportions[:, :, 1]
+    # Convert patient diversity to a normalized 0-1 scale
+    max_unique_patients = max(len(pats) for pats in neuron_patient_dict.values()) if neuron_patient_dict else 1
+    for (bmu_row, bmu_col), patients in neuron_patient_dict.items():
+        patient_map[bmu_row, bmu_col] = len(patients) / max_unique_patients  # Normalize
 
     # Compute U-Matrix
     u_matrix = np.zeros(grid_size)
@@ -1494,15 +1496,22 @@ def kohonen_subfunction_pytorch(
     axes[1, 0].pcolor(weights[:, :, 0].T, cmap='coolwarm')
     axes[1, 0].set_title("Component Plane (Feature 0)")
 
-    # 4. Patient Index Blended Map
-    patient_plot = axes[1, 1].pcolor(patient_map.T, cmap='viridis', edgecolors='k', linewidths=1, vmin=0, vmax=1)
-    axes[1, 1].set_title("Patient Index Blended Map")
+    # 4. Patient Diversity Map (New)
+    patient_plot = axes[1, 1].pcolor(patient_map.T, cmap='viridis', vmin=0, vmax=1)
+    axes[1, 1].set_title("Patient Diversity Map (1.0 = Most Blended)")
     pl.colorbar(patient_plot, ax=axes[1, 1])
 
     # 5. Blended Class Distribution
-    blended_plot = axes[1, 2].pcolor(blended_colors.T, cmap='flare', edgecolors='k', linewidths=1, vmin=0, vmax=1)
+    blended_plot = axes[1, 2].pcolor(blended_colors.T, cmap='flare', vmin=0, vmax=1)
     axes[1, 2].set_title("Blended Class Distribution")
     pl.colorbar(blended_plot, ax=axes[1, 2])
+
+    # 6. Blended Class Distribution * Normalized Hit Map
+    blended_plot = axes[0, 2].pcolor((blended_colors * (hit_map/np.max(hit_map))).T, cmap='flare', vmin=0, vmax=1)
+    axes[0, 2].set_title("Blended Class Distribution * Max-Scaled Hit Map")
+    pl.colorbar(blended_plot, ax=axes[0, 2])
+
+    pl.tight_layout()
 
     # **** Save entire figure *****
     print("Exporting Kohonen to JPG")

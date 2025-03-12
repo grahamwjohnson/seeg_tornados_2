@@ -53,7 +53,7 @@ if __name__ == "__main__":
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/pangolin_Thu_Jan_30_18_29_14_2025'
     model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_incatern'
     # model_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_testing'
-    single_pats = [] #['Epat27', 'Epat34'] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats  # TODO: modify to take a selection of patients
+    single_pats = ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats  # TODO: modify to take a selection of patients
     epoch = 33 # 39 # 141 , 999 to debug
     latent_subdir = f'latent_files/Epoch{epoch}'
     win_sec = 64 # 60, 10  # Must match strings in directory name exactly (e.g. 1.0 not 1)
@@ -76,16 +76,29 @@ if __name__ == "__main__":
 
     # Kohenen Settings
     # if 'som_precomputed_path' is None, will train a new SOM
-    som_precomputed_path = None # '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_incatern/kohenen/Epoch33/64SecondWindow_64SecondStride/all_pats/generation/Run15/som_state_dict.pt'
+    som_precomputed_path = None # '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_incatern/kohenen/Epoch33/64SecondWindow_64SecondStride/Epat27_Epat28_Epat30_Epat31_Epat33_Epat34_Epat35_Epat37_Epat39_Epat41/generation/som_state_dict.pt'
+    
+    # # GSM
+    # som_device = 1 # GPU
+    # som_batch_size = 256
+    # som_lr = 0.75
+    # som_lr_epoch_decay = 0.8
+    # som_epochs = 50
+    # som_gridsize = 16
+    # som_sigma = 4 # 3 
+    # som_sigma_epoch_decay = 0.725
+    # som_sigma_min = 0.01
+
+    # GWJ
     som_device = 0 # GPU
     som_batch_size = 256
     som_lr = 0.5
-    som_epochs = 30
-    som_gridsize = 8
-    som_lr_epoch_decay = 0.90
-    som_sigma = int(som_gridsize * 0.5)
-    som_sigma_epoch_decay = 0.90
-    som_sigma_min = 1.5
+    som_lr_epoch_decay = 0.97
+    som_epochs = 100
+    som_gridsize = 25
+    som_sigma = 15 
+    som_sigma_epoch_decay = 0.95
+    som_sigma_min = 0.1
 
     # ParamRepulsor Settings (unless random override below)
     prpacmap_metric='angular' # default 'euclidean', 'angular'
