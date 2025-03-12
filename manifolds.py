@@ -71,7 +71,7 @@ if __name__ == "__main__":
     HDBSCAN_min_samples = 100
 
     # Plotting Settings
-    plot_preictal_color_sec = 60*60*12 #60*60*4
+    plot_preictal_color_sec = 60*60*24 #60*60*4
     plot_postictal_color_sec = 0 #60*10 #60*60*4
 
     # Kohenen Settings
@@ -83,10 +83,10 @@ if __name__ == "__main__":
     som_batch_size = 256
     som_lr = 0.75
     som_lr_epoch_decay = 0.8
-    som_epochs = 10
+    som_epochs = 100
     som_gridsize = 25
-    som_sigma = 4 # 3 
-    som_sigma_epoch_decay = 0.725
+    som_sigma = 2 # GSM 3 
+    som_sigma_epoch_decay = 0.85 # GSM 0.725
     som_sigma_min = 0.01
 
     # # GWJ

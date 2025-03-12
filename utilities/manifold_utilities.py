@@ -19,6 +19,8 @@ from SOM import SOM
 import sys
 import torch
 import matplotlib.colors as mcolors
+from mpl_toolkits.mplot3d import Axes3D
+from scipy.ndimage import gaussian_filter
 
 '''
 @author: grahamwjohnson
@@ -1136,182 +1138,6 @@ def save_pacmap_objects(pacmap_dir, epoch, axis, reducer, hdb, xy_lims):
     output_obj10.close()
     print("Saved plot axis")
 
-# def kohonen_subfunction_pytorch(  
-#     atd_file,
-#     pat_ids_list,
-#     latent_data_windowed, 
-#     start_datetimes_epoch,  
-#     stop_datetimes_epoch,
-#     epoch, 
-#     FS, 
-#     win_sec, 
-#     stride_sec, 
-#     savedir,
-#     som_batch_size,
-#     som_lr,
-#     som_lr_epoch_decay,
-#     som_sigma,
-#     som_sigma_epoch_decay,
-#     som_epochs,
-#     som_gridsize,
-#     HDBSCAN_min_cluster_size,
-#     HDBSCAN_min_samples,
-#     plot_preictal_color_sec,
-#     plot_postictal_color_sec,
-#     interictal_contour=False,
-#     verbose=True,
-#     premade_SOM = None,
-#     premade_HDBSCAN = [],
-#     **kwargs):
-
-#     '''
-#     Goal of function:
-#     Run self-organizing maps (SOM) algorithm and plot results
-
-#     '''
-
-#     if not os.path.exists(savedir): os.makedirs(savedir)
-
-#     # Metadata
-#     latent_dim = latent_data_windowed[0].shape[1]
-#     num_timepoints_in_windowed_file = latent_data_windowed[0].shape[0]
-#     modified_FS = 1 / stride_sec
-
-#     # Check for NaNs in files
-#     delete_file_idxs = []
-#     for i in range(len(latent_data_windowed)):
-#         if np.sum(np.isnan(latent_data_windowed[i])) > 0:
-#             delete_file_idxs = delete_file_idxs + [i]
-#             print(f"WARNING: Deleted file {start_datetimes_epoch[i]} that had NaNs")
-
-#     # Delete entries/files in lists where there is NaN in latent space for that file
-#     latent_data_windowed = [item for i, item in enumerate(latent_data_windowed) if i not in delete_file_idxs]
-#     start_datetimes_epoch = [item for i, item in enumerate(start_datetimes_epoch) if i not in delete_file_idxs]  
-#     stop_datetimes_epoch = [item for i, item in enumerate(stop_datetimes_epoch) if i not in delete_file_idxs]
-#     pat_ids_list = [item for i, item in enumerate(pat_ids_list) if i not in delete_file_idxs]
-
-#     # Flatten data into [miniepoch, dim] to feed into PaCMAP, original data is [file, seq_miniepoch_in_file, latent_dim]
-#     latent_input = np.concatenate(latent_data_windowed, axis=0)
-#     pat_ids_input = [item for item in pat_ids_list for _ in range(latent_data_windowed[0].shape[0])]
-#     start_datetimes_input = [item + datetime.timedelta(seconds=stride_sec * i) for item in start_datetimes_epoch for i in range(latent_data_windowed[0].shape[0])]
-#     stop_datetimes_input = [item + datetime.timedelta(seconds=stride_sec * i) + datetime.timedelta(seconds=win_sec) for item in start_datetimes_epoch for i in range(latent_data_windowed[0].shape[0])]  # ITERATE FROM SHIFTED START using WINDOW_SEC, not from STOP datetimes
-
-#     # Make new Kohonen SOM
-#     if premade_SOM == None:
-
-#         # Initialize and train the SOM using pytorch
-#         print(f"Training new SOM: gridsize:{som_gridsize}, lr:{som_lr} w/ {som_lr_epoch_decay} decay per epoch, sigma:{som_sigma} w/ {som_sigma_epoch_decay} decay per epoch, num_features:{latent_input.shape[0]}, dims:{latent_input.shape[1]}, batchsize:{som_batch_size}")
-#         grid_size = (som_gridsize, som_gridsize)  # SOM grid size
-#         input_dim = latent_input.shape[1]  # Number of features
-#         som = SOM(grid_size=grid_size, input_dim=latent_input.shape[1], batch_size=som_batch_size, lr=som_lr, lr_epoch_decay=som_lr_epoch_decay, sigma=som_sigma, sigma_epoch_decay=som_sigma_epoch_decay, device='cuda')
-#         som.train(latent_input, num_epochs=som_epochs)
-
-#         # Save SOM
-#         ckp = som.state_dict()
-#         check_path = savedir + "/som_state_dict.pt"
-#         torch.save(ckp, check_path)
-#         print("SOM state dict saved")
-
-#         # print("Making new Kohonen SOM to use for visualization")
-#         # som = MiniSom(som_gridsize, som_gridsize, latent_input.shape[1], sigma=1.0, learning_rate=som_lr)  # Create a SOM grid (e.g., 10x10 grid)
-#         # som.train_random(latent_input, som_epochs)   # Train the SOM
-
-#     # Identify data points within pre-ictal buffers        
-#     preictal_bool_input = file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
-
-#     # Get the weights from the trained SOM (move to CPU for visualization)
-#     weights = som.get_weights()
-
-#     # Initialize a grid to count class assignments & Compute the hit map
-#     class_counts = np.zeros((grid_size[0], grid_size[1], 2))  # Shape: (grid_size[0], grid_size[1], num_classes)
-#     hit_map = np.zeros(grid_size) # initialize the hit map
-#     # Process data in batches
-#     for i in range(0, len(latent_input), som_batch_size):
-#         batch = latent_input[i:i + som_batch_size]  # Get a batch of inputs and labels
-#         batch_labels = preictal_bool_input[i:i + som_batch_size]
-#         batch = torch.tensor(batch, dtype=torch.float32, device='cuda') # Move batch to GPU
-#         bmu_rows, bmu_cols = som.find_bmu(batch) # Find BMUs for the entire batch
-#         bmu_rows = bmu_rows.cpu().numpy() # Move BMU indices to CPU and convert to NumPy
-#         bmu_cols = bmu_cols.cpu().numpy()
-#         np.add.at(hit_map, (bmu_rows, bmu_cols), 1) # Update the hit map using NumPy's advanced indexing
-
-#         # Update class counts for the batch
-#         for j, (bmu_row, bmu_col) in enumerate(zip(bmu_rows, bmu_cols)):
-#             label = int(batch_labels[j])  # Convert boolean label to int (0 or 1)
-#             class_counts[bmu_row, bmu_col, label] += 1  # Increment the count for the corresponding class
-
-#     # Compute class proportions for each neuron
-#     total_counts = np.sum(class_counts, axis=2, keepdims=True)  # Total counts per neuron
-#     class_proportions = np.divide(class_counts, total_counts, where=total_counts != 0)  # Shape: (grid_size[0], grid_size[1], 2)
-#     blended_colors = class_proportions[:, :, 1]  # Compute the blended colors for each neuron # Use proportion of class 1 (True) for blending
-        
-#     # Create a combined plot
-#     print("Plotting Kohonen")
-#     fig, axes = pl.subplots(2, 2, figsize=(12, 12))
-
-#     # 1. U-Matrix
-#     print("Plotting U-Matrix")
-#     # Compute the U-Matrix
-#     u_matrix = np.zeros((grid_size[0], grid_size[1]))  # Initialize U-Matrix
-#     for i in range(grid_size[0]):
-#         for j in range(grid_size[1]):
-#             neuron = weights[i, j] # Get the current neuron's weights
-#             distances = []  # Compute distances to all neighboring neurons
-#             for x in range(max(0, i - 1), min(grid_size[0], i + 2)):
-#                 for y in range(max(0, j - 1), min(grid_size[1], j + 2)):
-#                     if x == i and y == j:
-#                         continue  # Skip the current neuron
-#                     neighbor = weights[x, y]
-#                     distance = np.linalg.norm(neuron - neighbor)  # Euclidean distance
-#                     distances.append(distance)
-
-#             # Average the distances to get the U-Matrix value for this neuron
-#             u_matrix[i, j] = np.mean(distances)
-            
-#     axes[0, 0].pcolor(u_matrix.T, cmap='bone_r')
-#     axes[0, 0].set_title("U-Matrix")
-#     axes[0, 0].set_xlabel("Neuron X")
-#     axes[0, 0].set_ylabel("Neuron Y")
-
-#     # 2. Hit Map
-#     print("Plotting Hit Map")
-#     axes[0, 1].pcolor(hit_map.T, cmap='Blues')
-#     axes[0, 1].set_title("Hit Map")
-#     axes[0, 1].set_xlabel("Neuron X")
-#     axes[0, 1].set_ylabel("Neuron Y")
-
-#     # 3. Component Plane (Feature 0)
-#     print("Plotting Component Plane")
-#     compplane_feature = 0
-#     axes[1, 0].pcolor(weights[:, :, compplane_feature].T, cmap='coolwarm')
-#     axes[1, 0].set_title("Component Plane (Feature 0)")
-#     axes[1, 0].set_xlabel("Neuron X")
-#     axes[1, 0].set_ylabel("Neuron Y")
-
-#     # 4. Blended Class Distribution Across SOM
-#     blended_plot = axes[1, 1].pcolor(blended_colors.T, cmap='flare', edgecolors='k', linewidths=1, vmin=0, vmax=1)  # Transpose for correct orientation
-#     axes[1, 1].set_title("Blended Class Distribution Across SOM")
-#     axes[1, 1].set_xlabel("Neuron X")
-#     axes[1, 1].set_ylabel("Neuron Y")
-
-#     # Add a colorbar for the blended heatmap
-#     cbar = pl.colorbar(blended_plot, ax=axes[1, 1], ticks=[0, 0.5, 1])
-#     cbar.ax.set_yticklabels(['Class 0 (False)', '50% Class 0 / 50% Class 1', 'Class 1 (True)'])
-
-#     pl.tight_layout()
-
-#     # **** Save entire figure *****
-#     print("Exporting Kohonen to JPG")
-#     savename_jpg = savedir + f"/SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_epoch{epoch}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}.jpg"
-#     pl.savefig(savename_jpg, dpi=600)
-
-#     # TODO Upload to WandB
-
-#     pl.close(fig)
-
-#     return axes, som 
-
-
 def save_som_model(som, grid_size, input_dim, lr, sigma, lr_epoch_decay, sigma_epoch_decay, sigma_min, epoch, batch_size, save_path):
     # Save the state_dict (model weights), weights, and relevant hyperparameters
     torch.save({
@@ -1437,68 +1263,16 @@ def kohonen_subfunction_pytorch(
         som = load_som_model(som_precomputed_path, som_device)
 
 
-    # PLOT PREPARTION
+    # PLOT PREPARATION
 
-    # # PRE_ICTAL BUFFER BOOLEAN      
-    # preictal_bool_input = file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
-
-    # weights = som.get_weights()
-
-    # # Initialize maps
-    # class_counts = np.zeros((grid_size[0], grid_size[1], 2))
-    # hit_map = np.zeros(grid_size)
-    # patient_map = np.zeros(grid_size)
-    # neuron_patient_dict = {} # Dictionary to track unique patients per neuron
-
-    # # Inference on all data in batches
-    # for i in range(0, len(latent_input), som_batch_size):
-    #     batch = latent_input[i:i + som_batch_size]
-    #     batch_patients = pat_ids_input[i:i + som_batch_size]
-    #     batch_labels = preictal_bool_input[i:i + som_batch_size]
-
-    #     batch = torch.tensor(batch, dtype=torch.float32, device=som_device)
-    #     bmu_rows, bmu_cols = som.find_bmu(batch)
-    #     bmu_rows, bmu_cols = bmu_rows.cpu().numpy(), bmu_cols.cpu().numpy()
-
-    #     # Efficiently accumulate values using NumPy's `np.add.at`
-    #     np.add.at(hit_map, (bmu_rows, bmu_cols), 1)
-    #     np.add.at(class_counts, (bmu_rows, bmu_cols, batch_labels.astype(int)), 1)
-
-    #     for j, (bmu_row, bmu_col) in enumerate(zip(bmu_rows, bmu_cols)):
-    #         if (bmu_row, bmu_col) not in neuron_patient_dict:
-    #             neuron_patient_dict[(bmu_row, bmu_col)] = set()
-    #         neuron_patient_dict[(bmu_row, bmu_col)].add(batch_patients[j])  # Track unique patients
-
-    # # Compute blended class distribution
-    # total_counts = np.sum(class_counts, axis=2, keepdims=True)
-    # class_proportions = np.divide(class_counts, total_counts, where=total_counts != 0)
-    # blended_colors = class_proportions[:, :, 1]
-    # # Convert patient diversity to a normalized 0-1 scale
-    # max_unique_patients = max(len(pats) for pats in neuron_patient_dict.values()) if neuron_patient_dict else 1
-    # for (bmu_row, bmu_col), patients in neuron_patient_dict.items():
-    #     patient_map[bmu_row, bmu_col] = len(patients) / max_unique_patients  # Normalize
-
-    # # Compute U-Matrix
-    # u_matrix = np.zeros(grid_size)
-    # for i in range(grid_size[0]):
-    #     for j in range(grid_size[1]):
-    #         neuron = weights[i, j]
-    #         distances = [np.linalg.norm(neuron - weights[x, y]) for x in range(max(0, i-1), min(grid_size[0], i+2))
-    #                      for y in range(max(0, j-1), min(grid_size[1], j+2)) if (x, y) != (i, j)]
-    #         u_matrix[i, j] = np.mean(distances)
-
-
-    # PLOT PREPARTION
-
-    # PRE_ICTAL BUFFER FLOAT
+    # Pre-Ictal Float values by data point
     preictal_float_input = file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
 
     weights = som.get_weights()
 
     # Initialize maps
-    class_sums = np.zeros((grid_size[0], grid_size[1]))  # To accumulate float values (class sums)
+    preictal_sums = np.zeros((grid_size[0], grid_size[1]))  # To accumulate float values (class sums)
     hit_map = np.zeros(grid_size)
-    patient_map = np.zeros(grid_size)
     neuron_patient_dict = {}  # Dictionary to track unique patients per neuron
 
     # Inference on all data in batches
@@ -1516,7 +1290,7 @@ def kohonen_subfunction_pytorch(
 
         # Accumulate the float values (preictal scores) for each node (bmu)
         for j, (bmu_row, bmu_col) in enumerate(zip(bmu_rows, bmu_cols)):
-            class_sums[bmu_row, bmu_col] += batch_labels[j]  # Add float class values
+            preictal_sums[bmu_row, bmu_col] += batch_labels[j]  # Add float class values
 
         # Track unique patients for each node (BMU)
         for j, (bmu_row, bmu_col) in enumerate(zip(bmu_rows, bmu_cols)):
@@ -1524,22 +1298,13 @@ def kohonen_subfunction_pytorch(
                 neuron_patient_dict[(bmu_row, bmu_col)] = set()
             neuron_patient_dict[(bmu_row, bmu_col)].add(batch_patients[j])  # Track unique patients
 
-    # # Calculate blended class distribution (average of float values per node)
-    # # Divide the accumulated class sums by the hit counts for proper averaging
-    # blended_colors = np.divide(class_sums, hit_map, where=hit_map != 0)
-    blended_colors = class_sums
-
-    # Normalize blended_colors to ensure values are between 0 and 1
-    min_val = np.min(blended_colors)
-    max_val = np.max(blended_colors)
-
-    # Avoid division by zero in case of all zeros
-    if max_val - min_val > 0:
-        blended_colors = (blended_colors - min_val) / (max_val - min_val)
-    else:
-        blended_colors = np.zeros_like(blended_colors)  # In case all values are the same
+    # Normalize preictal_sums to ensure values are between 0 and 1
+    min_val = np.min(preictal_sums)
+    max_val = np.max(preictal_sums)
+    preictal_sums = (preictal_sums - min_val) / (max_val - min_val) 
 
     # Normalize patient diversity map
+    patient_map = np.zeros(grid_size)
     max_unique_patients = max(len(pats) for pats in neuron_patient_dict.values()) if neuron_patient_dict else 1
     for (bmu_row, bmu_col), patients in neuron_patient_dict.items():
         patient_map[bmu_row, bmu_col] = len(patients) / max_unique_patients  # Normalize
@@ -1553,14 +1318,10 @@ def kohonen_subfunction_pytorch(
                         for y in range(max(0, j-1), min(grid_size[1], j+2)) if (x, y) != (i, j)]
             u_matrix[i, j] = np.mean(distances)
 
-    # Plotting
-
-    # Create a custom colormap using LinearSegmentedColormap
-    colors = ["#FFCDB2", "#FFB4A2", "#E5989B", "#A36672", "#3E283B"]
-    custom_cmap = mcolors.LinearSegmentedColormap.from_list("custom_warm", colors, N=256)
+    # PLOTTING
 
     # Create a 2x3 plot layout
-    fig, axes = pl.subplots(2, 3, figsize=(18, 12))
+    fig, axes = pl.subplots(2, 4, figsize=(24, 12))
 
     # 1. U-Matrix
     axes[0, 0].pcolor(u_matrix.T, cmap='bone_r')
@@ -1579,20 +1340,40 @@ def kohonen_subfunction_pytorch(
     axes[1, 1].set_title("Patient Diversity Map (1.0 = Most Blended)")
     pl.colorbar(patient_plot, ax=axes[1, 1])
 
-    # 5. Blended Class Distribution
-    blended_plot = axes[1, 2].pcolor(blended_colors.T, cmap='flare', vmin=0, vmax=1)
-    axes[1, 2].set_title("Pre-Ictal Density")
-    pl.colorbar(blended_plot, ax=axes[1, 2])
+    # 5. Pre-Ictal Sums
+    blended_plot = axes[0, 2].pcolor(preictal_sums.T, cmap='flare', vmin=0, vmax=1)
+    axes[0, 2].set_title("Pre-Ictal Density")
+    pl.colorbar(blended_plot, ax=axes[0, 2])
 
-    # 6. Blended Class Distribution * Patient Diversity
-    rescale_preictal = blended_colors * patient_map
+    # 6. Pre-Ictal Sums * Patient Diversity
+    rescale_preictal = preictal_sums * patient_map
     rescale_preictal = rescale_preictal / np.max(rescale_preictal)
     if np.any(np.isnan(rescale_preictal)) or np.all(rescale_preictal == 0):  # Ensure the rescaling doesn't lead to values too small or NaN
         print("Warning: rescale_preictal has NaN or zero values.")
         rescale_preictal = np.zeros_like(rescale_preictal)
-    blended_plot_recaled = axes[0, 2].pcolor((rescale_preictal).T, cmap='flare', vmin=0, vmax=1)
-    axes[0, 2].set_title("Pre-Ictal * Patient Diversity")
-    pl.colorbar(blended_plot_recaled, ax=axes[0, 2])
+    blended_plot_recaled = axes[1, 2].pcolor((rescale_preictal).T, cmap='flare', vmin=0, vmax=1)
+    axes[1, 2].set_title("Pre-Ictal * Patient Diversity")
+    pl.colorbar(blended_plot_recaled, ax=axes[1, 2])
+
+    # 7. Pre-Ictal Sums & SMOOTHED
+    sigma_plot = 1  # Adjust this value for more or less smoothing
+    preictal_sums_smoothed = gaussian_filter(preictal_sums, sigma=sigma_plot)  # Apply Gaussian filter to smooth the preictal_sums data
+    min_val = np.min(preictal_sums_smoothed)
+    max_val = np.max(preictal_sums_smoothed)
+    preictal_sums_smoothed = (preictal_sums_smoothed - min_val) / (max_val - min_val) 
+    blended_plot = axes[0, 3].pcolor(preictal_sums_smoothed.T, cmap='flare', vmin=0, vmax=1)
+    axes[0, 3].set_title(f"Pre-Ictal Density - Smoothed (S:{sigma_plot})")
+    pl.colorbar(blended_plot, ax=axes[0, 3])
+
+    # 8. Pre-Ictal Sums * Patient Diversity & SMOOTHED
+    sigma_plot = 1  # Adjust this value for more or less smoothing
+    rescale_preictal_smoothed = gaussian_filter(rescale_preictal, sigma=sigma_plot)  # Apply Gaussian filter to smooth the preictal_sums data
+    min_val = np.min(rescale_preictal_smoothed)
+    max_val = np.max(rescale_preictal_smoothed)
+    rescale_preictal_smoothed = (rescale_preictal_smoothed - min_val) / (max_val - min_val) 
+    blended_plot_recaled = axes[1, 3].pcolor((rescale_preictal_smoothed).T, cmap='flare', vmin=0, vmax=1)
+    axes[1, 3].set_title(f"Pre-Ictal * Patient Diversity - Smoothed (S:{sigma_plot})")
+    pl.colorbar(blended_plot_recaled, ax=axes[1, 3])
 
     pl.tight_layout()
 
@@ -1604,6 +1385,58 @@ def kohonen_subfunction_pytorch(
     # TODO Upload to WandB
 
     pl.close(fig)
+
+
+    # 3D surface plot of Pre-Ictal Density with multiple views
+    fig_3d = pl.figure(figsize=(14, 12)) # Create a figure with multiple 3D subplots
+    ax_3d_2 = fig_3d.add_subplot(131, projection='3d')
+    ax_3d_3 = fig_3d.add_subplot(132, projection='3d')
+    x = np.linspace(0, grid_size[0] - 1, grid_size[0])
+    y = np.linspace(0, grid_size[1] - 1, grid_size[1])
+    X, Y = np.meshgrid(x, y) 
+    Z = preictal_sums_smoothed.T
+    surf_2 = ax_3d_2.plot_surface(X, Y, Z, cmap='flare', vmin=0, vmax=1, edgecolor='none')
+    ax_3d_2.set_title("Preictal Density: Isometric View -45")
+    ax_3d_2.set_xlabel('Grid X')
+    ax_3d_2.set_ylabel('Grid Y')
+    ax_3d_2.set_zlabel('Density')
+    ax_3d_2.view_init(elev=30, azim=-45)  # Isometric view -45
+    surf_3 = ax_3d_3.plot_surface(X, Y, Z, cmap='flare', vmin=0, vmax=1, edgecolor='none')
+    ax_3d_3.set_title("Preictal Density: Isometric View +45")
+    ax_3d_3.set_xlabel('Grid X')
+    ax_3d_3.set_ylabel('Grid Y')
+    ax_3d_3.set_zlabel('Density')
+    ax_3d_3.view_init(elev=30, azim=45)  # Isometric view +45
+    print("Exporting 3D Kohonen to JPG")
+    savename_jpg = savedir + f"/3Dpreictal_SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_epoch{epoch}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
+    pl.savefig(savename_jpg, dpi=600)
+    pl.close(fig_3d)
+
+
+    # 3D surface plot of Rescaled Pre-Ictal Density with multiple views
+    fig_3d = pl.figure(figsize=(14, 12)) # Create a figure with multiple 3D subplots
+    ax_3d_2 = fig_3d.add_subplot(131, projection='3d')
+    ax_3d_3 = fig_3d.add_subplot(132, projection='3d')
+    x = np.linspace(0, grid_size[0] - 1, grid_size[0])
+    y = np.linspace(0, grid_size[1] - 1, grid_size[1])
+    X, Y = np.meshgrid(x, y) 
+    Z = rescale_preictal_smoothed.T
+    surf_2 = ax_3d_2.plot_surface(X, Y, Z, cmap='flare', vmin=0, vmax=1, edgecolor='none')
+    ax_3d_2.set_title("Preictal Density * Patient Diversity: Isometric View -45")
+    ax_3d_2.set_xlabel('Grid X')
+    ax_3d_2.set_ylabel('Grid Y')
+    ax_3d_2.set_zlabel('Density')
+    ax_3d_2.view_init(elev=30, azim=-45)  # Isometric view -45
+    surf_3 = ax_3d_3.plot_surface(X, Y, Z, cmap='flare', vmin=0, vmax=1, edgecolor='none')
+    ax_3d_3.set_title("Preictal Density * Patient Diversity: Isometric View +45")
+    ax_3d_3.set_xlabel('Grid X')
+    ax_3d_3.set_ylabel('Grid Y')
+    ax_3d_3.set_zlabel('Density')
+    ax_3d_3.view_init(elev=30, azim=45)  # Isometric view +45
+    print("Exporting 3D Rescaled Kohonen to JPG")
+    savename_jpg = savedir + f"/3DpreictalRescaled_SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_epoch{epoch}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
+    pl.savefig(savename_jpg, dpi=600)
+    pl.close(fig_3d)
 
     return axes, som
 
