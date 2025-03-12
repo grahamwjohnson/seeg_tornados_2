@@ -18,6 +18,7 @@ from minisom import MiniSom
 from SOM import SOM
 import sys
 import torch
+import matplotlib.colors as mcolors
 
 '''
 @author: grahamwjohnson
@@ -1389,6 +1390,8 @@ def kohonen_subfunction_pytorch(
 
     if not os.path.exists(savedir): os.makedirs(savedir)
 
+    # DATA PREPARATION
+
     # Metadata
     latent_dim = latent_data_windowed[0].shape[1]
     num_timepoints_in_windowed_file = latent_data_windowed[0].shape[0]
@@ -1413,6 +1416,9 @@ def kohonen_subfunction_pytorch(
     start_datetimes_input = [item + datetime.timedelta(seconds=stride_sec * i) for item in start_datetimes_epoch for i in range(latent_data_windowed[0].shape[0])]
     stop_datetimes_input = [item + datetime.timedelta(seconds=stride_sec * i) + datetime.timedelta(seconds=win_sec) for item in start_datetimes_epoch for i in range(latent_data_windowed[0].shape[0])]  # ITERATE FROM SHIFTED START using WINDOW_SEC, not from STOP datetimes
 
+
+    # TRAINING
+
     # Build the SOM model        
     grid_size = (som_gridsize, som_gridsize)
     som = SOM(grid_size=grid_size, input_dim=latent_input.shape[1], batch_size=som_batch_size, lr=som_lr, 
@@ -1430,44 +1436,110 @@ def kohonen_subfunction_pytorch(
         print(f"Loading SOM pretrained weights from: {som_precomputed_path}")
         som = load_som_model(som_precomputed_path, som_device)
 
-    # Identify data points within pre-ictal buffers        
-    preictal_bool_input = file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
 
-    # Get SOM weights
+    # PLOT PREPARTION
+
+    # # PRE_ICTAL BUFFER BOOLEAN      
+    # preictal_bool_input = file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
+
+    # weights = som.get_weights()
+
+    # # Initialize maps
+    # class_counts = np.zeros((grid_size[0], grid_size[1], 2))
+    # hit_map = np.zeros(grid_size)
+    # patient_map = np.zeros(grid_size)
+    # neuron_patient_dict = {} # Dictionary to track unique patients per neuron
+
+    # # Inference on all data in batches
+    # for i in range(0, len(latent_input), som_batch_size):
+    #     batch = latent_input[i:i + som_batch_size]
+    #     batch_patients = pat_ids_input[i:i + som_batch_size]
+    #     batch_labels = preictal_bool_input[i:i + som_batch_size]
+
+    #     batch = torch.tensor(batch, dtype=torch.float32, device=som_device)
+    #     bmu_rows, bmu_cols = som.find_bmu(batch)
+    #     bmu_rows, bmu_cols = bmu_rows.cpu().numpy(), bmu_cols.cpu().numpy()
+
+    #     # Efficiently accumulate values using NumPy's `np.add.at`
+    #     np.add.at(hit_map, (bmu_rows, bmu_cols), 1)
+    #     np.add.at(class_counts, (bmu_rows, bmu_cols, batch_labels.astype(int)), 1)
+
+    #     for j, (bmu_row, bmu_col) in enumerate(zip(bmu_rows, bmu_cols)):
+    #         if (bmu_row, bmu_col) not in neuron_patient_dict:
+    #             neuron_patient_dict[(bmu_row, bmu_col)] = set()
+    #         neuron_patient_dict[(bmu_row, bmu_col)].add(batch_patients[j])  # Track unique patients
+
+    # # Compute blended class distribution
+    # total_counts = np.sum(class_counts, axis=2, keepdims=True)
+    # class_proportions = np.divide(class_counts, total_counts, where=total_counts != 0)
+    # blended_colors = class_proportions[:, :, 1]
+    # # Convert patient diversity to a normalized 0-1 scale
+    # max_unique_patients = max(len(pats) for pats in neuron_patient_dict.values()) if neuron_patient_dict else 1
+    # for (bmu_row, bmu_col), patients in neuron_patient_dict.items():
+    #     patient_map[bmu_row, bmu_col] = len(patients) / max_unique_patients  # Normalize
+
+    # # Compute U-Matrix
+    # u_matrix = np.zeros(grid_size)
+    # for i in range(grid_size[0]):
+    #     for j in range(grid_size[1]):
+    #         neuron = weights[i, j]
+    #         distances = [np.linalg.norm(neuron - weights[x, y]) for x in range(max(0, i-1), min(grid_size[0], i+2))
+    #                      for y in range(max(0, j-1), min(grid_size[1], j+2)) if (x, y) != (i, j)]
+    #         u_matrix[i, j] = np.mean(distances)
+
+
+    # PLOT PREPARTION
+
+    # PRE_ICTAL BUFFER FLOAT
+    preictal_float_input = file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
+
     weights = som.get_weights()
 
     # Initialize maps
-    class_counts = np.zeros((grid_size[0], grid_size[1], 2))
+    class_sums = np.zeros((grid_size[0], grid_size[1]))  # To accumulate float values (class sums)
     hit_map = np.zeros(grid_size)
     patient_map = np.zeros(grid_size)
+    neuron_patient_dict = {}  # Dictionary to track unique patients per neuron
 
-    # Dictionary to track unique patients per neuron
-    neuron_patient_dict = {}
-
-    # Process all data in batches
+    # Inference on all data in batches
     for i in range(0, len(latent_input), som_batch_size):
         batch = latent_input[i:i + som_batch_size]
         batch_patients = pat_ids_input[i:i + som_batch_size]
-        batch_labels = preictal_bool_input[i:i + som_batch_size]
+        batch_labels = preictal_float_input[i:i + som_batch_size]  # Using float values
 
         batch = torch.tensor(batch, dtype=torch.float32, device=som_device)
         bmu_rows, bmu_cols = som.find_bmu(batch)
         bmu_rows, bmu_cols = bmu_rows.cpu().numpy(), bmu_cols.cpu().numpy()
 
-        # Efficiently accumulate values using NumPy's `np.add.at`
+        # Efficiently accumulate hit counts using NumPy's `np.add.at`
         np.add.at(hit_map, (bmu_rows, bmu_cols), 1)
-        np.add.at(class_counts, (bmu_rows, bmu_cols, batch_labels.astype(int)), 1)
 
+        # Accumulate the float values (preictal scores) for each node (bmu)
+        for j, (bmu_row, bmu_col) in enumerate(zip(bmu_rows, bmu_cols)):
+            class_sums[bmu_row, bmu_col] += batch_labels[j]  # Add float class values
+
+        # Track unique patients for each node (BMU)
         for j, (bmu_row, bmu_col) in enumerate(zip(bmu_rows, bmu_cols)):
             if (bmu_row, bmu_col) not in neuron_patient_dict:
                 neuron_patient_dict[(bmu_row, bmu_col)] = set()
             neuron_patient_dict[(bmu_row, bmu_col)].add(batch_patients[j])  # Track unique patients
 
-    # Compute blended class distribution
-    total_counts = np.sum(class_counts, axis=2, keepdims=True)
-    class_proportions = np.divide(class_counts, total_counts, where=total_counts != 0)
-    blended_colors = class_proportions[:, :, 1]
-    # Convert patient diversity to a normalized 0-1 scale
+    # # Calculate blended class distribution (average of float values per node)
+    # # Divide the accumulated class sums by the hit counts for proper averaging
+    # blended_colors = np.divide(class_sums, hit_map, where=hit_map != 0)
+    blended_colors = class_sums
+
+    # Normalize blended_colors to ensure values are between 0 and 1
+    min_val = np.min(blended_colors)
+    max_val = np.max(blended_colors)
+
+    # Avoid division by zero in case of all zeros
+    if max_val - min_val > 0:
+        blended_colors = (blended_colors - min_val) / (max_val - min_val)
+    else:
+        blended_colors = np.zeros_like(blended_colors)  # In case all values are the same
+
+    # Normalize patient diversity map
     max_unique_patients = max(len(pats) for pats in neuron_patient_dict.values()) if neuron_patient_dict else 1
     for (bmu_row, bmu_col), patients in neuron_patient_dict.items():
         patient_map[bmu_row, bmu_col] = len(patients) / max_unique_patients  # Normalize
@@ -1478,8 +1550,14 @@ def kohonen_subfunction_pytorch(
         for j in range(grid_size[1]):
             neuron = weights[i, j]
             distances = [np.linalg.norm(neuron - weights[x, y]) for x in range(max(0, i-1), min(grid_size[0], i+2))
-                         for y in range(max(0, j-1), min(grid_size[1], j+2)) if (x, y) != (i, j)]
+                        for y in range(max(0, j-1), min(grid_size[1], j+2)) if (x, y) != (i, j)]
             u_matrix[i, j] = np.mean(distances)
+
+    # Plotting
+
+    # Create a custom colormap using LinearSegmentedColormap
+    colors = ["#FFCDB2", "#FFB4A2", "#E5989B", "#A36672", "#3E283B"]
+    custom_cmap = mcolors.LinearSegmentedColormap.from_list("custom_warm", colors, N=256)
 
     # Create a 2x3 plot layout
     fig, axes = pl.subplots(2, 3, figsize=(18, 12))
@@ -1503,17 +1581,22 @@ def kohonen_subfunction_pytorch(
 
     # 5. Blended Class Distribution
     blended_plot = axes[1, 2].pcolor(blended_colors.T, cmap='flare', vmin=0, vmax=1)
-    axes[1, 2].set_title("Blended Class Distribution")
+    axes[1, 2].set_title("Pre-Ictal Density")
     pl.colorbar(blended_plot, ax=axes[1, 2])
 
-    # 6. Blended Class Distribution * Normalized Hit Map
-    blended_plot = axes[0, 2].pcolor((blended_colors * (hit_map/np.max(hit_map))).T, cmap='flare', vmin=0, vmax=1)
-    axes[0, 2].set_title("Blended Class Distribution * Max-Scaled Hit Map")
-    pl.colorbar(blended_plot, ax=axes[0, 2])
+    # 6. Blended Class Distribution * Patient Diversity
+    rescale_preictal = blended_colors * patient_map
+    rescale_preictal = rescale_preictal / np.max(rescale_preictal)
+    if np.any(np.isnan(rescale_preictal)) or np.all(rescale_preictal == 0):  # Ensure the rescaling doesn't lead to values too small or NaN
+        print("Warning: rescale_preictal has NaN or zero values.")
+        rescale_preictal = np.zeros_like(rescale_preictal)
+    blended_plot_recaled = axes[0, 2].pcolor((rescale_preictal).T, cmap='flare', vmin=0, vmax=1)
+    axes[0, 2].set_title("Pre-Ictal * Patient Diversity")
+    pl.colorbar(blended_plot_recaled, ax=axes[0, 2])
 
     pl.tight_layout()
 
-    # **** Save entire figure *****
+    # EXPORT FIGURE
     print("Exporting Kohonen to JPG")
     savename_jpg = savedir + f"/SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_epoch{epoch}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
     pl.savefig(savename_jpg, dpi=600)
@@ -1522,7 +1605,9 @@ def kohonen_subfunction_pytorch(
 
     pl.close(fig)
 
-    return axes, som 
+    return axes, som
+
+
 
 def compute_histograms(data, min_val, max_val, B):
     """
@@ -1714,9 +1799,54 @@ def get_pat_seiz_datetimes(
 
     return pat_seiz_start_datetimes, pat_seiz_stop_datetimes, pat_seiz_types_str
 
+# def file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input):
+    
+#     data_window_preictal_bool = np.zeros_like(pat_ids_input, dtype=bool)
+
+#     # Generate numerical IDs for each unique patient, and give each datapoint an ID
+#     unique_ids = list(set(pat_ids_input))
+#     id_to_index = {id: idx for idx, id in enumerate(unique_ids)}  # Create mapping dictionary
+#     pat_idxs = [id_to_index[id] for id in pat_ids_input]
+
+#     pat_seiz_start_datetimes, pat_seiz_stop_datetimes, pat_seiz_types_str = [-1] * len(unique_ids), [-1] * len(unique_ids), [-1] * len(unique_ids)
+#     for i in range(len(unique_ids)):
+#         id_curr = unique_ids[i]
+#         idx_curr = id_to_index[id_curr]
+#         pat_seiz_start_datetimes[i], pat_seiz_stop_datetimes[i], pat_seiz_types_str[i] = get_pat_seiz_datetimes(id_curr, atd_file) 
+
+#     for i in range(len(pat_idxs)):
+#         seiz_starts_curr, seiz_stops_curr, seiz_types_curr = pat_seiz_start_datetimes[pat_idxs[i]], pat_seiz_stop_datetimes[pat_idxs[i]], pat_seiz_types_str[pat_idxs[i]]
+#         data_window_start = start_datetimes_input[i]
+#         data_window_stop = stop_datetimes_input[i]
+#         for j in range(len(seiz_starts_curr)):
+#             seiz_start = seiz_starts_curr[j]
+#             buffered_preictal_start = seiz_start - datetime.timedelta(seconds=plot_preictal_color_sec)
+
+#             # Case 1: data_window completely within preictal buffer
+#             if (data_window_start > buffered_preictal_start) & (data_window_stop < seiz_start):
+#                 data_window_preictal_bool[i] = True
+#                 break
+            
+#             # Case 2: data_window end is within preictal buffer (i.e. straddles buffer start)
+#             elif (data_window_start < buffered_preictal_start) & (data_window_stop > buffered_preictal_start):
+#                 data_window_preictal_bool[i] = True
+#                 break
+
+#             # Case 3: data_window start is within preictal buffer (i.e. straddles seizure start)
+#             elif (data_window_stop > seiz_start) & (data_window_start < seiz_start):
+#                 data_window_preictal_bool[i] = True
+#                 break
+
+#             # Case 4: data_window engulfs preictal buffer
+#             elif (data_window_start < buffered_preictal_start) & (data_window_stop > seiz_start):
+#                 data_window_preictal_bool[i] = True
+#                 break
+
+#     return data_window_preictal_bool
+
 def file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input):
     
-    data_window_preictal_bool = np.zeros_like(pat_ids_input, dtype=bool)
+    data_window_preictal_score = np.zeros_like(pat_ids_input, dtype=float)
 
     # Generate numerical IDs for each unique patient, and give each datapoint an ID
     unique_ids = list(set(pat_ids_input))
@@ -1733,28 +1863,25 @@ def file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start
         seiz_starts_curr, seiz_stops_curr, seiz_types_curr = pat_seiz_start_datetimes[pat_idxs[i]], pat_seiz_stop_datetimes[pat_idxs[i]], pat_seiz_types_str[pat_idxs[i]]
         data_window_start = start_datetimes_input[i]
         data_window_stop = stop_datetimes_input[i]
+        
         for j in range(len(seiz_starts_curr)):
             seiz_start = seiz_starts_curr[j]
             buffered_preictal_start = seiz_start - datetime.timedelta(seconds=plot_preictal_color_sec)
 
-            # Case 1: data_window completely within preictal buffer
-            if (data_window_start > buffered_preictal_start) & (data_window_stop < seiz_start):
-                data_window_preictal_bool[i] = True
+            # Compute time difference from seizure start (0 at start, increasing as further away)
+            if data_window_stop < seiz_start and data_window_start > buffered_preictal_start:
+                dist_to_seizure = (seiz_start - data_window_stop).total_seconds()
+                data_window_preictal_score[i] = 1.0 - (dist_to_seizure / plot_preictal_color_sec)
                 break
             
-            # Case 2: data_window end is within preictal buffer (i.e. straddles buffer start)
-            elif (data_window_start < buffered_preictal_start) & (data_window_stop > buffered_preictal_start):
-                data_window_preictal_bool[i] = True
+            # Case where part of the window overlaps the preictal buffer
+            elif data_window_stop > buffered_preictal_start and data_window_start < seiz_start:
+                overlap_start = max(data_window_start, buffered_preictal_start)
+                overlap_end = min(data_window_stop, seiz_start)
+                overlap_midpoint = (overlap_start + (overlap_end - overlap_start) / 2)  # Calculate the midpoint of the overlap range
+                avg_dist_to_seizure = (seiz_start - overlap_midpoint).total_seconds() # Calculate the distance from the midpoint to the seizure start time
+                data_window_preictal_score[i] = 1.0 - (avg_dist_to_seizure / plot_preictal_color_sec) # Update the preictal score based on the distance to seizure
                 break
 
-            # Case 3: data_window start is within preictal buffer (i.e. straddles seizure start)
-            elif (data_window_stop > seiz_start) & (data_window_start < seiz_start):
-                data_window_preictal_bool[i] = True
-                break
+    return np.clip(data_window_preictal_score, 0, 1)
 
-            # Case 4: data_window engulfs preictal buffer
-            elif (data_window_start < buffered_preictal_start) & (data_window_stop > seiz_start):
-                data_window_preictal_bool[i] = True
-                break
-
-    return data_window_preictal_bool

@@ -52,7 +52,7 @@ class SOM(nn.Module):
 
     def train(self, data_in, num_epochs):
         """ Train the SOM on the input data """
-        data_tensor = torch.tensor(data_in, dtype=torch.float32, device=self.device)  # Move data to GPU
+        data_tensor = torch.tensor(data_in, dtype=torch.float32, device=self.device)  # Move ALL data to GPU
         for epoch in range(num_epochs):
             indices = torch.randperm(data_tensor.shape[0], device=self.device)  # Shuffle using PyTorch
             data = data_tensor[indices]
@@ -69,7 +69,7 @@ class SOM(nn.Module):
             self.lr *= self.lr_epoch_decay
             self.sigma *= self.sigma_epoch_decay
             
-            # Low clipping
+            # Low sigma clipping
             if self.sigma < self.sigma_min: 
                 self.sigma = self.sigma_min
 
