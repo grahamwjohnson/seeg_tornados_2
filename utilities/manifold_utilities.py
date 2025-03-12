@@ -1311,7 +1311,7 @@ def save_pacmap_objects(pacmap_dir, epoch, axis, reducer, hdb, xy_lims):
 #     return axes, som 
 
 
-def save_som_model(som, grid_size, input_dim, lr, sigma, lr_epoch_decay, sigma_epoch_decay, epoch, save_path):
+def save_som_model(som, grid_size, input_dim, lr, sigma, lr_epoch_decay, sigma_epoch_decay, sigma_min, epoch, batch_size, save_path):
     # Save the state_dict (model weights), weights, and relevant hyperparameters
     torch.save({
         'model_state_dict': som.state_dict(),
@@ -1322,7 +1322,9 @@ def save_som_model(som, grid_size, input_dim, lr, sigma, lr_epoch_decay, sigma_e
         'sigma': sigma,
         'lr_epoch_decay': lr_epoch_decay,
         'sigma_epoch_decay': sigma_epoch_decay,
-        'epoch': epoch
+        'sigma_min': sigma_min,
+        'epoch': epoch,
+        'batch_size': batch_size
     }, save_path)
     print(f"SOM model saved at {save_path}")
 
@@ -1336,12 +1338,14 @@ def load_som_model(load_path, gpu_id):
     sigma = checkpoint['sigma']
     lr_epoch_decay = checkpoint['lr_epoch_decay']
     sigma_epoch_decay = checkpoint['sigma_epoch_decay']
+    sigma_min = checkpoint['sigma_min']
     epoch = checkpoint['epoch']
+    batch_size = checkpoint['batch_size']
     
     # Create a new SOM instance with the same parameters
-    som = SOM(grid_size=(grid_size, grid_size), input_dim=input_dim, batch_size=32, 
+    som = SOM(grid_size=(grid_size, grid_size), input_dim=input_dim, batch_size=batch_size, 
               lr=lr, lr_epoch_decay=lr_epoch_decay, sigma=sigma, 
-              sigma_epoch_decay=sigma_epoch_decay, device=gpu_id)
+              sigma_epoch_decay=sigma_epoch_decay, sigma_min=sigma_min, device=gpu_id)
     
     # Load the saved state_dict into the model (for training parameters)
     som.load_state_dict(checkpoint['model_state_dict'])
@@ -1371,6 +1375,7 @@ def kohonen_subfunction_pytorch(
     som_sigma_epoch_decay,
     som_epochs,
     som_gridsize,
+    som_sigma_min,
     HDBSCAN_min_cluster_size,
     HDBSCAN_min_samples,
     plot_preictal_color_sec,
@@ -1379,7 +1384,7 @@ def kohonen_subfunction_pytorch(
     verbose=True,
     som_precomputed_path = None,
     premade_HDBSCAN = [],
-    gpu_id = 0,
+    som_device = 0,
     **kwargs):
 
     if not os.path.exists(savedir): os.makedirs(savedir)
@@ -1411,19 +1416,19 @@ def kohonen_subfunction_pytorch(
     # Build the SOM model        
     grid_size = (som_gridsize, som_gridsize)
     som = SOM(grid_size=grid_size, input_dim=latent_input.shape[1], batch_size=som_batch_size, lr=som_lr, 
-                lr_epoch_decay=som_lr_epoch_decay, sigma=som_sigma, sigma_epoch_decay=som_sigma_epoch_decay, device='cuda')
+                lr_epoch_decay=som_lr_epoch_decay, sigma=som_sigma, sigma_epoch_decay=som_sigma_epoch_decay, sigma_min=som_sigma_min, device=som_device)
 
     if som_precomputed_path is None: # Make new Kohonen SOM
         print(f"Training new SOM: gridsize:{som_gridsize}, lr:{som_lr} w/ {som_lr_epoch_decay} decay per epoch, sigma:{som_sigma} w/ {som_sigma_epoch_decay} decay per epoch")
         som.train(latent_input, num_epochs=som_epochs)
         savepath = savedir + "/som_state_dict.pt"
         save_som_model(som, grid_size=som_gridsize, input_dim=latent_input.shape[1], 
-            lr=som_lr, sigma=som_sigma, lr_epoch_decay=som_lr_epoch_decay, sigma_epoch_decay=som_sigma_epoch_decay, 
-            epoch=som_epochs, save_path=savepath)
+            lr=som_lr, sigma=som_sigma, lr_epoch_decay=som_lr_epoch_decay, sigma_epoch_decay=som_sigma_epoch_decay, sigma_min=som_sigma_min,
+            epoch=som_epochs, batch_size=som_batch_size, save_path=savepath)
     
     else: # Load existing model weights
         print(f"Loading SOM pretrained weights from: {som_precomputed_path}")
-        som = load_som_model(som_precomputed_path, gpu_id)
+        som = load_som_model(som_precomputed_path, som_device)
 
     # Identify data points within pre-ictal buffers        
     preictal_bool_input = file_within_preictal(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
@@ -1447,7 +1452,7 @@ def kohonen_subfunction_pytorch(
         batch_patients = patient_colors[i:i + som_batch_size]
         batch_labels = preictal_bool_input[i:i + som_batch_size]
 
-        batch = torch.tensor(batch, dtype=torch.float32, device='cuda')
+        batch = torch.tensor(batch, dtype=torch.float32, device=som_device)
         bmu_rows, bmu_cols = som.find_bmu(batch)
         bmu_rows, bmu_cols = bmu_rows.cpu().numpy(), bmu_cols.cpu().numpy()
 

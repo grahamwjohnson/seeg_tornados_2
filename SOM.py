@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class SOM(nn.Module):
-    def __init__(self, grid_size, input_dim, batch_size, lr, lr_epoch_decay, sigma, sigma_epoch_decay, device):
+    def __init__(self, grid_size, input_dim, batch_size, lr, lr_epoch_decay, sigma, sigma_epoch_decay, sigma_min, device):
         super(SOM, self).__init__()
         self.grid_size = grid_size
         self.input_dim = input_dim
@@ -10,6 +10,7 @@ class SOM(nn.Module):
         self.lr_epoch_decay = lr_epoch_decay
         self.sigma = sigma
         self.sigma_epoch_decay = sigma_epoch_decay
+        self.sigma_min = sigma_min
         self.batch_size = batch_size
         self.device = device
 
@@ -67,6 +68,10 @@ class SOM(nn.Module):
             # Decay learning rate and sigma over time
             self.lr *= self.lr_epoch_decay
             self.sigma *= self.sigma_epoch_decay
+            
+            # Low clipping
+            if self.sigma < self.sigma_min: 
+                self.sigma = self.sigma_min
 
     def get_weights(self):
         """ Return weights as a NumPy array (for visualization) """
