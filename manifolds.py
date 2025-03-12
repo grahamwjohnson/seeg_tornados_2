@@ -76,16 +76,16 @@ if __name__ == "__main__":
 
     # Kohenen Settings
     # if 'som_precomputed_path' is None, will train a new SOM
-    som_precomputed_path = None # '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_incatern/kohenen/Epoch33/64SecondWindow_64SecondStride/all_pats/generation/Run14B/som_state_dict.pt'
+    som_precomputed_path = None # '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_incatern/kohenen/Epoch33/64SecondWindow_64SecondStride/all_pats/generation/Run15/som_state_dict.pt'
     som_device = 0 # GPU
     som_batch_size = 256
     som_lr = 0.5
-    som_epochs = 10
+    som_epochs = 30
     som_gridsize = 8
-    som_lr_epoch_decay = 0.80
-    som_sigma = int(som_gridsize * 0.2)
-    som_sigma_epoch_decay = 0.80
-    som_sigma_min = 1
+    som_lr_epoch_decay = 0.90
+    som_sigma = int(som_gridsize * 0.5)
+    som_sigma_epoch_decay = 0.90
+    som_sigma_min = 1.5
 
     # ParamRepulsor Settings (unless random override below)
     prpacmap_metric='angular' # default 'euclidean', 'angular'
