@@ -220,6 +220,7 @@ def main(
     wae_opt_state_dict_prev_path = [],
     cls_opt_state_dict_prev_path = [],
     running_latent_path = [],
+    running_prior_path = [],
     epochs_to_train: int = -1,
 
     **kwargs):
@@ -262,12 +263,17 @@ def main(
         opt_cls.load_state_dict(cls_opt_state_dict_prev)
         print(f"[GPU{gpu_id}] Model and Opt weights loaded from checkpoints")
 
-        # Load running latents
+        # Load running latents observed
         with open(running_latent_path, "rb") as f: accumulated_z = pickle.load(f)
         print(f"[GPU{gpu_id}] Running Latents loaded from checkpoints")
+
+        # Load running prior
+        with open(running_prior_path, "rb") as f: accumulated_prior = pickle.load(f)
+        print(f"[GPU{gpu_id}] Running Prior loaded from checkpoints")
     
     else:
         accumulated_z = []
+        accumulated_prior = []
 
     # Create the training object
     trainer = Trainer(
@@ -286,6 +292,7 @@ def main(
         wandb_run=wandb_run,
         finetune_inference=finetune_inference,
         accumulated_z=accumulated_z,
+        accumulated_prior=accumulated_prior,
         **kwargs)
 
     # Kill the val data generators if val_every is set artificially high
@@ -311,6 +318,7 @@ def main(
                 wae_opt_dict = trainer.opt_wae.state_dict()
                 cls_opt_dict = trainer.opt_cls.state_dict()
                 accumulated_z = trainer.accumulated_z
+                accumulated_prior = trainer.accumulated_prior
                 accumulated_labels = trainer.accumulated_labels
                 accumulated_class_probs = trainer.accumulated_class_probs
 
@@ -355,6 +363,7 @@ def main(
                 trainer.opt_wae.load_state_dict(wae_opt_dict)
                 trainer.opt_cls.load_state_dict(cls_opt_dict)
                 trainer.accumulated_z = accumulated_z
+                trainer.accumulated_prior = accumulated_prior
                 trainer.accumulated_labels = accumulated_labels
                 trainer.accumulated_class_probs = accumulated_class_probs
             
@@ -389,6 +398,7 @@ def main(
                 wae_opt_dict = trainer.opt_wae.state_dict()
                 cls_opt_dict = trainer.opt_cls.state_dict()
                 accumulated_z = trainer.accumulated_z
+                accumulated_prior = trainer.accumulated_prior
                 accumulated_labels = trainer.accumulated_labels
                 accumulated_class_probs = trainer.accumulated_class_probs
 
@@ -422,6 +432,7 @@ def main(
                 trainer.opt_wae.load_state_dict(wae_opt_dict)
                 trainer.opt_cls.load_state_dict(cls_opt_dict)
                 trainer.accumulated_z = accumulated_z
+                trainer.accumulated_prior = accumulated_prior
                 trainer.accumulated_labels = accumulated_labels
                 trainer.accumulated_class_probs = accumulated_class_probs
 
@@ -474,6 +485,7 @@ class Trainer:
         sinkhorn_blur: int,
         wasserstein_order: float,
         accumulated_z,
+        accumulated_prior,
         **kwargs
     ) -> None:
         self.world_size = world_size
@@ -516,6 +528,7 @@ class Trainer:
         self.sinkhorn_blur = sinkhorn_blur
         self.wasserstein_order = wasserstein_order
         self.accumulated_z = accumulated_z
+        self.accumulated_prior = accumulated_prior
         self.wandb_run = wandb_run
         self.kwargs = kwargs
 
@@ -534,9 +547,11 @@ class Trainer:
         if self.accumulated_z == []:
             # If first initialziing, then start off with observed ideal distributions from pure prior
             self.accumulated_z = self._sample_multimodal(self.total_collected_latents).to(self.gpu_id)
+            self.accumulated_prior = self._sample_multimodal(self.total_collected_latents).to(self.gpu_id)
         else: 
             # Ensure on proper device because loading from pickle
             self.accumulated_z = self.accumulated_z.to(self.gpu_id)
+            self.accumulated_prior = self.accumulated_prior.to(self.gpu_id)
 
         # Running tab of update index
         self.next_update_index = 0
@@ -589,6 +604,12 @@ class Trainer:
         output_obj.close()
         print("Saved running latents")
 
+        prior_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_running_prior.pkl"
+        output_obj = open(prior_path, 'wb')
+        pickle.dump(self.accumulated_prior, output_obj)
+        output_obj.close()
+        print("Saved running prior")
+
 
         print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
 
@@ -598,6 +619,8 @@ class Trainer:
 
     def _sample_multimodal(self, num_samps):
         """
+        Used to initialize the learnable prior 
+
         Generates high-dimensional samples from a multimodal distribution using Gamma distributions.
         The same shape and scale parameters are used for every latent dimension within a mode.
 
@@ -647,56 +670,73 @@ class Trainer:
         
         return samples
         
-    def _sample_observed(self, latent, random_observed_sampling, **kwargs):
-        self.accumulated_z = self.accumulated_z.detach() # Detach before sampling
+    def _sample_running_window(self, latent, prior, random_observed_sampling, **kwargs):
+        self.accumulated_z = self.accumulated_z.detach() # Ensure detached before sampling
+        self.accumulated_prior = self.accumulated_prior.detach()
         num_new = latent.shape[0]
         num_past = self.running_reg_passes - num_new
         
         if num_new == self.running_reg_passes:
-            return latent
+            return latent, prior
 
         elif num_new > self.running_reg_passes:
             raise Exception(f"latent.shape[0] > self.running_reg_passes ({num_new} > {self.running_reg_passes})")
 
         if random_observed_sampling: # RANDOM
             random_past_idxs = torch.randperm(self.accumulated_z.shape[0])[:num_past] 
-            past_samples = self.accumulated_z[random_past_idxs, :]
+            past_observed_samples = self.accumulated_z[random_past_idxs, :]
+
+            random_past_idxs = torch.randperm(self.accumulated_prior.shape[0])[:num_past] 
+            past_prior_samples = self.accumulated_prior[random_past_idxs, :]
 
         else: # NOT RANDOM
             # Must check for rollover
             if (self.next_update_index - num_past) >= 0:
-                past_samples = self.accumulated_z[self.next_update_index - num_past : self.next_update_index, :] # Use the next update index to know where the latest past samples are
+                past_observed_samples = self.accumulated_z[self.next_update_index - num_past : self.next_update_index, :] # Use the next update index to know where the latest past samples are
+                past_prior_samples = self.accumulated_prior[self.next_update_index - num_past : self.next_update_index, :]
 
             else: # Straddles end/start of indexes
                 num_past_from_start = self.next_update_index
                 num_past_from_end = num_past - num_past_from_start
 
-                past_samples_from_start = self.accumulated_z[:num_past_from_start, :]
-                past_samples_from_end = self.accumulated_z[-num_past_from_end:, :]
+                past_observed_samples_from_start = self.accumulated_z[:num_past_from_start, :]
+                past_observed_samples_from_end = self.accumulated_z[-num_past_from_end:, :]
 
-                past_samples = torch.cat([past_samples_from_end, past_samples_from_start])
+                past_prior_samples_from_start = self.accumulated_prior[:num_past_from_start, :]
+                past_prior_samples_from_end = self.accumulated_prior[-num_past_from_end:, :]
 
-        return torch.cat([past_samples, latent])
+                past_observed_samples = torch.cat([past_observed_samples_from_end, past_observed_samples_from_start])
+                past_prior_samples = torch.cat([past_prior_samples_from_end, past_prior_samples_from_start])
+
+        return torch.cat([past_observed_samples, latent]), torch.cat([past_prior_samples, prior])
 
     def _update_reg_window(
         self,
-        latent
+        latent,
+        prior
         ):
 
         num_new_updates = latent.shape[0]
         if (self.next_update_index + num_new_updates) < self.total_collected_latents:
             self.accumulated_z[self.next_update_index: self.next_update_index + num_new_updates, :] = latent
+            self.accumulated_prior[self.next_update_index: self.next_update_index + num_new_updates, :] = prior
             self.next_update_index = self.next_update_index + num_new_updates
 
         else: # Rollover
             residual_num = (self.next_update_index + num_new_updates) % self.total_collected_latents
             end_num = num_new_updates - residual_num
+
             self.accumulated_z[self.next_update_index: self.next_update_index + end_num, :] = latent[:end_num, :]
             self.accumulated_z[0: residual_num, :] = latent[end_num:, :]
+
+            self.accumulated_prior[self.next_update_index: self.next_update_index + end_num, :] = prior[:end_num, :]
+            self.accumulated_prior[0: residual_num, :] = prior[end_num:, :]
+
             self.next_update_index = residual_num
 
         # Detach to allow next backpass
         self.accumulated_z = self.accumulated_z.detach() 
+        self.accumulated_prior = self.accumulated_prior.detach() 
 
     def _run_export_embeddings(
         self, 
@@ -871,22 +911,18 @@ class Trainer:
 
             ### WAE ENCODER: 1-shifted
             # latent, class_probs_mean_of_latent, attW = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
-            latent, class_probs_mean_of_latent, attW = self.wae(x, reverse=False, alpha=self.classifier_alpha) # No shift if not causal masking
+            latent, prior, class_probs_mean_of_latent, attW = self.wae(x, reverse=False, alpha=self.classifier_alpha) # No shift if not causal masking
             
             ### WAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
             x_hat = self.wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
 
             # Pseudobatch the latent for regularization loss
             latent_batched = latent.reshape(latent.shape[0]* latent.shape[1], -1)
+            prior_batched = prior.reshape(latent.shape[0]* latent.shape[1], -1)
 
             # # Sample from the recent observed & prior (otherwise batch would be ripple in ocean - without some past info batch cannot capure meaningful shape of latent)
-            if not val_unseen:
-                observed_samples = self._sample_observed(latent_batched, **kwargs) # Will require grad now that blended in latent
-                prior_samples = self._sample_multimodal(self.running_reg_passes).to(self.gpu_id) # Never requires grad
-            else: # For val_unseen, do not do a running window
-                observed_samples = latent_batched
-                prior_samples = self._sample_multimodal(latent_batched.shape[0])
-
+            observed_samples, prior_samples = self._sample_running_window(latent_batched, prior_batched, **kwargs) # Will require grad now that blended in latent
+               
             # LOSSES
             recon_loss = loss_functions.recon_loss_function(
                 x=x, # No shift if not causal masking
@@ -919,7 +955,7 @@ class Trainer:
                 loss.backward()    
                 self.opt_wae.step()
                 self.opt_cls.step()
-                self._update_reg_window(latent_batched) # Update the buffers & detach() 
+                self._update_reg_window(latent_batched, prior_batched) # Update the buffers & detach() 
 
             # Realtime terminal info and WandB 
             if (iter_curr%self.recent_display_iters==0):
@@ -1019,6 +1055,14 @@ class Trainer:
                                 scores_byLayer_meanHeads = attW, 
                                 savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_attention", 
                                 **kwargs)
+                            utils_functions.print_prior_params_realtime(
+                                epoch = self.epoch, 
+                                iter_curr = iter_curr,
+                                shapes = (self.wae.module.prior.k1, self.wae.module.prior.k2),
+                                scales = (self.wae.module.prior.theta1, self.wae.module.prior.theta2),
+                                alphas = self.wae.module.prior.alpha,
+                                savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_priorparams", 
+                                **kwargs)
 
                             # NOTE: for finetuning, will still be guess the training patients, and TODO: idxs in dataset are wrong for class labels anyway
                             if (not val_unseen) & (not val_finetune): # Will not have accumulated for val_unseen
@@ -1045,7 +1089,7 @@ class Trainer:
         # Plot the full running latents
         utils_functions.plot_observed_latents(
             gpu_id = self.gpu_id,
-            prior = self._sample_multimodal(self.accumulated_z.shape[0]).cpu().numpy(),
+            prior = self.accumulated_prior.cpu().numpy(),
             observed = self.accumulated_z.cpu().numpy(),
             savedir = self.model_dir + f"/realtime_plots/{dataset_string}/observed_latents",
             epoch = self.epoch,

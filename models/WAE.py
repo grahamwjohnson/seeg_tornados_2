@@ -9,12 +9,54 @@ from torchinfo import summary
 # Local imports
 from .Transformer import ModelArgs, Transformer, RMSNorm
 from utilities.loss_functions import adversarial_loss_function
+import torch.distributions as dist
 
 '''
 @author: grahamwjohnson
 2023-2025 
 
 '''
+
+class BimodalGammaPrior(nn.Module):
+    def __init__(self, latent_dim, multimodal_shapes, multimodal_scales, **kwargs):
+        super(BimodalGammaPrior, self).__init__()
+        self.latent_dim = latent_dim
+
+        # Learnable parameters for the first gamma mode
+        self.k1 = nn.Parameter(torch.ones(latent_dim) * multimodal_shapes[0])  # Shape parameter >1 for stable sampling
+        self.theta1 = nn.Parameter(torch.ones(latent_dim) * multimodal_scales[0])  # Scale parameter
+
+        # Learnable parameters for the second gamma mode
+        self.k2 = nn.Parameter(torch.ones(latent_dim) * multimodal_shapes[1])  # Shape parameter >1 for stable sampling
+        self.theta2 = nn.Parameter(torch.ones(latent_dim) * multimodal_scales[1])  # Scale parameter
+
+        # Learnable mixing coefficient (logits for stability)
+        self.alpha = nn.Parameter(torch.zeros(latent_dim))  # Sigmoid(alpha) gives mixture probability
+
+    def reparameterized_gamma(self, shape, scale, num_samples):
+        """
+        Approximate reparameterized gamma sampling using the implicit reparameterization trick.
+        Uses log-normal approximation.
+        """
+        eps = torch.randn((num_samples, self.latent_dim), device=shape.device)  # Standard Normal noise
+        sample = torch.exp((1 / torch.sqrt(shape)) * eps + torch.log(shape * scale))
+        return sample
+
+    def sample(self, num_samples):
+        """
+        Generate differentiable samples from the bimodal gamma prior.
+        """
+        # Get gamma samples with implicit reparameterization
+        samples1 = self.reparameterized_gamma(self.k1, self.theta1, num_samples)
+        samples2 = self.reparameterized_gamma(self.k2, self.theta2, num_samples)
+
+        # Sample the mixing coefficients using differentiable sigmoid(alpha)
+        mix_probs = torch.sigmoid(self.alpha)  # Convert logits to probabilities
+        mix = torch.bernoulli(mix_probs.expand(num_samples, self.latent_dim))  # Sample mixture
+
+        # Combine samples from both modes
+        samples = mix * samples1 + (1 - mix) * samples2
+        return samples
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -296,6 +338,9 @@ class WAE(nn.Module):
         self.latent_dim = latent_dim 
         self.decoder_base_dims = decoder_base_dims
 
+        # Define learnable prior
+        self.prior = BimodalGammaPrior(self.latent_dim, **kwargs)
+
         # Raw CrossAttention Head
         self.encoder_head = Encoder_TimeSeriesWithCrossAttention(
             padded_channels=self.padded_channels, 
@@ -363,16 +408,20 @@ class WAE(nn.Module):
             y = self.norm_hidden(y)
             latent_batched = self.final_encode_layer(y)
 
+            # PRIOR
+            prior_batched = self.prior.sample(latent_batched.shape[0])
+
             # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
             # NOTE: you lose the priming tokens needed by transformer
             # latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
             latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length, dim=0), dim=0)
+            prior = torch.stack(torch.split(prior_batched, self.transformer_seq_length, dim=0), dim=0)
 
             # CLASSIFIER - on the mean of the means
             mean_of_latent = torch.mean(latent, dim=1)
             class_probs_mean_of_latent = self.adversarial_classifier(mean_of_latent, alpha)
             
-            return latent, class_probs_mean_of_latent, attW
+            return latent, prior, class_probs_mean_of_latent, attW
 
         elif reverse == True:
 
@@ -408,10 +457,11 @@ def print_models_flow(x, **kwargs):
     # Run through Encoder
     print(f"INPUT TO <ENC>\n"
     f"x:{x.shape}")
-    latent, class_probs, attW = wae(x, reverse=False, alpha=1)  
+    latent, prior, class_probs, attW = wae(x, reverse=False, alpha=1)  
     summary(wae, input_size=(x.shape), depth=999, device="cpu")
     print(
     f"latent:{latent.shape}\n"
+    f"prior:{prior.shape}\n"
     f"class_probs:{class_probs.shape}\n"
     f"attW:{attW.shape}\n")
 

@@ -56,7 +56,7 @@ from annoy import AnnoyIndex
 from scipy.sparse import csr_matrix
 from sklearn.metrics import confusion_matrix
 from matplotlib.colors import LogNorm
-
+from matplotlib.colors import Normalize
 
 # Local imports
 from models.WAE import print_models_flow
@@ -641,96 +641,174 @@ def plot_observed_latents(gpu_id, prior, observed, savedir, epoch, random_observ
  
     print("Observed Latents Plotted")
 
-
-def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_observed_numplots, bins=200, alpha=0.2, **kwargs):
+# def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_observed_numplots, bins=200, alpha=0.2, **kwargs):
     
-    N,D = barycenter.shape
+#     N,D = barycenter.shape
     
-    # Across SAMPLES - Sort along dim before
-    sorted1_barycenter = np.sort(barycenter, axis=1, kind='quicksort', order=None)
-    sorted1_prior = np.sort(prior, axis=1, kind='quicksort', order=None)
-    sorted1_observed = np.sort(observed, axis=1, kind='quicksort', order=None)
+#     # Across SAMPLES - Sort along dim before
+#     sorted1_barycenter = np.sort(barycenter, axis=1, kind='quicksort', order=None)
+#     sorted1_prior = np.sort(prior, axis=1, kind='quicksort', order=None)
+#     sorted1_observed = np.sort(observed, axis=1, kind='quicksort', order=None)
     
-    barycenter_meanSample = np.mean(sorted1_barycenter, axis=0)
-    prior_meanSample = np.mean(sorted1_prior, axis=0)
-    observed_meanSample = np.mean(sorted1_observed, axis=0)
+#     barycenter_meanSample = np.mean(sorted1_barycenter, axis=0)
+#     prior_meanSample = np.mean(sorted1_prior, axis=0)
+#     observed_meanSample = np.mean(sorted1_observed, axis=0)
     
-    # barycenter_stdSample = np.std(sorted1_barycenter, axis=0)
-    # prior_stdSample = np.std(sorted1_prior, axis=0)
-    # observed_stdSample = np.std(sorted1_observed, axis=0)
+#     # barycenter_stdSample = np.std(sorted1_barycenter, axis=0)
+#     # prior_stdSample = np.std(sorted1_prior, axis=0)
+#     # observed_stdSample = np.std(sorted1_observed, axis=0)
     
-    # Across DIMENSIONS - Sort along samples before
-    sorted0_barycenter = np.sort(barycenter, axis=0, kind='quicksort', order=None)
-    sorted0_prior = np.sort(prior, axis=0, kind='quicksort', order=None)
-    sorted0_observed = np.sort(observed, axis=0, kind='quicksort', order=None)
+#     # Across DIMENSIONS - Sort along samples before
+#     sorted0_barycenter = np.sort(barycenter, axis=0, kind='quicksort', order=None)
+#     sorted0_prior = np.sort(prior, axis=0, kind='quicksort', order=None)
+#     sorted0_observed = np.sort(observed, axis=0, kind='quicksort', order=None)
     
-    barycenter_meanDim = np.mean(sorted0_barycenter, axis=1)
-    prior_meanDim = np.mean(sorted0_prior, axis=1)
-    observed_meanDim = np.mean(sorted0_observed, axis=1)
+#     barycenter_meanDim = np.mean(sorted0_barycenter, axis=1)
+#     prior_meanDim = np.mean(sorted0_prior, axis=1)
+#     observed_meanDim = np.mean(sorted0_observed, axis=1)
 
-    # barycenter_stdDim = np.std(sorted0_barycenter, axis=1)
-    # prior_stdDim = np.std(sorted0_prior, axis=1)
-    # observed_stdDim = np.std(sorted0_observed, axis=1)
+#     # barycenter_stdDim = np.std(sorted0_barycenter, axis=1)
+#     # prior_stdDim = np.std(sorted0_prior, axis=1)
+#     # observed_stdDim = np.std(sorted0_observed, axis=1)
 
-    gs = gridspec.GridSpec(2, random_observed_numplots)
-    fig = pl.figure(figsize=(24, 12))
+#     gs = gridspec.GridSpec(2, random_observed_numplots)
+#     fig = pl.figure(figsize=(24, 12))
 
-    # Plot MEAN of samples (i.e. shows dims)
-    ax0 = fig.add_subplot(gs[0, :int(random_observed_numplots/2)])
-    sns.histplot(barycenter_meanSample, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax0)
-    sns.histplot(prior_meanSample, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax0)
-    sns.histplot(observed_meanSample, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax0)
-    ax0.set_title(f"MEAN Across Samples [{N}]")
-    pl.legend()
+#     # Plot MEAN of samples (i.e. shows dims)
+#     ax0 = fig.add_subplot(gs[0, :int(random_observed_numplots/2)])
+#     sns.histplot(barycenter_meanSample, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax0)
+#     sns.histplot(prior_meanSample, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax0)
+#     sns.histplot(observed_meanSample, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax0)
+#     ax0.set_title(f"MEAN Across Samples [{N}]")
+#     pl.legend()
 
-    # Plot MEAN of dims (i.e. shows samples)
-    ax1 = fig.add_subplot(gs[0, int(random_observed_numplots/2):])
-    sns.histplot(barycenter_meanDim, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax1)
-    sns.histplot(prior_meanDim, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax1)
-    sns.histplot(observed_meanDim, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax1)
-    ax1.set_title(f"MEAN Across Dimensions [{D}]")
-    pl.legend()
+#     # Plot MEAN of dims (i.e. shows samples)
+#     ax1 = fig.add_subplot(gs[0, int(random_observed_numplots/2):])
+#     sns.histplot(barycenter_meanDim, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax1)
+#     sns.histplot(prior_meanDim, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax1)
+#     sns.histplot(observed_meanDim, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax1)
+#     ax1.set_title(f"MEAN Across Dimensions [{D}]")
+#     pl.legend()
 
-    # # Plot STD of samples (i.e. shows dims)
-    # ax2 = fig.add_subplot(gs[1, :int(random_observed_numplots/2)])
-    # sns.histplot(barycenter_stdSample, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax2)
-    # sns.histplot(prior_stdSample, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax2)
-    # sns.histplot(observed_stdSample, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax2)
-    # ax2.set_title(f"STD Across Samples")
-    # pl.legend()
+#     # # Plot STD of samples (i.e. shows dims)
+#     # ax2 = fig.add_subplot(gs[1, :int(random_observed_numplots/2)])
+#     # sns.histplot(barycenter_stdSample, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax2)
+#     # sns.histplot(prior_stdSample, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax2)
+#     # sns.histplot(observed_stdSample, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax2)
+#     # ax2.set_title(f"STD Across Samples")
+#     # pl.legend()
 
-    # # Plot STD of dims (i.e. shows samples)
-    # ax3 = fig.add_subplot(gs[1, int(random_observed_numplots/2):])
-    # sns.histplot(barycenter_stdDim, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax3)
-    # sns.histplot(prior_stdDim, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax3)
-    # sns.histplot(observed_stdDim, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax3)
-    # ax3.set_title(f"STD Across Dimensions")
-    # pl.legend()
+#     # # Plot STD of dims (i.e. shows samples)
+#     # ax3 = fig.add_subplot(gs[1, int(random_observed_numplots/2):])
+#     # sns.histplot(barycenter_stdDim, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax3)
+#     # sns.histplot(prior_stdDim, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax3)
+#     # sns.histplot(observed_stdDim, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax3)
+#     # ax3.set_title(f"STD Across Dimensions")
+#     # pl.legend()
 
-    # Add random dimensions in to plot 
-    for i in range(random_observed_numplots):
-        ax_curr = fig.add_subplot(gs[1, i])
+#     # Add random dimensions in to plot 
+#     for i in range(random_observed_numplots):
+#         ax_curr = fig.add_subplot(gs[1, i])
         
-        # Random dim
-        np.random.seed(seed=None) # should replace with Generator for newer code
-        dim_idx = np.random.randint(0, D)
-        data_curr_barycenter = barycenter[:, dim_idx]
-        data_curr_prior = prior[:, dim_idx]
-        data_curr_observed = observed[:, dim_idx]
-        sns.histplot(data_curr_barycenter, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax_curr)
-        sns.histplot(data_curr_prior, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax_curr)
-        sns.histplot(data_curr_observed, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax_curr)
-        ax_curr.set_title(f"Dim {dim_idx}")
-        pl.legend()
+#         # Random dim
+#         np.random.seed(seed=None) # should replace with Generator for newer code
+#         dim_idx = np.random.randint(0, D)
+#         data_curr_barycenter = barycenter[:, dim_idx]
+#         data_curr_prior = prior[:, dim_idx]
+#         data_curr_observed = observed[:, dim_idx]
+#         sns.histplot(data_curr_barycenter, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax_curr)
+#         sns.histplot(data_curr_prior, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax_curr)
+#         sns.histplot(data_curr_observed, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax_curr)
+#         ax_curr.set_title(f"Dim {dim_idx}")
+#         pl.legend()
+
+#     if not os.path.exists(savedir): os.makedirs(savedir)
+#     savename_jpg = f"{savedir}/Barycenter_epoch{epoch}.jpg"
+#     pl.savefig(savename_jpg)
+#     pl.close(fig)    
+
+#     pl.close('all') 
+ 
+#     print("Barycenter Plotted")
+
+# def print_prior_params_realtime(epoch, iter_curr, shapes, scales, alphas, savedir, **kwargs):
+#     num_dists = len(shapes)
+#     alpha_sig = torch.sigmoid(alphas).cpu().detach().numpy() # Shared between distributions, sigmoid is how it's used in training
+#     alphaW = (alpha_sig, 1-alpha_sig) # HARD CODED FOR 2 DISTRUBUTIONS 
+
+#     # One figure with shapes/scales and aphas for all distributions
+#     gs = gridspec.GridSpec(1, 2)   # HARD CODED FOR 2 DISTRUBUTIONS 
+#     fig = pl.figure(figsize=(20, 14))
+#     norm = Normalize(vmin=0, vmax=1)
+
+#     for i in range(num_dists):
+#         data_plot = {
+#             "Shapes": shapes[i].cpu().detach().numpy(),
+#             "Scales": scales[i].cpu().detach().numpy(),
+#             "AlphaW": alphaW[i]
+#         }
+#         df = pd.DataFrame(data_plot)
+
+#         ax = fig.add_subplot(gs[0, i]) 
+#         sns.scatterplot(x="Shapes", y="Scales", hue="AlphaW", palette="crest", data=df, ax=ax, legend=False, hue_norm=norm )
+#         pl.title(f"Gamma Dist {i}")
+#         ax.set_aspect('equal')
+#         # Disable scientific notation
+#         ax.xaxis.set_major_formatter(ScalarFormatter())
+#         ax.yaxis.set_major_formatter(ScalarFormatter())
+
+#     # Create a ScalarMappable for the colorbar
+#     sm = mpl.cm.ScalarMappable(cmap="crest", norm=norm)
+#     sm.set_array([])  # We don't need actual data for the colorbar
+    
+#     # Add the colorbar to the figure, placing it to the right of the plot
+#     cbar = fig.colorbar(sm, ax=ax, orientation="vertical", fraction=0.03, pad=0.04)
+#     cbar.set_label("AlphaW", rotation=270, labelpad=15)
+
+#     if not os.path.exists(savedir): os.makedirs(savedir)
+#     savename_jpg = f"{savedir}/RealtimePriorParams_epoch{epoch}_iter{iter_curr}.jpg"
+#     pl.savefig(savename_jpg)
+#     pl.close(fig)    
+
+def print_prior_params_realtime(epoch, iter_curr, shapes, scales, alphas, savedir, **kwargs):
+    num_dists = len(shapes)
+    alpha_sig = torch.sigmoid(alphas).cpu().detach().numpy()  # Shared between distributions, sigmoid is how it's used in training
+    alphaW = (alpha_sig, 1 - alpha_sig)  # HARD CODED FOR 2 DISTRIBUTIONS
+
+    # One figure with shapes/scales and alphas for all distributions
+    gs = gridspec.GridSpec(1, 2, width_ratios=[1, 1.1])  # Adjusted for colorbar
+    fig = pl.figure(figsize=(20, 10))
+    norm = Normalize(vmin=0, vmax=1)
+
+    for i in range(num_dists):
+        data_plot = {
+            "Shapes": shapes[i].cpu().detach().numpy(),
+            "Scales": scales[i].cpu().detach().numpy(),
+            "AlphaW": alphaW[i]
+        }
+        df = pd.DataFrame(data_plot)
+
+        ax = fig.add_subplot(gs[0, i])
+        ax.set_aspect('equal')
+        ax.ticklabel_format(style='plain', axis='both')  # Disable scientific notation
+        s = sns.scatterplot(x="Shapes", y="Scales", hue="AlphaW", palette="crest", data=df, ax=ax, legend=False, hue_norm=norm)
+        pl.title(f"Gamma Dist {i}")
+        colorbar = plt.colorbar(s.collections[0], ax=ax)  # Extract the PathCollection and pass it to colorbar
+        colorbar.set_label('AlphaW')  # Optionally, set a label for the colorbar
+
+    # # Create a ScalarMappable for the colorbar
+    # sm = mpl.cm.ScalarMappable(cmap="crest", norm=norm)
+    # sm.set_array([])  # We don't need actual data for the colorbar
+
+    # # Add the colorbar to the figure, placing it to the right of the plot
+    # cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.65])  # [left, bottom, width, height]
+    # cbar = fig.colorbar(sm, cax=cbar_ax, orientation="vertical")
+    # cbar.set_label("AlphaW", rotation=270, labelpad=15)
 
     if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = f"{savedir}/Barycenter_epoch{epoch}.jpg"
+    savename_jpg = f"{savedir}/RealtimePriorParams_epoch{epoch}_iter{iter_curr}.jpg"
     pl.savefig(savename_jpg)
-    pl.close(fig)    
-
-    pl.close('all') 
- 
-    print("Barycenter Plotted")
+    pl.close(fig)
 
 def print_latent_realtime(latent, prior, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
 
@@ -783,7 +861,7 @@ def print_latent_realtime(latent, prior, savedir, epoch, iter_curr, file_name, n
     # pl.savefig(savename_jpg)
     # pl.close(fig)    
 
-    pl.close('all') 
+    # pl.close('all') 
 
 def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_realtime_channels_recon, num_recon_samples, **kwargs):
 
@@ -2191,6 +2269,7 @@ def initialize_directories(
 
         # Proper names for running latents 
         kwargs['running_latent_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_latents.pkl'
+        kwargs['running_prior_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_prior.pkl'
 
         # Set the start epoch 1 greater than max trained
         kwargs['start_epoch'] = (max_epoch + 1) 
