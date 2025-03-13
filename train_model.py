@@ -31,8 +31,8 @@ import auraloss
 import wandb
 import math
 import ot
-from ot.lp import wasserstein_1d
-from ot.utils import proj_simplex
+# from ot.lp import wasserstein_1d
+# from ot.utils import proj_simplex
 from geomloss import SamplesLoss
 # from torch.utils.data._utils import shared_memory_cleanup
 
@@ -219,7 +219,6 @@ def main(
     wae_state_dict_prev_path = [],
     wae_opt_state_dict_prev_path = [],
     cls_opt_state_dict_prev_path = [],
-    barycenter_path = [],
     running_latent_path = [],
     epochs_to_train: int = -1,
 
@@ -263,13 +262,11 @@ def main(
         opt_cls.load_state_dict(cls_opt_state_dict_prev)
         print(f"[GPU{gpu_id}] Model and Opt weights loaded from checkpoints")
 
-        # Load barycenter and running latents
-        with open(barycenter_path, "rb") as f: barycenter = pickle.load(f)
+        # Load running latents
         with open(running_latent_path, "rb") as f: accumulated_z = pickle.load(f)
-        print(f"[GPU{gpu_id}] Barycenter and Running Latents loaded from checkpoints")
+        print(f"[GPU{gpu_id}] Running Latents loaded from checkpoints")
     
     else:
-        barycenter = []
         accumulated_z = []
 
     # Create the training object
@@ -288,13 +285,12 @@ def main(
         valunseen_dataloader=valunseen_dataloader,
         wandb_run=wandb_run,
         finetune_inference=finetune_inference,
-        barycenter=barycenter,
         accumulated_z=accumulated_z,
         **kwargs)
 
     # Kill the val data generators if val_every is set artificially high
     if (kwargs['val_every'] > 999) & (kwargs['inference_every'] > 999) & (trainer.valfinetune_dataset != None) & (trainer.valunseen_dataset != None):
-        print(f"[GPU{str(trainer.gpu_id)}] WARNING: val_every is {kwargs['val_every']}, which is over articial arbitrary limit of 999, thus going to kill val generators")
+        print(f"[GPU{str(trainer.gpu_id)}] WARNING: val_every is {kwargs['val_every']}, which is over arbitrary limit of 999, thus going to kill val generators")
         trainer.valfinetune_dataset.kill_generator()
         trainer.valunseen_dataset.kill_generator()
     
@@ -314,7 +310,6 @@ def main(
                 wae_dict = trainer.wae.module.state_dict()
                 wae_opt_dict = trainer.opt_wae.state_dict()
                 cls_opt_dict = trainer.opt_cls.state_dict()
-                barycenter = trainer.barycenter
                 accumulated_z = trainer.accumulated_z
                 accumulated_labels = trainer.accumulated_labels
                 accumulated_class_probs = trainer.accumulated_class_probs
@@ -359,7 +354,6 @@ def main(
                 trainer.wae.module.load_state_dict(wae_dict)
                 trainer.opt_wae.load_state_dict(wae_opt_dict)
                 trainer.opt_cls.load_state_dict(cls_opt_dict)
-                trainer.barycenter = barycenter
                 trainer.accumulated_z = accumulated_z
                 trainer.accumulated_labels = accumulated_labels
                 trainer.accumulated_class_probs = accumulated_class_probs
@@ -394,7 +388,6 @@ def main(
                 wae_dict = trainer.wae.module.state_dict()
                 wae_opt_dict = trainer.opt_wae.state_dict()
                 cls_opt_dict = trainer.opt_cls.state_dict()
-                barycenter = trainer.barycenter
                 accumulated_z = trainer.accumulated_z
                 accumulated_labels = trainer.accumulated_labels
                 accumulated_class_probs = trainer.accumulated_class_probs
@@ -428,7 +421,6 @@ def main(
                 trainer.wae.module.load_state_dict(wae_dict)
                 trainer.opt_wae.load_state_dict(wae_opt_dict)
                 trainer.opt_cls.load_state_dict(cls_opt_dict)
-                trainer.barycenter = barycenter
                 trainer.accumulated_z = accumulated_z
                 trainer.accumulated_labels = accumulated_labels
                 trainer.accumulated_class_probs = accumulated_class_probs
@@ -473,15 +465,14 @@ class Trainer:
         inference_window_sec_list: list,
         inference_stride_sec_list: list,
         recent_display_iters: int,
+        total_collected_latents: int,
         running_reg_passes: int,
-        barycenter_batch_sampling: int,
         classifier_num_pats: int,
         multimodal_shapes: list,
         multimodal_scales: list,
         multimodal_weights: list,
         sinkhorn_blur: int,
         wasserstein_order: float,
-        barycenter,
         accumulated_z,
         **kwargs
     ) -> None:
@@ -516,15 +507,14 @@ class Trainer:
         self.inference_window_sec_list = inference_window_sec_list
         self.inference_stride_sec_list = inference_stride_sec_list
         self.recent_display_iters = recent_display_iters
+        self.total_collected_latents = total_collected_latents
         self.running_reg_passes = running_reg_passes
-        self.barycenter_batch_sampling = barycenter_batch_sampling
         self.classifier_num_pats = classifier_num_pats
         self.multimodal_shapes = multimodal_shapes
         self.multimodal_scales = multimodal_scales
         self.multimodal_weights = multimodal_weights
         self.sinkhorn_blur = sinkhorn_blur
         self.wasserstein_order = wasserstein_order
-        self.barycenter = barycenter
         self.accumulated_z = accumulated_z
         self.wandb_run = wandb_run
         self.kwargs = kwargs
@@ -541,19 +531,14 @@ class Trainer:
         self.wae = DDP(wae, device_ids=[gpu_id])   # find_unused_parameters=True
                     
         # Running Regulizer window for latent data
-        if self.barycenter == []:
-            # If first initialziing, then start off with observed & barycenter is ideal distributions from pure prior
-            self.accumulated_z = self._sample_multimodal(self.running_reg_passes).to(self.gpu_id)
-            self.barycenter = self._sample_multimodal(self.running_reg_passes * torch.distributed.get_world_size()).to(self.gpu_id)  # multiplied by DDPs
+        if self.accumulated_z == []:
+            # If first initialziing, then start off with observed ideal distributions from pure prior
+            self.accumulated_z = self._sample_multimodal(self.total_collected_latents).to(self.gpu_id)
         else: 
             # Ensure on proper device because loading from pickle
-            self.barycenter = self.barycenter.to(self.gpu_id) 
             self.accumulated_z = self.accumulated_z.to(self.gpu_id)
-            if self.accumulated_z == []: raise Exception("Error, accumulated_z is [], should be loaded/filled if barycenter was passed in")
 
-        # Running class labels for classifier
-        self.accumulated_labels = torch.zeros(self.running_reg_passes, dtype=torch.int64).to(self.gpu_id)
-        self.accumulated_class_probs = torch.zeros(self.running_reg_passes, self.classifier_num_pats).to(self.gpu_id)
+        # Running tab of update index
         self.next_update_index = 0
 
         # Watch with WandB
@@ -596,13 +581,6 @@ class Trainer:
         opt_ckp_cls = self.opt_cls.state_dict()
         opt_path_cls = check_core_dir + "/checkpoint_epoch" + str(epoch) + "_cls_opt.pt"
         torch.save(opt_ckp_cls, opt_path_cls)
-
-        # Save Barycenter 
-        barycenter_path = check_core_dir + "/checkpoint_epoch" + str(epoch) + "_barycenter.pkl"
-        output_obj = open(barycenter_path, 'wb')
-        pickle.dump(self.barycenter, output_obj)
-        output_obj.close()
-        print("Saved barycenter")
 
         # Save Running Latents 
         latents_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_running_latents.pkl"
@@ -669,26 +647,22 @@ class Trainer:
         
         return samples
         
-    def _sample_barycenter(self, num_barycenter_samples):
-        # Randomly select indices from the barycenter samples
-        indices = torch.randint(0, self.barycenter.shape[0], (num_barycenter_samples,))
-
-        # Sample from the barycenter using the selected indices
-        return self.barycenter[indices]
-
-    def _sample_observed(self, mean_latent):
+    def _sample_observed(self, latent, random_observed_sampling, **kwargs):
         self.accumulated_z = self.accumulated_z.detach() # Detach before sampling
-        num_new = mean_latent.shape[0]
+        num_new = latent.shape[0]
+        num_past = self.running_reg_passes - num_new
         
-        if num_new == self.barycenter_batch_sampling:
-            return mean_latent
+        if num_new == self.running_reg_passes:
+            return latent
 
-        elif num_new > self.barycenter_batch_sampling:
-            raise Exception(f"mean_latent.shape[0] > self.barycenter_batch_sampling ({num_new} > {self.barycenter_batch_sampling})")
+        elif num_new > self.running_reg_passes:
+            raise Exception(f"latent.shape[0] > self.running_reg_passes ({num_new} > {self.running_reg_passes})")
+
+        if random_observed_sampling: # RANDOM
+            random_past_idxs = torch.randperm(self.accumulated_z.shape[0])[:num_past] 
+            past_samples = self.accumulated_z[random_past_idxs, :]
 
         else: # NOT RANDOM
-            num_past = self.barycenter_batch_sampling - num_new
-
             # Must check for rollover
             if (self.next_update_index - num_past) >= 0:
                 past_samples = self.accumulated_z[self.next_update_index - num_past : self.next_update_index, :] # Use the next update index to know where the latest past samples are
@@ -702,111 +676,27 @@ class Trainer:
 
                 past_samples = torch.cat([past_samples_from_end, past_samples_from_start])
 
-            return torch.cat([past_samples, mean_latent])
+        return torch.cat([past_samples, latent])
 
-    def _update_barycenter(self, num_barycenter_iters, plot, plot_savedir, **kwargs):
-
-        '''
-        This will gather observed latent embeddings from across GPUs, and calculate new barycenter, then re-braodcast to all GPUs
-
-        '''
-        
-        if self.reg_weight == 0: # If not regulazing, then do not waste a bunch of time on barycenter calculation
-            print(f"[GPU{self.gpu_id}] OVERRIDE: reg_weight == 0, so NOT updating barycenter")
-
-        else:
-            print(f"[GPU{self.gpu_id}] at PRE barycenter calculation barrier")
-            barrier() # To align before gathering across GPUs
-
-            # Gather all of the observed latents
-            if self.gpu_id == 0:
-                # On the root rank, prepare a list to store the gathered tensors
-                gathered_z = [torch.zeros_like(self.accumulated_z) for _ in range(torch.distributed.get_world_size())]
-            else:
-                # On non-root ranks, gathered_z should be None
-                gathered_z = None
-
-            # Gather tensors from all ranks to rank 0
-            torch.distributed.gather(self.accumulated_z, gather_list=gathered_z, dst=0)
-
-            # Only run the calculation on GPU0
-            if self.gpu_id == 0:
-                all_z = torch.cat(gathered_z) # Concatenate the gathered z's together
-                print(f"[GPU{self.gpu_id}] size of gathered latents across GPUs is: {all_z.shape}")
-                x1 = self._sample_multimodal(all_z.shape[0]).cpu().numpy()  # Sample from multimodal gamma
-                x2 = all_z.cpu().numpy() # Use observations for other distribution
-                measures_locations = [x1, x2]
-                measures_weights = [ot.unif(x1.shape[0]), ot.unif(x2.shape[0])]
-                k, d = all_z.shape
-                X_init = self._sample_barycenter(all_z.shape[0]).detach().cpu().numpy() # Initialize based on previous barycenter 
-                b = (np.ones((k,)) / k)  # weights of the barycenter (it will not be optimized, only the locations are optimized)
-                X = ot.lp.free_support_barycenter(
-                    measures_locations, 
-                    measures_weights, 
-                    X_init, 
-                    b,
-                    numItermax=num_barycenter_iters,
-                    verbose=True)
-
-                self.barycenter = torch.tensor(X).to(self.gpu_id).float()
-
-            print(f"[GPU{self.gpu_id}] at POST barycenter calculation")
-            # Broadcast barycenter to all GPUs
-            if self.gpu_id == 0:
-                # On rank 0, ensure self.barycenter is a tensor on the correct device
-                self.barycenter = self.barycenter.to(f"cuda:{self.gpu_id}")  # Ensure it's on the correct GPU
-            else:
-                # On other ranks, initialize self.barycenter as an empty tensor on the correct device
-                self.barycenter = torch.zeros((self.running_reg_passes * torch.distributed.get_world_size(),self.barycenter.shape[1]), device=f"cuda:{self.gpu_id}")
-
-            # Broadcast the tensor from rank 0 to all other ranks
-            torch.distributed.broadcast(self.barycenter, src=0)
-            if self.barycenter.sum() == 0: raise Exception(f"ERROR: Boradcast failure, got all zeros on GPU{self.gpu_id}")
-            print(f"[GPU{self.gpu_id}] broadcasted shape of barycenter: {self.barycenter.shape}")
-
-            # Plot the barycenter if desired (plot on GPU 1 to ensure that it got the data)
-            if plot & (self.gpu_id == 1):
-                utils_functions.plot_barycenter(
-                    barycenter = self.barycenter.cpu().detach().numpy(), 
-                    prior = self._sample_multimodal(self.accumulated_z.shape[0]).cpu().numpy(),
-                    observed = self.accumulated_z.cpu().numpy(),
-                    savedir = plot_savedir,
-                    epoch = self.epoch,
-                    **kwargs)
-        
     def _update_reg_window(
         self,
-        mean_latent, 
-        file_class_label,
-        class_probs_mean_of_latent
+        latent
         ):
 
-        num_new_updates = mean_latent.shape[0]
-        if (self.next_update_index + num_new_updates) < self.running_reg_passes:
-            self.accumulated_z[self.next_update_index: self.next_update_index + num_new_updates, :] = mean_latent
-            self.accumulated_labels[self.next_update_index: self.next_update_index + num_new_updates] = file_class_label
-            self.accumulated_class_probs[self.next_update_index: self.next_update_index + num_new_updates, :] = class_probs_mean_of_latent
-            
+        num_new_updates = latent.shape[0]
+        if (self.next_update_index + num_new_updates) < self.total_collected_latents:
+            self.accumulated_z[self.next_update_index: self.next_update_index + num_new_updates, :] = latent
             self.next_update_index = self.next_update_index + num_new_updates
 
-        # Rollover
-        else:
-            residual_num = (self.next_update_index + num_new_updates) % self.running_reg_passes
+        else: # Rollover
+            residual_num = (self.next_update_index + num_new_updates) % self.total_collected_latents
             end_num = num_new_updates - residual_num
-            self.accumulated_z[self.next_update_index: self.next_update_index + end_num, :] = mean_latent[:end_num, :]
-            self.accumulated_z[0: residual_num, :] = mean_latent[end_num:, :]
-
-            self.accumulated_labels[self.next_update_index: self.next_update_index + end_num] = file_class_label[:end_num]
-            self.accumulated_labels[0: residual_num] = file_class_label[end_num:]
-
-            self.accumulated_class_probs[self.next_update_index: self.next_update_index + end_num, :] = class_probs_mean_of_latent[:end_num, :]
-            self.accumulated_class_probs[0: residual_num, :] = class_probs_mean_of_latent[end_num:, :]
-
+            self.accumulated_z[self.next_update_index: self.next_update_index + end_num, :] = latent[:end_num, :]
+            self.accumulated_z[0: residual_num, :] = latent[end_num:, :]
             self.next_update_index = residual_num
 
         # Detach to allow next backpass
         self.accumulated_z = self.accumulated_z.detach() 
-        self.accumulated_class_probs = self.accumulated_class_probs.detach()
 
     def _run_export_embeddings(
         self, 
@@ -986,27 +876,26 @@ class Trainer:
             ### WAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
             x_hat = self.wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
 
-            # Average the latents to get single embedding per encoder forward pass (still batch preserved of course)
-            mean_latent = torch.mean(latent, dim=1)
+            # Pseudobatch the latent for regularization loss
+            latent_batched = latent.reshape(latent.shape[0]* latent.shape[1], -1)
 
-            # Sample from the recent observed & Barycenter (otherwise batch would be ripple in ocean, but without some past info, batch cannot capure meaningful shape of latent)
+            # # Sample from the recent observed & prior (otherwise batch would be ripple in ocean - without some past info batch cannot capure meaningful shape of latent)
             if not val_unseen:
-                observed_samples = self._sample_observed(mean_latent) # Will require grad now that blended in mean_latent
-                barycenter_samples = self._sample_barycenter(self.barycenter_batch_sampling) # Never requires grad
+                observed_samples = self._sample_observed(latent_batched, **kwargs) # Will require grad now that blended in latent
+                prior_samples = self._sample_multimodal(self.running_reg_passes).to(self.gpu_id) # Never requires grad
             else: # For val_unseen, do not do a running window
-                observed_samples = mean_latent
-                barycenter_samples = self._sample_barycenter(mean_latent.shape[0])
+                observed_samples = latent_batched
+                prior_samples = self._sample_multimodal(latent_batched.shape[0])
 
             # LOSSES
             recon_loss = loss_functions.recon_loss_function(
-                # x=x[:, 1 + self.num_encode_concat_transformer_tokens :, :, :], # opposite 1-shifted & Transformer Encoder Concat Shifted 
                 x=x, # No shift if not causal masking
                 x_hat=x_hat,
                 recon_weight=self.recon_weight)
 
-            reg_loss = loss_functions.sinkhorn_loss( # Just on this local batch compared to Barycenter
+            reg_loss = loss_functions.sinkhorn_loss( # Just on this local batch compared to Prior
                 observed = observed_samples, # From accumulated_z
-                prior = barycenter_samples, # From Barycenter
+                prior = prior_samples, # From Prior
                 weight = self.reg_weight,
                 sinkhorn_blur = self.sinkhorn_blur,
                 wasserstein_order = self.wasserstein_order)
@@ -1028,9 +917,9 @@ class Trainer:
             if not val_unseen: 
                 self._zero_all_grads()
                 loss.backward()    
-                self._update_reg_window(mean_latent, file_class_label, class_probs_mean_of_latent) # Update the buffers & detach()
                 self.opt_wae.step()
                 self.opt_cls.step()
+                self._update_reg_window(latent_batched) # Update the buffers & detach() 
 
             # Realtime terminal info and WandB 
             if (iter_curr%self.recent_display_iters==0):
@@ -1108,7 +997,7 @@ class Trainer:
                         else:
                             utils_functions.print_latent_realtime(
                                 latent = observed_samples.cpu().detach().numpy(), 
-                                barycenter = barycenter_samples.cpu().detach().numpy(),
+                                prior = prior_samples.cpu().detach().numpy(),
                                 savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
                                 epoch = self.epoch,
                                 iter_curr = iter_curr,
@@ -1133,13 +1022,13 @@ class Trainer:
 
                             # NOTE: for finetuning, will still be guess the training patients, and TODO: idxs in dataset are wrong for class labels anyway
                             if (not val_unseen) & (not val_finetune): # Will not have accumulated for val_unseen
-                                utils_functions.print_confusion_realtime(
-                                    class_probs = self.accumulated_class_probs,
-                                    class_labels = self.accumulated_labels,
-                                    savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_confusion",
-                                    epoch = self.epoch,
-                                    iter_curr = iter_curr,
-                                    **kwargs)
+                                # utils_functions.print_confusion_realtime(
+                                #     class_probs = self.accumulated_class_probs,
+                                #     class_labels = self.accumulated_labels,
+                                #     savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_confusion",
+                                #     epoch = self.epoch,
+                                #     iter_curr = iter_curr,
+                                #     **kwargs)
 
                                 utils_functions.print_classprobs_realtime(
                                     class_probs = class_probs_mean_of_latent,
@@ -1153,12 +1042,14 @@ class Trainer:
             # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
             iter_curr = iter_curr + 1
 
-        # Update the Barycenter (average between empiric latent distriubution and given prior (e.g. Gamma) for this epoch
-        if (not val_unseen) & (not val_finetune):
-            self._update_barycenter(
-                plot=True, 
-                plot_savedir = self.model_dir + f"/realtime_plots/{dataset_string}/barycenters",
-                **kwargs)
+        # Plot the full running latents
+        utils_functions.plot_observed_latents(
+            gpu_id = self.gpu_id,
+            prior = self._sample_multimodal(self.accumulated_z.shape[0]).cpu().numpy(),
+            observed = self.accumulated_z.cpu().numpy(),
+            savedir = self.model_dir + f"/realtime_plots/{dataset_string}/observed_latents",
+            epoch = self.epoch,
+            **kwargs)
         
         print(f"[GPU{str(self.gpu_id)}] at end of epoch")
         # barrier()

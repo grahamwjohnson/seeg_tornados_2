@@ -583,7 +583,66 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier, hash_output
 
 # PLOTTING
 
-def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycenter_numplots, bins=200, alpha=0.2, **kwargs):
+def plot_observed_latents(gpu_id, prior, observed, savedir, epoch, random_observed_numplots, bins=200, alpha=0.2, **kwargs):
+    
+    N,D = observed.shape
+    
+    # Across SAMPLES - Sort along dim before
+    sorted1_prior = np.sort(prior, axis=1, kind='quicksort', order=None)
+    sorted1_observed = np.sort(observed, axis=1, kind='quicksort', order=None)
+    
+    prior_meanSample = np.mean(sorted1_prior, axis=0)
+    observed_meanSample = np.mean(sorted1_observed, axis=0)
+    
+    # Across DIMENSIONS - Sort along samples before
+    sorted0_prior = np.sort(prior, axis=0, kind='quicksort', order=None)
+    sorted0_observed = np.sort(observed, axis=0, kind='quicksort', order=None)
+    
+    prior_meanDim = np.mean(sorted0_prior, axis=1)
+    observed_meanDim = np.mean(sorted0_observed, axis=1)
+
+    gs = gridspec.GridSpec(2, random_observed_numplots)
+    fig = pl.figure(figsize=(24, 12))
+
+    # Plot MEAN of samples (i.e. shows dims)
+    ax0 = fig.add_subplot(gs[0, :int(random_observed_numplots/2)])
+    sns.histplot(prior_meanSample, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax0)
+    sns.histplot(observed_meanSample, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax0)
+    ax0.set_title(f"MEAN Across Samples [{N}]")
+    pl.legend()
+
+    # Plot MEAN of dims (i.e. shows samples)
+    ax1 = fig.add_subplot(gs[0, int(random_observed_numplots/2):])
+    sns.histplot(prior_meanDim, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax1)
+    sns.histplot(observed_meanDim, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax1)
+    ax1.set_title(f"MEAN Across Dimensions [{D}]")
+    pl.legend()
+
+    # Add random dimensions in to plot 
+    for i in range(random_observed_numplots):
+        ax_curr = fig.add_subplot(gs[1, i])
+        
+        # Random dim
+        np.random.seed(seed=None) # should replace with Generator for newer code
+        dim_idx = np.random.randint(0, D)
+        data_curr_prior = prior[:, dim_idx]
+        data_curr_observed = observed[:, dim_idx]
+        sns.histplot(data_curr_prior, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax_curr)
+        sns.histplot(data_curr_observed, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax_curr)
+        ax_curr.set_title(f"Dim {dim_idx}")
+        pl.legend()
+
+    if not os.path.exists(savedir): os.makedirs(savedir)
+    savename_jpg = f"{savedir}/ObservedLatents_epoch{epoch}_GPU{gpu_id}.jpg"
+    pl.savefig(savename_jpg)
+    pl.close(fig)    
+
+    pl.close('all') 
+ 
+    print("Observed Latents Plotted")
+
+
+def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_observed_numplots, bins=200, alpha=0.2, **kwargs):
     
     N,D = barycenter.shape
     
@@ -613,11 +672,11 @@ def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycent
     # prior_stdDim = np.std(sorted0_prior, axis=1)
     # observed_stdDim = np.std(sorted0_observed, axis=1)
 
-    gs = gridspec.GridSpec(2, random_barycenter_numplots)
+    gs = gridspec.GridSpec(2, random_observed_numplots)
     fig = pl.figure(figsize=(24, 12))
 
     # Plot MEAN of samples (i.e. shows dims)
-    ax0 = fig.add_subplot(gs[0, :int(random_barycenter_numplots/2)])
+    ax0 = fig.add_subplot(gs[0, :int(random_observed_numplots/2)])
     sns.histplot(barycenter_meanSample, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax0)
     sns.histplot(prior_meanSample, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax0)
     sns.histplot(observed_meanSample, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax0)
@@ -625,7 +684,7 @@ def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycent
     pl.legend()
 
     # Plot MEAN of dims (i.e. shows samples)
-    ax1 = fig.add_subplot(gs[0, int(random_barycenter_numplots/2):])
+    ax1 = fig.add_subplot(gs[0, int(random_observed_numplots/2):])
     sns.histplot(barycenter_meanDim, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax1)
     sns.histplot(prior_meanDim, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax1)
     sns.histplot(observed_meanDim, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax1)
@@ -633,7 +692,7 @@ def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycent
     pl.legend()
 
     # # Plot STD of samples (i.e. shows dims)
-    # ax2 = fig.add_subplot(gs[1, :int(random_barycenter_numplots/2)])
+    # ax2 = fig.add_subplot(gs[1, :int(random_observed_numplots/2)])
     # sns.histplot(barycenter_stdSample, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax2)
     # sns.histplot(prior_stdSample, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax2)
     # sns.histplot(observed_stdSample, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax2)
@@ -641,7 +700,7 @@ def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycent
     # pl.legend()
 
     # # Plot STD of dims (i.e. shows samples)
-    # ax3 = fig.add_subplot(gs[1, int(random_barycenter_numplots/2):])
+    # ax3 = fig.add_subplot(gs[1, int(random_observed_numplots/2):])
     # sns.histplot(barycenter_stdDim, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax3)
     # sns.histplot(prior_stdDim, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax3)
     # sns.histplot(observed_stdDim, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax3)
@@ -649,7 +708,7 @@ def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycent
     # pl.legend()
 
     # Add random dimensions in to plot 
-    for i in range(random_barycenter_numplots):
+    for i in range(random_observed_numplots):
         ax_curr = fig.add_subplot(gs[1, i])
         
         # Random dim
@@ -673,17 +732,17 @@ def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycent
  
     print("Barycenter Plotted")
 
-def print_latent_realtime(latent, barycenter, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
+def print_latent_realtime(latent, prior, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
 
     dims_to_plot = np.arange(0,num_realtime_dims)
         
     latent_plot = latent[:, 0:len(dims_to_plot)]
-    barycenter_plot = barycenter[:, 0:len(dims_to_plot)]
+    prior_plot = prior[:, 0:len(dims_to_plot)]
 
     df = pd.DataFrame({
         'dimension': np.tile(dims_to_plot, latent_plot.shape[0]),
         'latent': latent_plot.flatten(),
-        'barycenter': barycenter_plot.flatten(),
+        'prior': prior_plot.flatten(),
         # 'pat_labels': np.tile(pat_labels, num_realtime_dims)
     })
 
@@ -691,7 +750,7 @@ def print_latent_realtime(latent, barycenter, savedir, epoch, iter_curr, file_na
     gs = gridspec.GridSpec(1, 2)
     fig = pl.figure(figsize=(20, 14))
 
-    g1 = sns.jointplot(data=df, x="latent", y="barycenter", hue="dimension")
+    g1 = sns.jointplot(data=df, x="latent", y="prior", hue="dimension")
     xlim = g1.ax_joint.get_xlim()
     ylim = g1.ax_joint.get_ylim()
     fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
@@ -2130,8 +2189,7 @@ def initialize_directories(
         kwargs['wae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_wae_opt.pt'
         kwargs['cls_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_cls_opt.pt'
 
-        # Proper names for barycenter and running latents 
-        kwargs['barycenter_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_barycenter.pkl'
+        # Proper names for running latents 
         kwargs['running_latent_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_latents.pkl'
 
         # Set the start epoch 1 greater than max trained

@@ -1667,6 +1667,7 @@ def preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_date
 
         for j in range(len(seiz_starts_curr)):
             seiz_start = seiz_starts_curr[j]
+            seiz_stop = seiz_stops_curr[j]
             buffered_preictal_start = seiz_start - datetime.timedelta(seconds=plot_preictal_color_sec)
 
             # Compute time difference from seizure start (0 at start of preictal buffer, increasing as closer to seizure)
