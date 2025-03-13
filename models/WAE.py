@@ -18,20 +18,28 @@ import torch.distributions as dist
 '''
 
 class BimodalGammaPrior(nn.Module):
-    def __init__(self, latent_dim, multimodal_shapes, multimodal_scales, **kwargs):
+    def __init__(self, latent_dim, multimodal_shape_initrange, multimodal_scale_initrange, multimodal_alpha_initrange, **kwargs):
         super(BimodalGammaPrior, self).__init__()
         self.latent_dim = latent_dim
 
+        random_k1_inits = multimodal_shape_initrange[0] + (multimodal_shape_initrange[1] - multimodal_shape_initrange[0]) * torch.rand(latent_dim) 
+        random_theta1_inits =  multimodal_scale_initrange[0] + (multimodal_scale_initrange[1] - multimodal_scale_initrange[0]) * torch.rand(latent_dim) 
+
+        random_k2_inits = multimodal_shape_initrange[0] + (multimodal_shape_initrange[1] - multimodal_shape_initrange[0]) * torch.rand(latent_dim) 
+        random_theta2_inits =  multimodal_scale_initrange[0] + (multimodal_scale_initrange[1] - multimodal_scale_initrange[0]) * torch.rand(latent_dim) 
+
+        random_alpha_inits =  multimodal_alpha_initrange[0] + (multimodal_alpha_initrange[1] - multimodal_alpha_initrange[0]) * torch.rand(latent_dim) 
+
         # Learnable parameters for the first gamma mode
-        self.k1 = nn.Parameter(torch.ones(latent_dim) * multimodal_shapes[0])  # Shape parameter >1 for stable sampling
-        self.theta1 = nn.Parameter(torch.ones(latent_dim) * multimodal_scales[0])  # Scale parameter
+        self.k1 = nn.Parameter(torch.ones(latent_dim) * random_k1_inits)  # Shape parameter >1 for stable sampling
+        self.theta1 = nn.Parameter(torch.ones(latent_dim) * random_theta1_inits)  # Scale parameter
 
         # Learnable parameters for the second gamma mode
-        self.k2 = nn.Parameter(torch.ones(latent_dim) * multimodal_shapes[1])  # Shape parameter >1 for stable sampling
-        self.theta2 = nn.Parameter(torch.ones(latent_dim) * multimodal_scales[1])  # Scale parameter
+        self.k2 = nn.Parameter(torch.ones(latent_dim) * random_k2_inits)  # Shape parameter >1 for stable sampling
+        self.theta2 = nn.Parameter(torch.ones(latent_dim) * random_theta2_inits)  # Scale parameter
 
         # Learnable mixing coefficient (logits for stability)
-        self.alpha = nn.Parameter(torch.zeros(latent_dim))  # Sigmoid(alpha) gives mixture probability
+        self.alpha = nn.Parameter(torch.ones(latent_dim) * random_alpha_inits)  # Sigmoid(alpha) gives mixture probability
 
     def reparameterized_gamma(self, shape, scale, num_samples):
         """

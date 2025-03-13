@@ -479,9 +479,6 @@ class Trainer:
         total_collected_latents: int,
         running_reg_passes: int,
         classifier_num_pats: int,
-        multimodal_shapes: list,
-        multimodal_scales: list,
-        multimodal_weights: list,
         sinkhorn_blur: int,
         wasserstein_order: float,
         accumulated_z,
@@ -522,9 +519,6 @@ class Trainer:
         self.total_collected_latents = total_collected_latents
         self.running_reg_passes = running_reg_passes
         self.classifier_num_pats = classifier_num_pats
-        self.multimodal_shapes = multimodal_shapes
-        self.multimodal_scales = multimodal_scales
-        self.multimodal_weights = multimodal_weights
         self.sinkhorn_blur = sinkhorn_blur
         self.wasserstein_order = wasserstein_order
         self.accumulated_z = accumulated_z
@@ -546,8 +540,8 @@ class Trainer:
         # Running Regulizer window for latent data
         if self.accumulated_z == []:
             # If first initialziing, then start off with observed ideal distributions from pure prior
-            self.accumulated_z = self._sample_multimodal(self.total_collected_latents).to(self.gpu_id)
-            self.accumulated_prior = self._sample_multimodal(self.total_collected_latents).to(self.gpu_id)
+            self.accumulated_z = self.wae.module.prior.sample(self.total_collected_latents).detach().to(self.gpu_id)
+            self.accumulated_prior = self.wae.module.prior.sample(self.total_collected_latents).detach().to(self.gpu_id)
         else: 
             # Ensure on proper device because loading from pickle
             self.accumulated_z = self.accumulated_z.to(self.gpu_id)
@@ -616,60 +610,7 @@ class Trainer:
         if delete_old_checkpoints:
             utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch, **kwargs)
             print("Deleted old checkpoints, except epochs at end of reguaization annealing period")
-
-    def _sample_multimodal(self, num_samps):
-        """
-        Used to initialize the learnable prior 
-
-        Generates high-dimensional samples from a multimodal distribution using Gamma distributions.
-        The same shape and scale parameters are used for every latent dimension within a mode.
-
-        Args:
-            num_samps (int): Number of samples to generate.
-            self.multimodal_shapes (list or torch.Tensor): List or tensor of shape parameters (k) for the modes.
-            self.multimodal_scales (list or torch.Tensor): List or tensor of scale parameters (θ) for the modes.
-            self.multimodal_weights (list or torch.Tensor): List or tensor of weights for the modes, summing to 1.
-            self.latent_dim (int): Dimensionality of the latent space (e.g., 2048).
-
-        Returns:
-            torch.Tensor: High-dimensional samples from the multimodal Gamma distribution, of shape (num_samps, self.latent_dim).
-
-        Example usage:
-            num_samps = 1000
-            self.multimodal_shapes = [2, 5, 1]  # Shape parameters (k) for 3 modes
-            self.multimodal_scales = [1, 2, 0.5]  # Scale parameters (θ) for 3 modes
-            self.multimodal_weights = [0.2, 0.5, 0.3]  # Weights for the 3 modes, adds to 1
-            self.latent_dim = 2048  # High-dimensional latent space
-
-            samples = self._sample_multimodal(num_samps)
-        """
-        # Convert inputs to tensors if they are not already
-        if not isinstance(self.multimodal_shapes, torch.Tensor):
-            self.multimodal_shapes = torch.tensor(self.multimodal_shapes, dtype=torch.float32)
-        if not isinstance(self.multimodal_scales, torch.Tensor):
-            self.multimodal_scales = torch.tensor(self.multimodal_scales, dtype=torch.float32)
-        if not isinstance(self.multimodal_weights, torch.Tensor):
-            self.multimodal_weights = torch.tensor(self.multimodal_weights, dtype=torch.float32)
-
-        # Determine which mode to sample from for each sample in the batch
-        mode_indices = torch.multinomial(self.multimodal_weights, num_samples=num_samps, replacement=True)
-
-        # Generate samples from the chosen modes
-        samples = torch.zeros((num_samps, self.latent_dim))  # Shape: (num_samps, latent_dim)
-        for i in range(len(self.multimodal_weights)):
-            mask = mode_indices == i
-            num_samples_from_mode = mask.sum()
-            if num_samples_from_mode > 0:
-                # Sample from a Gamma distribution for the current mode
-                # Use the same shape and scale for all latent dimensions
-                gamma_samples = torch.distributions.Gamma(
-                    concentration=self.multimodal_shapes[i],  # Shape parameter (k)
-                    rate=1 / self.multimodal_scales[i]       # Rate parameter (1/θ)
-                ).sample((num_samples_from_mode, self.latent_dim))
-                samples[mask] = gamma_samples
-        
-        return samples
-        
+    
     def _sample_running_window(self, latent, prior, random_observed_sampling, **kwargs):
         self.accumulated_z = self.accumulated_z.detach() # Ensure detached before sampling
         self.accumulated_prior = self.accumulated_prior.detach()
