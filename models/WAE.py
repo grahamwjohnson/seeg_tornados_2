@@ -17,29 +17,17 @@ import torch.distributions as dist
 
 '''
 
-class BimodalGammaPrior(nn.Module):
-    def __init__(self, latent_dim, multimodal_shape_initrange, multimodal_scale_initrange, multimodal_alpha_initrange, **kwargs):
-        super(BimodalGammaPrior, self).__init__()
+class GammaPrior(nn.Module):
+    def __init__(self, latent_dim, gamma_shape_initrange, gamma_scale_initrange, **kwargs):
+        super(GammaPrior, self).__init__()
         self.latent_dim = latent_dim
 
-        random_k1_inits = multimodal_shape_initrange[0] + (multimodal_shape_initrange[1] - multimodal_shape_initrange[0]) * torch.rand(latent_dim) 
-        random_theta1_inits =  multimodal_scale_initrange[0] + (multimodal_scale_initrange[1] - multimodal_scale_initrange[0]) * torch.rand(latent_dim) 
+        # Initialize learnable parameters for the single Gamma distribution
+        random_k_inits = gamma_shape_initrange[0] + (gamma_shape_initrange[1] - gamma_shape_initrange[0]) * torch.rand(latent_dim)
+        random_theta_inits = gamma_scale_initrange[0] + (gamma_scale_initrange[1] - gamma_scale_initrange[0]) * torch.rand(latent_dim)
 
-        random_k2_inits = multimodal_shape_initrange[0] + (multimodal_shape_initrange[1] - multimodal_shape_initrange[0]) * torch.rand(latent_dim) 
-        random_theta2_inits =  multimodal_scale_initrange[0] + (multimodal_scale_initrange[1] - multimodal_scale_initrange[0]) * torch.rand(latent_dim) 
-
-        random_alpha_inits =  multimodal_alpha_initrange[0] + (multimodal_alpha_initrange[1] - multimodal_alpha_initrange[0]) * torch.rand(latent_dim) 
-
-        # Learnable parameters for the first gamma mode
-        self.k1 = nn.Parameter(torch.ones(latent_dim) * random_k1_inits)  # Shape parameter >1 for stable sampling
-        self.theta1 = nn.Parameter(torch.ones(latent_dim) * random_theta1_inits)  # Scale parameter
-
-        # Learnable parameters for the second gamma mode
-        self.k2 = nn.Parameter(torch.ones(latent_dim) * random_k2_inits)  # Shape parameter >1 for stable sampling
-        self.theta2 = nn.Parameter(torch.ones(latent_dim) * random_theta2_inits)  # Scale parameter
-
-        # Learnable mixing coefficient (logits for stability)
-        self.alpha = nn.Parameter(torch.ones(latent_dim) * random_alpha_inits)  # Sigmoid(alpha) gives mixture probability
+        self.k = nn.Parameter(torch.ones(latent_dim) * random_k_inits)  # Shape parameter
+        self.theta = nn.Parameter(torch.ones(latent_dim) * random_theta_inits)  # Scale parameter
 
     def reparameterized_gamma(self, shape, scale, num_samples):
         """
@@ -50,22 +38,68 @@ class BimodalGammaPrior(nn.Module):
         sample = torch.exp((1 / torch.sqrt(shape)) * eps + torch.log(shape * scale))
         return sample
 
-    def sample(self, num_samples):
-        """
-        Generate differentiable samples from the bimodal gamma prior.
-        """
+    # def normalize_gamma_sample(self, sample, shape, scale, target_variance=0.1):
+    #     """Normalizes Gamma sample by adjusting variance to `target_variance`."""
+    #     # mean = shape * scale  # Mean of the Gamma distribution
+    #     variance = shape * (scale**2)  # Variance of the Gamma distribution
+    #     # Rescale sample to match target variance 
+    #     return sample * torch.sqrt(target_variance / (variance + 1e-6))  # Avoid division by zero
 
-        # Get gamma samples with implicit reparameterization
-        samples1 = self.reparameterized_gamma(torch.abs(self.k1), torch.abs(self.theta1), num_samples)
-        samples2 = self.reparameterized_gamma(torch.abs(self.k2), torch.abs(self.theta2), num_samples)
+    def sample(self, num_samples, target_variance=1.0):
+        """Generate differentiable samples from the Gamma prior, normalized by target variance."""
+        raw_samples = self.reparameterized_gamma(torch.abs(self.k), torch.abs(self.theta), num_samples)
+        # norm_samples = self.normalize_gamma_sample(raw_samples, torch.abs(self.k), torch.abs(self.theta), target_variance)
+        return raw_samples
 
-        # Sample the mixing coefficients using differentiable sigmoid(alpha)
-        mix_probs = torch.sigmoid(self.alpha)  # Convert logits to probabilities
-        mix = torch.bernoulli(mix_probs.expand(num_samples, self.latent_dim))  # Sample mixture
+# class BimodalGammaPrior(nn.Module):
+#     def __init__(self, latent_dim, multimodal_shape_initrange, multimodal_scale_initrange, multimodal_alpha_initrange, **kwargs):
+#         super(BimodalGammaPrior, self).__init__()
+#         self.latent_dim = latent_dim
 
-        # Combine samples from both modes
-        samples = mix * samples1 + (1 - mix) * samples2
-        return samples
+#         random_k1_inits = multimodal_shape_initrange[0] + (multimodal_shape_initrange[1] - multimodal_shape_initrange[0]) * torch.rand(latent_dim) 
+#         random_theta1_inits =  multimodal_scale_initrange[0] + (multimodal_scale_initrange[1] - multimodal_scale_initrange[0]) * torch.rand(latent_dim) 
+
+#         random_k2_inits = multimodal_shape_initrange[0] + (multimodal_shape_initrange[1] - multimodal_shape_initrange[0]) * torch.rand(latent_dim) 
+#         random_theta2_inits =  multimodal_scale_initrange[0] + (multimodal_scale_initrange[1] - multimodal_scale_initrange[0]) * torch.rand(latent_dim) 
+
+#         random_alpha_inits =  multimodal_alpha_initrange[0] + (multimodal_alpha_initrange[1] - multimodal_alpha_initrange[0]) * torch.rand(latent_dim) 
+
+#         # Learnable parameters for the first gamma mode
+#         self.k1 = nn.Parameter(torch.ones(latent_dim) * random_k1_inits)  # Shape parameter >1 for stable sampling
+#         self.theta1 = nn.Parameter(torch.ones(latent_dim) * random_theta1_inits)  # Scale parameter
+
+#         # Learnable parameters for the second gamma mode
+#         self.k2 = nn.Parameter(torch.ones(latent_dim) * random_k2_inits)  # Shape parameter >1 for stable sampling
+#         self.theta2 = nn.Parameter(torch.ones(latent_dim) * random_theta2_inits)  # Scale parameter
+
+#         # Learnable mixing coefficient (logits for stability)
+#         self.alpha = nn.Parameter(torch.ones(latent_dim) * random_alpha_inits)  # Sigmoid(alpha) gives mixture probability
+
+#     def reparameterized_gamma(self, shape, scale, num_samples):
+#         """
+#         Approximate reparameterized gamma sampling using the implicit reparameterization trick.
+#         Uses log-normal approximation.
+#         """
+#         eps = torch.randn((num_samples, self.latent_dim), device=shape.device)  # Standard Normal noise
+#         sample = torch.exp((1 / torch.sqrt(shape)) * eps + torch.log(shape * scale))
+#         return sample
+
+#     def sample(self, num_samples):
+#         """
+#         Generate differentiable samples from the bimodal gamma prior.
+#         """
+
+#         # Get gamma samples with implicit reparameterization
+#         samples1 = self.reparameterized_gamma(torch.abs(self.k1), torch.abs(self.theta1), num_samples)
+#         samples2 = self.reparameterized_gamma(torch.abs(self.k2), torch.abs(self.theta2), num_samples)
+
+#         # Sample the mixing coefficients using differentiable sigmoid(alpha)
+#         mix_probs = torch.sigmoid(self.alpha)  # Convert logits to probabilities
+#         mix = torch.bernoulli(mix_probs.expand(num_samples, self.latent_dim))  # Sample mixture
+
+#         # Combine samples from both modes
+#         samples = mix * samples1 + (1 - mix) * samples2
+#         return samples
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -311,8 +345,7 @@ class AdversarialClassifier(nn.Module):
 
 class WAE(nn.Module):
     '''
-    The Reverseable Encoder/Decoder 
-    Shares weights between Conv/TransConv layers, in addition to FC layers (except Mean/Logvar layers)
+    WAE Reverseable Encoder/Decoder 
     '''
     def __init__(
         self, 
@@ -348,7 +381,7 @@ class WAE(nn.Module):
         self.decoder_base_dims = decoder_base_dims
 
         # Define learnable prior
-        self.prior = BimodalGammaPrior(self.latent_dim, **kwargs)
+        self.prior = GammaPrior(self.latent_dim, **kwargs)
 
         # Raw CrossAttention Head
         self.encoder_head = Encoder_TimeSeriesWithCrossAttention(
@@ -383,18 +416,6 @@ class WAE(nn.Module):
 
         # Non-linearity as needed
         self.silu = nn.SiLU()
-
-    # def concat_past_tokens(self, x):
-    #     '''
-    #     Sliding window with stride of 1 that collects N concat tokens at a time
-    #     '''
-    #     num_pulls = x.shape[1] - self.num_encode_concat_transformer_tokens - self.transformer_start_pos
-    #     y = torch.zeros([x.shape[0], num_pulls, self.top_dims]).to(x)
-
-    #     for i in range(num_pulls):
-    #         y[:, i, :] = x[:, i:i+self.num_encode_concat_transformer_tokens, :].reshape(x.shape[0], self.num_encode_concat_transformer_tokens * x.shape[2])
-
-    #     return y
 
     def forward(self, x, reverse=False, hash_pat_embedding=-1, alpha=None):
 

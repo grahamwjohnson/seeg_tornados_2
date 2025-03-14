@@ -998,9 +998,8 @@ class Trainer:
                             utils_functions.print_prior_params_realtime(
                                 epoch = self.epoch, 
                                 iter_curr = iter_curr,
-                                shapes = (self.wae.module.prior.k1, self.wae.module.prior.k2),
-                                scales = (self.wae.module.prior.theta1, self.wae.module.prior.theta2),
-                                alphas = self.wae.module.prior.alpha,
+                                shapes = self.wae.module.prior.k,
+                                scales = self.wae.module.prior.theta, 
                                 savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_priorparams", 
                                 **kwargs)
 

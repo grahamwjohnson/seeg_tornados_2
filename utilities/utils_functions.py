@@ -17,7 +17,6 @@ import pyedflib
 import numpy as np
 import scipy
 import pickle
-import joblib
 import json
 import os
 import sys
@@ -35,28 +34,17 @@ import chardet
 import codecs
 import torch
 import shutil
-import hdbscan
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import seaborn as sns
 import multiprocessing as mp
-import heapq
 from sklearn.datasets import load_iris
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 import math
 from scipy.stats import norm
 import matplotlib.colors as colors
-import auraloss
-from tkinter import filedialog
-import re
-from functools import partial
-from matplotlib.colors import LinearSegmentedColormap
-from annoy import AnnoyIndex
-from scipy.sparse import csr_matrix
 from sklearn.metrics import confusion_matrix
-from matplotlib.colors import LogNorm
-from matplotlib.colors import Normalize
+from matplotlib.patches import Rectangle
 
 # Local imports
 from models.WAE import print_models_flow
@@ -217,7 +205,7 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         Reg_max, Reg_min, Reg_epochs_TO_max, Reg_epochs_AT_max, Reg_stall_epochs,
-        wasserstein_order_max, wasserstein_order_min, wasserstein_taper_epochs,
+        wasserstein_switch_epochs,
         classifier_weight, 
         classifier_max, classifier_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier,
@@ -251,16 +239,11 @@ def LR_and_weight_schedules(
     else:
         classifier_val = classifier_max
 
-    # *** Wasserstein Order Taper ***
-    taper_iters_total = iters_per_epoch * wasserstein_taper_epochs
-    taper_iters_curr = iters_per_epoch * epoch + iter_curr
-    if taper_iters_curr > taper_iters_total:
-        wasserstein_order_val = wasserstein_order_min
+    # *** Wasserstein Order Switch ***
+    if  epoch < wasserstein_switch_epochs:
+        wasserstein_order_val = 2
     else: 
-        wasserstein_range = wasserstein_order_max - wasserstein_order_min
-        wasserstein_order_val = wasserstein_order_max - wasserstein_range * (taper_iters_curr/taper_iters_total) 
-
-
+        wasserstein_order_val = 1
 
     # *** Reg SCHEDULE ***
     
@@ -472,8 +455,7 @@ def get_average_label(tensor_1d):
     #   2   >  1  >   3  >   0
     
     a = np.array(tensor_1d)
-    if 2 in a:
-        return 2
+    if 2 in a:        return 2
     if 1 in a:
         return 1
     if 3 in a:
@@ -652,30 +634,27 @@ def plot_observed_latents(gpu_id, prior, observed, savedir, epoch, random_observ
  
     print("Observed Latents Plotted")
 
-def print_prior_params_realtime(epoch, iter_curr, shapes, scales, alphas, savedir, **kwargs):
-    num_dists = len(shapes)
-    alpha_sig = torch.sigmoid(alphas).cpu().detach().numpy()  # Shared between distributions, sigmoid is how it's used in training
-    alphaW = (alpha_sig, 1 - alpha_sig)  # HARD CODED FOR 2 DISTRIBUTIONS
+def print_prior_params_realtime(epoch, iter_curr, shapes, scales, savedir, gamma_shape_initrange, gamma_scale_initrange, **kwargs):
 
     # One figure with shapes/scales and alphas for all distributions
-    gs = gridspec.GridSpec(2, 2) 
+    gs = gridspec.GridSpec(1, 1) 
     fig = pl.figure(figsize=(12, 12))
-    norm = Normalize(vmin=0, vmax=1)
 
-    for i in range(num_dists):
-        data_plot = {
-            "Index": np.arange(0, alpha_sig.shape[0]),
-            "Shapes": shapes[i].cpu().detach().numpy(),
-            "Scales": scales[i].cpu().detach().numpy(),
-            "AlphaW": alphaW[i]
-        }
-        df = pd.DataFrame(data_plot)
-        ax = fig.add_subplot(gs[0, i])
-        s = sns.scatterplot(x="Shapes", y="Scales", hue="AlphaW", palette="crest", data=df, ax=ax, legend=False, hue_norm=norm)
-        pl.title(f"Gamma Dist {i}: Color by Alpha")
-        ax = fig.add_subplot(gs[1, i])
-        s = sns.scatterplot(x="Shapes", y="Scales", hue="Index", palette="tab20", data=df, ax=ax, legend=False)
-        pl.title(f"Gamma Dist {i}: Color by Index")
+    data_plot = {
+        "Index": np.arange(0, shapes.shape[0]),
+        "Shapes": shapes.cpu().detach().numpy(),
+        "Scales": scales.cpu().detach().numpy(),
+    }
+    df = pd.DataFrame(data_plot)
+    ax = fig.add_subplot(gs[0, 0])
+    s = sns.scatterplot(x="Shapes", y="Scales", hue="Index", palette="tab20", data=df, ax=ax, legend=False)
+    pl.title(f"Gamma Dists: Color by Index")
+
+    # Draw the initialization range box
+    shape_min, shape_max = gamma_shape_initrange
+    scale_min, scale_max = gamma_scale_initrange
+    rect = Rectangle((shape_min, scale_min), shape_max - shape_min, scale_max - scale_min, linewidth=2, edgecolor='red', facecolor='none', linestyle='--')
+    ax.add_patch(rect)
 
     pl.tight_layout()
 
@@ -895,51 +874,6 @@ def print_confusion_realtime(class_probs, class_labels, savedir, epoch, iter_cur
 
     pl.close('all') 
 
-def print_autoreg_raw_predictions(gpu_id, epoch, pat_id, rand_file_count, raw_context, raw_pred, raw_target, autoreg_channels, savedir, num_realtime_dims, **kwargs):
-
-    raw_context = raw_context.detach().cpu().numpy()
-    raw_pred = raw_pred.detach().cpu().numpy()
-    raw_target = raw_target.detach().cpu().numpy()
-
-    batchsize = raw_context.shape[0]
-
-    np.random.seed(seed=None) 
-    r = np.arange(0,raw_context.shape[1])
-    np.random.shuffle(r)
-    random_ch_idxs = r[0:autoreg_channels]
-
-    # Make new grid/fig for every batch
-    for b in range(0, batchsize):
-        gs = gridspec.GridSpec(autoreg_channels, 1) 
-        fig = pl.figure(figsize=(20, 14))
-        palette = sns.cubehelix_palette(n_colors=2, start=3, rot=1) 
-        for c in range(0,len(random_ch_idxs)):
-            context_plot = raw_context[b, random_ch_idxs[c], :]
-            prediction_plot = raw_pred[b, random_ch_idxs[c], :]
-            target_plot = raw_target[b, random_ch_idxs[c], :]
-
-            contextTarget_plot = np.concatenate((context_plot, target_plot), axis=0)
-            prediction_buffered_plot = np.zeros_like(contextTarget_plot)
-            prediction_buffered_plot[-len(prediction_plot):] = prediction_plot
-                
-            df = pd.DataFrame({
-                "Target": contextTarget_plot,
-                "Prediction": prediction_buffered_plot
-            })
-
-            ax = fig.add_subplot(gs[c, 0]) 
-            sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
-            ax.set_title(f"Ch:{random_ch_idxs[c]}")
-            
-        fig.suptitle(f"Ch:{random_ch_idxs}")
-        if gpu_id == 0: time.sleep(0.1)
-        if not os.path.exists(savedir): os.makedirs(savedir)
-        savename_jpg = f"{savedir}/AutoregressiveRecon_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.jpg"
-        pl.savefig(savename_jpg)
-        pl.close(fig)   
-
-    pl.close('all') 
-
 def print_attention_realtime(epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, **kwargs):
 
     scores_byLayer_meanHeads = scores_byLayer_meanHeads.detach().cpu().numpy()
@@ -980,50 +914,6 @@ def print_attention_realtime(epoch, iter_curr, pat_idxs, scores_byLayer_meanHead
         pl.close(fig)   
 
     pl.close('all') 
-
-def plot_MeanStd(plot_mean, plot_std, plot_dict, file_name, epoch, savedir, gpu_id, pat_id, iter): # plot_weights
-
-    mean_mean = np.mean(plot_mean, axis=2)
-    plot_std = np.mean(plot_std, axis=2)
-    # weight_mean = np.mean(plot_weights, axis=2)
-    num_dims = mean_mean.shape[1]
-    x=np.linspace(0,num_dims-1,num_dims)
-
-    df = pd.DataFrame({
-        'mean': np.mean(mean_mean, axis=0),
-        'std': np.mean(plot_std, axis=0),
-    })
-
-    gs = gridspec.GridSpec(2, 5)
-    fig = pl.figure(figsize=(20, 14))
-    
-    # Plot Means
-    ax1 = pl.subplot(gs[0, :])
-    sns.barplot(df, ax=ax1, x=x, y="mean", native_scale=True, errorbar=None,)
-
-    # Plot Logvar
-    ax1 = pl.subplot(gs[1, :])
-    sns.barplot(df, ax=ax1, x=x, y="std", native_scale=True, errorbar=None,)
-
-    # Pull out toaken start times because it's plotting whole batch at once
-    fig.suptitle(file_name + create_metadata_subtitle(plot_dict))
-
-    if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = savedir + f"/MeanLogvarWeights_batch{str(plot_mean.shape[0])}_" + "epoch" + str(epoch) + "_iter" + str(iter) + "_" + pat_id + "_gpu" + str(gpu_id) + ".jpg"
-    pl.savefig(savename_jpg)
-    pl.close(fig)    
-
-    mean_of_mean_mean = np.mean(np.abs(mean_mean))
-    std_of_mean_mean = np.std(np.abs(mean_mean))
-    mean_zscores = np.mean((np.abs(mean_mean) - mean_of_mean_mean)/std_of_mean_mean , axis=0)
-
-    mean_of_plot_std = np.mean(plot_std)
-    std_of_plot_std = np.std(plot_std)
-    std_zscores = np.mean((plot_std - mean_of_plot_std)/std_of_plot_std , axis=0)
-
-    pl.close('all') 
-
-    return mean_zscores, std_zscores
 
 def plot_recon(x, x_hat, plot_dict, batch_file_names, epoch, savedir, gpu_id, pat_id, iter, FS, num_rand_recon_plots, recon_sec=4, **kwargs):
 

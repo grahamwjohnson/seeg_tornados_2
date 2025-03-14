@@ -1,7 +1,5 @@
 import torch
 from torch import nn
-import heapq
-import torch.nn.functional as F
 from geomloss import SamplesLoss
 
 '''
@@ -41,10 +39,7 @@ def sinkhorn_loss(observed, prior, weight, sinkhorn_blur, wasserstein_order):
     loss_fn = SamplesLoss(loss="sinkhorn", p=wasserstein_order, blur=sinkhorn_blur)
     sinkhorn_loss = loss_fn(observed, prior)  # Standard Sinkhorn loss
 
-    # **Normalize for Stability Across Blur Values**
-    norm_loss = sinkhorn_loss  
-
-    return norm_loss * weight  # Apply manual re-weighting
+    return sinkhorn_loss * weight  # Apply manual re-weighting
    
 
 
