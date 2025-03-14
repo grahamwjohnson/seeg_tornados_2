@@ -217,6 +217,7 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         Reg_max, Reg_min, Reg_epochs_TO_max, Reg_epochs_AT_max, Reg_stall_epochs,
+        wasserstein_order_max, wasserstein_order_min, wasserstein_taper_epochs,
         classifier_weight, 
         classifier_max, classifier_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier,
@@ -249,6 +250,16 @@ def LR_and_weight_schedules(
         classifier_val = classifier_floor + (iter_curr/iters_per_epoch) * (classifier_ceil - classifier_floor)
     else:
         classifier_val = classifier_max
+
+    # *** Wasserstein Order Taper ***
+    taper_iters_total = iters_per_epoch * wasserstein_taper_epochs
+    taper_iters_curr = iters_per_epoch * epoch + iter_curr
+    if taper_iters_curr > taper_iters_total:
+        wasserstein_order_val = wasserstein_order_min
+    else: 
+        wasserstein_range = wasserstein_order_max - wasserstein_order_min
+        wasserstein_order_val = wasserstein_order_max - wasserstein_range * (taper_iters_curr/taper_iters_total) 
+
 
 
     # *** Reg SCHEDULE ***
@@ -325,7 +336,7 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first 
     )
             
-    return Reg_val, LR_val_core, LR_val_cls, Sparse_val, classifier_weight, classifier_val
+    return Reg_val, wasserstein_order_val, LR_val_core, LR_val_cls, Sparse_val, classifier_weight, classifier_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop

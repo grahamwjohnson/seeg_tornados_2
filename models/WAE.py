@@ -54,9 +54,10 @@ class BimodalGammaPrior(nn.Module):
         """
         Generate differentiable samples from the bimodal gamma prior.
         """
+
         # Get gamma samples with implicit reparameterization
-        samples1 = self.reparameterized_gamma(self.k1, self.theta1, num_samples)
-        samples2 = self.reparameterized_gamma(self.k2, self.theta2, num_samples)
+        samples1 = self.reparameterized_gamma(torch.abs(self.k1), torch.abs(self.theta1), num_samples)
+        samples2 = self.reparameterized_gamma(torch.abs(self.k2), torch.abs(self.theta2), num_samples)
 
         # Sample the mixing coefficients using differentiable sigmoid(alpha)
         mix_probs = torch.sigmoid(self.alpha)  # Convert logits to probabilities

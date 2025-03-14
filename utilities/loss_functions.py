@@ -32,15 +32,17 @@ def adversarial_loss_function(probs, labels, classifier_weight):
 
 def sinkhorn_loss(observed, prior, weight, sinkhorn_blur, wasserstein_order):
 
-    if torch.isnan(observed).any() or torch.isnan(prior).any(): raise ValueError("NaN detected in input tensors for Sinkhorn loss!")
-    if torch.isinf(observed).any() or torch.isinf(prior).any(): raise ValueError("Inf detected in input tensors for Sinkhorn loss!")
+    if torch.isnan(observed).any(): raise ValueError("NaN detected in OBSERVED tensors for Sinkhorn loss!")
+    if torch.isinf(observed).any(): raise ValueError("Inf detected in OBSERVED tensors for Sinkhorn loss!")
+    if torch.isnan(prior).any(): raise ValueError("NaN detected in PRIOR tensors for Sinkhorn loss!")
+    if torch.isinf(prior).any(): raise ValueError("Inf detected in PRIOR tensors for Sinkhorn loss!")
     
     # # **Compute Standard Sinkhorn Loss**
     loss_fn = SamplesLoss(loss="sinkhorn", p=wasserstein_order, blur=sinkhorn_blur)
     sinkhorn_loss = loss_fn(observed, prior)  # Standard Sinkhorn loss
 
     # **Normalize for Stability Across Blur Values**
-    norm_loss = sinkhorn_loss 
+    norm_loss = sinkhorn_loss  
 
     return norm_loss * weight  # Apply manual re-weighting
    

@@ -8,7 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.distributions.gamma import Gamma
 import sys  
 import os
-import shutil
+import shutil 
 import matplotlib.pylab as pl
 import matplotlib.gridspec as gridspec
 import os
@@ -480,7 +480,6 @@ class Trainer:
         running_reg_passes: int,
         classifier_num_pats: int,
         sinkhorn_blur: int,
-        wasserstein_order: float,
         accumulated_z,
         accumulated_prior,
         **kwargs
@@ -520,7 +519,6 @@ class Trainer:
         self.running_reg_passes = running_reg_passes
         self.classifier_num_pats = classifier_num_pats
         self.sinkhorn_blur = sinkhorn_blur
-        self.wasserstein_order = wasserstein_order
         self.accumulated_z = accumulated_z
         self.accumulated_prior = accumulated_prior
         self.wandb_run = wandb_run
@@ -836,7 +834,7 @@ class Trainer:
             hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
         
             # For Training: Update the Regulizer multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-            self.reg_weight, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
+            self.reg_weight, self.wasserstein_order, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
             
             if (not val_finetune) & (not val_unseen): 
@@ -925,6 +923,7 @@ class Trainer:
                         train_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                         train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                         train_reg_Beta=self.reg_weight, 
+                        train_wasserstein_order = self.wasserstein_order,
                         train_sinkhorn_blur=self.sinkhorn_blur,
                         train_running_reg_passes=self.running_reg_passes,
                         train_ReconWeight=self.recon_weight,
