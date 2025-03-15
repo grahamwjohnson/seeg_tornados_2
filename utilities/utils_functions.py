@@ -205,7 +205,8 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         Reg_max, Reg_min, Reg_epochs_TO_max, Reg_epochs_AT_max, Reg_stall_epochs,
-        wasserstein_switch_epochs,
+        mog_weight_reg_beta_static,
+        wasserstein_taper_epochs,
         classifier_weight, 
         classifier_max, classifier_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier,
@@ -240,10 +241,12 @@ def LR_and_weight_schedules(
         classifier_val = classifier_max
 
     # *** Wasserstein Order Switch ***
-    if  epoch < wasserstein_switch_epochs:
-        wasserstein_order_val = 2
+    if  epoch > wasserstein_taper_epochs:
+        wasserstein_alpha = 0
     else: 
-        wasserstein_order_val = 1
+        wasserstein_alpha_taper_iters_total = wasserstein_taper_epochs * iters_per_epoch
+        wasserstein_alpha_taper_iters_curr =  epoch * iters_per_epoch + iter_curr
+        wasserstein_alpha = 1 - wasserstein_alpha_taper_iters_curr/wasserstein_alpha_taper_iters_total
 
     # *** Reg SCHEDULE ***
     
@@ -319,7 +322,7 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first 
     )
             
-    return Reg_val, wasserstein_order_val, LR_val_core, LR_val_cls, Sparse_val, classifier_weight, classifier_val
+    return Reg_val, mog_weight_reg_beta_static, wasserstein_alpha, LR_val_core, LR_val_cls, Sparse_val, classifier_weight, classifier_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
@@ -634,34 +637,46 @@ def plot_observed_latents(gpu_id, prior, observed, savedir, epoch, random_observ
  
     print("Observed Latents Plotted")
 
-def print_prior_params_realtime(epoch, iter_curr, shapes, scales, savedir, gamma_shape_initrange, gamma_scale_initrange, **kwargs):
+def print_prior_params_realtime(epoch, iter_curr, means, stds, log_weights, savedir, num_MoG_components, **kwargs):
 
     # One figure with shapes/scales and alphas for all distributions
-    gs = gridspec.GridSpec(1, 1) 
-    fig = pl.figure(figsize=(12, 12))
+    gs = gridspec.GridSpec(1, 2) 
+    fig = plt.figure(figsize=(24, 12))
 
+    # Prepare the data for plotting
     data_plot = {
-        "Index": np.arange(0, shapes.shape[0]),
-        "Shapes": shapes.cpu().detach().numpy(),
-        "Scales": scales.cpu().detach().numpy(),
+        "Index": np.tile(np.arange(0, means.shape[1]), num_MoG_components),
+        "Means": means.cpu().detach().numpy().reshape(-1),
+        "Stds": stds.cpu().detach().numpy().reshape(-1),
+        "Weights": torch.softmax(log_weights, dim=0).detach().cpu().numpy().reshape(-1)
     }
     df = pd.DataFrame(data_plot)
+
+    # First plot: Means vs Stds, colored by Index
     ax = fig.add_subplot(gs[0, 0])
-    s = sns.scatterplot(x="Shapes", y="Scales", hue="Index", palette="tab20", data=df, ax=ax, legend=False)
-    pl.title(f"Gamma Dists: Color by Index")
+    sns.scatterplot(x="Means", y="Stds", hue="Index", palette="tab20", data=df, ax=ax, legend=False)
+    ax.set_title(f"Gamma Dists: Color by Index")
 
-    # Draw the initialization range box
-    shape_min, shape_max = gamma_shape_initrange
-    scale_min, scale_max = gamma_scale_initrange
-    rect = Rectangle((shape_min, scale_min), shape_max - shape_min, scale_max - scale_min, linewidth=2, edgecolor='red', facecolor='none', linestyle='--')
-    ax.add_patch(rect)
+    # Second plot: Means vs Stds, colored by Weights
+    ax = fig.add_subplot(gs[0, 1])
+    scatter = sns.scatterplot(x="Means", y="Stds", hue="Weights", palette="crest", data=df, ax=ax, legend=False)
+    ax.set_title(f"Gamma Dists: Color by Weight")
 
-    pl.tight_layout()
+    # Add colorbar to the second plot
+    norm = plt.Normalize(vmin=0, vmax=1)  # Normalize color scale to be between 0 and 1
+    sm = plt.cm.ScalarMappable(cmap="crest", norm=norm)
+    sm.set_array([])  # Empty array to make colorbar work
+    cbar = plt.colorbar(sm, ax=ax, orientation='vertical', label='Weights')
 
-    if not os.path.exists(savedir): os.makedirs(savedir)
+    # Adjust layout to make sure everything fits
+    plt.tight_layout()
+
+    # Save the plot
+    if not os.path.exists(savedir):
+        os.makedirs(savedir)
     savename_jpg = f"{savedir}/RealtimePriorParams_epoch{epoch}_iter{iter_curr}.jpg"
-    pl.savefig(savename_jpg)
-    pl.close(fig)
+    plt.savefig(savename_jpg)
+    plt.close(fig)
 
 def print_latent_realtime(latent, prior, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
 

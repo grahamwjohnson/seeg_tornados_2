@@ -762,7 +762,7 @@ class Trainer:
                     ### WAE ENCODER
                     # Forward pass in stacked batch through WAE encoder
                     # latent, _, _ = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
-                    latent, _, _ = self.wae(x, reverse=False, alpha=self.classifier_alpha) # No shift if not causal masking
+                    latent, _, _, _, _ = self.wae(x, reverse=False, alpha=self.classifier_alpha) # No shift if not causal masking
                     files_latents[:, w, :] = torch.mean(latent, dim=1)
 
                 # After file complete, pacmap_window/stride the file and save each file from batch seperately
@@ -834,7 +834,7 @@ class Trainer:
             hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
         
             # For Training: Update the Regulizer multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-            self.reg_weight, self.wasserstein_order, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
+            self.reg_weight, self.mog_weight_reg_beta, self.wasserstein_alpha, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
             
             if (not val_finetune) & (not val_unseen): 
@@ -850,17 +850,17 @@ class Trainer:
 
             ### WAE ENCODER: 1-shifted
             # latent, class_probs_mean_of_latent, attW = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
-            latent, prior, class_probs_mean_of_latent, attW = self.wae(x, reverse=False, alpha=self.classifier_alpha) # No shift if not causal masking
+            latent, prior, prior_weights, class_probs_mean_of_latent, attW = self.wae(x, reverse=False, alpha=self.classifier_alpha) # No shift if not causal masking
             
             ### WAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
             x_hat = self.wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
 
             # Pseudobatch the latent for regularization loss
-            latent_batched = latent.reshape(latent.shape[0]* latent.shape[1], -1)
-            prior_batched = prior.reshape(latent.shape[0]* latent.shape[1], -1)
+            latent_batched = latent.reshape(latent.shape[0] * latent.shape[1], -1)
+            prior_batched = prior.reshape(latent.shape[0] * latent.shape[1], -1)
 
             # # Sample from the recent observed & prior (otherwise batch would be ripple in ocean - without some past info batch cannot capure meaningful shape of latent)
-            observed_samples, prior_samples = self._sample_running_window(latent_batched, prior_batched, **kwargs) # Will require grad now that blended in latent
+            observed_samples, prior_samples = self._sample_running_window(latent_batched, prior_batched, **kwargs) # Will require grad now 
                
             # LOSSES
             recon_loss = loss_functions.recon_loss_function(
@@ -873,14 +873,18 @@ class Trainer:
                 prior = prior_samples, # From Prior
                 weight = self.reg_weight,
                 sinkhorn_blur = self.sinkhorn_blur,
-                wasserstein_order = self.wasserstein_order)
+                wasserstein_alpha = self.wasserstein_alpha)
+            
+            mog_weight_reg_loss = loss_functions.mog_weight_reg(
+                prior_weights=prior_weights,
+                mog_weight_reg_beta=self.mog_weight_reg_beta)
 
             adversarial_loss = loss_functions.adversarial_loss_function(
                 probs=class_probs_mean_of_latent, 
                 labels=file_class_label,
                 classifier_weight=self.classifier_weight)
 
-            loss = recon_loss + reg_loss + adversarial_loss 
+            loss = recon_loss + reg_loss + adversarial_loss + mog_weight_reg_loss
 
             # Not currently used, but is nice to see
             sparse_loss = loss_functions.sparse_l1_reg(
@@ -923,7 +927,9 @@ class Trainer:
                         train_LR_wae=self.opt_wae.param_groups[0]['lr'], 
                         train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
                         train_reg_Beta=self.reg_weight, 
-                        train_wasserstein_order = self.wasserstein_order,
+                        train_mog_weight_reg_loss = mog_weight_reg_loss,
+                        train_mog_weight_reg_beta = self.mog_weight_reg_beta,
+                        train_wasserstein_alpha = self.wasserstein_alpha,
                         train_sinkhorn_blur=self.sinkhorn_blur,
                         train_running_reg_passes=self.running_reg_passes,
                         train_ReconWeight=self.recon_weight,
@@ -998,8 +1004,9 @@ class Trainer:
                             utils_functions.print_prior_params_realtime(
                                 epoch = self.epoch, 
                                 iter_curr = iter_curr,
-                                shapes = self.wae.module.prior.k,
-                                scales = self.wae.module.prior.theta, 
+                                means = self.wae.module.prior.means,
+                                stds = self.wae.module.prior.stds, 
+                                log_weights = self.wae.module.prior.log_weights,
                                 savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_priorparams", 
                                 **kwargs)
 

@@ -34,7 +34,7 @@ nested_max_workers: 16 # For the get batch subprocess
 # Training settings
 continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
 print_dataset_bargraphs: False # Typically set to False if not the first run of model, but may want true if adding new patients
-cont_train_model_dir: '/media/glommy1/model_runs/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/sulphurbutterfly_Thu_Mar_13_20_11_47_2025' 
+cont_train_model_dir: '/media/glommy1/model_runs/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/salmon_Fri_Mar_14_12_23_17_2025' 
 inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
 
 ### WAE Model Params ###
@@ -135,18 +135,21 @@ Reg_stall_epochs: 0 # Min Reg weight rise until stall is complete
 Reg_epochs_AT_max: 15 # Maybe coincide with the wasserstein order switch epoch?
 Reg_epochs_TO_max: 5
 
-# GAMMA 
-# multimodal distribution params  
+# Prior running window & Sinkhorn
 random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
 total_collected_latents: 32768  # If 'random_observed_sampling' is False, this buffer just needs to be long enough to accomodate 'running_reg_passes', but longer will let you see more observed in each epoch's plot
-running_reg_passes: 4096 # Memory of observed latents when calculating Wasserstein loss (This + [Batch * 'transformer_seq_length'] will be total for Sinkhorn loss), if This == [Batch * 'transformer_seq_length'], then only 1 forward pass is used for reg loss
-gamma_shape_initrange: [2, 2.01] # Only used to initialize prior and observed buffers        [10,   30  ]
-gamma_scale_initrange: [0.05, 0.10] # Only used to initialize prior and observed buffers  # [0.05, 0.05]
+running_reg_passes: 4096 # kwargs['running_reg_passes'] = kwargs['random_pulls_in_batch'] *  kwargs['transformer_seq_length'] # Memory of observed latents when calculating Wasserstein loss (This + [Batch * 'transformer_seq_length'] will be total for Sinkhorn loss), if This == [Batch * 'transformer_seq_length'], then only 1 forward pass is used for reg loss
 sinkhorn_blur: kwargs['sinkhorn_blur'] = 0.0001 # This is the BATCH/SMALL scale blur updates
 random_observed_numplots: 4
 
-# Wasserstein Order Taper
-wasserstein_switch_epochs: 20 # when to flip from Wasserstein 2 --> 1, currently cannot do continous taper due to no efficient contonous wasserstein order calculation on PyTorhc (GeomLoss is just 1 or 2, and my custom methods run out of Cuda Memory)
+# Mixture of Guassian (MoG)
+num_MoG_components: 5
+MoG_std_scale_init: 0.1 # how fat to initialize the guassians
+MoG_mean_scale_init: 0.75
+mog_weight_reg_beta_static: 1
+
+# Wasserstein Taper between W2 --> W1, controlled by alpha value
+wasserstein_taper_epochs: 10 # when to flip from Wasserstein 2 --> 1, currently cannot do continous taper due to no efficient contonous wasserstein order calculation on PyTorhc (GeomLoss is just 1 or 2, and my custom methods run out of Cuda Memory)
 
 # Sparsity weight control
 Sparse_max: kwargs['Sparse_max'] = 1e-7 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############

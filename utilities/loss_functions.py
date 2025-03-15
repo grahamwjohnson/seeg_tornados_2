@@ -28,18 +28,36 @@ def adversarial_loss_function(probs, labels, classifier_weight):
     adversarial_loss = nn.functional.cross_entropy(probs, labels) / torch.log(torch.tensor(probs.shape[1]))
     return classifier_weight * adversarial_loss
 
-def sinkhorn_loss(observed, prior, weight, sinkhorn_blur, wasserstein_order):
+def sinkhorn_loss(observed, prior, weight, sinkhorn_blur, wasserstein_alpha):
 
     if torch.isnan(observed).any(): raise ValueError("NaN detected in OBSERVED tensors for Sinkhorn loss!")
     if torch.isinf(observed).any(): raise ValueError("Inf detected in OBSERVED tensors for Sinkhorn loss!")
     if torch.isnan(prior).any(): raise ValueError("NaN detected in PRIOR tensors for Sinkhorn loss!")
     if torch.isinf(prior).any(): raise ValueError("Inf detected in PRIOR tensors for Sinkhorn loss!")
     
-    # # **Compute Standard Sinkhorn Loss**
-    loss_fn = SamplesLoss(loss="sinkhorn", p=wasserstein_order, blur=sinkhorn_blur)
-    sinkhorn_loss = loss_fn(observed, prior)  # Standard Sinkhorn loss
+    # W1
+    loss_fn = SamplesLoss(loss="sinkhorn", p=1, blur=sinkhorn_blur)
+    W1_loss = loss_fn(observed, prior)  # Standard Sinkhorn loss
 
-    return sinkhorn_loss * weight  # Apply manual re-weighting
+    if wasserstein_alpha > 0: # Some mixing of W2 present
+        # W2
+        loss_fn = SamplesLoss(loss="sinkhorn", p=2, blur=sinkhorn_blur)
+        W2_loss = loss_fn(observed, prior)  # Standard Sinkhorn loss
+        
+        loss = wasserstein_alpha * W2_loss + (1- wasserstein_alpha) * W1_loss 
+
+        return weight * loss   # Apply manual re-weighting
+    
+    else:
+        return weight * W1_loss
+
+def mog_weight_reg(prior_weights, mog_weight_reg_beta):
+    num_components = prior_weights.shape[0]
+    even_weight = 1/num_components
+    mean_weight_diff = torch.mean(torch.abs(prior_weights - even_weight))
+    return mog_weight_reg_beta * mean_weight_diff
+
+
    
 
 

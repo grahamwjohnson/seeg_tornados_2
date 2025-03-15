@@ -17,89 +17,55 @@ import torch.distributions as dist
 
 '''
 
-class GammaPrior(nn.Module):
-    def __init__(self, latent_dim, gamma_shape_initrange, gamma_scale_initrange, **kwargs):
-        super(GammaPrior, self).__init__()
+import torch
+import torch.nn as nn
+
+class GaussianMixturePrior(nn.Module):
+    def __init__(self, latent_dim, num_MoG_components, MoG_std_scale_init, MoG_mean_scale_init, **kwargs):
+        super(GaussianMixturePrior, self).__init__()
         self.latent_dim = latent_dim
+        self.num_MoG_components = num_MoG_components
 
-        # Initialize learnable parameters for the single Gamma distribution
-        random_k_inits = gamma_shape_initrange[0] + (gamma_shape_initrange[1] - gamma_shape_initrange[0]) * torch.rand(latent_dim)
-        random_theta_inits = gamma_scale_initrange[0] + (gamma_scale_initrange[1] - gamma_scale_initrange[0]) * torch.rand(latent_dim)
+        # Learnable parameters for the mixture of Gaussians
+        self.means = nn.Parameter(torch.randn(num_MoG_components, latent_dim) * MoG_mean_scale_init)  # (num_MoG_components, latent_dim)
+        self.stds = nn.Parameter(torch.ones(num_MoG_components, latent_dim) * MoG_std_scale_init)  # (num_MoG_components, latent_dim)
 
-        self.k = nn.Parameter(torch.ones(latent_dim) * random_k_inits)  # Shape parameter
-        self.theta = nn.Parameter(torch.ones(latent_dim) * random_theta_inits)  # Scale parameter
+        # Mixing coefficients per Gaussian component (per dimension)
+        self.log_weights = nn.Parameter(torch.randn(num_MoG_components, latent_dim))  # (num_MoG_components, latent_dim)
 
-    def reparameterized_gamma(self, shape, scale, num_samples):
-        """
-        Approximate reparameterized gamma sampling using the implicit reparameterization trick.
-        Uses log-normal approximation.
-        """
-        eps = torch.randn((num_samples, self.latent_dim), device=shape.device)  # Standard Normal noise
-        sample = torch.exp((1 / torch.sqrt(shape)) * eps + torch.log(shape * scale))
-        return sample
+    def reparameterized_sample(self, num_samples, temperature=0.1):
+        device = self.means.device
 
-    # def normalize_gamma_sample(self, sample, shape, scale, target_variance=0.1):
-    #     """Normalizes Gamma sample by adjusting variance to `target_variance`."""
-    #     # mean = shape * scale  # Mean of the Gamma distribution
-    #     variance = shape * (scale**2)  # Variance of the Gamma distribution
-    #     # Rescale sample to match target variance 
-    #     return sample * torch.sqrt(target_variance / (variance + 1e-6))  # Avoid division by zero
+        # Convert logits to probabilities for each latent dimension (softmax across components)
+        weights = torch.softmax(self.log_weights, dim=0) + 1e-8  # (num_MoG_components, latent_dim)
 
-    def sample(self, num_samples, target_variance=1.0):
-        """Generate differentiable samples from the Gamma prior, normalized by target variance."""
-        raw_samples = self.reparameterized_gamma(torch.abs(self.k), torch.abs(self.theta), num_samples)
-        # norm_samples = self.normalize_gamma_sample(raw_samples, torch.abs(self.k), torch.abs(self.theta), target_variance)
-        return raw_samples
+        # Generate Gumbel noise for each latent dimension
+        gumbel_noise = -torch.log(-torch.log(torch.rand(num_samples, self.num_MoG_components, self.latent_dim, device=device)))  # (num_samples, num_MoG_components, latent_dim)
 
-# class BimodalGammaPrior(nn.Module):
-#     def __init__(self, latent_dim, multimodal_shape_initrange, multimodal_scale_initrange, multimodal_alpha_initrange, **kwargs):
-#         super(BimodalGammaPrior, self).__init__()
-#         self.latent_dim = latent_dim
+        # Expand weights to match the shape of Gumbel noise
+        log_weights = torch.log(weights).unsqueeze(0)  # (1, num_MoG_components, latent_dim)
 
-#         random_k1_inits = multimodal_shape_initrange[0] + (multimodal_shape_initrange[1] - multimodal_shape_initrange[0]) * torch.rand(latent_dim) 
-#         random_theta1_inits =  multimodal_scale_initrange[0] + (multimodal_scale_initrange[1] - multimodal_scale_initrange[0]) * torch.rand(latent_dim) 
+        # Compute Gumbel-Softmax logits
+        logits = (log_weights + gumbel_noise) / temperature  # (num_samples, num_MoG_components, latent_dim)
 
-#         random_k2_inits = multimodal_shape_initrange[0] + (multimodal_shape_initrange[1] - multimodal_shape_initrange[0]) * torch.rand(latent_dim) 
-#         random_theta2_inits =  multimodal_scale_initrange[0] + (multimodal_scale_initrange[1] - multimodal_scale_initrange[0]) * torch.rand(latent_dim) 
+        # Compute Gumbel-Softmax probabilities
+        component_probs = torch.softmax(logits, dim=1)  # (num_samples, num_MoG_components, latent_dim)
 
-#         random_alpha_inits =  multimodal_alpha_initrange[0] + (multimodal_alpha_initrange[1] - multimodal_alpha_initrange[0]) * torch.rand(latent_dim) 
+        # Generate samples from each Gaussian component
+        eps = torch.randn(num_samples, self.num_MoG_components, self.latent_dim, device=device)  # (num_samples, num_MoG_components, latent_dim)
+        component_samples = self.means.unsqueeze(0) + self.stds.unsqueeze(0) * eps  # (num_samples, num_MoG_components, latent_dim)
 
-#         # Learnable parameters for the first gamma mode
-#         self.k1 = nn.Parameter(torch.ones(latent_dim) * random_k1_inits)  # Shape parameter >1 for stable sampling
-#         self.theta1 = nn.Parameter(torch.ones(latent_dim) * random_theta1_inits)  # Scale parameter
+        # Weight the samples from each component using the Gumbel-Softmax probabilities
+        weighted_samples = component_probs * component_samples  # (num_samples, num_MoG_components, latent_dim)
 
-#         # Learnable parameters for the second gamma mode
-#         self.k2 = nn.Parameter(torch.ones(latent_dim) * random_k2_inits)  # Shape parameter >1 for stable sampling
-#         self.theta2 = nn.Parameter(torch.ones(latent_dim) * random_theta2_inits)  # Scale parameter
+        # Sum the weighted samples to get the final mixture samples
+        prior_samples = weighted_samples.sum(dim=1)  # (num_samples, latent_dim)
 
-#         # Learnable mixing coefficient (logits for stability)
-#         self.alpha = nn.Parameter(torch.ones(latent_dim) * random_alpha_inits)  # Sigmoid(alpha) gives mixture probability
-
-#     def reparameterized_gamma(self, shape, scale, num_samples):
-#         """
-#         Approximate reparameterized gamma sampling using the implicit reparameterization trick.
-#         Uses log-normal approximation.
-#         """
-#         eps = torch.randn((num_samples, self.latent_dim), device=shape.device)  # Standard Normal noise
-#         sample = torch.exp((1 / torch.sqrt(shape)) * eps + torch.log(shape * scale))
-#         return sample
-
-#     def sample(self, num_samples):
-#         """
-#         Generate differentiable samples from the bimodal gamma prior.
-#         """
-
-#         # Get gamma samples with implicit reparameterization
-#         samples1 = self.reparameterized_gamma(torch.abs(self.k1), torch.abs(self.theta1), num_samples)
-#         samples2 = self.reparameterized_gamma(torch.abs(self.k2), torch.abs(self.theta2), num_samples)
-
-#         # Sample the mixing coefficients using differentiable sigmoid(alpha)
-#         mix_probs = torch.sigmoid(self.alpha)  # Convert logits to probabilities
-#         mix = torch.bernoulli(mix_probs.expand(num_samples, self.latent_dim))  # Sample mixture
-
-#         # Combine samples from both modes
-#         samples = mix * samples1 + (1 - mix) * samples2
-#         return samples
+        return prior_samples
+                
+    def sample(self, num_samples):
+        """Generate samples from the true mixture of Gaussians."""
+        return self.reparameterized_sample(num_samples)
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -381,7 +347,7 @@ class WAE(nn.Module):
         self.decoder_base_dims = decoder_base_dims
 
         # Define learnable prior
-        self.prior = GammaPrior(self.latent_dim, **kwargs)
+        self.prior = GaussianMixturePrior(self.latent_dim, **kwargs)
 
         # Raw CrossAttention Head
         self.encoder_head = Encoder_TimeSeriesWithCrossAttention(
@@ -440,6 +406,7 @@ class WAE(nn.Module):
 
             # PRIOR
             prior_batched = self.prior.sample(latent_batched.shape[0])
+            prior_weights = torch.softmax(self.prior.log_weights, dim=0)
 
             # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
             # NOTE: you lose the priming tokens needed by transformer
@@ -447,11 +414,11 @@ class WAE(nn.Module):
             latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length, dim=0), dim=0)
             prior = torch.stack(torch.split(prior_batched, self.transformer_seq_length, dim=0), dim=0)
 
-            # CLASSIFIER - on the mean of the means
+            # CLASSIFIER - on the mean of latents
             mean_of_latent = torch.mean(latent, dim=1)
             class_probs_mean_of_latent = self.adversarial_classifier(mean_of_latent, alpha)
             
-            return latent, prior, class_probs_mean_of_latent, attW
+            return latent, prior, prior_weights, class_probs_mean_of_latent, attW
 
         elif reverse == True:
 
@@ -487,11 +454,12 @@ def print_models_flow(x, **kwargs):
     # Run through Encoder
     print(f"INPUT TO <ENC>\n"
     f"x:{x.shape}")
-    latent, prior, class_probs, attW = wae(x, reverse=False, alpha=1)  
+    latent, prior, prior_weights, class_probs, attW = wae(x, reverse=False, alpha=1)  
     summary(wae, input_size=(x.shape), depth=999, device="cpu")
     print(
     f"latent:{latent.shape}\n"
     f"prior:{prior.shape}\n"
+    f"prior_weights:{prior_weights.shape}\n"
     f"class_probs:{class_probs.shape}\n"
     f"attW:{attW.shape}\n")
 
