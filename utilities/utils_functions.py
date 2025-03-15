@@ -209,7 +209,8 @@ def LR_and_weight_schedules(
         wasserstein_taper_epochs,
         classifier_weight, 
         classifier_max, classifier_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
-        LR_min_classifier,
+        LR_min_classifier, 
+        LR_max_prior,
         Sparse_max, Sparse_min, Sparse_epochs_TO_max, Sparse_epochs_AT_max, 
         LR_max_core, LR_min_core, 
         LR_epochs_TO_max_core, LR_epochs_AT_max_core, 
@@ -218,6 +219,8 @@ def LR_and_weight_schedules(
             
     # *** Classifier Weight ###
     classifier_weight = classifier_weight # Dummy pass
+
+    LR_val_prior = LR_max_prior
 
     # *** Classifier LR ###
     LR_val_cls = LR_min_classifier
@@ -241,8 +244,9 @@ def LR_and_weight_schedules(
         classifier_val = classifier_max
 
     # *** Wasserstein Order Switch ***
-    if  epoch > wasserstein_taper_epochs:
+    if  epoch >= wasserstein_taper_epochs:
         wasserstein_alpha = 0
+    
     else: 
         wasserstein_alpha_taper_iters_total = wasserstein_taper_epochs * iters_per_epoch
         wasserstein_alpha_taper_iters_curr =  epoch * iters_per_epoch + iter_curr
@@ -322,7 +326,7 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first 
     )
             
-    return Reg_val, mog_weight_reg_beta_static, wasserstein_alpha, LR_val_core, LR_val_cls, Sparse_val, classifier_weight, classifier_val
+    return Reg_val, mog_weight_reg_beta_static, wasserstein_alpha, LR_val_core, LR_val_prior, LR_val_cls, Sparse_val, classifier_weight, classifier_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
@@ -638,37 +642,59 @@ def plot_observed_latents(gpu_id, prior, observed, savedir, epoch, random_observ
     print("Observed Latents Plotted")
 
 def print_prior_params_realtime(epoch, iter_curr, means, stds, log_weights, savedir, num_MoG_components, **kwargs):
+    """
+    Plot the means, stds, and weights of the Gaussian mixture prior.
+    
+    Args:
+        epoch (int): Current epoch.
+        iter_curr (int): Current iteration.
+        means (torch.Tensor): Means of the Gaussian components, shape (num_MoG_components,).
+        stds (torch.Tensor): Standard deviations of the Gaussian components, shape (num_MoG_components,).
+        log_weights (torch.Tensor): Log weights of the Gaussian components, shape (num_MoG_components,).
+        savedir (str): Directory to save the plot.
+        num_MoG_components (int): Number of Gaussian components.
+    """
+    # Detach and convert parameters to numpy
+    means = means.detach().cpu().numpy()  # (num_MoG_components,)
+    stds = stds.detach().cpu().numpy()  # (num_MoG_components,)
+    weights = torch.softmax(log_weights, dim=0).detach().cpu().numpy()  # (num_MoG_components,)
 
-    # One figure with shapes/scales and alphas for all distributions
-    gs = gridspec.GridSpec(1, 2) 
-    fig = plt.figure(figsize=(24, 12))
+    # Create a 2x2 grid of subplots
+    fig = plt.figure(figsize=(12, 10))
 
-    # Prepare the data for plotting
-    data_plot = {
-        "Index": np.tile(np.arange(0, means.shape[1]), num_MoG_components),
-        "Means": means.cpu().detach().numpy().reshape(-1),
-        "Stds": stds.cpu().detach().numpy().reshape(-1),
-        "Weights": torch.softmax(log_weights, dim=0).detach().cpu().numpy().reshape(-1)
-    }
-    df = pd.DataFrame(data_plot)
+    # Define a color palette for the components
+    # colors = plt.cm.tab10.colors  # Use the 'tab10' colormap for distinct colors
+    colors = sns.color_palette("crest", num_MoG_components)  
 
-    # First plot: Means vs Stds, colored by Index
-    ax = fig.add_subplot(gs[0, 0])
-    sns.scatterplot(x="Means", y="Stds", hue="Index", palette="tab20", data=df, ax=ax, legend=False)
-    ax.set_title(f"Gamma Dists: Color by Index")
+    # Subplot 0,0: Bar plot of means
+    ax1 = plt.subplot2grid((2, 2), (0, 0))
+    for i in range(num_MoG_components):
+        ax1.bar(i, means[i], color=colors[i], alpha=0.7, label=f"Component {i}")
+    ax1.set_title("Means of Gaussian Components")
+    ax1.set_xlabel("Component Index")
+    ax1.set_ylabel("Mean Value")
+    ax1.set_xticks(np.arange(num_MoG_components))
 
-    # Second plot: Means vs Stds, colored by Weights
-    ax = fig.add_subplot(gs[0, 1])
-    scatter = sns.scatterplot(x="Means", y="Stds", hue="Weights", palette="crest", data=df, ax=ax, legend=False)
-    ax.set_title(f"Gamma Dists: Color by Weight")
+    # Subplot 0,1: Bar plot of stds
+    ax2 = plt.subplot2grid((2, 2), (0, 1))
+    for i in range(num_MoG_components):
+        ax2.bar(i, stds[i], color=colors[i], alpha=0.7, label=f"Component {i}")
+    ax2.set_title("Standard Deviations of Gaussian Components")
+    ax2.set_xlabel("Component Index")
+    ax2.set_ylabel("Standard Deviation")
+    ax2.set_xticks(np.arange(num_MoG_components))
 
-    # Add colorbar to the second plot
-    norm = plt.Normalize(vmin=0, vmax=1)  # Normalize color scale to be between 0 and 1
-    sm = plt.cm.ScalarMappable(cmap="crest", norm=norm)
-    sm.set_array([])  # Empty array to make colorbar work
-    cbar = plt.colorbar(sm, ax=ax, orientation='vertical', label='Weights')
+    # Subplot 1,0:1: Bar plot of weights (shared across dimensions)
+    ax3 = plt.subplot2grid((2, 2), (1, 0), colspan=2)
+    for i in range(num_MoG_components):
+        ax3.bar(i, weights[i], color=colors[i], alpha=0.7, label=f"Component {i}")
+    ax3.set_title("Weights of Gaussian Components (Shared Across Dimensions)")
+    ax3.set_xlabel("Component Index")
+    ax3.set_ylabel("Weight Value")
+    ax3.set_xticks(np.arange(num_MoG_components))
+    ax3.set_ylim(0, 1)  # Ensure weights are between 0 and 1
 
-    # Adjust layout to make sure everything fits
+    # Adjust layout and display the plot
     plt.tight_layout()
 
     # Save the plot
@@ -2044,7 +2070,6 @@ def initialize_directories(
         # Construct the proper file names to get CORE state dicts
         kwargs['wae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_wae.pt'
         kwargs['wae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_wae_opt.pt'
-        kwargs['cls_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_cls_opt.pt'
 
         # Proper names for running latents 
         kwargs['running_latent_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_latents.pkl'

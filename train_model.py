@@ -76,13 +76,17 @@ def load_train_objs(
     train_hour_dataset_range, 
     val_finetune_hour_dataset_range, 
     val_unseen_hour_dataset_range, 
-    inference_selection, 
     num_dataloader_workers,
 
     # WAE Optimizers
     core_weight_decay, 
     adamW_beta1,
     adamW_beta2,
+
+    # Prior Optimizer
+    prior_weight_decay,
+    prior_adamW_beta1,
+    prior_adamW_beta2,    
 
     # Classifier Optimizer
     classifier_weight_decay,
@@ -149,8 +153,6 @@ def load_train_objs(
     else: # If no val, just make a train dataset
         train_pats_dirs = all_pats_dirs
         train_pats_list = all_pats_list
-
-        # Dummy
         valfinetune_dataset = None
         valunseen_dataset = None
         valfinetune_dataloader = None
@@ -180,24 +182,29 @@ def load_train_objs(
     wae = wae.to(gpu_id) 
 
     # Separate the parameters into two groups
-    classifier_params = []
     wae_params = []
+    classifier_params = []
+    prior_params = []
 
     # Iterate through the model parameters
     for name, param in wae.named_parameters():
         # Check if the parameter is part of the encoder submodule
         if 'adversarial_classifier' in name:
             classifier_params.append(param)
+        elif 'prior' in name:
+            prior_params.append(param)
         else:
             wae_params.append(param)
-    
-    # opt_wae = torch.optim.AdamW(wae.parameters(), weight_decay=core_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_core'])
-    # opt_cls = torch.optim.AdamW(wae.classifier.parameters(), weight_decay=classifier_weight_decay, betas=(classifier_adamW_beta1, classifier_adamW_beta2), lr=kwargs['LR_min_classifier'])
-    
-    opt_wae = torch.optim.AdamW(wae_params, weight_decay=core_weight_decay, betas=(adamW_beta1, adamW_beta2), lr=kwargs['LR_min_core'])
-    opt_cls = torch.optim.AdamW(classifier_params, weight_decay=classifier_weight_decay, betas=(classifier_adamW_beta1, classifier_adamW_beta2), lr=kwargs['LR_min_classifier'])
 
-    return train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, wae, opt_wae, opt_cls
+    # Separate the parameters
+    param_groups = [
+        {"params": wae_params, "lr":  kwargs['LR_min_core'], "weight_decay": core_weight_decay, "betas": (adamW_beta1, adamW_beta2)},  
+        {"params": prior_params, "lr": kwargs['LR_max_prior'], "weight_decay": prior_weight_decay, "betas":(prior_adamW_beta1, prior_adamW_beta2)},
+        {"params": classifier_params, "lr": kwargs['LR_min_classifier'], "weight_decay": classifier_weight_decay, "betas":(classifier_adamW_beta1, classifier_adamW_beta2)}  
+    ]
+    opt_wae = torch.optim.AdamW(param_groups)
+
+    return train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, wae, opt_wae
 
 def main(  
     # Ordered variables
@@ -210,6 +217,7 @@ def main(
     timestamp_id: int,
     start_epoch: int,
     LR_val_wae: float,
+    LR_val_prior: float,
     LR_val_cls: float,
     val_finetine_bool: bool,
     finetune_inference: bool, 
@@ -218,7 +226,6 @@ def main(
     realtime_printing_interval_train,
     wae_state_dict_prev_path = [],
     wae_opt_state_dict_prev_path = [],
-    cls_opt_state_dict_prev_path = [],
     running_latent_path = [],
     running_prior_path = [],
     epochs_to_train: int = -1,
@@ -248,7 +255,7 @@ def main(
     ddp_setup(gpu_id, world_size)
 
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
-    train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, wae, opt_wae, opt_cls = load_train_objs(gpu_id=gpu_id, **kwargs) 
+    train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, wae, opt_wae = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
     # Load the model/opt states if not first epoch & if in training mode
     if (start_epoch > 0):
@@ -259,8 +266,6 @@ def main(
         wae.load_state_dict(wae_state_dict_prev)
         wae_opt_state_dict_prev = torch.load(wae_opt_state_dict_prev_path, map_location=map_location)
         opt_wae.load_state_dict(wae_opt_state_dict_prev)
-        cls_opt_state_dict_prev = torch.load(cls_opt_state_dict_prev_path, map_location=map_location)
-        opt_cls.load_state_dict(cls_opt_state_dict_prev)
         print(f"[GPU{gpu_id}] Model and Opt weights loaded from checkpoints")
 
         # Load running latents observed
@@ -281,7 +286,6 @@ def main(
         gpu_id=gpu_id, 
         wae=wae, 
         opt_wae=opt_wae,
-        opt_cls=opt_cls,
         start_epoch=start_epoch,
         train_dataset=train_dataset, 
         train_dataloader=train_dataloader,
@@ -316,7 +320,6 @@ def main(
             if finetune_inference:
                 wae_dict = trainer.wae.module.state_dict()
                 wae_opt_dict = trainer.opt_wae.state_dict()
-                cls_opt_dict = trainer.opt_cls.state_dict()
                 accumulated_z = trainer.accumulated_z
                 accumulated_prior = trainer.accumulated_prior
                 accumulated_labels = trainer.accumulated_labels
@@ -326,7 +329,8 @@ def main(
                 # Set to train and change LR to validate settings
                 trainer._set_to_train()
                 trainer.opt_wae.param_groups[0]['lr'] = LR_val_wae
-                trainer.opt_cls.param_groups[0]['lr'] = LR_val_cls
+                trainer.opt_wae.param_groups[1]['lr'] = LR_val_prior
+                trainer.opt_wae.param_groups[2]['lr'] = LR_val_cls
                 for finetune_epoch in range(finetune_inference_epochs):
                     trainer.epoch = epoch + finetune_epoch
                     trainer._run_train_epoch(
@@ -361,7 +365,6 @@ def main(
             if finetune_inference:
                 trainer.wae.module.load_state_dict(wae_dict)
                 trainer.opt_wae.load_state_dict(wae_opt_dict)
-                trainer.opt_cls.load_state_dict(cls_opt_dict)
                 trainer.accumulated_z = accumulated_z
                 trainer.accumulated_prior = accumulated_prior
                 trainer.accumulated_labels = accumulated_labels
@@ -396,7 +399,6 @@ def main(
                 # Save pre-finetune model/opt weights
                 wae_dict = trainer.wae.module.state_dict()
                 wae_opt_dict = trainer.opt_wae.state_dict()
-                cls_opt_dict = trainer.opt_cls.state_dict()
                 accumulated_z = trainer.accumulated_z
                 accumulated_prior = trainer.accumulated_prior
                 accumulated_labels = trainer.accumulated_labels
@@ -406,7 +408,8 @@ def main(
                 # Set to train and change LR to validate settings
                 trainer._set_to_train()
                 trainer.opt_wae.param_groups[0]['lr'] = LR_val_wae
-                trainer.opt_cls.param_groups[0]['lr'] = LR_val_cls
+                trainer.opt_wae.param_groups[1]['lr'] = LR_val_prior
+                trainer.opt_wae.param_groups[2]['lr'] = LR_val_cls
                 trainer._run_train_epoch(
                     dataloader_curr = trainer.valfinetune_dataloader, 
                     dataset_string = "valfinetune",
@@ -430,7 +433,6 @@ def main(
             if val_finetine_bool:
                 trainer.wae.module.load_state_dict(wae_dict)
                 trainer.opt_wae.load_state_dict(wae_opt_dict)
-                trainer.opt_cls.load_state_dict(cls_opt_dict)
                 trainer.accumulated_z = accumulated_z
                 trainer.accumulated_prior = accumulated_prior
                 trainer.accumulated_labels = accumulated_labels
@@ -455,7 +457,6 @@ class Trainer:
         valfinetune_dataloader: DataLoader,
         valunseen_dataloader: DataLoader,
         opt_wae: torch.optim.Optimizer,
-        opt_cls: torch.optim.Optimizer,
         wandb_run,
         model_dir: str,
         val_every: int,
@@ -495,7 +496,6 @@ class Trainer:
         self.valfinetune_dataloader = valfinetune_dataloader
         self.valunseen_dataloader = valunseen_dataloader
         self.opt_wae = opt_wae
-        self.opt_cls = opt_cls
         self.model_dir = model_dir
         self.val_every = val_every
         self.inference_every = inference_every
@@ -559,7 +559,6 @@ class Trainer:
 
     def _zero_all_grads(self):
         self.opt_wae.zero_grad()
-        self.opt_cls.zero_grad()
 
     def _save_checkpoint(self, epoch, delete_old_checkpoints, **kwargs):
             
@@ -580,14 +579,10 @@ class Trainer:
         check_path = check_core_dir + "/checkpoint_epoch" + str(epoch) + "_wae.pt"
         torch.save(ckp, check_path)
 
-        # Save optimizers
+        # Save optimizer
         opt_ckp = self.opt_wae.state_dict()
         opt_path = check_core_dir + "/checkpoint_epoch" + str(epoch) + "_wae_opt.pt"
         torch.save(opt_ckp, opt_path)
-
-        opt_ckp_cls = self.opt_cls.state_dict()
-        opt_path_cls = check_core_dir + "/checkpoint_epoch" + str(epoch) + "_cls_opt.pt"
-        torch.save(opt_ckp_cls, opt_path_cls)
 
         # Save Running Latents 
         latents_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_running_latents.pkl"
@@ -834,25 +829,26 @@ class Trainer:
             hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
         
             # For Training: Update the Regulizer multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-            self.reg_weight, self.mog_weight_reg_beta, self.wasserstein_alpha, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
+            self.reg_weight, self.mog_weight_reg_beta, self.wasserstein_alpha, self.curr_LR_core, self.curr_LR_prior, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
             
             if (not val_finetune) & (not val_unseen): 
                 self.opt_wae.param_groups[0]['lr'] = self.curr_LR_core
-                self.opt_cls.param_groups[0]['lr'] = self.curr_LR_cls
+                self.opt_wae.param_groups[1]['lr'] = self.curr_LR_prior
+                self.opt_wae.param_groups[2]['lr'] = self.curr_LR_cls
             
             else: # For validation, do not consider classifier
                 self.classifier_alpha = 0
-                self.opt_cls.param_groups[0]['lr'] = 0
+                self.opt_wae.param_groups[2]['lr'] = 0
 
             # Check for NaNs
             if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
 
             ### WAE ENCODER: 1-shifted
             # latent, class_probs_mean_of_latent, attW = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
-            latent, prior, prior_weights, class_probs_mean_of_latent, attW = self.wae(x, reverse=False, alpha=self.classifier_alpha) # No shift if not causal masking
+            latent, prior, prior_weights, class_probs_mean_of_latent, attW = self.wae(x, reverse=False, alpha=self.classifier_alpha) # No 1-shift if not causal masking
             
-            ### WAE DECODER: 1-shifted & Transformer Encoder Concat Shifted (Need to prime first embedding with past context)
+            ### WAE DECODER
             x_hat = self.wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
 
             # Pseudobatch the latent for regularization loss
@@ -897,7 +893,6 @@ class Trainer:
                 self._zero_all_grads()
                 loss.backward()    
                 self.opt_wae.step()
-                self.opt_cls.step()
                 self._update_reg_window(latent_batched, prior_batched) # Update the buffers & detach() 
 
             # Realtime terminal info and WandB 
@@ -925,7 +920,8 @@ class Trainer:
                         train_adversarial_loss=adversarial_loss,
                         train_sparse_loss=sparse_loss,
                         train_LR_wae=self.opt_wae.param_groups[0]['lr'], 
-                        train_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                        train_LR_mogWeights=self.opt_wae.param_groups[1]['lr'],
+                        train_LR_classifier=self.opt_wae.param_groups[2]['lr'],
                         train_reg_Beta=self.reg_weight, 
                         train_mog_weight_reg_loss = mog_weight_reg_loss,
                         train_mog_weight_reg_beta = self.mog_weight_reg_beta,
@@ -945,7 +941,8 @@ class Trainer:
                         val_finetune_reg_loss=reg_loss, 
                         val_finetune_sparse_loss=sparse_loss,
                         val_finetune_LR_wae=self.opt_wae.param_groups[0]['lr'], 
-                        val_finetune_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                        val_finetune_LR_mogWeights=self.opt_wae.param_groups[1]['lr'],
+                        val_finetune_LR_classifier=self.opt_wae.param_groups[2]['lr'],
                         val_finetune_reg_Beta=self.reg_weight, 
                         val_finetune_sinkhorn_blur=self.sinkhorn_blur,
                         val_finetune_ReconWeight=self.recon_weight,
@@ -961,7 +958,8 @@ class Trainer:
                         val_unseen_reg_loss=reg_loss, 
                         val_unseen_sparse_loss=sparse_loss,
                         val_unseen_LR_wae=self.opt_wae.param_groups[0]['lr'], 
-                        val_unseen_LR_classifier=self.opt_cls.param_groups[0]['lr'], 
+                        val_unseen_LR_mogWeights=self.opt_wae.param_groups[1]['lr'],
+                        val_unseen_LR_classifier=self.opt_wae.param_groups[2]['lr'],
                         val_unseen_reg_Beta=self.reg_weight, 
                         val_unseen_sinkhorn_blur=self.sinkhorn_blur,
                         val_unseen_ReconWeight=self.recon_weight,

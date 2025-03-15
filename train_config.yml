@@ -2,7 +2,10 @@
 
 num_gpus: 2
  
-# Dataset formation variables
+# DATASET
+continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+print_dataset_bargraphs: False # Typically set to False if not the first run of model, but may want true if adding new patients
+cont_train_model_dir: '/media/glommy1/model_runs/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/salmon_Fri_Mar_14_12_23_17_2025' 
 pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats' #   2pats'     # 10pats' 
 train_val_pat_perc: kwargs['train_val_pat_perc'] = [0.90, 0.10] #[0.5, 0.5] # [0.8, 0.2]
 num_freq_bands: 1
@@ -23,24 +26,29 @@ freq_bands_str: 'wholeband' # 1to12Hz_12to59Hz_61to179Hz, wholeband
 intrapatient_dataset_style: 2 # 1 all data (no SPES), 2 all data (with SPES), 3 ONLY SPES
 train_hour_dataset_range: kwargs['train_hour_dataset_range'] = [-1, -1]  # [-1, -1] means all, [X, -1] means from X to end
 rand_name_json: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/utilities/animals.json'
+num_dataloader_workers: 0 # persistent workers will be True if >0, IMPORTANT: DDP observed to be unstable if != 0
+delete_old_checkpoints: True # WIll only keep most recent checkpoint  
+subprocess_num_threads: 1 
 
-# Random data generator (seperate subprocess)
+# RANDOM DATA GENERATOR
 env_python_path: '/home/graham/anaconda3/envs/pytorch_env2/bin/python'
 random_gen_script_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/gen_random_data.py'
 num_buffer_batches: kwargs['num_buffer_batches'] = int(kwargs['train_forward_passes'] / kwargs['num_gpus'])   # 512 # Max files to keep in random generator tmp directry 
 num_data_threads: 1 # How many threads to start for each data generator (by each GPU)
 nested_max_workers: 16 # For the get batch subprocess
 
-# Training settings
-continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
-print_dataset_bargraphs: False # Typically set to False if not the first run of model, but may want true if adding new patients
-cont_train_model_dir: '/media/glommy1/model_runs/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/salmon_Fri_Mar_14_12_23_17_2025' 
-inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
+# PLOTTING
+realtime_latent_printing: True
+num_realtime_channels_recon: 1 # Will be batch * this plotted
+realtime_printing_interval_train: 64
+realtime_printing_interval_val: 64
+num_recon_samples: 256 # this will limit how much is shown in recon plots, ERROR if not enough samples, pulls from START and END of transformer sequence 
+num_rand_recon_plots: 4
+num_realtime_dims: 5
+recent_display_iters: 5 # How often to print to console when training & how often to log to WandB
 
-### WAE Model Params ###
+# CORE MODEL: Wasserstein Autoencoder (WAE)
 encode_token_samples: 16 # 8
-
-# Cross atttention embedder
 padded_channels: 256 #input padded to allow for different number of channels, also the top level embed dim
 crattn_embed_dim: 256  # This times encode_token_samples will be transformer dims e.g. 32*32 = 1024
 crattn_num_highdim_heads: 8 # at padding dimension
@@ -49,8 +57,6 @@ crattn_num_lowdim_heads: 8 # at embed dim dimension
 crattn_num_lowdim_layers: 4 # at embed dim dimension
 crattn_max_seq_len: kwargs['crattn_max_seq_len'] = kwargs['encode_token_samples']
 crattn_dropout: 0.1 
-
-# Transformer Encoder
 transformer_dim: kwargs['transformer_dim'] = kwargs['crattn_embed_dim'] * kwargs['encode_token_samples']
 transformer_seq_length: 64
 max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
@@ -61,137 +67,93 @@ multiple_of: 256
 ffn_dim_multiplier: 0.4 # Default is 1 to make FF layers account for ~2/3 of total parameter count
 attention_dropout: 0.1               
 encoder_transformer_activation: "silu"
-
-# WAE-Layers Encoder
-# num_encode_concat_transformer_tokens: 1
 transformer_start_pos: 0 # Not currently coded up to work if > 0
 top_dims: kwargs['top_dims'] = kwargs['transformer_dim'] # kwargs['num_encode_concat_transformer_tokens'] * kwargs['transformer_dim']
 hidden_dims: 8192 # 4096
 latent_dim: 4096 # 2048
-
-# DECODER
-# Non-autoregressive transformer
 decoder_base_dims: 512 # top dim of decoder is [encode_token_samples * decoder_base_dims]
-
-# Classifier
-classifier_hidden_dims: [2048, 1024, 512, 256]
-classifier_num_pats: 40 #    ########   Hardcoded  ########
-classifier_dropout: 0.1
-
-# WAE Optimizer hyperparameters
-core_weight_decay: 0.1
-adamW_beta1: 0.9
-adamW_beta2: 0.95 
-
-# Classifier ptimizer hyperparameters
-classifier_weight_decay: 0
-classifier_adamW_beta1: 0.9
-classifier_adamW_beta2: 0.999
-
-# Patient hash embedding
 hash_output_range: kwargs['hash_output_range'] = (0, 0.5)  # tuple, modify based on approximate range of prior
 train_num_rand_hashes: 1  # Number of random channel orders, with deterministic hash embedding for each, a form of augmentation
-autoreg_num_rand_hashes: 1 # Need to be only one to work? in theory should work with many?
-val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
-
-# Training settings
-random_pulls_in_batch: 8 # BATCHSIZE
-train_forward_passes: 2048 # Independent of batchsize, just random pulls of data
-valfinetune_forward_passes: 2048 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes
-valunseen_forward_passes: 2048 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes
-epochs_to_train: 999999 
-
-# Validating settings
-val_finetine_bool: True # If False, will skip finetuning and just validate on unseen portion of validation patients 
-val_every: 99999 # Will only do one epoch, so update 'valfinetune_forward_passes' if want to finetune longer
-val_finetune_hour_dataset_range: kwargs['val_finetune_hour_dataset_range'] = [2, 50]
-val_unseen_hour_dataset_range: kwargs['val_unseen_hour_dataset_range'] = [50, -1]
-LR_val_wae: kwargs['LR_val_wae'] = 1e-7 # SHould probably set finetuning LR to about min of training LR if pulsing train LR, or down 1-2 orders of magnitude if train LR is constant (i.e. not pulsing)
-LR_val_cls: kwargs['LR_val_cls'] = 1e-4
-
-# Inference settings
-finetune_inference: True # If False, will just run inference on model trained on only 'train' patients
-finetune_inference_epochs: 5 # NOTE: will  increase the epoch count overall to keep track of finetuning inference
-inference_every: 99999
-inference_batch_mult: 1 # Will enable higher inference throughput, but at cost of more VRAM at all times because max-batch_size needs to be increased for initialization of Transformer
-
-# Realtime plotting
-realtime_latent_printing: True
-num_realtime_channels_recon: 1 # Will be batch * this plotted
-realtime_printing_interval_train: 64
-realtime_printing_interval_val: 64
-num_recon_samples: 256 # this will limit how much is shown in recon plots, ERROR if not enough samples, pulls from START and END of transformer sequence 
-num_rand_recon_plots: 4
-num_realtime_dims: 5
-recent_display_iters: 5 # How often to print to console when training & how often to log to WandB
-
-
-### Dynamic Weights ###
-
-# Beta WAE controls
-Reg_max: kwargs['Reg_max'] = 1e-2 # 1e-3 # 0.01 # 1e5 # 0.01 #0.1
-Reg_min: kwargs['Reg_min'] = 0
-Reg_stall_epochs: 0 # Min Reg weight rise until stall is complete
-Reg_epochs_AT_max: 15 # Maybe coincide with the wasserstein order switch epoch?
-Reg_epochs_TO_max: 5
-
-# Prior running window & Sinkhorn
-random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
-total_collected_latents: 32768  # If 'random_observed_sampling' is False, this buffer just needs to be long enough to accomodate 'running_reg_passes', but longer will let you see more observed in each epoch's plot
-running_reg_passes: 4096 # kwargs['running_reg_passes'] = kwargs['random_pulls_in_batch'] *  kwargs['transformer_seq_length'] # Memory of observed latents when calculating Wasserstein loss (This + [Batch * 'transformer_seq_length'] will be total for Sinkhorn loss), if This == [Batch * 'transformer_seq_length'], then only 1 forward pass is used for reg loss
-sinkhorn_blur: kwargs['sinkhorn_blur'] = 0.0001 # This is the BATCH/SMALL scale blur updates
-random_observed_numplots: 4
-
-# Mixture of Guassian (MoG)
-num_MoG_components: 5
-MoG_std_scale_init: 0.1 # how fat to initialize the guassians
-MoG_mean_scale_init: 0.75
-mog_weight_reg_beta_static: 1
-
-# Wasserstein Taper between W2 --> W1, controlled by alpha value
-wasserstein_taper_epochs: 10 # when to flip from Wasserstein 2 --> 1, currently cannot do continous taper due to no efficient contonous wasserstein order calculation on PyTorhc (GeomLoss is just 1 or 2, and my custom methods run out of Cuda Memory)
-
-# Sparsity weight control
-Sparse_max: kwargs['Sparse_max'] = 1e-7 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
-Sparse_min: kwargs['Sparse_min'] = 0
-Sparse_epochs_AT_max: 99999
-Sparse_epochs_TO_max: 0
-
-# Classifier (Varies alpha of reverse gradient flow, not weight)
-classifier_weight: 1 # OVERALL ADVERSARIAL training: i.e. reverse gradient (WAE) AND classifier power. # Should probably get into same ballpark as recon and Reg
-classifier_max: kwargs['classifier_max'] = 0 # 1 # 
-classifier_min: kwargs['classifier_min'] = 0 # 0.001
-classifier_epochs_AT_max: 5
-classifier_epochs_TO_max: 5
-classifier_rise_first: False
-
-### Static Weights ###
 recon_weight: 3 # 3
-
-### Dynamic Learning Rates ###
-
-# WAE learning rate controls
 LR_max_core: kwargs['LR_max_core'] = 1e-5 # 5e-7
 LR_min_core: kwargs['LR_min_core'] = 1e-5 # 1e-8 
 LR_epochs_TO_max_core: 1
 LR_epochs_AT_max_core: 1
 manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
 manual_step_size_core: 99999
+core_weight_decay: 0.1
+adamW_beta1: 0.9
+adamW_beta2: 0.95 
 
-# Classifier LR Controls
-LR_min_classifier: kwargs['LR_min_classifier'] = 1e-5 # 5e-7
-# TODO implement scheduler 
+# PRIOR - Mixture of Guassians (MoG)
+num_MoG_components: 4
+MoG_std_scale_init: 0.05 # how fat to initialize the guassians
+MoG_mean_scale_init: 2.5 # This is a min and max of means, they will be initialized evenly across this range
+mog_weight_reg_beta_static: 0.1
+random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
+total_collected_latents: 32768  # If 'random_observed_sampling' is False, this buffer only needs to be long enough to accomodate 'running_reg_passes', but longer will let you see more observed in each epoch's plot
+running_reg_passes: 4096 # kwargs['running_reg_passes'] = kwargs['random_pulls_in_batch'] *  kwargs['transformer_seq_length'] # Memory of observed latents when calculating Wasserstein loss (This + [Batch * 'transformer_seq_length'] will be total for Sinkhorn loss), if This == [Batch * 'transformer_seq_length'], then only 1 forward pass is used for reg loss
+sinkhorn_blur: kwargs['sinkhorn_blur'] = 0.01 # This is the 'running_reg_passes' scale blur updates
+wasserstein_taper_epochs: 100 # when to flip from Wasserstein 2 --> 1, currently cannot do continous taper due to no efficient contonous wasserstein order calculation on PyTorhc (GeomLoss is just 1 or 2, and my custom methods run out of Cuda Memory)
+random_observed_numplots: 4 # On the end of epoch plot
+Reg_max: kwargs['Reg_max'] = 1e-3 # 1e-3 # 0.01 # 1e5 # 0.01 #0.1
+Reg_min: kwargs['Reg_min'] = 0
+Reg_stall_epochs: 0 # Min Reg weight rise until stall is complete
+Reg_epochs_AT_max: 15 # Maybe coincide with the wasserstein order switch epoch?
+Reg_epochs_TO_max: 5
+LR_max_prior: kwargs['LR_max_prior'] = 5e-6
+prior_weight_decay: 0
+prior_adamW_beta1: 0.9
+prior_adamW_beta2: 0.999
 
-delete_old_checkpoints: True   
+# CLASSIFIER - Adversarial
+# Not currently being integrated in backprop (beyond the classifer weights themselves, i.e. reverse gradient alpha is 0)
+classifier_hidden_dims: [2048, 1024, 512, 256]
+classifier_num_pats: 40 #    ########   Hardcoded  ########
+classifier_dropout: 0.1
+classifier_weight: 1 # OVERALL ADVERSARIAL training: i.e. reverse gradient (WAE) AND classifier power. # Should probably get into same ballpark as recon and Reg
+classifier_max: kwargs['classifier_max'] = 0 # 1 # 
+classifier_min: kwargs['classifier_min'] = 0 # 0.001
+classifier_epochs_AT_max: 5
+classifier_epochs_TO_max: 5
+classifier_rise_first: False
+LR_min_classifier: kwargs['LR_min_classifier'] = 1e-4 # 5e-7
+classifier_weight_decay: 0
+classifier_adamW_beta1: 0.9
+classifier_adamW_beta2: 0.999
 
-# Multiprocessing 
-subprocess_num_threads: 1 
-num_dataloader_workers: 0 # persistent workers will be True if >0, DDP observed to be unstable if != 0
+# SPARSITY
+# Not currently being integrated in backprop
+Sparse_max: kwargs['Sparse_max'] = 1e-7 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
+Sparse_min: kwargs['Sparse_min'] = 0
+Sparse_epochs_AT_max: 99999
+Sparse_epochs_TO_max: 0
 
-# Inference file saves
-# Both window and stride must be multiple of input seconds to encoder 
-# (i.e. encode_token_samples * transformer_seq_length / FS)
-inference_window_sec_list: [64, 64, 16, 16, 2] # [64, 64, 64, 32, 16, 16, 8, 2] 
-inference_stride_sec_list: [64, 2,  16, 2,  2] # [64, 32, 16, 16, 16, 8,  4, 2] 
+# TRAINING 
+random_pulls_in_batch: 8 # BATCHSIZE
+train_forward_passes: 2048 # Independent of batchsize, just random pulls of data
+epochs_to_train: 999999 
+
+# VALIDATION
+valfinetune_forward_passes: 2048 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes
+valunseen_forward_passes: 2048 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes
+val_finetine_bool: True # If False, will skip finetuning and just validate on unseen portion of validation patients 
+val_every: 99999 # Will only do one epoch, so update 'valfinetune_forward_passes' if want to finetune longer
+val_finetune_hour_dataset_range: kwargs['val_finetune_hour_dataset_range'] = [2, 50]
+val_unseen_hour_dataset_range: kwargs['val_unseen_hour_dataset_range'] = [50, -1]
+LR_val_wae: kwargs['LR_val_wae'] = 1e-7 # SHould probably set finetuning LR to about min of training LR if pulsing train LR, or down 1-2 orders of magnitude if train LR is constant (i.e. not pulsing)
+LR_val_prior: kwargs['LR_val_prior'] = 1e-7
+LR_val_cls: kwargs['LR_val_cls'] = 1e-4
+val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
+
+# INFERENCE
+finetune_inference: True # If False, will just run inference on model trained on only 'train' patients
+finetune_inference_epochs: 5 # NOTE: will  increase the epoch count overall to keep track of finetuning inference
+inference_every: 99999
+inference_batch_mult: 1 # Will enable higher inference throughput, but at cost of more VRAM at all times because max-batch_size needs to be increased for initialization of Transformer
+inference_window_sec_list: [64, 64, 16, 16, 2] 
+inference_stride_sec_list: [64, 2,  16, 2,  2] # Both window and stride must be multiple of input seconds to encoder,  (i.e. encode_token_samples * transformer_seq_length / FS)
+
+
 
 
