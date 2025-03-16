@@ -35,194 +35,6 @@ def gaussian_tapered_array(num_MoG_components):
     
     return gaussian
 
-class GaussianMixturePrior(nn.Module):
-    def __init__(self, latent_dim, num_MoG_components, MoG_std_scale_init, MoG_mean_scale_init, **kwargs):
-        super(GaussianMixturePrior, self).__init__()
-        self.latent_dim = latent_dim
-        self.num_MoG_components = num_MoG_components
-
-        # Initialize the Gaussians with means spread evenly across the scale parameter
-        MoG_means = torch.linspace(-MoG_mean_scale_init, MoG_mean_scale_init, num_MoG_components, dtype=torch.float32)
-
-        # Learnable parameters for the mixture of Gaussians
-        self.means = nn.Parameter(MoG_means)  # (num_MoG_components,)
-        self.stds = nn.Parameter(torch.ones(num_MoG_components, dtype=torch.float32) * MoG_std_scale_init)  # (num_MoG_components,)
-
-        # Mixing coefficients per Gaussian component (shared across dimensions)
-        MoG_weights = gaussian_tapered_array(num_MoG_components)
-        self.log_weights = nn.Parameter(torch.ones(num_MoG_components, dtype=torch.float32) * MoG_weights)  # (num_MoG_components,)
-
-    def reparameterized_sample(self, num_samples, temperature=0.1):
-        device = self.means.device
-
-        # Convert logits to probabilities (softmax across components)
-        weights = torch.softmax(self.log_weights, dim=0,  dtype=torch.float32) + 1e-8  # (num_MoG_components,)
-
-        # Generate Gumbel noise
-        gumbel_noise = -torch.log(-torch.log(torch.rand(num_samples, self.num_MoG_components, dtype=torch.float32, device=device)))  # (num_samples, num_MoG_components)
-
-        # Compute Gumbel-Softmax logits
-        logits = (torch.log(weights).unsqueeze(0) + gumbel_noise) / temperature  # (num_samples, num_MoG_components)
-
-        # Compute Gumbel-Softmax probabilities
-        component_probs = torch.softmax(logits, dim=1)  # (num_samples, num_MoG_components)
-
-        # Generate samples from each Gaussian component
-        eps = torch.randn(num_samples, self.num_MoG_components, self.latent_dim, dtype=torch.float32, device=device)  # (num_samples, num_MoG_components, latent_dim)
-        component_samples = self.means.unsqueeze(0).unsqueeze(-1) + self.stds.unsqueeze(0).unsqueeze(-1) * eps  # (num_samples, num_MoG_components, latent_dim)
-
-        # Weight the samples from each component using the Gumbel-Softmax probabilities
-        weighted_samples = component_probs.unsqueeze(-1) * component_samples  # (num_samples, num_MoG_components, latent_dim)
-
-        # Sum the weighted samples to get the final mixture samples
-        prior_samples = weighted_samples.sum(dim=1)  # (num_samples, latent_dim)
-
-        return prior_samples
-
-# class GaussianMixturePrior(nn.Module):
-#     def __init__(self, latent_dim, num_MoG_components, MoG_std_scale_init, MoG_mean_scale_init, **kwargs):
-#         super(GaussianMixturePrior, self).__init__()
-#         self.latent_dim = latent_dim
-#         self.num_MoG_components = num_MoG_components
-
-#         # Initialize the GUassians in a standard way as means spread evenly across scale parameter, same STD for all
-#         MoG_means = torch.linspace(-MoG_mean_scale_init, MoG_mean_scale_init, num_MoG_components)
-
-#         # Learnable parameters for the mixture of Gaussians
-#         self.means = nn.Parameter(torch.ones(num_MoG_components) * MoG_means)  # (num_MoG_components,)
-#         self.stds = nn.Parameter(torch.ones(num_MoG_components) * MoG_std_scale_init)  # (num_MoG_components,)
-
-#         # Mixing coefficients per Gaussian component (shared across dimensions)
-#         MoG_weight = 1/num_MoG_components # Initialzie to even weights
-#         self.log_weights = nn.Parameter(torch.ones(num_MoG_components) * MoG_weight)  # (num_MoG_components,)
-
-#     def reparameterized_sample(self, num_samples, temperature=0.1):
-#         device = self.means.device
-
-#         # Convert logits to probabilities (softmax across components)
-#         weights = torch.softmax(self.log_weights, dim=0) + 1e-8  # (num_MoG_components,)
-
-#         # Generate Gumbel noise
-#         gumbel_noise = -torch.log(-torch.log(torch.rand(num_samples, self.num_MoG_components, device=device)))  # (num_samples, num_MoG_components)
-
-#         # Expand weights to match the shape of Gumbel noise
-#         log_weights = torch.log(weights).unsqueeze(0)  # (1, num_MoG_components)
-
-#         # Compute Gumbel-Softmax logits
-#         logits = (log_weights + gumbel_noise) / temperature  # (num_samples, num_MoG_components)
-
-#         # Compute Gumbel-Softmax probabilities
-#         component_probs = torch.softmax(logits, dim=1)  # (num_samples, num_MoG_components)
-
-#         # Generate samples from each Gaussian component (shared across dimensions)
-#         eps = torch.randn(num_samples, self.num_MoG_components, self.latent_dim, device=device)  # (num_samples, num_MoG_components, latent_dim)
-#         component_samples = self.means.unsqueeze(0).unsqueeze(-1) + self.stds.unsqueeze(0).unsqueeze(-1) * eps  # (num_samples, num_MoG_components, latent_dim)
-
-#         # Weight the samples from each component using the Gumbel-Softmax probabilities
-#         weighted_samples = component_probs.unsqueeze(-1) * component_samples  # (num_samples, num_MoG_components, latent_dim)
-
-#         # Sum the weighted samples to get the final mixture samples
-#         prior_samples = weighted_samples.sum(dim=1)  # (num_samples, latent_dim)
-
-#         return prior_samples
-
-    def sample(self, num_samples):
-        """Generate samples from the true mixture of Gaussians."""
-        return self.reparameterized_sample(num_samples)
-
-# class GaussianMixturePrior(nn.Module):
-#     def __init__(self, latent_dim, num_MoG_components, MoG_std_scale_init, MoG_mean_scale_init, **kwargs):
-#         super(GaussianMixturePrior, self).__init__()
-#         self.latent_dim = latent_dim
-#         self.num_MoG_components = num_MoG_components
-
-#         # Learnable parameters for the mixture of Gaussians
-#         self.means = nn.Parameter(torch.randn(num_MoG_components) * MoG_mean_scale_init)  # (num_MoG_components,)
-#         self.stds = nn.Parameter(torch.ones(num_MoG_components) * MoG_std_scale_init)  # (num_MoG_components,)
-
-#         # Mixing coefficients per Gaussian component (per dimension)
-#         self.log_weights = nn.Parameter(torch.randn(num_MoG_components, latent_dim))  # (num_MoG_components, latent_dim)
-
-#     def reparameterized_sample(self, num_samples, temperature=0.1):
-#         device = self.means.device
-
-#         # Convert logits to probabilities for each latent dimension (softmax across components)
-#         weights = torch.softmax(self.log_weights, dim=0) + 1e-8  # (num_MoG_components, latent_dim)
-
-#         # Generate Gumbel noise for each latent dimension
-#         gumbel_noise = -torch.log(-torch.log(torch.rand(num_samples, self.num_MoG_components, self.latent_dim, device=device)))  # (num_samples, num_MoG_components, latent_dim)
-
-#         # Expand weights to match the shape of Gumbel noise
-#         log_weights = torch.log(weights).unsqueeze(0)  # (1, num_MoG_components, latent_dim)
-
-#         # Compute Gumbel-Softmax logits
-#         logits = (log_weights + gumbel_noise) / temperature  # (num_samples, num_MoG_components, latent_dim)
-
-#         # Compute Gumbel-Softmax probabilities
-#         component_probs = torch.softmax(logits, dim=1)  # (num_samples, num_MoG_components, latent_dim)
-
-#         # Generate samples from each Gaussian component (shared across dimensions)
-#         eps = torch.randn(num_samples, self.num_MoG_components, self.latent_dim, device=device)  # (num_samples, num_MoG_components, latent_dim)
-#         component_samples = self.means.unsqueeze(0).unsqueeze(-1) + self.stds.unsqueeze(0).unsqueeze(-1) * eps  # (num_samples, num_MoG_components, latent_dim)
-
-#         # Weight the samples from each component using the Gumbel-Softmax probabilities
-#         weighted_samples = component_probs * component_samples  # (num_samples, num_MoG_components, latent_dim)
-
-#         # Sum the weighted samples to get the final mixture samples
-#         prior_samples = weighted_samples.sum(dim=1)  # (num_samples, latent_dim)
-
-#         return prior_samples
-
-#     def sample(self, num_samples):
-#         """Generate samples from the true mixture of Gaussians."""
-#         return self.reparameterized_sample(num_samples)
-
-# class GaussianMixturePrior(nn.Module):
-#     def __init__(self, latent_dim, num_MoG_components, MoG_std_scale_init, MoG_mean_scale_init, **kwargs):
-#         super(GaussianMixturePrior, self).__init__()
-#         self.latent_dim = latent_dim
-#         self.num_MoG_components = num_MoG_components
-
-#         # Learnable parameters for the mixture of Gaussians
-#         self.means = nn.Parameter(torch.randn(num_MoG_components, latent_dim) * MoG_mean_scale_init)  # (num_MoG_components, latent_dim)
-#         self.stds = nn.Parameter(torch.ones(num_MoG_components, latent_dim) * MoG_std_scale_init)  # (num_MoG_components, latent_dim)
-
-#         # Mixing coefficients per Gaussian component (per dimension)
-#         self.log_weights = nn.Parameter(torch.randn(num_MoG_components, latent_dim))  # (num_MoG_components, latent_dim)
-
-#     def reparameterized_sample(self, num_samples, temperature=0.1):
-#         device = self.means.device
-
-#         # Convert logits to probabilities for each latent dimension (softmax across components)
-#         weights = torch.softmax(self.log_weights, dim=0) + 1e-8  # (num_MoG_components, latent_dim)
-
-#         # Generate Gumbel noise for each latent dimension
-#         gumbel_noise = -torch.log(-torch.log(torch.rand(num_samples, self.num_MoG_components, self.latent_dim, device=device)))  # (num_samples, num_MoG_components, latent_dim)
-
-#         # Expand weights to match the shape of Gumbel noise
-#         log_weights = torch.log(weights).unsqueeze(0)  # (1, num_MoG_components, latent_dim)
-
-#         # Compute Gumbel-Softmax logits
-#         logits = (log_weights + gumbel_noise) / temperature  # (num_samples, num_MoG_components, latent_dim)
-
-#         # Compute Gumbel-Softmax probabilities
-#         component_probs = torch.softmax(logits, dim=1)  # (num_samples, num_MoG_components, latent_dim)
-
-#         # Generate samples from each Gaussian component
-#         eps = torch.randn(num_samples, self.num_MoG_components, self.latent_dim, device=device)  # (num_samples, num_MoG_components, latent_dim)
-#         component_samples = self.means.unsqueeze(0) + self.stds.unsqueeze(0) * eps  # (num_samples, num_MoG_components, latent_dim)
-
-#         # Weight the samples from each component using the Gumbel-Softmax probabilities
-#         weighted_samples = component_probs * component_samples  # (num_samples, num_MoG_components, latent_dim)
-
-#         # Sum the weighted samples to get the final mixture samples
-#         prior_samples = weighted_samples.sum(dim=1)  # (num_samples, latent_dim)
-
-#         return prior_samples
-                
-#     def sample(self, num_samples):
-#         """Generate samples from the true mixture of Gaussians."""
-#         return self.reparameterized_sample(num_samples)
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -466,9 +278,9 @@ class AdversarialClassifier(nn.Module):
             mu = layer(mu)
         return self.softmax(mu)
 
-class WAE(nn.Module):
+class VAE(nn.Module):
     '''
-    WAE Reverseable Encoder/Decoder 
+    VAE Reverseable Encoder/Decoder 
     '''
     def __init__(
         self, 
@@ -487,7 +299,7 @@ class WAE(nn.Module):
         gpu_id=None,  
         **kwargs):
 
-        super(WAE, self).__init__()
+        super(VAE, self).__init__()
 
         self.gpu_id = gpu_id
         self.encode_token_samples = encode_token_samples
@@ -502,9 +314,6 @@ class WAE(nn.Module):
         self.hidden_dims = hidden_dims
         self.latent_dim = latent_dim 
         self.decoder_base_dims = decoder_base_dims
-
-        # Define learnable prior
-        self.prior = GaussianMixturePrior(self.latent_dim, **kwargs)
 
         # Raw CrossAttention Head
         self.encoder_head = Encoder_TimeSeriesWithCrossAttention(
