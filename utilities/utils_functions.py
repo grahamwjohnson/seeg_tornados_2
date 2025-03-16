@@ -722,7 +722,7 @@ def print_latent_realtime(latent, prior, savedir, epoch, iter_curr, file_name, n
     gs = gridspec.GridSpec(1, 2)
     fig = pl.figure(figsize=(20, 14))
 
-    g1 = sns.jointplot(data=df, x="latent", y="prior", hue="dimension")
+    g1 = sns.jointplot(data=df, x="latent", y="prior", hue="dimension", marginal_kws={'bw_adjust': 0.3})
     xlim = g1.ax_joint.get_xlim()
     ylim = g1.ax_joint.get_ylim()
     fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
