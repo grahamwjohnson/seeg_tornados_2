@@ -615,7 +615,7 @@ def plot_mog_and_encoder_means(gpu_id, mog_means, mog_logvars, mog_weights, enco
         for k in range(K):
             ax.hist(encoder_means_flat[:, k, d], bins=n_bins, alpha=0.5, label=f'Comp {k}')
         ax.axvline(mog_means[:, d].mean(), color='red', linestyle='--', alpha=0.7, label='MoG Prior Mean')
-        ax.set_title(f'Encoder Means (Dim {d})')
+        ax.set_title(f'Encoder Means (Dim {d}) (Color MoGComp)')
         ax.set_xlabel('Mean Value')
         ax.set_ylabel('Frequency')
 
@@ -625,7 +625,7 @@ def plot_mog_and_encoder_means(gpu_id, mog_means, mog_logvars, mog_weights, enco
         for k in range(K):
             ax.hist(encoder_logvars_flat[:, k, d], bins=n_bins, alpha=0.5, label=f'Comp {k}')
         ax.axvline(mog_logvars[:, d].mean(), color='red', linestyle='--', alpha=0.7, label='MoG Prior Logvar')
-        ax.set_title(f'Encoder Logvars (Dim {d})')
+        ax.set_title(f'Encoder Logvars (Dim {d}) (Color MoGComp)')
         ax.set_xlabel('Logvar Value')
         ax.set_ylabel('Frequency')
 
@@ -635,7 +635,7 @@ def plot_mog_and_encoder_means(gpu_id, mog_means, mog_logvars, mog_weights, enco
     for k in range(K):
         ax.hist(encoder_mogpreds_flat[:, k], bins=n_bins, alpha=0.5, label=f'Comp {k}')
         ax.axvline(mog_weights[k], color='red', linestyle='--', alpha=0.7, label=f'MoG Prior Weight (Comp {k})')
-    ax.set_title(f'Encoder MoG Predictions')
+    ax.set_title(f'Encoder MoG Predictions (Color is MoG Component)')
     ax.set_xlabel('Weight Value')
     ax.set_ylabel('Frequency')
 
@@ -719,6 +719,7 @@ def print_latent_realtime(mean, logvar, mogpreds, savedir, epoch, iter_curr, n_b
             ax3.legend()
 
     # Adjust layout and save the plot
+    fig.suptitle("Token-Level MoG-Weighted Means & Logvars: Single Forward Passes")
     pl.tight_layout()
     if not os.path.exists(savedir):
         os.makedirs(savedir)

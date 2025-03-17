@@ -73,7 +73,7 @@ adamW_beta2: 0.95
 
 # PRIOR - VAE
 mog_components: 64 # Categorical sampling of single component with gumbel-softmax trick
-gumbel_softmax_temperature: 20.0 # Higher means softer assignment to MoG, more exploratin of latent space, noisier embeddings
+gumbel_softmax_temperature: 1000.0 # Higher means softer assignment to MoG, more exploratin of latent space, noisier embeddings
 entropy_weight: kwargs['entropy_weight'] = 1e-6 # Helps prevent mode collapse
 repulsion_weight: kwargs['repulsion_weight'] = 1e2 # Helps keep centers of guassians far apart
 random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'

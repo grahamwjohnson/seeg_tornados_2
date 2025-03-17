@@ -474,7 +474,10 @@ class VAE(nn.Module):
         # Right before latent space
         self.mean_encode_layer = nn.Linear(self.hidden_dims, self.mog_components * self.latent_dim, bias=True)  
         self.logvar_encode_layer = nn.Linear(self.hidden_dims, self.mog_components * self.latent_dim, bias=True) 
-        self.mogpreds_layer = nn.Linear(self.hidden_dims, self.mog_components, bias=True)
+        self.mogpreds_layer = nn.Sequential(
+            nn.Linear(self.hidden_dims, self.mog_components, bias=True),
+            nn.SiLU(),
+            RMSNorm(self.mog_components))
 
         # Decoder
         self.decoder = Decoder_MLP(
