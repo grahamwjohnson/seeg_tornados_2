@@ -45,7 +45,7 @@ num_rand_recon_plots: 4
 num_realtime_dims: 5
 recent_display_iters: 5 # How often to print to console when training & how often to log to WandB
 
-# CORE MODEL: Wasserstein Autoencoder (WAE)
+# CORE MODEL: Wasserstein Autoencoder (VAE)
 encode_token_samples: 16 # 8
 padded_channels: 256 #input padded to allow for different number of channels, also the top level embed dim
 crattn_embed_dim: 256  # This times encode_token_samples will be transformer dims e.g. 32*32 = 1024
@@ -82,33 +82,27 @@ core_weight_decay: 0.1
 adamW_beta1: 0.9
 adamW_beta2: 0.95 
 
-# PRIOR - Mixture of Guassians (MoG)
-num_MoG_components: 5
-MoG_std_scale_init: 0.2 # how fat to initialize the guassians
-MoG_mean_scale_init: 2 # This is a min and max of means, they will be initialized evenly across this range
-mog_weight_reg_beta_static: 0
+# PRIOR - VAE
+mog_components: 16
+monte_carlo_samples: 1
+entropy_weight: kwargs['entropy_weight'] = 1e-5 # Of MoG components
+repulsion_weight: kwargs['repulsion_weight'] = 5 # Of MoG components
 random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
 total_collected_latents: 32768  # If 'random_observed_sampling' is False, this buffer only needs to be long enough to accomodate 'running_reg_passes', but longer will let you see more observed in each epoch's plot
-running_reg_passes: 512 # kwargs['running_reg_passes'] = kwargs['random_pulls_in_batch'] *  kwargs['transformer_seq_length'] # Memory of observed latents when calculating Wasserstein loss (This + [Batch * 'transformer_seq_length'] will be total for Sinkhorn loss), if This == [Batch * 'transformer_seq_length'], then only 1 forward pass is used for reg loss
-sinkhorn_blur: kwargs['sinkhorn_blur'] = 0.01 # This is the 'running_reg_passes' scale blur updates, should be approximately the same as the MoG std inits 
-wasserstein_taper_epochs: 100 # when to flip from Wasserstein 2 --> 1, currently cannot do continous taper due to no efficient contonous wasserstein order calculation on PyTorhc (GeomLoss is just 1 or 2, and my custom methods run out of Cuda Memory)
+running_reg_passes: 8192 # kwargs['running_reg_passes'] = kwargs['random_pulls_in_batch'] *  kwargs['transformer_seq_length'] # Memory of observed latents when calculating Wasserstein loss (This + [Batch * 'transformer_seq_length'] will be total for Sinkhorn loss), if This == [Batch * 'transformer_seq_length'], then only 1 forward pass is used for reg loss
 random_observed_numplots: 4 # On the end of epoch plot
-Reg_max: kwargs['Reg_max'] = 1e-2 # 1e-3 # 0.01 # 1e5 # 0.01 #0.1
+Reg_max: kwargs['Reg_max'] = 1e3 # 1e-3 # 0.01 # 1e5 # 0.01 #0.1
 Reg_min: kwargs['Reg_min'] = 0
 Reg_stall_epochs: 0 # Min Reg weight rise until stall is complete
 Reg_epochs_AT_max: 15 # Maybe coincide with the wasserstein order switch epoch?
 Reg_epochs_TO_max: 5
-LR_max_prior: kwargs['LR_max_prior'] = 5e-6
-prior_weight_decay: 0
-prior_adamW_beta1: 0.9
-prior_adamW_beta2: 0.999
 
 # CLASSIFIER - Adversarial
 # Not currently being integrated in backprop (beyond the classifer weights themselves, i.e. reverse gradient alpha is 0)
 classifier_hidden_dims: [2048, 1024, 512, 256]
 classifier_num_pats: 45 #    ########   Hardcoded  ########
 classifier_dropout: 0.1
-classifier_weight: 1 # OVERALL ADVERSARIAL training: i.e. reverse gradient (WAE) AND classifier power. # Should probably get into same ballpark as recon and Reg
+classifier_weight: 1 # OVERALL ADVERSARIAL training: i.e. reverse gradient (VAE) AND classifier power. # Should probably get into same ballpark as recon and Reg
 classifier_max: kwargs['classifier_max'] = 1e-3 
 classifier_min: kwargs['classifier_min'] = 0 
 classifier_epochs_AT_max: 99999
@@ -139,8 +133,7 @@ val_finetine_bool: True # If False, will skip finetuning and just validate on un
 val_every: 99999 # Will only do one epoch, so update 'valfinetune_forward_passes' if want to finetune longer
 val_finetune_hour_dataset_range: kwargs['val_finetune_hour_dataset_range'] = [2, 50]
 val_unseen_hour_dataset_range: kwargs['val_unseen_hour_dataset_range'] = [50, -1]
-LR_val_wae: kwargs['LR_val_wae'] = 1e-7 # SHould probably set finetuning LR to about min of training LR if pulsing train LR, or down 1-2 orders of magnitude if train LR is constant (i.e. not pulsing)
-LR_val_prior: kwargs['LR_val_prior'] = 1e-7
+LR_val_vae: kwargs['LR_val_vae'] = 1e-7 # SHould probably set finetuning LR to about min of training LR if pulsing train LR, or down 1-2 orders of magnitude if train LR is constant (i.e. not pulsing)
 LR_val_cls: kwargs['LR_val_cls'] = 1e-4
 val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
 

@@ -17,24 +17,50 @@ import torch.distributions as dist
 
 '''
 
-def gaussian_tapered_array(num_MoG_components):
-    # Ensure the number of components is odd to have a clear middle value
-    if num_MoG_components % 2 == 0:
-        raise ValueError("num_MoG_components must be an odd number to have a clear middle value.")
-    
-    # Create an array of indices centered around the middle
-    middle_index = num_MoG_components // 2
-    indices = np.arange(num_MoG_components) - middle_index
-    
-    # Create a Gaussian distribution centered at the middle index
-    sigma = num_MoG_components / 6  # Adjust sigma to control the spread of the Gaussian
-    gaussian = np.exp(-(indices ** 2) / (2 * sigma ** 2))
-    
-    # Normalize so that the middle value is 1
-    gaussian /= gaussian[middle_index]
-    
-    return gaussian
+class MoGPrior(nn.Module):
+    def __init__(self, K, D):
+        """
+        Mixture of Gaussians (MoG) prior.
+        K: Number of components
+        D: Latent space dimensionality
+        """
+        super(MoGPrior, self).__init__()
+        self.K = K
+        self.D = D
 
+        # Initialize means, logvars, and weights
+        self.means = nn.Parameter(torch.randn(K, D))  # Shape: (K, D)
+        self.logvars = nn.Parameter(torch.zeros(K, D))  # Shape: (K, D)
+        self.weights = nn.Parameter(torch.ones(K) / K)  # Shape: (K,)
+
+    def forward(self, z):
+        """
+        Compute the log probability of z under the MoG prior.
+        z: Latent variable, shape (batch_size, D)
+        """
+
+        # Expand z to (batch_size, K, D) for broadcasting
+        z = z.unsqueeze(1)  # Shape: (batch_size, 1, D)
+        z = z.expand(-1, self.K, -1)  # Shape: (batch_size, K, D)
+
+        # Compute log probability for each component
+        log_probs = -0.5 * (
+            self.logvars +
+            torch.pow(z - self.means, 2) / torch.exp(self.logvars) +
+            self.D * torch.log(2 * torch.tensor(torch.pi))
+        )  # Shape: (batch_size, K, D)
+
+        # Sum over dimensions to get log probability per component
+        log_probs = log_probs.sum(dim=-1)  # Shape: (batch_size, K)
+
+        # Add log weights and compute log mixture probability
+        log_mixture_probs = torch.log_softmax(self.weights, dim=0)  # Shape: (K,)
+        log_probs = log_probs + log_mixture_probs.unsqueeze(0)  # Shape: (batch_size, K)
+
+        # Log-sum-exp to get the log probability of the mixture
+        log_prob = torch.logsumexp(log_probs, dim=1)  # Shape: (batch_size,)
+
+        return log_prob
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -288,7 +314,6 @@ class VAE(nn.Module):
         padded_channels,
         crattn_embed_dim,
         transformer_seq_length,
-        # num_encode_concat_transformer_tokens,
         transformer_start_pos,
         transformer_dim,
         encoder_transformer_activation,
@@ -296,6 +321,8 @@ class VAE(nn.Module):
         hidden_dims,
         latent_dim, 
         decoder_base_dims,
+        mog_components,
+        monte_carlo_samples,
         gpu_id=None,  
         **kwargs):
 
@@ -315,6 +342,11 @@ class VAE(nn.Module):
         self.latent_dim = latent_dim 
         self.decoder_base_dims = decoder_base_dims
 
+        # Prior
+        self.prior = MoGPrior(
+            K = mog_components,
+            D = self.latent_dim)
+
         # Raw CrossAttention Head
         self.encoder_head = Encoder_TimeSeriesWithCrossAttention(
             padded_channels=self.padded_channels, 
@@ -333,7 +365,8 @@ class VAE(nn.Module):
         self.norm_hidden = RMSNorm(dim=self.hidden_dims)
 
         # Right before latent space
-        self.final_encode_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  # bias=False
+        self.mean_encode_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True)  
+        self.logvar_encode_layer = nn.Linear(self.hidden_dims, self.latent_dim, bias=True) 
 
         # Decoder
         self.decoder = Decoder_MLP(
@@ -348,6 +381,17 @@ class VAE(nn.Module):
 
         # Non-linearity as needed
         self.silu = nn.SiLU()
+
+    def reparameterize(self, mu, logvar):
+        """
+        Reparameterization trick to sample from N(mu, var) from N(0,1).
+        :param mu: (Tensor) Mean of the latent Gaussian [B x D]
+        :param logvar: (Tensor) Standard deviation of the latent Gaussian [B x D]
+        :return: (Tensor) [B x D]
+        """
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
 
     def forward(self, x, reverse=False, hash_pat_embedding=-1, alpha=None):
 
@@ -368,23 +412,21 @@ class VAE(nn.Module):
             y = self.top_to_hidden(y)
             y = self.silu(y)
             y = self.norm_hidden(y)
-            latent_batched = self.final_encode_layer(y)
-
-            # PRIOR
-            prior_batched = self.prior.sample(latent_batched.shape[0])
-            prior_weights = torch.softmax(self.prior.log_weights, dim=0)
+            mean_batched, logvar_batched = self.mean_encode_layer(y), self.logvar_encode_layer(y)
+            latent_batched = self.reparameterize(mean_batched, logvar_batched)
 
             # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
             # NOTE: you lose the priming tokens needed by transformer
             # latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length - self.num_encode_concat_transformer_tokens - 1, dim=0), dim=0)
             latent = torch.stack(torch.split(latent_batched, self.transformer_seq_length, dim=0), dim=0)
-            prior = torch.stack(torch.split(prior_batched, self.transformer_seq_length, dim=0), dim=0)
+            mean = torch.stack(torch.split(mean_batched, self.transformer_seq_length, dim=0), dim=0)
+            logvar = torch.stack(torch.split(logvar_batched, self.transformer_seq_length, dim=0), dim=0)
 
-            # CLASSIFIER - on the mean of latents
-            mean_of_latent = torch.mean(latent, dim=1)
-            class_probs_mean_of_latent = self.adversarial_classifier(mean_of_latent, alpha)
+            # CLASSIFIER - on the mean of mus
+            mean_of_mean = torch.mean(mean, dim=1)
+            class_probs_mean_of_latent = self.adversarial_classifier(mean_of_mean, alpha)
             
-            return latent, prior, prior_weights, class_probs_mean_of_latent, attW
+            return mean, logvar, latent, class_probs_mean_of_latent, attW
 
         elif reverse == True:
 
@@ -415,17 +457,18 @@ def print_models_flow(x, **kwargs):
     file_class_label = torch.tensor([0]*x.shape[0]) # dummy
 
     # Build the WAE
-    wae = WAE(**kwargs) 
+    vae = VAE(**kwargs) 
 
     # Run through Encoder
     print(f"INPUT TO <ENC>\n"
     f"x:{x.shape}")
-    latent, prior, prior_weights, class_probs, attW = wae(x, reverse=False, alpha=1)  
-    summary(wae, input_size=(x.shape), depth=999, device="cpu")
+    mean, logvar, latent, class_probs, attW = vae(x, reverse=False, alpha=1)  
+    summary(vae, input_size=(x.shape), depth=999, device="cpu")
     print(
     f"latent:{latent.shape}\n"
-    f"prior:{prior.shape}\n"
-    f"prior_weights:{prior_weights.shape}\n"
+    f"mean:{mean.shape}\n"
+    f"logvar:{logvar.shape}\n"
+    f"latent:{latent.shape}\n",
     f"class_probs:{class_probs.shape}\n"
     f"attW:{attW.shape}\n")
 
@@ -439,11 +482,11 @@ def print_models_flow(x, **kwargs):
     print(f"\n\n\nINPUT TO <WAE - Decoder Mode> \n"
     f"z:{latent.shape}\n"
     f"hash_pat_embedding:{hash_pat_embedding.shape}\n")
-    summary(wae, input_data=[latent, True, hash_pat_embedding, hash_channel_order], depth=999, device="cpu")
-    core_out = wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
+    summary(vae, input_data=[latent, True, hash_pat_embedding, hash_channel_order], depth=999, device="cpu")
+    core_out = vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
     print(f"decoder_out:{core_out.shape}\n")
 
-    del wae
+    del vae
 
 if __name__ == "__main__":
 
@@ -460,7 +503,7 @@ if __name__ == "__main__":
 
     x = torch.rand(batchsize, in_channels, data_length, len(kernel_sizes))
 
-    wae = WAE(
+    vae = VAE(
         encode_token_samples=data_length,
         in_channels=in_channels,
         kernel_sizes=kernel_sizes, 
@@ -472,11 +515,5 @@ if __name__ == "__main__":
         **kwargs
     )
 
-    # mean,logvar,z = wae(x, reverse=False)
-    # x_hat = wae(z, reverse=True)
-    # loss_fn = nn.MSELoss(reduction='mean')
-    # recon_loss = loss_fn(x, x_hat) 
-    # recon_loss.backward()
-
-    print(f"Are the weights of encoder and decoder tied? {torch.allclose(wae.top_to_hidden.weight.T, wae.hidden_to_top.weight)}")
+    print(f"Are the weights of encoder and decoder tied? {torch.allclose(vae.top_to_hidden.weight.T, vae.hidden_to_top.weight)}")
 

@@ -47,7 +47,7 @@ from sklearn.metrics import confusion_matrix
 from matplotlib.patches import Rectangle
 
 # Local imports
-from models.WAE import print_models_flow
+from models.VAE import print_models_flow
 
 def fill_hist_by_channel(data_in: np.ndarray, histo_bin_edges: np.ndarray, zero_island_delete_idxs: list):
 
@@ -205,12 +205,9 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         Reg_max, Reg_min, Reg_epochs_TO_max, Reg_epochs_AT_max, Reg_stall_epochs,
-        mog_weight_reg_beta_static,
-        wasserstein_taper_epochs,
         classifier_weight, 
         classifier_max, classifier_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier, 
-        LR_max_prior,
         Sparse_max, Sparse_min, Sparse_epochs_TO_max, Sparse_epochs_AT_max, 
         LR_max_core, LR_min_core, 
         LR_epochs_TO_max_core, LR_epochs_AT_max_core, 
@@ -219,8 +216,6 @@ def LR_and_weight_schedules(
             
     # *** Classifier Weight ###
     classifier_weight = classifier_weight # Dummy pass
-
-    LR_val_prior = LR_max_prior
 
     # *** Classifier LR ###
     LR_val_cls = LR_min_classifier
@@ -243,17 +238,9 @@ def LR_and_weight_schedules(
     else:
         classifier_val = classifier_max
 
-    # *** Wasserstein Order Switch ***
-    if  epoch >= wasserstein_taper_epochs:
-        wasserstein_alpha = 0
-    
-    else: 
-        wasserstein_alpha_taper_iters_total = wasserstein_taper_epochs * iters_per_epoch
-        wasserstein_alpha_taper_iters_curr =  epoch * iters_per_epoch + iter_curr
-        wasserstein_alpha = 1 - wasserstein_alpha_taper_iters_curr/wasserstein_alpha_taper_iters_total
 
     # *** Reg SCHEDULE ***
-    
+
     # If within the stall, send out Reg_min
     if epoch < Reg_stall_epochs:
         Reg_val = Reg_min
@@ -326,7 +313,7 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first 
     )
             
-    return Reg_val, mog_weight_reg_beta_static, wasserstein_alpha, LR_val_core, LR_val_prior, LR_val_cls, Sparse_val, classifier_weight, classifier_val
+    return Reg_val, LR_val_core, LR_val_cls, Sparse_val, classifier_weight, classifier_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
@@ -583,138 +570,188 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier, hash_output
 
 # PLOTTING
 
-def plot_observed_latents(gpu_id, prior, observed, savedir, epoch, random_observed_numplots, bins=200, alpha=0.2, **kwargs):
-    
-    N,D = observed.shape
-    
-    # Across SAMPLES - Sort along dim before
-    sorted1_prior = np.sort(prior, axis=1, kind='quicksort', order=None)
-    sorted1_observed = np.sort(observed, axis=1, kind='quicksort', order=None)
-    
-    prior_meanSample = np.mean(sorted1_prior, axis=0)
-    observed_meanSample = np.mean(sorted1_observed, axis=0)
-    
-    # Across DIMENSIONS - Sort along samples before
-    sorted0_prior = np.sort(prior, axis=0, kind='quicksort', order=None)
-    sorted0_observed = np.sort(observed, axis=0, kind='quicksort', order=None)
-    
-    prior_meanDim = np.mean(sorted0_prior, axis=1)
-    observed_meanDim = np.mean(sorted0_observed, axis=1)
-
-    gs = gridspec.GridSpec(2, random_observed_numplots)
-    fig = pl.figure(figsize=(24, 12))
-
-    # Plot MEAN of samples (i.e. shows dims)
-    ax0 = fig.add_subplot(gs[0, :int(random_observed_numplots/2)])
-    sns.histplot(prior_meanSample, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax0)
-    sns.histplot(observed_meanSample, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax0)
-    ax0.set_title(f"MEAN Across Samples [{N}]")
-    pl.legend()
-
-    # Plot MEAN of dims (i.e. shows samples)
-    ax1 = fig.add_subplot(gs[0, int(random_observed_numplots/2):])
-    sns.histplot(prior_meanDim, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax1)
-    sns.histplot(observed_meanDim, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax1)
-    ax1.set_title(f"MEAN Across Dimensions [{D}]")
-    pl.legend()
-
-    # Add random dimensions in to plot 
-    for i in range(random_observed_numplots):
-        ax_curr = fig.add_subplot(gs[1, i])
-        
-        # Random dim
-        np.random.seed(seed=None) # should replace with Generator for newer code
-        dim_idx = np.random.randint(0, D)
-        data_curr_prior = prior[:, dim_idx]
-        data_curr_observed = observed[:, dim_idx]
-        sns.histplot(data_curr_prior, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax_curr)
-        sns.histplot(data_curr_observed, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax_curr)
-        ax_curr.set_title(f"Dim {dim_idx}")
-        pl.legend()
-
-    if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = f"{savedir}/ObservedLatents_epoch{epoch}_GPU{gpu_id}.jpg"
-    pl.savefig(savename_jpg)
-    pl.close(fig)    
-
-    pl.close('all') 
- 
-    print("Observed Latents Plotted")
-
-def print_prior_params_realtime(epoch, iter_curr, means, stds, log_weights, savedir, num_MoG_components, **kwargs):
+def plot_mog_and_encoder_means(mog_means, mog_logvars, mog_weights, encoder_means, encoder_logvars, savedir, epoch, gpu_id, bins=50, N=5, i=0, **kwargs):
     """
-    Plot the means, stds, and weights of the Gaussian mixture prior.
-    
-    Args:
-        epoch (int): Current epoch.
-        iter_curr (int): Current iteration.
-        means (torch.Tensor): Means of the Gaussian components, shape (num_MoG_components,).
-        stds (torch.Tensor): Standard deviations of the Gaussian components, shape (num_MoG_components,).
-        log_weights (torch.Tensor): Log weights of the Gaussian components, shape (num_MoG_components,).
-        savedir (str): Directory to save the plot.
-        num_MoG_components (int): Number of Gaussian components.
+    Plot the MoG prior means, log-variances, and histogram of encoder means.
+    mog_means: MoG prior means, shape (K, D)
+    mog_logvars: MoG prior log-variances, shape (K, D)
+    encoder_means: Encoder means, shape (batch_size, D)
+    savedir: Directory to save the plot
+    epoch: Current epoch (for filename)
+    gpu_id: GPU ID (for filename)
+    bins: Number of bins for the histogram
+    N: Number of dimensions to show in the right column (default 5)
+    i: Dimension to visualize in the third column (default 0)
     """
-    # Detach and convert parameters to numpy
-    means = means.detach().cpu().numpy()  # (num_MoG_components,)
-    stds = stds.detach().cpu().numpy()  # (num_MoG_components,)
-    weights = torch.softmax(log_weights, dim=0).detach().cpu().numpy()  # (num_MoG_components,)
+    K, D = mog_means.shape
+    batch_size = encoder_means.shape[0]
 
-    # Create a 2x2 grid of subplots
-    fig = plt.figure(figsize=(12, 10))
+    # Create a 3x3 grid of subplots
+    fig, axes = plt.subplots(3, 3, figsize=(30, 12))
 
-    # Define a color palette for the components
-    # colors = plt.cm.tab10.colors  # Use the 'tab10' colormap for distinct colors
-    colors = sns.color_palette("crest", num_MoG_components)  
+    # Left Column: Full-dimensional plots
+    # Top Panel: Heatmap of MoG prior means
+    ax = axes[0, 0]
+    im = ax.imshow(mog_means, aspect='auto', cmap='viridis_r', interpolation='none')
+    ax.set_title(f'MoG Prior Means (K={K}, D={D})')
+    ax.set_xlabel('Dimension (D)')
+    ax.set_ylabel('Component (K)')
+    
+    # Add horizontal lines to separate components
+    for k in range(1, K):
+        ax.axhline(k - 0.5, color='white', linewidth=1)
+    
+    # Add colorbar with discrete ticks
+    cbar = fig.colorbar(im, ax=ax, label='Mean Value')
+    cbar.set_ticks(np.linspace(mog_means.min(), mog_means.max(), num=K))
 
-    # Subplot 0,0: Bar plot of means
-    ax1 = plt.subplot2grid((2, 2), (0, 0))
-    for i in range(num_MoG_components):
-        ax1.bar(i, means[i], color=colors[i], alpha=0.7, label=f"Component {i}")
-    ax1.set_title("Means of Gaussian Components")
-    ax1.set_xlabel("Component Index")
-    ax1.set_ylabel("Mean Value")
-    ax1.set_xticks(np.arange(num_MoG_components))
+    # Middle Panel: Heatmap of MoG prior log-variances
+    ax = axes[1, 0]
+    im = ax.imshow(mog_logvars, aspect='auto', cmap='plasma_r', interpolation='none')
+    ax.set_title(f'MoG Prior Log-Variances (K={K}, D={D})')
+    ax.set_xlabel('Dimension (D)')
+    ax.set_ylabel('Component (K)')
+    
+    # Add horizontal lines to separate components
+    for k in range(1, K):
+        ax.axhline(k - 0.5, color='white', linewidth=1)
+    
+    # Add colorbar with discrete ticks
+    cbar = fig.colorbar(im, ax=ax, label='Log-Variance Value')
+    cbar.set_ticks(np.linspace(mog_logvars.min(), mog_logvars.max(), num=K))
 
-    # Subplot 0,1: Bar plot of stds
-    ax2 = plt.subplot2grid((2, 2), (0, 1))
-    for i in range(num_MoG_components):
-        ax2.bar(i, stds[i], color=colors[i], alpha=0.7, label=f"Component {i}")
-    ax2.set_title("Standard Deviations of Gaussian Components")
-    ax2.set_xlabel("Component Index")
-    ax2.set_ylabel("Standard Deviation")
-    ax2.set_xticks(np.arange(num_MoG_components))
+    # Bottom Panel: Heatmap of histogram of encoder means
+    ax = axes[2, 0]
+    
+    # Compute histogram for each dimension
+    hist_data = []
+    for d in range(D):
+        hist, bin_edges = np.histogram(encoder_means[:, d], bins=bins, range=(-5, 5))  # Adjust range as needed
+        hist_data.append(hist)
+    
+    # Stack histograms into a 2D array (D x bins)
+    hist_data = np.stack(hist_data, axis=0)  # Shape: (D, bins)
+    
+    # Plot the heatmap
+    im = ax.imshow(hist_data.T, aspect='auto', cmap='inferno', extent=[0, D, -5, 5])
+    ax.set_title(f'Histogram of Encoder Means (Batch Size={batch_size}, D={D})')
+    ax.set_xlabel('Dimension (D)')
+    ax.set_ylabel('Mean Value')
+    fig.colorbar(im, ax=ax, label='Frequency')
 
-    # Subplot 1,0:1: Bar plot of weights (shared across dimensions)
-    ax3 = plt.subplot2grid((2, 2), (1, 0), colspan=2)
-    for i in range(num_MoG_components):
-        ax3.bar(i, weights[i], color=colors[i], alpha=0.7, label=f"Component {i}")
-    ax3.set_title("Weights of Gaussian Components (Shared Across Dimensions)")
-    ax3.set_xlabel("Component Index")
-    ax3.set_ylabel("Weight Value")
-    ax3.set_xticks(np.arange(num_MoG_components))
-    ax3.set_ylim(0, 1)  # Ensure weights are between 0 and 1
+    # Middle Column: First N dimensions only
+    # Top Panel: Heatmap of MoG prior means (first N dimensions)
+    ax = axes[0, 1]
+    im = ax.imshow(mog_means[:, :N], aspect='auto', cmap='viridis_r', interpolation='none')
+    ax.set_title(f'MoG Prior Means (K={K}, First {N} Dimensions)')
+    ax.set_xlabel('Dimension (D)')
+    ax.set_ylabel('Component (K)')
+    
+    # Add horizontal lines to separate components
+    for k in range(1, K):
+        ax.axhline(k - 0.5, color='white', linewidth=1)
+    
+    # Add colorbar with discrete ticks
+    cbar = fig.colorbar(im, ax=ax, label='Mean Value')
+    cbar.set_ticks(np.linspace(mog_means.min(), mog_means.max(), num=K))
 
-    # Adjust layout and display the plot
+    # Middle Panel: Heatmap of MoG prior log-variances (first N dimensions)
+    ax = axes[1, 1]
+    im = ax.imshow(mog_logvars[:, :N], aspect='auto', cmap='plasma_r', interpolation='none')
+    ax.set_title(f'MoG Prior Log-Variances (K={K}, First {N} Dimensions)')
+    ax.set_xlabel('Dimension (D)')
+    ax.set_ylabel('Component (K)')
+    
+    # Add horizontal lines to separate components
+    for k in range(1, K):
+        ax.axhline(k - 0.5, color='white', linewidth=1)
+    
+    # Add colorbar with discrete ticks
+    cbar = fig.colorbar(im, ax=ax, label='Log-Variance Value')
+    cbar.set_ticks(np.linspace(mog_logvars.min(), mog_logvars.max(), num=K))
+
+    # Bottom Panel: Heatmap of histogram of encoder means (first N dimensions)
+    ax = axes[2, 1]
+    
+    # Compute histogram for the first N dimensions
+    hist_data_N = []
+    for d in range(N):
+        hist, bin_edges = np.histogram(encoder_means[:, d], bins=bins, range=(-5, 5))  # Adjust range as needed
+        hist_data_N.append(hist)
+    
+    # Stack histograms into a 2D array (N x bins)
+    hist_data_N = np.stack(hist_data_N, axis=0)  # Shape: (N, bins)
+    
+    # Plot the heatmap
+    im = ax.imshow(hist_data_N.T, aspect='auto', cmap='inferno', extent=[0, N, -5, 5])
+    ax.set_title(f'Histogram of Encoder Means (Batch Size={batch_size}, First {N} Dimensions)')
+    ax.set_xlabel('Dimension (D)')
+    ax.set_ylabel('Mean Value')
+    fig.colorbar(im, ax=ax, label='Frequency')
+
+    # Right Column: 1D visualizations for dimension i
+    # Top Plot: 1D visualization of dimension i's prior
+    ax = axes[0, 2]
+    
+    # Sample from the MoG prior for dimension i
+    samples = []
+    for k in range(K):
+        mean_k = mog_means[k, i]
+        weight_k = mog_weights[k]
+        std_k = np.exp(0.5 * mog_logvars[k, i])
+        samples_k = np.random.normal(mean_k, std_k, size=int(1000 * weight_k))  # Sample 1000 points per component
+        samples.append(samples_k)
+    
+    # Plot the samples
+    for k in range(K):
+        ax.hist(samples[k], bins=bins, range=(-5, 5), alpha=0.5, label=f'Component {k+1}')
+    ax.set_title(f'1D Prior for Dimension {i} (K={K})')
+    ax.set_xlabel('Mean Value')
+    ax.set_ylabel('Frequency')
+    ax.legend()
+
+    # Bottom Plot: 1D visualization of encoder means for dimension i
+    ax = axes[1, 2]
+    
+    # Plot the histogram of encoder means for dimension i
+    ax.hist(encoder_means[:, i], bins=bins, range=(-5, 5), color='blue', alpha=0.7)
+    ax.set_title(f'1D Encoder Means for Dimension {i}')
+    ax.set_xlabel('Mean Value')
+    ax.set_ylabel('Frequency')
+
+    # Bottom Plot: 1D visualization of encoder logvars for dimension i
+    ax = axes[2, 2]
+    
+    # Plot the histogram of encoder logvars for dimension i
+    ax.hist(encoder_logvars[:, i], bins=bins, color='purple', alpha=0.7)
+    ax.set_title(f'1D Encoder Logvars for Dimension {i}')
+    ax.set_xlabel('Logvar Value')
+    ax.set_ylabel('Frequency')
+
+    # Adjust layout and display
     plt.tight_layout()
-
+    
     # Save the plot
     if not os.path.exists(savedir):
         os.makedirs(savedir)
-    savename_jpg = f"{savedir}/RealtimePriorParams_epoch{epoch}_iter{iter_curr}.jpg"
+    savename_jpg = f"{savedir}/PriorPosterior_epoch{epoch}_GPU{gpu_id}.jpg"
     plt.savefig(savename_jpg)
     plt.close(fig)
 
-def print_latent_realtime(latent, prior, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
+    plt.close('all')
+    print("Prior and Posterior Plotted")
+
+def print_latent_realtime(mean, logvar, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
 
     dims_to_plot = np.arange(0,num_realtime_dims)
         
-    latent_plot = latent[:, 0:len(dims_to_plot)]
-    prior_plot = prior[:, 0:len(dims_to_plot)]
+    mean_plot = mean[:, 0:len(dims_to_plot)]
+    logvar_plot = logvar[:, 0:len(dims_to_plot)]
 
     df = pd.DataFrame({
-        'dimension': np.tile(dims_to_plot, latent_plot.shape[0]),
-        'latent': latent_plot.flatten(),
-        'prior': prior_plot.flatten(),
+        'dimension': np.tile(dims_to_plot, mean_plot.shape[0]),
+        'mean': mean_plot.flatten(),
+        'logvar': logvar_plot.flatten(),
         # 'pat_labels': np.tile(pat_labels, num_realtime_dims)
     })
 
@@ -722,7 +759,7 @@ def print_latent_realtime(latent, prior, savedir, epoch, iter_curr, file_name, n
     gs = gridspec.GridSpec(1, 2)
     fig = pl.figure(figsize=(20, 14))
 
-    g1 = sns.jointplot(data=df, x="latent", y="prior", hue="dimension", marginal_kws={'bw_adjust': 0.3})
+    g1 = sns.jointplot(data=df, x="mean", y="logvar", hue="dimension", marginal_kws={'bw_adjust': 0.3})
     xlim = g1.ax_joint.get_xlim()
     ylim = g1.ax_joint.get_ylim()
     fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
@@ -2068,8 +2105,8 @@ def initialize_directories(
         print(f"Resuming training after saved epoch: {str(max_epoch)}")
         
         # Construct the proper file names to get CORE state dicts
-        kwargs['wae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_wae.pt'
-        kwargs['wae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_wae_opt.pt'
+        kwargs['vae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae.pt'
+        kwargs['vae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_opt.pt'
 
         # Proper names for running latents 
         kwargs['running_latent_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_latents.pkl'

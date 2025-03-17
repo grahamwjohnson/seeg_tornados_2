@@ -6,6 +6,87 @@ from geomloss import SamplesLoss
 @author: grahamwjohnson
 '''
 
+def mog_entropy_regularization(weights, logvars, entropy_weight, **kwargs):
+    """
+    Computes the entropy of the MoG prior, considering weights and log-variances.
+
+    Args:
+        weights (torch.Tensor): Unnormalized mixture weights (K,).
+        logvars (torch.Tensor): Log-variances of Gaussians (K, D).
+
+    Returns:
+        torch.Tensor: Negative entropy regularization loss.
+    """
+    K, D = logvars.shape  # Number of components, Latent dimension
+
+    # Convert unnormalized weights to probabilities
+    probs = torch.softmax(weights, dim=0)  # Shape: (K,)
+
+    # Gaussian Entropy: H = 0.5 * (D * (1 + log(2π)) + sum(logvars))
+    gaussian_entropies = 0.5 * (D * (1 + torch.log(2 * torch.tensor(torch.pi))) + logvars.sum(dim=-1))  # (K,)
+
+    # Weighted sum of Gaussian entropies
+    mog_entropy = torch.sum(probs * gaussian_entropies)  # Scalar
+
+    return entropy_weight * (-mog_entropy) # Negative entropy (minimization) 
+
+def mog_repulsion_regularization(weights, means, repulsion_weight, **kwargs):
+    """
+    Computes the entropy of the MoG prior, considering weights, means, and log-variances.
+
+    Args:
+        weights (torch.Tensor): Unnormalized mixture weights (K,).
+        means (torch.Tensor): Means of the Gaussian components (K, D).
+
+    Returns:
+        torch.Tensor: Repulsion regularization loss.
+    """
+
+    # Convert unnormalized weights to probabilities
+    probs = torch.softmax(weights, dim=0)  # Shape: (K,)
+
+    # Pairwise Mean Separation (Repulsive Regularization)
+    mean_diffs = means.unsqueeze(0) - means.unsqueeze(1)  # Shape: (K, K, D)
+    mean_sq_dists = torch.sum(mean_diffs ** 2, dim=-1)  # Shape: (K, K)
+    
+    repulsion_term = torch.sum(probs.unsqueeze(0) * probs.unsqueeze(1) * torch.exp(-mean_sq_dists))  # Scalar
+
+    return repulsion_weight * repulsion_term  
+
+def mog_loss(mean, logvar, mog_prior, weight, monte_carlo_samples, **kwargs):
+    """
+    Compute the KL divergence between q(z|x) and the MoG prior p(z).
+    mean: Encoder mean, shape (batch_size, D)
+    logvar: Encoder log-variance, shape (batch_size, D)
+    mog_prior: Instance of MoGPrior
+    z_samples: Number of samples for Monte Carlo approximation
+    """
+    batch_size, D = mean.shape
+
+    # Sample from q(z|x) using the reparameterization trick
+    std = torch.exp(0.5 * logvar)  # Standard deviation
+    eps = torch.randn(monte_carlo_samples, batch_size, D, device=mean.device)  # Random noise
+    z = mean + eps * std  # Shape: (z_samples, batch_size, D)
+
+    # Compute log q(z|x)
+    log_qzx = -0.5 * (
+        logvar +
+        torch.pow(z - mean, 2) / torch.exp(logvar) +
+        D * torch.log(2 * torch.tensor(torch.pi))
+    ).sum(dim=-1)  # Shape: (z_samples, batch_size)
+
+    # Compute log p(z) under the MoG prior
+    log_pz = mog_prior(z.view(-1, D))  # Shape: (z_samples * batch_size,)
+    log_pz = log_pz.view(monte_carlo_samples, batch_size)  # Shape: (z_samples, batch_size)
+
+    # KL divergence: log q(z|x) - log p(z)
+    kl_div = log_qzx - log_pz  # Shape: (z_samples, batch_size)
+
+    # Average over samples and batch
+    kl_div = kl_div.mean()  # Scalar
+
+    return weight * kl_div / (batch_size * D)
+
 def recon_loss_function(x, x_hat, recon_weight):
     # recon_loss = LogCosh_weight * LogCosh_loss_fn(x, x_hat) 
     loss_fn = nn.MSELoss(reduction='mean')
@@ -28,37 +109,18 @@ def adversarial_loss_function(probs, labels, classifier_weight):
     adversarial_loss = nn.functional.cross_entropy(probs, labels) / torch.log(torch.tensor(probs.shape[1]))
     return classifier_weight * adversarial_loss
 
-def sinkhorn_loss(observed, prior, weight, sinkhorn_blur, wasserstein_alpha):
+# def KL_divergence(mu, logvar, weight):
+#     if torch.isnan(mu).any(): raise ValueError("NaN detected in OBSERVED tensors for Sinkhorn loss!")
+#     if torch.isinf(mu).any(): raise ValueError("Inf detected in OBSERVED tensors for Sinkhorn loss!")
+#     if torch.isnan(logvar).any(): raise ValueError("NaN detected in PRIOR tensors for Sinkhorn loss!")
+#     if torch.isinf(logvar).any(): raise ValueError("Inf detected in PRIOR tensors for Sinkhorn loss!")
 
-    if torch.isnan(observed).any(): raise ValueError("NaN detected in OBSERVED tensors for Sinkhorn loss!")
-    if torch.isinf(observed).any(): raise ValueError("Inf detected in OBSERVED tensors for Sinkhorn loss!")
-    if torch.isnan(prior).any(): raise ValueError("NaN detected in PRIOR tensors for Sinkhorn loss!")
-    if torch.isinf(prior).any(): raise ValueError("Inf detected in PRIOR tensors for Sinkhorn loss!")
+#     batch_size, latent_dim = mu.shape
+
+#     # KL Divergence loss
+#     kl_divergence = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     
-    # W1
-    loss_fn = SamplesLoss(loss="sinkhorn", p=1, blur=sinkhorn_blur)
-    W1_loss = loss_fn(observed, prior)  # Standard Sinkhorn loss
-
-    if wasserstein_alpha > 0: # Some mixing of W2 present
-        # W2
-        loss_fn = SamplesLoss(loss="sinkhorn", p=2, blur=sinkhorn_blur)
-        W2_loss = loss_fn(observed, prior)  # Standard Sinkhorn loss
-        
-        loss = wasserstein_alpha * W2_loss + (1- wasserstein_alpha) * W1_loss 
-
-        return weight * loss   # Apply manual re-weighting
-    
-    else:
-        return weight * W1_loss
-
-def mog_weight_reg(prior_weights, mog_weight_reg_beta):
-    num_components = prior_weights.shape[0]
-    even_weight = 1/num_components
-    mean_weight_diff = torch.mean(torch.abs(prior_weights - even_weight))
-    return mog_weight_reg_beta * mean_weight_diff
-
-
-   
+#     return weight * kl_divergence / (batch_size *  latent_dim)
 
 
 

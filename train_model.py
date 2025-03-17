@@ -41,7 +41,7 @@ from utilities import latent_plotting
 from utilities import utils_functions
 from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
-from models.WAE import WAE
+from models.VAE import VAE
 
 '''
 @author: grahamwjohnson
@@ -78,15 +78,10 @@ def load_train_objs(
     val_unseen_hour_dataset_range, 
     num_dataloader_workers,
 
-    # WAE Optimizers
+    # VAE Optimizers
     core_weight_decay, 
     adamW_beta1,
     adamW_beta2,
-
-    # Prior Optimizer
-    prior_weight_decay,
-    prior_adamW_beta1,
-    prior_adamW_beta2,    
 
     # Classifier Optimizer
     classifier_weight_decay,
@@ -177,34 +172,30 @@ def load_train_objs(
     train_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
     train_dataloader = utils_functions.prepare_dataloader(train_dataset, batch_size=None, num_workers=num_dataloader_workers)
          
-    ### WAE ###
-    wae = WAE(gpu_id=gpu_id, **kwargs) 
-    wae = wae.to(gpu_id) 
+    ### VAE ###
+    vae = VAE(gpu_id=gpu_id, **kwargs) 
+    vae = vae.to(gpu_id) 
 
     # Separate the parameters into two groups
-    wae_params = []
+    vae_params = []
     classifier_params = []
-    prior_params = []
 
     # Iterate through the model parameters
-    for name, param in wae.named_parameters():
+    for name, param in vae.named_parameters():
         # Check if the parameter is part of the encoder submodule
         if 'adversarial_classifier' in name:
             classifier_params.append(param)
-        elif 'prior' in name:
-            prior_params.append(param)
         else:
-            wae_params.append(param)
+            vae_params.append(param)
 
     # Separate the parameters
     param_groups = [
-        {"params": wae_params, "lr":  kwargs['LR_min_core'], "weight_decay": core_weight_decay, "betas": (adamW_beta1, adamW_beta2)},  
-        {"params": prior_params, "lr": kwargs['LR_max_prior'], "weight_decay": prior_weight_decay, "betas":(prior_adamW_beta1, prior_adamW_beta2)},
+        {"params": vae_params, "lr":  kwargs['LR_min_core'], "weight_decay": core_weight_decay, "betas": (adamW_beta1, adamW_beta2)},  
         {"params": classifier_params, "lr": kwargs['LR_min_classifier'], "weight_decay": classifier_weight_decay, "betas":(classifier_adamW_beta1, classifier_adamW_beta2)}  
     ]
-    opt_wae = torch.optim.AdamW(param_groups)
+    opt_vae = torch.optim.AdamW(param_groups)
 
-    return train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, wae, opt_wae
+    return train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, vae, opt_vae
 
 def main(  
     # Ordered variables
@@ -216,20 +207,18 @@ def main(
     run_name: str,
     timestamp_id: int,
     start_epoch: int,
-    LR_val_wae: float,
-    LR_val_prior: float,
+    LR_val_vae: float,
     LR_val_cls: float,
     val_finetine_bool: bool,
     finetune_inference: bool, 
     finetune_inference_epochs: int,
     realtime_printing_interval_val,
     realtime_printing_interval_train,
-    wae_state_dict_prev_path = [],
-    wae_opt_state_dict_prev_path = [],
-    running_latent_path = [],
-    running_prior_path = [],
+    vae_state_dict_prev_path = [],
+    vae_opt_state_dict_prev_path = [],
+    running_mean_path = [],
+    running_logvar_path = [],
     epochs_to_train: int = -1,
-
     **kwargs):
 
     '''
@@ -255,37 +244,37 @@ def main(
     ddp_setup(gpu_id, world_size)
 
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
-    train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, wae, opt_wae = load_train_objs(gpu_id=gpu_id, **kwargs) 
+    train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, vae, opt_vae = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
     # Load the model/opt states if not first epoch & if in training mode
     if (start_epoch > 0):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % gpu_id}
 
-        # Load in WAE weights and opts
-        wae_state_dict_prev = torch.load(wae_state_dict_prev_path, map_location=map_location)
-        wae.load_state_dict(wae_state_dict_prev)
-        wae_opt_state_dict_prev = torch.load(wae_opt_state_dict_prev_path, map_location=map_location)
-        opt_wae.load_state_dict(wae_opt_state_dict_prev)
+        # Load in VAE weights and opts
+        vae_state_dict_prev = torch.load(vae_state_dict_prev_path, map_location=map_location)
+        vae.load_state_dict(vae_state_dict_prev)
+        vae_opt_state_dict_prev = torch.load(vae_opt_state_dict_prev_path, map_location=map_location)
+        opt_vae.load_state_dict(vae_opt_state_dict_prev)
         print(f"[GPU{gpu_id}] Model and Opt weights loaded from checkpoints")
 
-        # Load running latents observed
-        with open(running_latent_path, "rb") as f: accumulated_z = pickle.load(f)
-        print(f"[GPU{gpu_id}] Running Latents loaded from checkpoints")
+        # Load running mean 
+        with open(running_mean_path, "rb") as f: accumulated_mean = pickle.load(f)
+        print(f"[GPU{gpu_id}] Running Means loaded from checkpoints")
 
-        # Load running prior
-        with open(running_prior_path, "rb") as f: accumulated_prior = pickle.load(f)
-        print(f"[GPU{gpu_id}] Running Prior loaded from checkpoints")
+        # Load running logvar
+        with open(running_logvar_path, "rb") as f: accumulated_logvar = pickle.load(f)
+        print(f"[GPU{gpu_id}] Running Logvars loaded from checkpoints")
     
     else:
-        accumulated_z = []
-        accumulated_prior = []
+        accumulated_mean = []
+        accumulated_logvar = []
 
     # Create the training object
     trainer = Trainer(
         world_size=world_size,
         gpu_id=gpu_id, 
-        wae=wae, 
-        opt_wae=opt_wae,
+        vae=vae, 
+        opt_vae=opt_vae,
         start_epoch=start_epoch,
         train_dataset=train_dataset, 
         train_dataloader=train_dataloader,
@@ -295,8 +284,8 @@ def main(
         valunseen_dataloader=valunseen_dataloader,
         wandb_run=wandb_run,
         finetune_inference=finetune_inference,
-        accumulated_z=accumulated_z,
-        accumulated_prior=accumulated_prior,
+        accumulated_mean=accumulated_mean,
+        accumulated_logvar=accumulated_logvar,
         **kwargs)
 
     # Kill the val data generators if val_every is set artificially high
@@ -318,19 +307,18 @@ def main(
 
             # Save pre-finetune model/opt weights
             if finetune_inference:
-                wae_dict = trainer.wae.module.state_dict()
-                wae_opt_dict = trainer.opt_wae.state_dict()
-                accumulated_z = trainer.accumulated_z
-                accumulated_prior = trainer.accumulated_prior
+                vae_dict = trainer.vae.module.state_dict()
+                vae_opt_dict = trainer.opt_vae.state_dict()
+                accumulated_mean = trainer.accumulated_mean
+                accumulated_logvar = trainer.accumulated_logvar
                 accumulated_labels = trainer.accumulated_labels
                 accumulated_class_probs = trainer.accumulated_class_probs
 
                 # FINETUNE on beginning of validation patients (currently only one epoch)
                 # Set to train and change LR to validate settings
                 trainer._set_to_train()
-                trainer.opt_wae.param_groups[0]['lr'] = LR_val_wae
-                trainer.opt_wae.param_groups[1]['lr'] = LR_val_prior
-                trainer.opt_wae.param_groups[2]['lr'] = LR_val_cls
+                trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
+                trainer.opt_vae.param_groups[1]['lr'] = LR_val_cls
                 for finetune_epoch in range(finetune_inference_epochs):
                     trainer.epoch = epoch + finetune_epoch
                     trainer._run_train_epoch(
@@ -363,10 +351,10 @@ def main(
 
             # Restore model/opt weights to pre-finetune, and restart data generators
             if finetune_inference:
-                trainer.wae.module.load_state_dict(wae_dict)
-                trainer.opt_wae.load_state_dict(wae_opt_dict)
-                trainer.accumulated_z = accumulated_z
-                trainer.accumulated_prior = accumulated_prior
+                trainer.vae.module.load_state_dict(vae_dict)
+                trainer.opt_vae.load_state_dict(vae_opt_dict)
+                trainer.accumulated_mean = accumulated_mean
+                trainer.accumulated_logvar = accumulated_logvar
                 trainer.accumulated_labels = accumulated_labels
                 trainer.accumulated_class_probs = accumulated_class_probs
             
@@ -397,19 +385,18 @@ def main(
             
             if val_finetine_bool:
                 # Save pre-finetune model/opt weights
-                wae_dict = trainer.wae.module.state_dict()
-                wae_opt_dict = trainer.opt_wae.state_dict()
-                accumulated_z = trainer.accumulated_z
-                accumulated_prior = trainer.accumulated_prior
+                vae_dict = trainer.vae.module.state_dict()
+                vae_opt_dict = trainer.opt_vae.state_dict()
+                accumulated_mean = trainer.accumulated_mean
+                accumulated_logvar = trainer.accumulated_logvar
                 accumulated_labels = trainer.accumulated_labels
                 accumulated_class_probs = trainer.accumulated_class_probs
 
                 # FINETUNE on beginning of validation patients (currently only one epoch)
                 # Set to train and change LR to validate settings
                 trainer._set_to_train()
-                trainer.opt_wae.param_groups[0]['lr'] = LR_val_wae
-                trainer.opt_wae.param_groups[1]['lr'] = LR_val_prior
-                trainer.opt_wae.param_groups[2]['lr'] = LR_val_cls
+                trainer.opt_vae.param_groups[0]['lr'] = LR_val_vae
+                trainer.opt_vae.param_groups[1]['lr'] = LR_val_cls
                 trainer._run_train_epoch(
                     dataloader_curr = trainer.valfinetune_dataloader, 
                     dataset_string = "valfinetune",
@@ -431,10 +418,10 @@ def main(
 
             # Restore model/opt weights to pre-finetune
             if val_finetine_bool:
-                trainer.wae.module.load_state_dict(wae_dict)
-                trainer.opt_wae.load_state_dict(wae_opt_dict)
-                trainer.accumulated_z = accumulated_z
-                trainer.accumulated_prior = accumulated_prior
+                trainer.vae.module.load_state_dict(vae_dict)
+                trainer.opt_vae.load_state_dict(vae_opt_dict)
+                trainer.accumulated_mean = accumulated_mean
+                trainer.accumulated_logvar = accumulated_logvar
                 trainer.accumulated_labels = accumulated_labels
                 trainer.accumulated_class_probs = accumulated_class_probs
 
@@ -448,7 +435,7 @@ class Trainer:
         self,
         world_size: int,
         gpu_id: int,
-        wae: torch.nn.Module,
+        vae: torch.nn.Module,
         start_epoch: int,
         train_dataset: SEEG_Tornado_Dataset,
         valfinetune_dataset: SEEG_Tornado_Dataset,
@@ -456,7 +443,7 @@ class Trainer:
         train_dataloader: DataLoader,
         valfinetune_dataloader: DataLoader,
         valunseen_dataloader: DataLoader,
-        opt_wae: torch.optim.Optimizer,
+        opt_vae: torch.optim.Optimizer,
         wandb_run,
         model_dir: str,
         val_every: int,
@@ -466,12 +453,10 @@ class Trainer:
         encode_token_samples: int,
         num_samples: int,
         transformer_seq_length: int,
-        # num_encode_concat_transformer_tokens: int,
         transformer_start_pos: int,
         FS: int,
         hash_output_range: tuple,
         intrapatient_dataset_style: list,
-        # transformer_weight: float,
         recon_weight: float,
         atd_file: str,
         inference_window_sec_list: list,
@@ -480,14 +465,13 @@ class Trainer:
         total_collected_latents: int,
         running_reg_passes: int,
         classifier_num_pats: int,
-        sinkhorn_blur: int,
-        accumulated_z,
-        accumulated_prior,
+        accumulated_mean,
+        accumulated_logvar,
         **kwargs
     ) -> None:
         self.world_size = world_size
         self.gpu_id = gpu_id
-        self.wae = wae
+        self.vae = vae
         self.start_epoch = start_epoch
         self.train_dataset = train_dataset
         self.valfinetune_dataset = valfinetune_dataset
@@ -495,7 +479,7 @@ class Trainer:
         self.train_dataloader = train_dataloader
         self.valfinetune_dataloader = valfinetune_dataloader
         self.valunseen_dataloader = valunseen_dataloader
-        self.opt_wae = opt_wae
+        self.opt_vae = opt_vae
         self.model_dir = model_dir
         self.val_every = val_every
         self.inference_every = inference_every
@@ -504,7 +488,6 @@ class Trainer:
         self.encode_token_samples = encode_token_samples
         self.num_samples = num_samples
         self.transformer_seq_length = transformer_seq_length
-        # self.num_encode_concat_transformer_tokens = num_encode_concat_transformer_tokens
         self.transformer_start_pos = transformer_start_pos
         self.FS = FS
         self.hash_output_range = hash_output_range
@@ -518,9 +501,8 @@ class Trainer:
         self.total_collected_latents = total_collected_latents
         self.running_reg_passes = running_reg_passes
         self.classifier_num_pats = classifier_num_pats
-        self.sinkhorn_blur = sinkhorn_blur
-        self.accumulated_z = accumulated_z
-        self.accumulated_prior = accumulated_prior
+        self.accumulated_mean = accumulated_mean
+        self.accumulated_logvar = accumulated_logvar
         self.wandb_run = wandb_run
         self.kwargs = kwargs
 
@@ -532,33 +514,33 @@ class Trainer:
         # Number of iterations per file
         self.num_windows = int((self.num_samples - self.transformer_seq_length * self.encode_token_samples - self.encode_token_samples)/self.encode_token_samples) - 2
 
-        # Set up wae & transformer with DDP
-        self.wae = DDP(wae, device_ids=[gpu_id])   # find_unused_parameters=True
+        # Set up vae & transformer with DDP
+        self.vae = DDP(vae, device_ids=[gpu_id])   # find_unused_parameters=True
                     
         # Running Regulizer window for latent data
-        if self.accumulated_z == []:
-            # If first initialziing, then start off with observed ideal distributions from pure prior
-            self.accumulated_z = self.wae.module.prior.sample(self.total_collected_latents).detach().to(self.gpu_id)
-            self.accumulated_prior = self.wae.module.prior.sample(self.total_collected_latents).detach().to(self.gpu_id)
+        if self.accumulated_mean == []:
+            # If first initialziing, then start off with random
+            self.accumulated_mean = torch.randn(self.total_collected_latents, self.latent_dim).to(self.gpu_id)
+            self.accumulated_logvar = torch.randn(self.total_collected_latents, self.latent_dim).to(self.gpu_id)
         else: 
             # Ensure on proper device because loading from pickle
-            self.accumulated_z = self.accumulated_z.to(self.gpu_id)
-            self.accumulated_prior = self.accumulated_prior.to(self.gpu_id)
+            self.accumulated_mean = self.accumulated_mean.to(self.gpu_id)
+            self.accumulated_logvar = self.accumulated_logvar.to(self.gpu_id)
 
         # Running tab of update index
         self.next_update_index = 0
 
         # Watch with WandB
-        wandb.watch(self.wae)
+        wandb.watch(self.vae)
         
     def _set_to_train(self):
-        self.wae.train()
+        self.vae.train()
 
     def _set_to_eval(self):
-        self.wae.eval()
+        self.vae.eval()
 
     def _zero_all_grads(self):
-        self.opt_wae.zero_grad()
+        self.opt_vae.zero_grad()
 
     def _save_checkpoint(self, epoch, delete_old_checkpoints, **kwargs):
             
@@ -568,35 +550,35 @@ class Trainer:
         base_checkpoint_dir = self.model_dir + f"/checkpoints"
         check_epoch_dir = base_checkpoint_dir + f"/Epoch_{str(epoch)}"
 
-        print("Saving wae model weights")
+        print("Saving vae model weights")
 
-        ### WAE CHECKPOINT 
+        ### VAE CHECKPOINT 
         check_core_dir = check_epoch_dir + "/core_checkpoints"
         if not os.path.exists(check_core_dir): os.makedirs(check_core_dir)
 
         # Save model
-        ckp = self.wae.module.state_dict()
-        check_path = check_core_dir + "/checkpoint_epoch" + str(epoch) + "_wae.pt"
+        ckp = self.vae.module.state_dict()
+        check_path = check_core_dir + "/checkpoint_epoch" + str(epoch) + "_vae.pt"
         torch.save(ckp, check_path)
 
         # Save optimizer
-        opt_ckp = self.opt_wae.state_dict()
-        opt_path = check_core_dir + "/checkpoint_epoch" + str(epoch) + "_wae_opt.pt"
+        opt_ckp = self.opt_vae.state_dict()
+        opt_path = check_core_dir + "/checkpoint_epoch" + str(epoch) + "_vae_opt.pt"
         torch.save(opt_ckp, opt_path)
 
-        # Save Running Latents 
-        latents_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_running_latents.pkl"
+        # Save Running Mean 
+        latents_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_running_means.pkl"
         output_obj = open(latents_path, 'wb')
-        pickle.dump(self.accumulated_z, output_obj)
+        pickle.dump(self.accumulated_mean, output_obj)
         output_obj.close()
-        print("Saved running latents")
+        print("Saved running means")
 
-        prior_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_running_prior.pkl"
-        output_obj = open(prior_path, 'wb')
-        pickle.dump(self.accumulated_prior, output_obj)
+        # Save Running Logvar 
+        latents_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_running_logvars.pkl"
+        output_obj = open(latents_path, 'wb')
+        pickle.dump(self.accumulated_logvar, output_obj)
         output_obj.close()
-        print("Saved running prior")
-
+        print("Saved running logvars")
 
         print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
 
@@ -604,73 +586,73 @@ class Trainer:
             utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch, **kwargs)
             print("Deleted old checkpoints, except epochs at end of reguaization annealing period")
     
-    def _sample_running_window(self, latent, prior, random_observed_sampling, **kwargs):
-        self.accumulated_z = self.accumulated_z.detach() # Ensure detached before sampling
-        self.accumulated_prior = self.accumulated_prior.detach()
-        num_new = latent.shape[0]
+    def _sample_running_window(self, mean, logvar, random_observed_sampling, **kwargs):
+        self.accumulated_mean = self.accumulated_mean.detach() # Ensure detached before sampling
+        self.accumulated_logvar = self.accumulated_logvar.detach() # Ensure detached before sampling
+        num_new = mean.shape[0]
         num_past = self.running_reg_passes - num_new
         
         if num_new == self.running_reg_passes:
-            return latent, prior
+            return mean, logvar
 
         elif num_new > self.running_reg_passes:
             raise Exception(f"latent.shape[0] > self.running_reg_passes ({num_new} > {self.running_reg_passes})")
 
         if random_observed_sampling: # RANDOM
-            random_past_idxs = torch.randperm(self.accumulated_z.shape[0])[:num_past] 
-            past_observed_samples = self.accumulated_z[random_past_idxs, :]
+            random_past_idxs = torch.randperm(self.accumulated_mean.shape[0])[:num_past] 
+            past_mean_samples = self.accumulated_mean[random_past_idxs, :]
 
-            random_past_idxs = torch.randperm(self.accumulated_prior.shape[0])[:num_past] 
-            past_prior_samples = self.accumulated_prior[random_past_idxs, :]
+            random_past_idxs = torch.randperm(self.accumulated_logvar.shape[0])[:num_past] 
+            past_logvar_samples = self.accumulated_logvar[random_past_idxs, :]
 
         else: # NOT RANDOM
             # Must check for rollover
             if (self.next_update_index - num_past) >= 0:
-                past_observed_samples = self.accumulated_z[self.next_update_index - num_past : self.next_update_index, :] # Use the next update index to know where the latest past samples are
-                past_prior_samples = self.accumulated_prior[self.next_update_index - num_past : self.next_update_index, :]
+                past_mean_samples = self.accumulated_mean[self.next_update_index - num_past : self.next_update_index, :] # Use the next update index to know where the latest past samples are
+                past_logvar_samples = self.accumulated_logvar[self.next_update_index - num_past : self.next_update_index, :]
 
             else: # Straddles end/start of indexes
                 num_past_from_start = self.next_update_index
                 num_past_from_end = num_past - num_past_from_start
 
-                past_observed_samples_from_start = self.accumulated_z[:num_past_from_start, :]
-                past_observed_samples_from_end = self.accumulated_z[-num_past_from_end:, :]
+                past_mean_samples_from_start = self.accumulated_mean[:num_past_from_start, :]
+                past_mean_samples_from_end = self.accumulated_mean[-num_past_from_end:, :]
 
-                past_prior_samples_from_start = self.accumulated_prior[:num_past_from_start, :]
-                past_prior_samples_from_end = self.accumulated_prior[-num_past_from_end:, :]
+                past_logvar_samples_from_start = self.accumulated_logvar[:num_past_from_start, :]
+                past_logvar_samples_from_end = self.accumulated_logvar[-num_past_from_end:, :]
 
-                past_observed_samples = torch.cat([past_observed_samples_from_end, past_observed_samples_from_start])
-                past_prior_samples = torch.cat([past_prior_samples_from_end, past_prior_samples_from_start])
+                past_mean_samples = torch.cat([past_mean_samples_from_end, past_mean_samples_from_start])
+                past_logvar_samples = torch.cat([past_logvar_samples_from_end, past_logvar_samples_from_start])
 
-        return torch.cat([past_observed_samples, latent]), torch.cat([past_prior_samples, prior])
+        return torch.cat([past_mean_samples, mean]), torch.cat([past_logvar_samples, logvar])
 
     def _update_reg_window(
         self,
-        latent,
-        prior
+        mean,
+        logvar
         ):
 
-        num_new_updates = latent.shape[0]
+        num_new_updates = mean.shape[0]
         if (self.next_update_index + num_new_updates) < self.total_collected_latents:
-            self.accumulated_z[self.next_update_index: self.next_update_index + num_new_updates, :] = latent
-            self.accumulated_prior[self.next_update_index: self.next_update_index + num_new_updates, :] = prior
+            self.accumulated_mean[self.next_update_index: self.next_update_index + num_new_updates, :] = mean
+            self.accumulated_logvar[self.next_update_index: self.next_update_index + num_new_updates, :] = logvar
             self.next_update_index = self.next_update_index + num_new_updates
 
         else: # Rollover
             residual_num = (self.next_update_index + num_new_updates) % self.total_collected_latents
             end_num = num_new_updates - residual_num
 
-            self.accumulated_z[self.next_update_index: self.next_update_index + end_num, :] = latent[:end_num, :]
-            self.accumulated_z[0: residual_num, :] = latent[end_num:, :]
+            self.accumulated_mean[self.next_update_index: self.next_update_index + end_num, :] = mean[:end_num, :]
+            self.accumulated_mean[0: residual_num, :] = mean[end_num:, :]
 
-            self.accumulated_prior[self.next_update_index: self.next_update_index + end_num, :] = prior[:end_num, :]
-            self.accumulated_prior[0: residual_num, :] = prior[end_num:, :]
+            self.accumulated_logvar[self.next_update_index: self.next_update_index + end_num, :] = logvar[:end_num, :]
+            self.accumulated_logvar[0: residual_num, :] = logvar[end_num:, :]
 
             self.next_update_index = residual_num
 
         # Detach to allow next backpass
-        self.accumulated_z = self.accumulated_z.detach() 
-        self.accumulated_prior = self.accumulated_prior.detach() 
+        self.accumulated_mean = self.accumulated_mean.detach() 
+        self.accumulated_logvar = self.accumulated_logvar.detach() 
 
     def _run_export_embeddings(
         self, 
@@ -754,11 +736,11 @@ class Trainer:
                         end_idx = start_idx + self.encode_token_samples * embedding_idx + self.encode_token_samples 
                         x[:, embedding_idx, :num_channels_curr, :] = data_tensor[:, hash_channel_order, end_idx-self.encode_token_samples : end_idx]
 
-                    ### WAE ENCODER
-                    # Forward pass in stacked batch through WAE encoder
-                    # latent, _, _ = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
-                    latent, _, _, _, _ = self.wae(x, reverse=False, alpha=self.classifier_alpha) # No shift if not causal masking
-                    files_latents[:, w, :] = torch.mean(latent, dim=1)
+                    ### VAE ENCODER
+                    # Forward pass in stacked batch through VAE encoder
+                    # latent, _, _ = self.vae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
+                    mean, _, _, _, _ = self.vae(x, reverse=False, alpha=self.classifier_alpha) # No shift if not causal masking
+                    files_latents[:, w, :] = torch.mean(mean, dim=1)
 
                 # After file complete, pacmap_window/stride the file and save each file from batch seperately
                 # Seperate directory for each win/stride combination
@@ -818,7 +800,7 @@ class Trainer:
         '''
 
         print(f"[GPU{self.gpu_id}] encode_token_samples: {self.encode_token_samples}")
-        
+
         iter_curr = 0
         total_iters = len(dataloader_curr)
         for x, file_name, file_class_label, hash_channel_order, hash_pat_embedding in dataloader_curr: 
@@ -829,34 +811,34 @@ class Trainer:
             hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
         
             # For Training: Update the Regulizer multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-            self.reg_weight, self.mog_weight_reg_beta, self.wasserstein_alpha, self.curr_LR_core, self.curr_LR_prior, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
+            self.reg_weight, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
             
             if (not val_finetune) & (not val_unseen): 
-                self.opt_wae.param_groups[0]['lr'] = self.curr_LR_core
-                self.opt_wae.param_groups[1]['lr'] = self.curr_LR_prior
-                self.opt_wae.param_groups[2]['lr'] = self.curr_LR_cls
+                self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
+                self.opt_vae.param_groups[1]['lr'] = self.curr_LR_cls
             
             else: # For validation, do not consider classifier
                 self.classifier_alpha = 0
-                self.opt_wae.param_groups[2]['lr'] = 0
+                self.opt_vae.param_groups[1]['lr'] = 0
 
             # Check for NaNs
             if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
 
-            ### WAE ENCODER: 1-shifted
-            # latent, class_probs_mean_of_latent, attW = self.wae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
-            latent, prior, prior_weights, class_probs_mean_of_latent, attW = self.wae(x, reverse=False, alpha=self.classifier_alpha) # No 1-shift if not causal masking
+            ### VAE ENCODER: 1-shifted
+            # latent, class_probs_mean_of_latent, attW = self.vae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
+            mean, logvar, latent, class_probs_mean_of_latent, attW = self.vae(x, reverse=False, alpha=self.classifier_alpha) # No 1-shift if not causal masking
             
-            ### WAE DECODER
-            x_hat = self.wae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
+            ### VAE DECODER
+            x_hat = self.vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
 
             # Pseudobatch the latent for regularization loss
+            mean_batched = mean.reshape(mean.shape[0] * mean.shape[1], -1)
+            logvar_batched = logvar.reshape(logvar.shape[0] * logvar.shape[1], -1)
             latent_batched = latent.reshape(latent.shape[0] * latent.shape[1], -1)
-            prior_batched = prior.reshape(latent.shape[0] * latent.shape[1], -1)
 
-            # # Sample from the recent observed & prior (otherwise batch would be ripple in ocean - without some past info batch cannot capure meaningful shape of latent)
-            observed_samples, prior_samples = self._sample_running_window(latent_batched, prior_batched, **kwargs) # Will require grad now 
+            # # Sample from the recent mean & logvar (otherwise batch would be ripple in ocean - without some past info batch cannot capure meaningful shape of latent)
+            mean_samples, logvar_samples = self._sample_running_window(mean_batched, logvar_batched, **kwargs) # Will require grad now 
                
             # LOSSES
             recon_loss = loss_functions.recon_loss_function(
@@ -864,23 +846,29 @@ class Trainer:
                 x_hat=x_hat,
                 recon_weight=self.recon_weight)
 
-            reg_loss = loss_functions.sinkhorn_loss( # Just on this local batch compared to Prior
-                observed = observed_samples, # From accumulated_z
-                prior = prior_samples, # From Prior
+            reg_loss = loss_functions.mog_loss(  # Monte Carlo MoG
+                mean = mean_samples,
+                logvar = logvar_samples,
+                mog_prior = self.vae.module.prior,
                 weight = self.reg_weight,
-                sinkhorn_blur = self.sinkhorn_blur,
-                wasserstein_alpha = self.wasserstein_alpha)
+                **kwargs)
+
+            reg_entropy = loss_functions.mog_entropy_regularization(
+                weights = self.vae.module.prior.weights, 
+                logvars = self.vae.module.prior.logvars, 
+                **kwargs)
             
-            mog_weight_reg_loss = loss_functions.mog_weight_reg(
-                prior_weights=prior_weights,
-                mog_weight_reg_beta=self.mog_weight_reg_beta)
+            reg_repulsion = loss_functions.mog_repulsion_regularization(
+                weights = self.vae.module.prior.weights, 
+                means = self.vae.module.prior.means, 
+                **kwargs)
 
             adversarial_loss = loss_functions.adversarial_loss_function(
                 probs=class_probs_mean_of_latent, 
                 labels=file_class_label,
                 classifier_weight=self.classifier_weight)
 
-            loss = recon_loss + reg_loss + adversarial_loss + mog_weight_reg_loss
+            loss = recon_loss + reg_loss + reg_entropy + reg_repulsion + adversarial_loss 
 
             # Not currently used, but is nice to see
             sparse_loss = loss_functions.sparse_l1_reg(
@@ -892,8 +880,9 @@ class Trainer:
             if not val_unseen: 
                 self._zero_all_grads()
                 loss.backward()    
-                self.opt_wae.step()
-                self._update_reg_window(latent_batched, prior_batched) # Update the buffers & detach() 
+                torch.nn.utils.clip_grad_norm_(self.vae.module.prior.parameters(), max_norm=1.0) # Gradient clipping for MoG prior, prevent excessive updates even with strong regularization 
+                self.opt_vae.step()
+                self._update_reg_window(mean_batched, logvar_batched) # Update the buffers & detach() 
 
             # Realtime terminal info and WandB 
             if (iter_curr%self.recent_display_iters==0):
@@ -917,16 +906,13 @@ class Trainer:
                         train_loss=loss,
                         train_recon_loss=recon_loss, 
                         train_reg_loss=reg_loss, 
+                        train_reg_entropy=reg_entropy,
+                        train_reg_repulsion=reg_repulsion,
                         train_adversarial_loss=adversarial_loss,
                         train_sparse_loss=sparse_loss,
-                        train_LR_wae=self.opt_wae.param_groups[0]['lr'], 
-                        train_LR_mogWeights=self.opt_wae.param_groups[1]['lr'],
-                        train_LR_classifier=self.opt_wae.param_groups[2]['lr'],
+                        train_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                        train_LR_classifier=self.opt_vae.param_groups[1]['lr'],
                         train_reg_Beta=self.reg_weight, 
-                        train_mog_weight_reg_loss = mog_weight_reg_loss,
-                        train_mog_weight_reg_beta = self.mog_weight_reg_beta,
-                        train_wasserstein_alpha = self.wasserstein_alpha,
-                        train_sinkhorn_blur=self.sinkhorn_blur,
                         train_running_reg_passes=self.running_reg_passes,
                         train_ReconWeight=self.recon_weight,
                         train_AdversarialAlpha=self.classifier_alpha,
@@ -940,11 +926,9 @@ class Trainer:
                         val_finetune_recon_loss=recon_loss, 
                         val_finetune_reg_loss=reg_loss, 
                         val_finetune_sparse_loss=sparse_loss,
-                        val_finetune_LR_wae=self.opt_wae.param_groups[0]['lr'], 
-                        val_finetune_LR_mogWeights=self.opt_wae.param_groups[1]['lr'],
-                        val_finetune_LR_classifier=self.opt_wae.param_groups[2]['lr'],
+                        val_finetune_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                        val_finetune_LR_classifier=self.opt_vae.param_groups[1]['lr'],
                         val_finetune_reg_Beta=self.reg_weight, 
-                        val_finetune_sinkhorn_blur=self.sinkhorn_blur,
                         val_finetune_ReconWeight=self.recon_weight,
                         val_finetune_AdversarialAlpha=self.classifier_alpha,
                         val_finetune_Sparse_weight=self.sparse_weight,
@@ -957,9 +941,8 @@ class Trainer:
                         val_unseen_recon_loss=recon_loss, 
                         val_unseen_reg_loss=reg_loss, 
                         val_unseen_sparse_loss=sparse_loss,
-                        val_unseen_LR_wae=self.opt_wae.param_groups[0]['lr'], 
-                        val_unseen_LR_mogWeights=self.opt_wae.param_groups[1]['lr'],
-                        val_unseen_LR_classifier=self.opt_wae.param_groups[2]['lr'],
+                        val_unseen_LR_vae=self.opt_vae.param_groups[0]['lr'], 
+                        val_unseen_LR_classifier=self.opt_vae.param_groups[1]['lr'],
                         val_unseen_reg_Beta=self.reg_weight, 
                         val_unseen_sinkhorn_blur=self.sinkhorn_blur,
                         val_unseen_ReconWeight=self.recon_weight,
@@ -976,8 +959,8 @@ class Trainer:
                             print("WARNING: Loss is nan, no plots can be made")
                         else:
                             utils_functions.print_latent_realtime(
-                                latent = observed_samples.cpu().detach().numpy(), 
-                                prior = prior_samples.cpu().detach().numpy(),
+                                mean = mean_samples.cpu().detach().numpy(), 
+                                logvar = logvar_samples.cpu().detach().numpy(),
                                 savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
                                 epoch = self.epoch,
                                 iter_curr = iter_curr,
@@ -998,14 +981,6 @@ class Trainer:
                                 pat_idxs = file_class_label, 
                                 scores_byLayer_meanHeads = attW, 
                                 savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_attention", 
-                                **kwargs)
-                            utils_functions.print_prior_params_realtime(
-                                epoch = self.epoch, 
-                                iter_curr = iter_curr,
-                                means = self.wae.module.prior.means,
-                                stds = self.wae.module.prior.stds, 
-                                log_weights = self.wae.module.prior.log_weights,
-                                savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_priorparams", 
                                 **kwargs)
 
                             # NOTE: for finetuning, will still be guess the training patients, and TODO: idxs in dataset are wrong for class labels anyway
@@ -1031,10 +1006,13 @@ class Trainer:
             iter_curr = iter_curr + 1
 
         # Plot the full running latents
-        utils_functions.plot_observed_latents(
-            gpu_id = self.gpu_id,
-            prior = self.accumulated_prior.cpu().numpy(),
-            observed = self.accumulated_z.cpu().numpy(),
+        utils_functions.plot_mog_and_encoder_means(
+            gpu_id = self.gpu_id, 
+            mog_means = self.vae.module.prior.means.detach().cpu().numpy(), 
+            mog_logvars = self.vae.module.prior.logvars.detach().cpu().numpy(), 
+            mog_weights = self.vae.module.prior.weights.detach().cpu().numpy(), 
+            encoder_means = self.accumulated_mean.detach().cpu().numpy(),
+            encoder_logvars = self.accumulated_logvar.detach().cpu().numpy(),
             savedir = self.model_dir + f"/realtime_plots/{dataset_string}/observed_latents",
             epoch = self.epoch,
             **kwargs)
