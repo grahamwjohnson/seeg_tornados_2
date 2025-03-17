@@ -3,8 +3,8 @@
 num_gpus: 2
  
 # DATASET
-continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
-cont_train_model_dir: '/media/glommy1/model_runs/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/salmon_Fri_Mar_14_12_23_17_2025' 
+continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+cont_train_model_dir: '/media/glommy1/model_runs/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/murrelet_Sun_Mar_16_23_14_49_2025' 
 print_dataset_bargraphs: False # Rough visualization of all data timestamps/types  for each patient. Typically set to False if not the first run of model, but may want true if adding new patients
 pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats' #   2pats'     # 10pats' 
 train_val_pat_perc: kwargs['train_val_pat_perc'] = [1.00, 0.0] #[0.5, 0.5] # [0.8, 0.2]
@@ -83,13 +83,13 @@ adamW_beta1: 0.9
 adamW_beta2: 0.95 
 
 # PRIOR - VAE
-mog_components: 16
-monte_carlo_samples: 1
+mog_components: 8 # Helps dictate global clustering of latent space 
+monte_carlo_samples: 64 # Not sure, but feel like it needs to be higher than MoG components, big GPU Memory usage as this increases
 entropy_weight: kwargs['entropy_weight'] = 1e-5 # Of MoG components
 repulsion_weight: kwargs['repulsion_weight'] = 5 # Of MoG components
 random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
-total_collected_latents: 32768  # If 'random_observed_sampling' is False, this buffer only needs to be long enough to accomodate 'running_reg_passes', but longer will let you see more observed in each epoch's plot
-running_reg_passes: 8192 # kwargs['running_reg_passes'] = kwargs['random_pulls_in_batch'] *  kwargs['transformer_seq_length'] # Memory of observed latents when calculating Wasserstein loss (This + [Batch * 'transformer_seq_length'] will be total for Sinkhorn loss), if This == [Batch * 'transformer_seq_length'], then only 1 forward pass is used for reg loss
+total_collected_latents: 8192  # If 'random_observed_sampling' is False, this buffer only needs to be long enough to accomodate 'running_reg_passes', but longer will let you see more observed in each epoch's plot
+running_reg_passes: 64 # kwargs['running_reg_passes'] = kwargs['random_pulls_in_batch'] *  kwargs['transformer_seq_length'] # Memory of observed latents when calculating Wasserstein loss (This + [Batch * 'transformer_seq_length'] will be total for Sinkhorn loss), if This == [Batch * 'transformer_seq_length'], then only 1 forward pass is used for reg loss
 random_observed_numplots: 4 # On the end of epoch plot
 Reg_max: kwargs['Reg_max'] = 1e3 # 1e-3 # 0.01 # 1e5 # 0.01 #0.1
 Reg_min: kwargs['Reg_min'] = 0

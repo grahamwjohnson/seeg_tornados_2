@@ -832,13 +832,16 @@ class Trainer:
             ### VAE DECODER
             x_hat = self.vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
 
-            # Pseudobatch the latent for regularization loss
-            mean_batched = mean.reshape(mean.shape[0] * mean.shape[1], -1)
-            logvar_batched = logvar.reshape(logvar.shape[0] * logvar.shape[1], -1)
-            latent_batched = latent.reshape(latent.shape[0] * latent.shape[1], -1)
+            # # Pseudobatch the latent for regularization loss
+            # mean_batched = mean.reshape(mean.shape[0] * mean.shape[1], -1)
+            # logvar_batched = logvar.reshape(logvar.shape[0] * logvar.shape[1], -1)
+            # latent_batched = latent.reshape(latent.shape[0] * latent.shape[1], -1)
+
+            mean_meaned = torch.mean(mean, dim=1)
+            logvar_meaned = torch.mean(logvar, dim=1)
 
             # # Sample from the recent mean & logvar (otherwise batch would be ripple in ocean - without some past info batch cannot capure meaningful shape of latent)
-            mean_samples, logvar_samples = self._sample_running_window(mean_batched, logvar_batched, **kwargs) # Will require grad now 
+            mean_samples, logvar_samples = self._sample_running_window(mean_meaned, logvar_meaned, **kwargs) # Will require grad now 
                
             # LOSSES
             recon_loss = loss_functions.recon_loss_function(
@@ -882,7 +885,7 @@ class Trainer:
                 loss.backward()    
                 torch.nn.utils.clip_grad_norm_(self.vae.module.prior.parameters(), max_norm=1.0) # Gradient clipping for MoG prior, prevent excessive updates even with strong regularization 
                 self.opt_vae.step()
-                self._update_reg_window(mean_batched, logvar_batched) # Update the buffers & detach() 
+                self._update_reg_window(mean_meaned, logvar_meaned) # Update the buffers & detach() 
 
             # Realtime terminal info and WandB 
             if (iter_curr%self.recent_display_iters==0):

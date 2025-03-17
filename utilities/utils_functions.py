@@ -570,12 +570,14 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier, hash_output
 
 # PLOTTING
 
-def plot_mog_and_encoder_means(mog_means, mog_logvars, mog_weights, encoder_means, encoder_logvars, savedir, epoch, gpu_id, bins=50, N=5, i=0, **kwargs):
+def plot_mog_and_encoder_means(mog_means, mog_logvars, mog_weights, encoder_means, encoder_logvars, savedir, epoch, gpu_id, bins=100, N=5, i=0, **kwargs):
     """
     Plot the MoG prior means, log-variances, and histogram of encoder means.
     mog_means: MoG prior means, shape (K, D)
     mog_logvars: MoG prior log-variances, shape (K, D)
+    mog_weights: MoG prior weights, shape (K,)
     encoder_means: Encoder means, shape (batch_size, D)
+    encoder_logvars: Encoder log-variances, shape (batch_size, D)
     savedir: Directory to save the plot
     epoch: Current epoch (for filename)
     gpu_id: GPU ID (for filename)
@@ -588,6 +590,9 @@ def plot_mog_and_encoder_means(mog_means, mog_logvars, mog_weights, encoder_mean
 
     # Create a 3x3 grid of subplots
     fig, axes = plt.subplots(3, 3, figsize=(30, 12))
+
+    # Define the range for the histograms
+    hist_range = (-5, 5)
 
     # Left Column: Full-dimensional plots
     # Top Panel: Heatmap of MoG prior means
@@ -625,15 +630,16 @@ def plot_mog_and_encoder_means(mog_means, mog_logvars, mog_weights, encoder_mean
     
     # Compute histogram for each dimension
     hist_data = []
+    bin_edges = None
     for d in range(D):
-        hist, bin_edges = np.histogram(encoder_means[:, d], bins=bins, range=(-5, 5))  # Adjust range as needed
+        hist, bin_edges = np.histogram(encoder_means[:, d], bins=bins, range=hist_range)
         hist_data.append(hist)
     
     # Stack histograms into a 2D array (D x bins)
     hist_data = np.stack(hist_data, axis=0)  # Shape: (D, bins)
     
     # Plot the heatmap
-    im = ax.imshow(hist_data.T, aspect='auto', cmap='inferno', extent=[0, D, -5, 5])
+    im = ax.imshow(hist_data.T, aspect='auto', cmap='inferno', extent=[0, D, hist_range[0], hist_range[1]])
     ax.set_title(f'Histogram of Encoder Means (Batch Size={batch_size}, D={D})')
     ax.set_xlabel('Dimension (D)')
     ax.set_ylabel('Mean Value')
@@ -676,14 +682,14 @@ def plot_mog_and_encoder_means(mog_means, mog_logvars, mog_weights, encoder_mean
     # Compute histogram for the first N dimensions
     hist_data_N = []
     for d in range(N):
-        hist, bin_edges = np.histogram(encoder_means[:, d], bins=bins, range=(-5, 5))  # Adjust range as needed
+        hist, _ = np.histogram(encoder_means[:, d], bins=bins, range=hist_range)
         hist_data_N.append(hist)
     
     # Stack histograms into a 2D array (N x bins)
     hist_data_N = np.stack(hist_data_N, axis=0)  # Shape: (N, bins)
     
     # Plot the heatmap
-    im = ax.imshow(hist_data_N.T, aspect='auto', cmap='inferno', extent=[0, N, -5, 5])
+    im = ax.imshow(hist_data_N.T, aspect='auto', cmap='inferno', extent=[0, N, hist_range[0], hist_range[1]])
     ax.set_title(f'Histogram of Encoder Means (Batch Size={batch_size}, First {N} Dimensions)')
     ax.set_xlabel('Dimension (D)')
     ax.set_ylabel('Mean Value')
@@ -699,12 +705,12 @@ def plot_mog_and_encoder_means(mog_means, mog_logvars, mog_weights, encoder_mean
         mean_k = mog_means[k, i]
         weight_k = mog_weights[k]
         std_k = np.exp(0.5 * mog_logvars[k, i])
-        samples_k = np.random.normal(mean_k, std_k, size=int(1000 * weight_k))  # Sample 1000 points per component
+        samples_k = np.random.normal(mean_k, std_k, size=int(10000 * weight_k))  # Sample w * N points per component
         samples.append(samples_k)
     
     # Plot the samples
     for k in range(K):
-        ax.hist(samples[k], bins=bins, range=(-5, 5), alpha=0.5, label=f'Component {k+1}')
+        ax.hist(samples[k], bins=bins, range=hist_range, alpha=0.5, label=f'Component {k+1}')
     ax.set_title(f'1D Prior for Dimension {i} (K={K})')
     ax.set_xlabel('Mean Value')
     ax.set_ylabel('Frequency')
@@ -714,7 +720,8 @@ def plot_mog_and_encoder_means(mog_means, mog_logvars, mog_weights, encoder_mean
     ax = axes[1, 2]
     
     # Plot the histogram of encoder means for dimension i
-    ax.hist(encoder_means[:, i], bins=bins, range=(-5, 5), color='blue', alpha=0.7)
+    hist, _ = np.histogram(encoder_means[:, i], bins=bins, range=hist_range)
+    ax.bar(bin_edges[:-1], hist, width=np.diff(bin_edges), color='blue', alpha=0.7)
     ax.set_title(f'1D Encoder Means for Dimension {i}')
     ax.set_xlabel('Mean Value')
     ax.set_ylabel('Frequency')
@@ -740,6 +747,177 @@ def plot_mog_and_encoder_means(mog_means, mog_logvars, mog_weights, encoder_mean
 
     plt.close('all')
     print("Prior and Posterior Plotted")
+
+# def plot_mog_and_encoder_means(mog_means, mog_logvars, mog_weights, encoder_means, encoder_logvars, savedir, epoch, gpu_id, bins=100, N=5, i=0, **kwargs):
+#     """
+#     Plot the MoG prior means, log-variances, and histogram of encoder means.
+#     mog_means: MoG prior means, shape (K, D)
+#     mog_logvars: MoG prior log-variances, shape (K, D)
+#     encoder_means: Encoder means, shape (batch_size, D)
+#     savedir: Directory to save the plot
+#     epoch: Current epoch (for filename)
+#     gpu_id: GPU ID (for filename)
+#     bins: Number of bins for the histogram
+#     N: Number of dimensions to show in the right column (default 5)
+#     i: Dimension to visualize in the third column (default 0)
+#     """
+#     K, D = mog_means.shape
+#     batch_size = encoder_means.shape[0]
+
+#     # Create a 3x3 grid of subplots
+#     fig, axes = plt.subplots(3, 3, figsize=(30, 12))
+
+#     # Left Column: Full-dimensional plots
+#     # Top Panel: Heatmap of MoG prior means
+#     ax = axes[0, 0]
+#     im = ax.imshow(mog_means, aspect='auto', cmap='viridis_r', interpolation='none')
+#     ax.set_title(f'MoG Prior Means (K={K}, D={D})')
+#     ax.set_xlabel('Dimension (D)')
+#     ax.set_ylabel('Component (K)')
+    
+#     # Add horizontal lines to separate components
+#     for k in range(1, K):
+#         ax.axhline(k - 0.5, color='white', linewidth=1)
+    
+#     # Add colorbar with discrete ticks
+#     cbar = fig.colorbar(im, ax=ax, label='Mean Value')
+#     cbar.set_ticks(np.linspace(mog_means.min(), mog_means.max(), num=K))
+
+#     # Middle Panel: Heatmap of MoG prior log-variances
+#     ax = axes[1, 0]
+#     im = ax.imshow(mog_logvars, aspect='auto', cmap='plasma_r', interpolation='none')
+#     ax.set_title(f'MoG Prior Log-Variances (K={K}, D={D})')
+#     ax.set_xlabel('Dimension (D)')
+#     ax.set_ylabel('Component (K)')
+    
+#     # Add horizontal lines to separate components
+#     for k in range(1, K):
+#         ax.axhline(k - 0.5, color='white', linewidth=1)
+    
+#     # Add colorbar with discrete ticks
+#     cbar = fig.colorbar(im, ax=ax, label='Log-Variance Value')
+#     cbar.set_ticks(np.linspace(mog_logvars.min(), mog_logvars.max(), num=K))
+
+#     # Bottom Panel: Heatmap of histogram of encoder means
+#     ax = axes[2, 0]
+    
+#     # Compute histogram for each dimension
+#     hist_data = []
+#     for d in range(D):
+#         hist, bin_edges = np.histogram(encoder_means[:, d], bins=bins, range=(-5, 5))  # Adjust range as needed
+#         hist_data.append(hist)
+    
+#     # Stack histograms into a 2D array (D x bins)
+#     hist_data = np.stack(hist_data, axis=0)  # Shape: (D, bins)
+    
+#     # Plot the heatmap
+#     im = ax.imshow(hist_data.T, aspect='auto', cmap='inferno', extent=[0, D, -5, 5])
+#     ax.set_title(f'Histogram of Encoder Means (Batch Size={batch_size}, D={D})')
+#     ax.set_xlabel('Dimension (D)')
+#     ax.set_ylabel('Mean Value')
+#     fig.colorbar(im, ax=ax, label='Frequency')
+
+#     # Middle Column: First N dimensions only
+#     # Top Panel: Heatmap of MoG prior means (first N dimensions)
+#     ax = axes[0, 1]
+#     im = ax.imshow(mog_means[:, :N], aspect='auto', cmap='viridis_r', interpolation='none')
+#     ax.set_title(f'MoG Prior Means (K={K}, First {N} Dimensions)')
+#     ax.set_xlabel('Dimension (D)')
+#     ax.set_ylabel('Component (K)')
+    
+#     # Add horizontal lines to separate components
+#     for k in range(1, K):
+#         ax.axhline(k - 0.5, color='white', linewidth=1)
+    
+#     # Add colorbar with discrete ticks
+#     cbar = fig.colorbar(im, ax=ax, label='Mean Value')
+#     cbar.set_ticks(np.linspace(mog_means.min(), mog_means.max(), num=K))
+
+#     # Middle Panel: Heatmap of MoG prior log-variances (first N dimensions)
+#     ax = axes[1, 1]
+#     im = ax.imshow(mog_logvars[:, :N], aspect='auto', cmap='plasma_r', interpolation='none')
+#     ax.set_title(f'MoG Prior Log-Variances (K={K}, First {N} Dimensions)')
+#     ax.set_xlabel('Dimension (D)')
+#     ax.set_ylabel('Component (K)')
+    
+#     # Add horizontal lines to separate components
+#     for k in range(1, K):
+#         ax.axhline(k - 0.5, color='white', linewidth=1)
+    
+#     # Add colorbar with discrete ticks
+#     cbar = fig.colorbar(im, ax=ax, label='Log-Variance Value')
+#     cbar.set_ticks(np.linspace(mog_logvars.min(), mog_logvars.max(), num=K))
+
+#     # Bottom Panel: Heatmap of histogram of encoder means (first N dimensions)
+#     ax = axes[2, 1]
+    
+#     # Compute histogram for the first N dimensions
+#     hist_data_N = []
+#     for d in range(N):
+#         hist, bin_edges = np.histogram(encoder_means[:, d], bins=bins, range=(-5, 5))  # Adjust range as needed
+#         hist_data_N.append(hist)
+    
+#     # Stack histograms into a 2D array (N x bins)
+#     hist_data_N = np.stack(hist_data_N, axis=0)  # Shape: (N, bins)
+    
+#     # Plot the heatmap
+#     im = ax.imshow(hist_data_N.T, aspect='auto', cmap='inferno', extent=[0, N, -5, 5])
+#     ax.set_title(f'Histogram of Encoder Means (Batch Size={batch_size}, First {N} Dimensions)')
+#     ax.set_xlabel('Dimension (D)')
+#     ax.set_ylabel('Mean Value')
+#     fig.colorbar(im, ax=ax, label='Frequency')
+
+#     # Right Column: 1D visualizations for dimension i
+#     # Top Plot: 1D visualization of dimension i's prior
+#     ax = axes[0, 2]
+    
+#     # Sample from the MoG prior for dimension i
+#     samples = []
+#     for k in range(K):
+#         mean_k = mog_means[k, i]
+#         weight_k = mog_weights[k]
+#         std_k = np.exp(0.5 * mog_logvars[k, i])
+#         samples_k = np.random.normal(mean_k, std_k, size=int(10000 * weight_k))  # Sample w * N points per component
+#         samples.append(samples_k)
+    
+#     # Plot the samples
+#     for k in range(K):
+#         ax.hist(samples[k], bins=bins, range=(-5, 5), alpha=0.5, label=f'Component {k+1}')
+#     ax.set_title(f'1D Prior for Dimension {i} (K={K})')
+#     ax.set_xlabel('Mean Value')
+#     ax.set_ylabel('Frequency')
+#     ax.legend()
+
+#     # Bottom Plot: 1D visualization of encoder means for dimension i
+#     ax = axes[1, 2]
+    
+#     # Plot the histogram of encoder means for dimension i
+#     ax.hist(encoder_means[:, i], bins=bins, range=(-5, 5), color='blue', alpha=0.7)
+#     ax.set_title(f'1D Encoder Means for Dimension {i}')
+#     ax.set_xlabel('Mean Value')
+#     ax.set_ylabel('Frequency')
+
+#     # Bottom Plot: 1D visualization of encoder logvars for dimension i
+#     ax = axes[2, 2]
+    
+#     # Plot the histogram of encoder logvars for dimension i
+#     ax.hist(encoder_logvars[:, i], bins=bins, color='purple', alpha=0.7)
+#     ax.set_title(f'1D Encoder Logvars for Dimension {i}')
+#     ax.set_xlabel('Logvar Value')
+#     ax.set_ylabel('Frequency')
+
+#     # Adjust layout and display
+#     plt.tight_layout()
+    
+#     # Save the plot
+#     if not os.path.exists(savedir):
+#         os.makedirs(savedir)
+#     savename_jpg = f"{savedir}/PriorPosterior_epoch{epoch}_GPU{gpu_id}.jpg"
+#     plt.savefig(savename_jpg)
+#     plt.close(fig)
+
+#     plt.close('all')
+#     print("Prior and Posterior Plotted")
 
 def print_latent_realtime(mean, logvar, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
 
