@@ -654,7 +654,7 @@ class Trainer:
         # Detach to allow next backpass
         self.accumulated_mean = self.accumulated_mean.detach() 
         self.accumulated_logvar = self.accumulated_logvar.detach() 
-        self.accumulated_zmeaned= self.accumulated_zmeaned.detach() 
+        self.accumulated_zmeaned = self.accumulated_zmeaned.detach() 
         self.accumulated_mogpreds = self.accumulated_mogpreds.detach() 
 
     def _run_export_embeddings(
@@ -896,7 +896,7 @@ class Trainer:
                 loss.backward()    
                 torch.nn.utils.clip_grad_norm_(self.vae.module.prior.parameters(), max_norm=1.0) # Gradient clipping for MoG prior, prevent excessive updates even with strong regularization 
                 self.opt_vae.step()
-                self._update_reg_window(mean_tokenmeaned, logvar_tokenmeaned, mogpreds_tokenmeaned) # Update the buffers & detach() 
+                self._update_reg_window(mean_tokenmeaned, logvar_tokenmeaned, z_meaned, mogpreds_tokenmeaned) # Update the buffers & detach() 
 
             # Realtime terminal info and WandB 
             if (iter_curr%self.recent_display_iters==0):
@@ -1028,7 +1028,7 @@ class Trainer:
             mog_weights = self.vae.module.prior.weights.detach().cpu().numpy(), 
             encoder_means = self.accumulated_mean.detach().cpu().numpy(),
             encoder_logvars = self.accumulated_logvar.detach().cpu().numpy(),
-            enocder_zmeaned = self.accumulated_zmeaned.detach().cpu().numpy(),
+            encoder_zmeaned = self.accumulated_zmeaned.detach().cpu().numpy(),
             encoder_mogpreds = self.accumulated_mogpreds.detach().cpu().numpy(),
             savedir = self.model_dir + f"/realtime_plots/{dataset_string}/observed_latents",
             epoch = self.epoch,

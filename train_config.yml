@@ -58,7 +58,7 @@ transformer_start_pos: 0 # Not currently coded up to work if > 0
 top_dims: kwargs['top_dims'] = kwargs['transformer_dim'] # kwargs['num_encode_concat_transformer_tokens'] * kwargs['transformer_dim']
 hidden_dims: 2048 # 4096
 latent_dim: 1024 # 2048
-decoder_base_dims: 128 # top dim of decoder is [encode_token_samples * decoder_base_dims]
+decoder_base_dims: 256 # top dim of decoder is [encode_token_samples * decoder_base_dims]
 hash_output_range: kwargs['hash_output_range'] = (-2, 2)  # tuple, modify based on approximate range of prior
 recon_weight: 3 # 3
 LR_max_core: kwargs['LR_max_core'] = 1e-5 # 5e-7
@@ -72,14 +72,13 @@ adamW_beta1: 0.9
 adamW_beta2: 0.95 
 
 # PRIOR - VAE
-mog_components: 64 # Helps dictate global clustering of latent space 
-# monte_carlo_samples: 16 # Not sure, but feel like it needs to be higher than MoG components, big GPU Memory usage as this increases
-gumbel_softmax_temperature: 1.0 # Higher means softer assignment to MoG, smoother latent space with less discrete clustering
-entropy_weight: kwargs['entropy_weight'] = 1e-6 # Of MoG components
-repulsion_weight: kwargs['repulsion_weight'] = 1e2 # Of MoG components
+mog_components: 64 # Categorical sampling of single component with gumbel-softmax trick
+gumbel_softmax_temperature: 20.0 # Higher means softer assignment to MoG, more exploratin of latent space, noisier embeddings
+entropy_weight: kwargs['entropy_weight'] = 1e-6 # Helps prevent mode collapse
+repulsion_weight: kwargs['repulsion_weight'] = 1e2 # Helps keep centers of guassians far apart
 random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
 random_observed_numplots: 4 # On the end of epoch plot
-Reg_max: kwargs['Reg_max'] = 0 # 1e-2 # 1e-3 # 0.01 # 1e5 # 0.01 #0.1
+Reg_max: kwargs['Reg_max'] = 1e2 # 1e-2 # 1e-3 # 0.01 # 1e5 # 0.01 #0.1
 Reg_min: kwargs['Reg_min'] = 0
 Reg_stall_epochs: 0 # Min Reg weight rise until stall is complete
 Reg_epochs_AT_max: 15 # Maybe coincide with the wasserstein order switch epoch?
@@ -110,7 +109,7 @@ Sparse_epochs_TO_max: 0
 
 # TRAINING 
 random_pulls_in_batch: 8 # BATCHSIZE
-train_forward_passes: 8 # Independent of batchsize, just random pulls of data
+train_forward_passes: 2048 # Independent of batchsize, just random pulls of data
 epochs_to_train: 999999 
 train_num_rand_hashes: 1  # Number of random channel orders, with deterministic hash embedding for each, a form of augmentation
 
@@ -142,6 +141,7 @@ realtime_printing_interval_val: 64
 num_recon_samples: 256 # this will limit how much is shown in recon plots, ERROR if not enough samples, pulls from START and END of transformer sequence 
 num_rand_recon_plots: 4
 num_realtime_dims: 5
+num_accumulated_plotting_dims: 5
 recent_display_iters: 5 # How often to print to console when training & how often to log to WandB
 
 

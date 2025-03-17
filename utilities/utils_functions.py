@@ -570,10 +570,11 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier, hash_output
 
 # PLOTTING
 
-def plot_mog_and_encoder_means(gpu_id, mog_means, mog_logvars, mog_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, **kwargs):
+def plot_mog_and_encoder_means(gpu_id, mog_means, mog_logvars, mog_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, num_accumulated_plotting_dims=5, n_bins=100, **kwargs):
     """
     Plot distributions of encoder statistics across MoG components using histograms.
     Compares encoder statistics with MoG prior state and includes encoder_zmeaned visualization.
+    Each dimension is plotted in a separate column for clarity.
     
     Args:
         gpu_id: GPU ID (for logging purposes)
@@ -586,6 +587,8 @@ def plot_mog_and_encoder_means(gpu_id, mog_means, mog_logvars, mog_weights, enco
         encoder_zmeaned: Aggregated latent representation, shape (Batch, D)
         savedir: Directory to save the plots
         epoch: Current epoch
+        num_accumulated_plotting_dims: Number of dimensions to visualize (default: 5)
+        n_bins: Number of bins for histograms (default: 100)
         **kwargs: Additional arguments
     """
     Batch, K, D = encoder_means.shape  # Batch size, number of MoG components, and latent dimension
@@ -595,6 +598,7 @@ def plot_mog_and_encoder_means(gpu_id, mog_means, mog_logvars, mog_weights, enco
     assert encoder_logvars.shape == (Batch, K, D), f"encoder_logvars must have shape (Batch, K, D), but got {encoder_logvars.shape}"
     assert encoder_mogpreds.shape == (Batch, K), f"encoder_mogpreds must have shape (Batch, K), but got {encoder_mogpreds.shape}"
     assert encoder_zmeaned.shape == (Batch, D), f"encoder_zmeaned must have shape (Batch, D), but got {encoder_zmeaned.shape}"
+    assert num_accumulated_plotting_dims <= D, f"num_accumulated_plotting_dims ({num_accumulated_plotting_dims}) cannot exceed latent dimension D ({D})"
 
     # Flatten the batch dimension to treat all batches as a single dataset
     encoder_means_flat = encoder_means.reshape(-1, K, D)  # Shape: (Batch, K, D) -> (Batch * 1, K, D)
@@ -603,61 +607,59 @@ def plot_mog_and_encoder_means(gpu_id, mog_means, mog_logvars, mog_weights, enco
     encoder_zmeaned_flat = encoder_zmeaned.reshape(-1, D)  # Shape: (Batch, D) -> (Batch * 1, D)
 
     # Create a figure with subplots
-    fig, axes = pl.subplots(4, 1, figsize=(12, 24))
+    fig = pl.figure(figsize=(5 * num_accumulated_plotting_dims, 20))
 
-    # Plot 1: Distribution of Encoder Means vs MoG Prior Means (for each MoG component)
-    for k in range(K):
-        axes[0].hist(encoder_means_flat[:, k, :].flatten(), bins=50, alpha=0.5, label=f'Comp {k}' if k < 5 else None)
-    for k in range(K):
-        axes[0].axvline(mog_means[k, :].mean(), color='red', linestyle='--', alpha=0.7, label=f'MoG Prior Mean (Comp {k})' if k < 5 else None)
-    axes[0].set_title(f'Distribution of Encoder Means vs MoG Prior Means (Epoch {epoch})')
-    axes[0].set_xlabel('Mean Value')
-    axes[0].set_ylabel('Frequency')
-    axes[0].legend()
-    axes[0].grid(True)
+    # Plot 1: Distribution of Encoder Means vs MoG Prior Means (for each MoG component, first `num_accumulated_plotting_dims` dims)
+    for d in range(num_accumulated_plotting_dims):
+        ax = fig.add_subplot(4, num_accumulated_plotting_dims, d + 1)
+        for k in range(K):
+            ax.hist(encoder_means_flat[:, k, d], bins=n_bins, alpha=0.5, label=f'Comp {k}')
+        ax.axvline(mog_means[:, d].mean(), color='red', linestyle='--', alpha=0.7, label='MoG Prior Mean')
+        ax.set_title(f'Encoder Means (Dim {d})')
+        ax.set_xlabel('Mean Value')
+        ax.set_ylabel('Frequency')
 
-    # Plot 2: Distribution of Encoder Logvars vs MoG Prior Logvars (for each MoG component)
-    for k in range(K):
-        axes[1].hist(encoder_logvars_flat[:, k, :].flatten(), bins=50, alpha=0.5, label=f'Comp {k}' if k < 5 else None)
-    for k in range(K):
-        axes[1].axvline(mog_logvars[k, :].mean(), color='red', linestyle='--', alpha=0.7, label=f'MoG Prior Logvar (Comp {k})' if k < 5 else None)
-    axes[1].set_title(f'Distribution of Encoder Logvars vs MoG Prior Logvars (Epoch {epoch})')
-    axes[1].set_xlabel('Logvar Value')
-    axes[1].set_ylabel('Frequency')
-    axes[1].legend()
-    axes[1].grid(True)
+    # Plot 2: Distribution of Encoder Logvars vs MoG Prior Logvars (for each MoG component, first `num_accumulated_plotting_dims` dims)
+    for d in range(num_accumulated_plotting_dims):
+        ax = fig.add_subplot(4, num_accumulated_plotting_dims, num_accumulated_plotting_dims + d + 1)
+        for k in range(K):
+            ax.hist(encoder_logvars_flat[:, k, d], bins=n_bins, alpha=0.5, label=f'Comp {k}')
+        ax.axvline(mog_logvars[:, d].mean(), color='red', linestyle='--', alpha=0.7, label='MoG Prior Logvar')
+        ax.set_title(f'Encoder Logvars (Dim {d})')
+        ax.set_xlabel('Logvar Value')
+        ax.set_ylabel('Frequency')
 
     # Plot 3: Distribution of Encoder MoG Predictions vs MoG Prior Weights (for each MoG component)
+    # Span all columns for the MoG predictions plot
+    ax = fig.add_subplot(4, 1, 3)  # Span all columns in row 3
     for k in range(K):
-        axes[2].hist(encoder_mogpreds_flat[:, k], bins=50, alpha=0.5, label=f'Comp {k}')
-        axes[2].axvline(mog_weights[k], color='red', linestyle='--', alpha=0.7, label=f'MoG Prior Weight (Comp {k})' if k < 5 else None)
-    axes[2].set_title(f'Distribution of Encoder MoG Predictions vs MoG Prior Weights (Epoch {epoch})')
-    axes[2].set_xlabel('Weight Value')
-    axes[2].set_ylabel('Frequency')
-    axes[2].legend()
-    axes[2].grid(True)
+        ax.hist(encoder_mogpreds_flat[:, k], bins=n_bins, alpha=0.5, label=f'Comp {k}')
+        ax.axvline(mog_weights[k], color='red', linestyle='--', alpha=0.7, label=f'MoG Prior Weight (Comp {k})')
+    ax.set_title(f'Encoder MoG Predictions')
+    ax.set_xlabel('Weight Value')
+    ax.set_ylabel('Frequency')
 
-    # Plot 4: Distribution of encoder_zmeaned (aggregated latent representation)
-    for d in range(D):
-        axes[3].hist(encoder_zmeaned_flat[:, d], bins=50, alpha=0.5, label=f'Dim {d}' if d < 5 else None)
-    axes[3].set_title(f'Distribution of encoder_zmeaned (Epoch {epoch})')
-    axes[3].set_xlabel('Latent Value')
-    axes[3].set_ylabel('Frequency')
-    axes[3].legend()
-    axes[3].grid(True)
+    # Plot 4: Distribution of encoder_zmeaned (aggregated latent representation, first `num_accumulated_plotting_dims` dims)
+    for d in range(num_accumulated_plotting_dims):
+        ax = fig.add_subplot(4, num_accumulated_plotting_dims, 3 * num_accumulated_plotting_dims + d + 1)
+        ax.hist(encoder_zmeaned_flat[:, d], bins=n_bins, alpha=0.5, label=f'Dim {d}')
+        ax.set_title(f'encoder_zmeaned (Dim {d})')
+        ax.set_xlabel('Latent Value')
+        ax.set_ylabel('Frequency')
+        ax.legend()
 
     # Adjust layout and save the plot
-    pl.tight_layout()
     if not os.path.exists(savedir):
         os.makedirs(savedir)
     savename_jpg = f"{savedir}/ObservedLatents_epoch{epoch}_gpu{gpu_id}.jpg"
     pl.savefig(savename_jpg)
     pl.close(fig)
 
-def print_latent_realtime(mean, logvar, mogpreds, savedir, epoch, iter_curr, **kwargs):
+def print_latent_realtime(mean, logvar, mogpreds, savedir, epoch, iter_curr, n_bins=100, **kwargs):
     """
-    Plot weighted means, logvars, and MoG predictions at the token level for the first 5 dimensions.
-    Aggregates tokens across all batches.
+    Plot weighted means, logvars, and average MoG weights at the token level for the first 5 dimensions.
+    Aggregates tokens across all batches, with separate histograms for each batch index.
+    Weighting is done separately for each batch.
     
     Args:
         mean: Encoder means, shape (batch_size, T, K, D)
@@ -666,46 +668,58 @@ def print_latent_realtime(mean, logvar, mogpreds, savedir, epoch, iter_curr, **k
         savedir: Directory to save the plots
         epoch: Current epoch
         iter_curr: Current iteration
+        n_bins: Number of bins for histograms (default: 100)
         **kwargs: Additional arguments
     """
     batch_size, T, K, D = mean.shape
 
-    # Aggregate tokens across all batches
-    mean_agg = mean.reshape(-1, K, D)  # Shape: (batch_size * T, K, D)
-    logvar_agg = logvar.reshape(-1, K, D)  # Shape: (batch_size * T, K, D)
-    mogpreds_agg = mogpreds.reshape(-1, K)  # Shape: (batch_size * T, K)
+    # Weight the means and logvars by MoG predictions separately for each batch
+    weighted_mean = np.zeros((batch_size, T, D))  # Shape: (batch_size, T, D)
+    weighted_logvar = np.zeros((batch_size, T, D))  # Shape: (batch_size, T, D)
 
-    # Weight the means and logvars by MoG predictions
-    weighted_mean = np.sum(mean_agg * mogpreds_agg[:, :, np.newaxis], axis=1)  # Shape: (batch_size * T, D)
-    weighted_logvar = np.sum(logvar_agg * mogpreds_agg[:, :, np.newaxis], axis=1)  # Shape: (batch_size * T, D)
+    for b in range(batch_size):
+        # Weight the means and logvars for the current batch
+        weighted_mean[b] = np.sum(mean[b] * mogpreds[b][:, :, np.newaxis], axis=1)  # Shape: (T, D)
+        weighted_logvar[b] = np.sum(logvar[b] * mogpreds[b][:, :, np.newaxis], axis=1)  # Shape: (T, D)
+
+    # Compute the average MoG weights across all tokens for each batch
+    avg_mogpreds = np.mean(mogpreds, axis=1)  # Shape: (batch_size, K)
 
     # Plot the first 5 dimensions
     num_dims = min(5, D)
-    fig, axes = pl.subplots(num_dims, 3, figsize=(18, 5 * num_dims))
+    fig = pl.figure(figsize=(28, 5 * num_dims))  # Wider figure to accommodate 7 columns
 
     for d in range(num_dims):
-        # Plot weighted means
-        axes[d, 0].hist(weighted_mean[:, d], bins=50, color='skyblue', alpha=0.7)
-        axes[d, 0].set_title(f'Weighted Mean (Dim {d})')
-        axes[d, 0].set_xlabel('Value')
-        axes[d, 0].set_ylabel('Frequency')
+        # Plot weighted means (first column)
+        ax1 = pl.subplot2grid((num_dims, 7), (d, 0), colspan=1)
+        for b in range(batch_size):
+            ax1.hist(weighted_mean[b, :, d], bins=n_bins, alpha=0.4, label=f'Batch {b}')
+        ax1.set_title(f'Weighted Mean (Dim {d})')
+        ax1.set_xlabel('Value')
+        ax1.set_ylabel('Frequency')
+        ax1.set_xlim(-5, 5)  # Set x-axis range from -5 to 5
 
-        # Plot weighted logvars
-        axes[d, 1].hist(weighted_logvar[:, d], bins=50, color='lightgreen', alpha=0.7)
-        axes[d, 1].set_title(f'Weighted Logvar (Dim {d})')
-        axes[d, 1].set_xlabel('Value')
-        axes[d, 1].set_ylabel('Frequency')
+        # Plot weighted logvars (second column)
+        ax2 = pl.subplot2grid((num_dims, 7), (d, 1), colspan=1)
+        for b in range(batch_size):
+            ax2.hist(weighted_logvar[b, :, d], bins=n_bins, alpha=0.4, label=f'Batch {b}')
+        ax2.set_title(f'Weighted Logvar (Dim {d})')
+        ax2.set_xlabel('Value')
+        ax2.set_ylabel('Frequency')
 
-        # Plot MoG predictions for the current dimension
-        for k in range(K):
-            axes[d, 2].hist(mogpreds_agg[:, k], bins=50, alpha=0.5, label=f'Component {k}')
-        axes[d, 2].set_title(f'MoG Component Predictions (Dim {d})')
-        axes[d, 2].set_xlabel('Probability')
-        axes[d, 2].set_ylabel('Frequency')
-        # axes[d, 2].legend()
+        # Plot average MoG weights (columns 2–6, single subplot spanning 5 columns)
+        if d == 0:  # Only create this subplot once
+            ax3 = pl.subplot2grid((num_dims, 7), (d, 2), colspan=5, rowspan=num_dims)
+            for b in range(batch_size):
+                ax3.bar(np.arange(K) + 0.1 * b, avg_mogpreds[b], width=0.1, alpha=0.4, label=f'Batch {b}')
+            ax3.set_title(f'Average MoG Weights')
+            ax3.set_xlabel('MoG Component')
+            ax3.set_ylabel('Average Weight')
+            ax3.set_xticks(np.arange(K))  # Show all MoG component indices on the x-axis
+            ax3.legend()
 
     # Adjust layout and save the plot
-    # pl.tight_layout()
+    pl.tight_layout()
     if not os.path.exists(savedir):
         os.makedirs(savedir)
     savename_jpg = f"{savedir}/RealtimeLatents_epoch{epoch}_iter{iter_curr}.jpg"
