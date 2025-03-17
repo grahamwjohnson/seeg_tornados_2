@@ -53,39 +53,57 @@ def mog_repulsion_regularization(weights, means, repulsion_weight, **kwargs):
 
     return repulsion_weight * repulsion_term  
 
-def mog_loss(mean, logvar, mog_prior, weight, monte_carlo_samples, **kwargs):
+def mog_loss(encoder_means, encoder_logvars, encoder_mogpreds, mog_prior, weight, gumbel_softmax_temperature, **kwargs):
     """
     Compute the KL divergence between q(z|x) and the MoG prior p(z).
-    mean: Encoder mean, shape (batch_size, D)
-    logvar: Encoder log-variance, shape (batch_size, D)
+    encoder_means: Encoder means, shape (batch_size, T, K, D)
+    encoder_logvars: Encoder log-variances, shape (batch_size, T, K, D)
+    encoder_mogpreds: Encoder component predictions (softmaxed), shape (batch_size, T, K)
     mog_prior: Instance of MoGPrior
-    z_samples: Number of samples for Monte Carlo approximation
+    weight: Weight of the KL loss
+    temperature: Temperature for Gumbel-Softmax (controls the sharpness of the distribution)
     """
-    batch_size, D = mean.shape
+    batch_size, T, K, D = encoder_means.shape
 
-    # Sample from q(z|x) using the reparameterization trick
-    std = torch.exp(0.5 * logvar)  # Standard deviation
-    eps = torch.randn(monte_carlo_samples, batch_size, D, device=mean.device)  # Random noise
-    z = mean + eps * std  # Shape: (z_samples, batch_size, D)
+    # Step 1: Use Gumbel-Softmax to sample component weights DIFFERENTIABLY
+    # Generate Gumbel noise
+    gumbel_noise = -torch.log(-torch.log(torch.rand_like(encoder_mogpreds)))  # Shape: (batch_size, T, K)
 
-    # Compute log q(z|x)
+    # Apply Gumbel-Softmax
+    logits = (torch.log(encoder_mogpreds + 1e-10) + gumbel_noise)  # Shape: (batch_size, T, K)
+    component_weights = torch.softmax(logits / gumbel_softmax_temperature, dim=-1)  # Shape: (batch_size, T, K)
+
+    # Step 2: Compute weighted means and log-variances for each token
+    selected_means = torch.sum(encoder_means * component_weights.unsqueeze(-1), dim=2)  # Shape: (batch_size, T, D)
+    selected_logvars = torch.sum(encoder_logvars * component_weights.unsqueeze(-1), dim=2)  # Shape: (batch_size, T, D)
+
+    # Step 3: Reparameterization trick to sample z at the TOKEN level
+    eps = torch.randn_like(selected_means)  # Shape: (batch_size, T, D)
+    z_token = selected_means + eps * torch.exp(0.5 * selected_logvars)  # Shape: (batch_size, T, D)
+
+    # Step 4: Compute log q(z|x) at the TOKEN level
     log_qzx = -0.5 * (
-        logvar +
-        torch.pow(z - mean, 2) / torch.exp(logvar) +
+        selected_logvars +
+        torch.pow(z_token - selected_means, 2) / torch.exp(selected_logvars) +
         D * torch.log(2 * torch.tensor(torch.pi))
-    ).sum(dim=-1)  # Shape: (z_samples, batch_size)
+    ).sum(dim=-1)  # Shape: (batch_size, T)
 
-    # Compute log p(z) under the MoG prior
-    log_pz = mog_prior(z.view(-1, D))  # Shape: (z_samples * batch_size,)
-    log_pz = log_pz.view(monte_carlo_samples, batch_size)  # Shape: (z_samples, batch_size)
+    # Step 5: Compute log p(z) under the MoG prior at the TOKEN level
+    z_flat = z_token.view(-1, D)  # Shape: (batch_size * T, D)
+    log_pz = mog_prior(z_flat)  # Shape: (batch_size * T,)
+    log_pz = log_pz.view(batch_size, T)  # Shape: (batch_size, T)
 
-    # KL divergence: log q(z|x) - log p(z)
-    kl_div = log_qzx - log_pz  # Shape: (z_samples, batch_size)
+    # Step 6: Compute KL divergence at the TOKEN level
+    kl_div = log_qzx - log_pz  # Shape: (batch_size, T)
 
-    # Average over samples and batch
+    # Step 7: Average KL divergence over tokens and batch for global regularization
     kl_div = kl_div.mean()  # Scalar
 
-    return weight * kl_div / (batch_size * D)
+    # Step 8: Normalize the loss by the number of tokens and latent dimensions
+    normalized_loss = weight * kl_div / (batch_size * T * D)
+
+    # Step 9: Return the loss, token-level z, and other values
+    return normalized_loss, z_token
 
 def recon_loss_function(x, x_hat, recon_weight):
     # recon_loss = LogCosh_weight * LogCosh_loss_fn(x, x_hat) 

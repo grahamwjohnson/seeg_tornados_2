@@ -570,407 +570,147 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier, hash_output
 
 # PLOTTING
 
-def plot_mog_and_encoder_means(mog_means, mog_logvars, mog_weights, encoder_means, encoder_logvars, savedir, epoch, gpu_id, bins=100, N=5, i=0, **kwargs):
+def plot_mog_and_encoder_means(gpu_id, mog_means, mog_logvars, mog_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, **kwargs):
     """
-    Plot the MoG prior means, log-variances, and histogram of encoder means.
-    mog_means: MoG prior means, shape (K, D)
-    mog_logvars: MoG prior log-variances, shape (K, D)
-    mog_weights: MoG prior weights, shape (K,)
-    encoder_means: Encoder means, shape (batch_size, D)
-    encoder_logvars: Encoder log-variances, shape (batch_size, D)
-    savedir: Directory to save the plot
-    epoch: Current epoch (for filename)
-    gpu_id: GPU ID (for filename)
-    bins: Number of bins for the histogram
-    N: Number of dimensions to show in the right column (default 5)
-    i: Dimension to visualize in the third column (default 0)
+    Plot distributions of encoder statistics across MoG components using histograms.
+    Compares encoder statistics with MoG prior state and includes encoder_zmeaned visualization.
+    
+    Args:
+        gpu_id: GPU ID (for logging purposes)
+        mog_means: MoG prior means, shape (K, D)
+        mog_logvars: MoG prior log-variances, shape (K, D)
+        mog_weights: MoG prior weights, shape (K,)
+        encoder_means: Encoder means, shape (Batch, K, D)
+        encoder_logvars: Encoder log-variances, shape (Batch, K, D)
+        encoder_mogpreds: Encoder MoG predictions, shape (Batch, K)
+        encoder_zmeaned: Aggregated latent representation, shape (Batch, D)
+        savedir: Directory to save the plots
+        epoch: Current epoch
+        **kwargs: Additional arguments
     """
-    K, D = mog_means.shape
-    batch_size = encoder_means.shape[0]
+    Batch, K, D = encoder_means.shape  # Batch size, number of MoG components, and latent dimension
 
-    # Create a 3x3 grid of subplots
-    fig, axes = plt.subplots(3, 3, figsize=(30, 12))
+    # Validate input shapes
+    assert encoder_means.shape == (Batch, K, D), f"encoder_means must have shape (Batch, K, D), but got {encoder_means.shape}"
+    assert encoder_logvars.shape == (Batch, K, D), f"encoder_logvars must have shape (Batch, K, D), but got {encoder_logvars.shape}"
+    assert encoder_mogpreds.shape == (Batch, K), f"encoder_mogpreds must have shape (Batch, K), but got {encoder_mogpreds.shape}"
+    assert encoder_zmeaned.shape == (Batch, D), f"encoder_zmeaned must have shape (Batch, D), but got {encoder_zmeaned.shape}"
 
-    # Define the range for the histograms
-    hist_range = (-5, 5)
+    # Flatten the batch dimension to treat all batches as a single dataset
+    encoder_means_flat = encoder_means.reshape(-1, K, D)  # Shape: (Batch, K, D) -> (Batch * 1, K, D)
+    encoder_logvars_flat = encoder_logvars.reshape(-1, K, D)  # Shape: (Batch, K, D) -> (Batch * 1, K, D)
+    encoder_mogpreds_flat = encoder_mogpreds.reshape(-1, K)  # Shape: (Batch, K) -> (Batch * 1, K)
+    encoder_zmeaned_flat = encoder_zmeaned.reshape(-1, D)  # Shape: (Batch, D) -> (Batch * 1, D)
 
-    # Left Column: Full-dimensional plots
-    # Top Panel: Heatmap of MoG prior means
-    ax = axes[0, 0]
-    im = ax.imshow(mog_means, aspect='auto', cmap='viridis_r', interpolation='none')
-    ax.set_title(f'MoG Prior Means (K={K}, D={D})')
-    ax.set_xlabel('Dimension (D)')
-    ax.set_ylabel('Component (K)')
-    
-    # Add horizontal lines to separate components
-    for k in range(1, K):
-        ax.axhline(k - 0.5, color='white', linewidth=1)
-    
-    # Add colorbar with discrete ticks
-    cbar = fig.colorbar(im, ax=ax, label='Mean Value')
-    cbar.set_ticks(np.linspace(mog_means.min(), mog_means.max(), num=K))
+    # Create a figure with subplots
+    fig, axes = pl.subplots(4, 1, figsize=(12, 24))
 
-    # Middle Panel: Heatmap of MoG prior log-variances
-    ax = axes[1, 0]
-    im = ax.imshow(mog_logvars, aspect='auto', cmap='plasma_r', interpolation='none')
-    ax.set_title(f'MoG Prior Log-Variances (K={K}, D={D})')
-    ax.set_xlabel('Dimension (D)')
-    ax.set_ylabel('Component (K)')
-    
-    # Add horizontal lines to separate components
-    for k in range(1, K):
-        ax.axhline(k - 0.5, color='white', linewidth=1)
-    
-    # Add colorbar with discrete ticks
-    cbar = fig.colorbar(im, ax=ax, label='Log-Variance Value')
-    cbar.set_ticks(np.linspace(mog_logvars.min(), mog_logvars.max(), num=K))
+    # Plot 1: Distribution of Encoder Means vs MoG Prior Means (for each MoG component)
+    for k in range(K):
+        axes[0].hist(encoder_means_flat[:, k, :].flatten(), bins=50, alpha=0.5, label=f'Comp {k}' if k < 5 else None)
+    for k in range(K):
+        axes[0].axvline(mog_means[k, :].mean(), color='red', linestyle='--', alpha=0.7, label=f'MoG Prior Mean (Comp {k})' if k < 5 else None)
+    axes[0].set_title(f'Distribution of Encoder Means vs MoG Prior Means (Epoch {epoch})')
+    axes[0].set_xlabel('Mean Value')
+    axes[0].set_ylabel('Frequency')
+    axes[0].legend()
+    axes[0].grid(True)
 
-    # Bottom Panel: Heatmap of histogram of encoder means
-    ax = axes[2, 0]
-    
-    # Compute histogram for each dimension
-    hist_data = []
-    bin_edges = None
+    # Plot 2: Distribution of Encoder Logvars vs MoG Prior Logvars (for each MoG component)
+    for k in range(K):
+        axes[1].hist(encoder_logvars_flat[:, k, :].flatten(), bins=50, alpha=0.5, label=f'Comp {k}' if k < 5 else None)
+    for k in range(K):
+        axes[1].axvline(mog_logvars[k, :].mean(), color='red', linestyle='--', alpha=0.7, label=f'MoG Prior Logvar (Comp {k})' if k < 5 else None)
+    axes[1].set_title(f'Distribution of Encoder Logvars vs MoG Prior Logvars (Epoch {epoch})')
+    axes[1].set_xlabel('Logvar Value')
+    axes[1].set_ylabel('Frequency')
+    axes[1].legend()
+    axes[1].grid(True)
+
+    # Plot 3: Distribution of Encoder MoG Predictions vs MoG Prior Weights (for each MoG component)
+    for k in range(K):
+        axes[2].hist(encoder_mogpreds_flat[:, k], bins=50, alpha=0.5, label=f'Comp {k}')
+        axes[2].axvline(mog_weights[k], color='red', linestyle='--', alpha=0.7, label=f'MoG Prior Weight (Comp {k})' if k < 5 else None)
+    axes[2].set_title(f'Distribution of Encoder MoG Predictions vs MoG Prior Weights (Epoch {epoch})')
+    axes[2].set_xlabel('Weight Value')
+    axes[2].set_ylabel('Frequency')
+    axes[2].legend()
+    axes[2].grid(True)
+
+    # Plot 4: Distribution of encoder_zmeaned (aggregated latent representation)
     for d in range(D):
-        hist, bin_edges = np.histogram(encoder_means[:, d], bins=bins, range=hist_range)
-        hist_data.append(hist)
-    
-    # Stack histograms into a 2D array (D x bins)
-    hist_data = np.stack(hist_data, axis=0)  # Shape: (D, bins)
-    
-    # Plot the heatmap
-    im = ax.imshow(hist_data.T, aspect='auto', cmap='inferno', extent=[0, D, hist_range[0], hist_range[1]])
-    ax.set_title(f'Histogram of Encoder Means (Batch Size={batch_size}, D={D})')
-    ax.set_xlabel('Dimension (D)')
-    ax.set_ylabel('Mean Value')
-    fig.colorbar(im, ax=ax, label='Frequency')
+        axes[3].hist(encoder_zmeaned_flat[:, d], bins=50, alpha=0.5, label=f'Dim {d}' if d < 5 else None)
+    axes[3].set_title(f'Distribution of encoder_zmeaned (Epoch {epoch})')
+    axes[3].set_xlabel('Latent Value')
+    axes[3].set_ylabel('Frequency')
+    axes[3].legend()
+    axes[3].grid(True)
 
-    # Middle Column: First N dimensions only
-    # Top Panel: Heatmap of MoG prior means (first N dimensions)
-    ax = axes[0, 1]
-    im = ax.imshow(mog_means[:, :N], aspect='auto', cmap='viridis_r', interpolation='none')
-    ax.set_title(f'MoG Prior Means (K={K}, First {N} Dimensions)')
-    ax.set_xlabel('Dimension (D)')
-    ax.set_ylabel('Component (K)')
-    
-    # Add horizontal lines to separate components
-    for k in range(1, K):
-        ax.axhline(k - 0.5, color='white', linewidth=1)
-    
-    # Add colorbar with discrete ticks
-    cbar = fig.colorbar(im, ax=ax, label='Mean Value')
-    cbar.set_ticks(np.linspace(mog_means.min(), mog_means.max(), num=K))
-
-    # Middle Panel: Heatmap of MoG prior log-variances (first N dimensions)
-    ax = axes[1, 1]
-    im = ax.imshow(mog_logvars[:, :N], aspect='auto', cmap='plasma_r', interpolation='none')
-    ax.set_title(f'MoG Prior Log-Variances (K={K}, First {N} Dimensions)')
-    ax.set_xlabel('Dimension (D)')
-    ax.set_ylabel('Component (K)')
-    
-    # Add horizontal lines to separate components
-    for k in range(1, K):
-        ax.axhline(k - 0.5, color='white', linewidth=1)
-    
-    # Add colorbar with discrete ticks
-    cbar = fig.colorbar(im, ax=ax, label='Log-Variance Value')
-    cbar.set_ticks(np.linspace(mog_logvars.min(), mog_logvars.max(), num=K))
-
-    # Bottom Panel: Heatmap of histogram of encoder means (first N dimensions)
-    ax = axes[2, 1]
-    
-    # Compute histogram for the first N dimensions
-    hist_data_N = []
-    for d in range(N):
-        hist, _ = np.histogram(encoder_means[:, d], bins=bins, range=hist_range)
-        hist_data_N.append(hist)
-    
-    # Stack histograms into a 2D array (N x bins)
-    hist_data_N = np.stack(hist_data_N, axis=0)  # Shape: (N, bins)
-    
-    # Plot the heatmap
-    im = ax.imshow(hist_data_N.T, aspect='auto', cmap='inferno', extent=[0, N, hist_range[0], hist_range[1]])
-    ax.set_title(f'Histogram of Encoder Means (Batch Size={batch_size}, First {N} Dimensions)')
-    ax.set_xlabel('Dimension (D)')
-    ax.set_ylabel('Mean Value')
-    fig.colorbar(im, ax=ax, label='Frequency')
-
-    # Right Column: 1D visualizations for dimension i
-    # Top Plot: 1D visualization of dimension i's prior
-    ax = axes[0, 2]
-    
-    # Sample from the MoG prior for dimension i
-    samples = []
-    for k in range(K):
-        mean_k = mog_means[k, i]
-        weight_k = mog_weights[k]
-        std_k = np.exp(0.5 * mog_logvars[k, i])
-        samples_k = np.random.normal(mean_k, std_k, size=int(10000 * weight_k))  # Sample w * N points per component
-        samples.append(samples_k)
-    
-    # Plot the samples
-    for k in range(K):
-        ax.hist(samples[k], bins=bins, range=hist_range, alpha=0.5, label=f'Component {k+1}')
-    ax.set_title(f'1D Prior for Dimension {i} (K={K})')
-    ax.set_xlabel('Mean Value')
-    ax.set_ylabel('Frequency')
-    ax.legend()
-
-    # Bottom Plot: 1D visualization of encoder means for dimension i
-    ax = axes[1, 2]
-    
-    # Plot the histogram of encoder means for dimension i
-    hist, _ = np.histogram(encoder_means[:, i], bins=bins, range=hist_range)
-    ax.bar(bin_edges[:-1], hist, width=np.diff(bin_edges), color='blue', alpha=0.7)
-    ax.set_title(f'1D Encoder Means for Dimension {i}')
-    ax.set_xlabel('Mean Value')
-    ax.set_ylabel('Frequency')
-
-    # Bottom Plot: 1D visualization of encoder logvars for dimension i
-    ax = axes[2, 2]
-    
-    # Plot the histogram of encoder logvars for dimension i
-    ax.hist(encoder_logvars[:, i], bins=bins, color='purple', alpha=0.7)
-    ax.set_title(f'1D Encoder Logvars for Dimension {i}')
-    ax.set_xlabel('Logvar Value')
-    ax.set_ylabel('Frequency')
-
-    # Adjust layout and display
-    plt.tight_layout()
-    
-    # Save the plot
+    # Adjust layout and save the plot
+    pl.tight_layout()
     if not os.path.exists(savedir):
         os.makedirs(savedir)
-    savename_jpg = f"{savedir}/PriorPosterior_epoch{epoch}_GPU{gpu_id}.jpg"
-    plt.savefig(savename_jpg)
-    plt.close(fig)
-
-    plt.close('all')
-    print("Prior and Posterior Plotted")
-
-# def plot_mog_and_encoder_means(mog_means, mog_logvars, mog_weights, encoder_means, encoder_logvars, savedir, epoch, gpu_id, bins=100, N=5, i=0, **kwargs):
-#     """
-#     Plot the MoG prior means, log-variances, and histogram of encoder means.
-#     mog_means: MoG prior means, shape (K, D)
-#     mog_logvars: MoG prior log-variances, shape (K, D)
-#     encoder_means: Encoder means, shape (batch_size, D)
-#     savedir: Directory to save the plot
-#     epoch: Current epoch (for filename)
-#     gpu_id: GPU ID (for filename)
-#     bins: Number of bins for the histogram
-#     N: Number of dimensions to show in the right column (default 5)
-#     i: Dimension to visualize in the third column (default 0)
-#     """
-#     K, D = mog_means.shape
-#     batch_size = encoder_means.shape[0]
-
-#     # Create a 3x3 grid of subplots
-#     fig, axes = plt.subplots(3, 3, figsize=(30, 12))
-
-#     # Left Column: Full-dimensional plots
-#     # Top Panel: Heatmap of MoG prior means
-#     ax = axes[0, 0]
-#     im = ax.imshow(mog_means, aspect='auto', cmap='viridis_r', interpolation='none')
-#     ax.set_title(f'MoG Prior Means (K={K}, D={D})')
-#     ax.set_xlabel('Dimension (D)')
-#     ax.set_ylabel('Component (K)')
-    
-#     # Add horizontal lines to separate components
-#     for k in range(1, K):
-#         ax.axhline(k - 0.5, color='white', linewidth=1)
-    
-#     # Add colorbar with discrete ticks
-#     cbar = fig.colorbar(im, ax=ax, label='Mean Value')
-#     cbar.set_ticks(np.linspace(mog_means.min(), mog_means.max(), num=K))
-
-#     # Middle Panel: Heatmap of MoG prior log-variances
-#     ax = axes[1, 0]
-#     im = ax.imshow(mog_logvars, aspect='auto', cmap='plasma_r', interpolation='none')
-#     ax.set_title(f'MoG Prior Log-Variances (K={K}, D={D})')
-#     ax.set_xlabel('Dimension (D)')
-#     ax.set_ylabel('Component (K)')
-    
-#     # Add horizontal lines to separate components
-#     for k in range(1, K):
-#         ax.axhline(k - 0.5, color='white', linewidth=1)
-    
-#     # Add colorbar with discrete ticks
-#     cbar = fig.colorbar(im, ax=ax, label='Log-Variance Value')
-#     cbar.set_ticks(np.linspace(mog_logvars.min(), mog_logvars.max(), num=K))
-
-#     # Bottom Panel: Heatmap of histogram of encoder means
-#     ax = axes[2, 0]
-    
-#     # Compute histogram for each dimension
-#     hist_data = []
-#     for d in range(D):
-#         hist, bin_edges = np.histogram(encoder_means[:, d], bins=bins, range=(-5, 5))  # Adjust range as needed
-#         hist_data.append(hist)
-    
-#     # Stack histograms into a 2D array (D x bins)
-#     hist_data = np.stack(hist_data, axis=0)  # Shape: (D, bins)
-    
-#     # Plot the heatmap
-#     im = ax.imshow(hist_data.T, aspect='auto', cmap='inferno', extent=[0, D, -5, 5])
-#     ax.set_title(f'Histogram of Encoder Means (Batch Size={batch_size}, D={D})')
-#     ax.set_xlabel('Dimension (D)')
-#     ax.set_ylabel('Mean Value')
-#     fig.colorbar(im, ax=ax, label='Frequency')
-
-#     # Middle Column: First N dimensions only
-#     # Top Panel: Heatmap of MoG prior means (first N dimensions)
-#     ax = axes[0, 1]
-#     im = ax.imshow(mog_means[:, :N], aspect='auto', cmap='viridis_r', interpolation='none')
-#     ax.set_title(f'MoG Prior Means (K={K}, First {N} Dimensions)')
-#     ax.set_xlabel('Dimension (D)')
-#     ax.set_ylabel('Component (K)')
-    
-#     # Add horizontal lines to separate components
-#     for k in range(1, K):
-#         ax.axhline(k - 0.5, color='white', linewidth=1)
-    
-#     # Add colorbar with discrete ticks
-#     cbar = fig.colorbar(im, ax=ax, label='Mean Value')
-#     cbar.set_ticks(np.linspace(mog_means.min(), mog_means.max(), num=K))
-
-#     # Middle Panel: Heatmap of MoG prior log-variances (first N dimensions)
-#     ax = axes[1, 1]
-#     im = ax.imshow(mog_logvars[:, :N], aspect='auto', cmap='plasma_r', interpolation='none')
-#     ax.set_title(f'MoG Prior Log-Variances (K={K}, First {N} Dimensions)')
-#     ax.set_xlabel('Dimension (D)')
-#     ax.set_ylabel('Component (K)')
-    
-#     # Add horizontal lines to separate components
-#     for k in range(1, K):
-#         ax.axhline(k - 0.5, color='white', linewidth=1)
-    
-#     # Add colorbar with discrete ticks
-#     cbar = fig.colorbar(im, ax=ax, label='Log-Variance Value')
-#     cbar.set_ticks(np.linspace(mog_logvars.min(), mog_logvars.max(), num=K))
-
-#     # Bottom Panel: Heatmap of histogram of encoder means (first N dimensions)
-#     ax = axes[2, 1]
-    
-#     # Compute histogram for the first N dimensions
-#     hist_data_N = []
-#     for d in range(N):
-#         hist, bin_edges = np.histogram(encoder_means[:, d], bins=bins, range=(-5, 5))  # Adjust range as needed
-#         hist_data_N.append(hist)
-    
-#     # Stack histograms into a 2D array (N x bins)
-#     hist_data_N = np.stack(hist_data_N, axis=0)  # Shape: (N, bins)
-    
-#     # Plot the heatmap
-#     im = ax.imshow(hist_data_N.T, aspect='auto', cmap='inferno', extent=[0, N, -5, 5])
-#     ax.set_title(f'Histogram of Encoder Means (Batch Size={batch_size}, First {N} Dimensions)')
-#     ax.set_xlabel('Dimension (D)')
-#     ax.set_ylabel('Mean Value')
-#     fig.colorbar(im, ax=ax, label='Frequency')
-
-#     # Right Column: 1D visualizations for dimension i
-#     # Top Plot: 1D visualization of dimension i's prior
-#     ax = axes[0, 2]
-    
-#     # Sample from the MoG prior for dimension i
-#     samples = []
-#     for k in range(K):
-#         mean_k = mog_means[k, i]
-#         weight_k = mog_weights[k]
-#         std_k = np.exp(0.5 * mog_logvars[k, i])
-#         samples_k = np.random.normal(mean_k, std_k, size=int(10000 * weight_k))  # Sample w * N points per component
-#         samples.append(samples_k)
-    
-#     # Plot the samples
-#     for k in range(K):
-#         ax.hist(samples[k], bins=bins, range=(-5, 5), alpha=0.5, label=f'Component {k+1}')
-#     ax.set_title(f'1D Prior for Dimension {i} (K={K})')
-#     ax.set_xlabel('Mean Value')
-#     ax.set_ylabel('Frequency')
-#     ax.legend()
-
-#     # Bottom Plot: 1D visualization of encoder means for dimension i
-#     ax = axes[1, 2]
-    
-#     # Plot the histogram of encoder means for dimension i
-#     ax.hist(encoder_means[:, i], bins=bins, range=(-5, 5), color='blue', alpha=0.7)
-#     ax.set_title(f'1D Encoder Means for Dimension {i}')
-#     ax.set_xlabel('Mean Value')
-#     ax.set_ylabel('Frequency')
-
-#     # Bottom Plot: 1D visualization of encoder logvars for dimension i
-#     ax = axes[2, 2]
-    
-#     # Plot the histogram of encoder logvars for dimension i
-#     ax.hist(encoder_logvars[:, i], bins=bins, color='purple', alpha=0.7)
-#     ax.set_title(f'1D Encoder Logvars for Dimension {i}')
-#     ax.set_xlabel('Logvar Value')
-#     ax.set_ylabel('Frequency')
-
-#     # Adjust layout and display
-#     plt.tight_layout()
-    
-#     # Save the plot
-#     if not os.path.exists(savedir):
-#         os.makedirs(savedir)
-#     savename_jpg = f"{savedir}/PriorPosterior_epoch{epoch}_GPU{gpu_id}.jpg"
-#     plt.savefig(savename_jpg)
-#     plt.close(fig)
-
-#     plt.close('all')
-#     print("Prior and Posterior Plotted")
-
-def print_latent_realtime(mean, logvar, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
-
-    dims_to_plot = np.arange(0,num_realtime_dims)
-        
-    mean_plot = mean[:, 0:len(dims_to_plot)]
-    logvar_plot = logvar[:, 0:len(dims_to_plot)]
-
-    df = pd.DataFrame({
-        'dimension': np.tile(dims_to_plot, mean_plot.shape[0]),
-        'mean': mean_plot.flatten(),
-        'logvar': logvar_plot.flatten(),
-        # 'pat_labels': np.tile(pat_labels, num_realtime_dims)
-    })
-
-    # COLOR BY DIM
-    gs = gridspec.GridSpec(1, 2)
-    fig = pl.figure(figsize=(20, 14))
-
-    g1 = sns.jointplot(data=df, x="mean", y="logvar", hue="dimension", marginal_kws={'bw_adjust': 0.3})
-    xlim = g1.ax_joint.get_xlim()
-    ylim = g1.ax_joint.get_ylim()
-    fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
-
-    if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = f"{savedir}/RealtimeLatent_epoch{epoch}_iter{iter_curr}_colorbyDIM.jpg"
+    savename_jpg = f"{savedir}/ObservedLatents_epoch{epoch}_gpu{gpu_id}.jpg"
     pl.savefig(savename_jpg)
-    pl.close(fig)    
+    pl.close(fig)
 
-    pl.close('all') 
+def print_latent_realtime(mean, logvar, mogpreds, savedir, epoch, iter_curr, **kwargs):
+    """
+    Plot weighted means, logvars, and MoG predictions at the token level for the first 5 dimensions.
+    Aggregates tokens across all batches.
+    
+    Args:
+        mean: Encoder means, shape (batch_size, T, K, D)
+        logvar: Encoder log-variances, shape (batch_size, T, K, D)
+        mogpreds: MoG component probabilities, shape (batch_size, T, K)
+        savedir: Directory to save the plots
+        epoch: Current epoch
+        iter_curr: Current iteration
+        **kwargs: Additional arguments
+    """
+    batch_size, T, K, D = mean.shape
 
+    # Aggregate tokens across all batches
+    mean_agg = mean.reshape(-1, K, D)  # Shape: (batch_size * T, K, D)
+    logvar_agg = logvar.reshape(-1, K, D)  # Shape: (batch_size * T, K, D)
+    mogpreds_agg = mogpreds.reshape(-1, K)  # Shape: (batch_size * T, K)
 
-    # # COLOR BY PAT
-    # num_pats_sampled = len(set(pat_labels))
-    # cmap_raw = plt.get_cmap('cubehelix')
-    # samp_vec = np.linspace(0.1, 0.8, num_pats_sampled)  # Sample 10 colors for the palette
-    # cmap_list = [mpl.colors.rgb2hex(cmap_raw(i)) for i in samp_vec]  # Convert to hex
+    # Weight the means and logvars by MoG predictions
+    weighted_mean = np.sum(mean_agg * mogpreds_agg[:, :, np.newaxis], axis=1)  # Shape: (batch_size * T, D)
+    weighted_logvar = np.sum(logvar_agg * mogpreds_agg[:, :, np.newaxis], axis=1)  # Shape: (batch_size * T, D)
 
-    # gs = gridspec.GridSpec(1, 2)
-    # fig = pl.figure(figsize=(20, 14))
+    # Plot the first 5 dimensions
+    num_dims = min(5, D)
+    fig, axes = pl.subplots(num_dims, 3, figsize=(18, 5 * num_dims))
 
-    # g2 = sns.jointplot(data=df, x="latent", y="prior", hue="pat_labels", kind="kde", palette=cmap_list)
-    # g2.ax_joint.set_xlim(xlim)
-    # g2.ax_joint.set_ylim(ylim)
-    # g2.ax_joint.get_legend().remove()
-    # fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
+    for d in range(num_dims):
+        # Plot weighted means
+        axes[d, 0].hist(weighted_mean[:, d], bins=50, color='skyblue', alpha=0.7)
+        axes[d, 0].set_title(f'Weighted Mean (Dim {d})')
+        axes[d, 0].set_xlabel('Value')
+        axes[d, 0].set_ylabel('Frequency')
 
-    # if not os.path.exists(savedir): os.makedirs(savedir)
-    # savename_jpg = f"{savedir}/RealtimeLatent_epoch{epoch}_iter{iter_curr}_colorbyPAT.jpg"
-    # pl.savefig(savename_jpg)
-    # pl.close(fig)    
+        # Plot weighted logvars
+        axes[d, 1].hist(weighted_logvar[:, d], bins=50, color='lightgreen', alpha=0.7)
+        axes[d, 1].set_title(f'Weighted Logvar (Dim {d})')
+        axes[d, 1].set_xlabel('Value')
+        axes[d, 1].set_ylabel('Frequency')
 
-    # pl.close('all') 
+        # Plot MoG predictions for the current dimension
+        for k in range(K):
+            axes[d, 2].hist(mogpreds_agg[:, k], bins=50, alpha=0.5, label=f'Component {k}')
+        axes[d, 2].set_title(f'MoG Component Predictions (Dim {d})')
+        axes[d, 2].set_xlabel('Probability')
+        axes[d, 2].set_ylabel('Frequency')
+        # axes[d, 2].legend()
+
+    # Adjust layout and save the plot
+    # pl.tight_layout()
+    if not os.path.exists(savedir):
+        os.makedirs(savedir)
+    savename_jpg = f"{savedir}/RealtimeLatents_epoch{epoch}_iter{iter_curr}.jpg"
+    pl.savefig(savename_jpg)
+    pl.close(fig)
 
 def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_realtime_channels_recon, num_recon_samples, **kwargs):
 
@@ -1446,14 +1186,6 @@ def exec_kwargs(kwargs):
 
     return kwargs
 
-def get_PaCMAP_model(model_common_prefix, pre_PaCMAP_window_sec_path, pre_PaCMAP_stride_sec_path):
-    # with open(model_path, "rb") as f: PaCMAP = pickle.load(f)
-    PaCMAP = pacmap.load(model_common_prefix)
-    with open(pre_PaCMAP_window_sec_path, "rb") as f: pre_PaCMAP_window_sec = pickle.load(f)
-    with open(pre_PaCMAP_stride_sec_path, "rb") as f: pre_PaCMAP_stride_sec = pickle.load(f)
-
-    return PaCMAP, pre_PaCMAP_window_sec, pre_PaCMAP_stride_sec
-
 def load_data_tensor(filename):
     file = open(filename,'rb')
     data = pickle.load(file) 
@@ -1623,47 +1355,6 @@ def get_start_stop_from_latent_path(latent_file):
     abs_stop_datetime = datetime.datetime(int(s[4:8]),int(s[0:2]),int(s[2:4]),int(s[8:10]),int(s[10:12]),int(s[12:14]),int(int(s[14:16])*1e4))
 
     return abs_start_datetime, abs_stop_datetime
-
-def import_all_val_files(file_list):
-    
-    # Import pacmap variables
-    win_key = '_pre_PaCMAP_window_sec.pkl'
-    win_path = file_list[[idx for idx, s in enumerate(file_list) if win_key in s][0]]
-    stride_key = '_pre_PaCMAP_stride_sec.pkl'
-    stride_path = file_list[[idx for idx, s in enumerate(file_list) if stride_key in s][0]]
-    pac2d_key = 'PaCMAP.pkl'
-    pac2d_common_path = file_list[[idx for idx, s in enumerate(file_list) if pac2d_key in s][0]].split('.pkl')[0]
-    PaCMAP, pre_PaCMAP_window_sec, pre_PaCMAP_stride_sec = get_PaCMAP_model(model_common_prefix=pac2d_common_path, pre_PaCMAP_window_sec_path=win_path, pre_PaCMAP_stride_sec_path=stride_path)
-    pac_MEDDIM_key = 'PaCMAP_MedDim.pkl'
-    pac_MEDDIM_common_path = file_list[[idx for idx, s in enumerate(file_list) if pac_MEDDIM_key in s][0]].split('.pkl')[0]
-    PaCMAP_MedDim, _, _ = get_PaCMAP_model(model_common_prefix=pac_MEDDIM_common_path, pre_PaCMAP_window_sec_path=win_path, pre_PaCMAP_stride_sec_path=stride_path)
-
-    # Import HDBSCAN model
-    hdbscan_key = '_hdbscan.pkl'
-    hdbscan_path = file_list[[idx for idx, s in enumerate(file_list) if hdbscan_key in s][0]]
-    with open(hdbscan_path, "rb") as f: HDBSCAN = pickle.load(f)
-
-    # Import PCA model
-    pca_key = '_PCA.pkl'
-    pca_path = file_list[[idx for idx, s in enumerate(file_list) if pca_key in s][0]]
-    with open(pca_path, "rb") as f: pca = pickle.load(f)
-
-    # Import xy_lims
-    key = '_xy_lims.pkl'
-    path = file_list[[idx for idx, s in enumerate(file_list) if key in s][0]]
-    with open(path, "rb") as f: xy_lims = pickle.load(f)
-
-    # Import xy_lims_PCA
-    key = '_xy_lims_PCA.pkl'
-    path = file_list[[idx for idx, s in enumerate(file_list) if key in s][0]]
-    with open(path, "rb") as f: xy_lims_PCA = pickle.load(f)
-
-    # Import xy_lims_RAW_DIMS
-    key = '_xy_lims_RAW_DIMS.pkl'
-    path = file_list[[idx for idx, s in enumerate(file_list) if key in s][0]]
-    with open(path, "rb") as f: xy_lims_RAW_DIMS = pickle.load(f)
-
-    return pre_PaCMAP_window_sec, pre_PaCMAP_stride_sec, PaCMAP, PaCMAP_MedDim, pca, HDBSCAN, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS
 
 def filename_to_datetimes(list_file_names):
         start_datetimes = [datetime.datetime.min]*len(list_file_names)
@@ -2287,8 +1978,10 @@ def initialize_directories(
         kwargs['vae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_opt.pt'
 
         # Proper names for running latents 
-        kwargs['running_latent_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_latents.pkl'
-        kwargs['running_prior_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_prior.pkl'
+        kwargs['running_mean_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_means.pkl'
+        kwargs['running_logvar_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_logvars.pkl'
+        kwargs['running_zmeaned_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_zmeaned.pkl'
+        kwargs['running_mogpreds_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_mogpreds.pkl' 
 
         # Set the start epoch 1 greater than max trained
         kwargs['start_epoch'] = (max_epoch + 1) 
@@ -2338,7 +2031,6 @@ def run_setup(**kwargs):
     kwargs = initialize_directories(run_notes=run_notes, **kwargs)
 
     # Print the model forward pass sizes
-    # fake_data = torch.rand(kwargs['max_batch_size'], kwargs['transformer_seq_length'] - 1, kwargs['padded_channels'], kwargs['encode_token_samples']) # 199 is just an example of number of patient channels
     fake_data = torch.rand(kwargs['max_batch_size'], kwargs['transformer_seq_length'], kwargs['padded_channels'], kwargs['encode_token_samples']) 
     print_models_flow(x=fake_data, **kwargs)
 

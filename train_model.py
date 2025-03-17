@@ -8,33 +8,14 @@ from torch.utils.data import Dataset, DataLoader
 from torch.distributions.gamma import Gamma
 import sys  
 import os
-import shutil 
-import matplotlib.pylab as pl
-import matplotlib.gridspec as gridspec
 import os
 import wandb
-import copy
-import pandas as pd
-import random
 import numpy as np
-import time
 import datetime
 import pickle
-import joblib
-import gc
-import heapq
-import traceback
 import glob
-import pacmap
 import yaml
-import auraloss
 import wandb
-import math
-import ot
-# from ot.lp import wasserstein_1d
-# from ot.utils import proj_simplex
-from geomloss import SamplesLoss
-# from torch.utils.data._utils import shared_memory_cleanup
 
 # Local Imports
 from utilities import latent_plotting
@@ -218,6 +199,8 @@ def main(
     vae_opt_state_dict_prev_path = [],
     running_mean_path = [],
     running_logvar_path = [],
+    running_zmeaned_path = [],
+    running_mogpreds_path = [],
     epochs_to_train: int = -1,
     **kwargs):
 
@@ -264,10 +247,20 @@ def main(
         # Load running logvar
         with open(running_logvar_path, "rb") as f: accumulated_logvar = pickle.load(f)
         print(f"[GPU{gpu_id}] Running Logvars loaded from checkpoints")
+
+        # Load running zmeaned
+        with open(running_zmeaned_path, "rb") as f: accumulated_zmeaned = pickle.load(f)
+        print(f"[GPU{gpu_id}] Running Z Token-Averaged loaded from checkpoints")
+
+        # Load running logvar
+        with open(running_mogpreds_path, "rb") as f: accumulated_mogpreds = pickle.load(f)
+        print(f"[GPU{gpu_id}] Running MoG Predictions loaded from checkpoints")
     
     else:
         accumulated_mean = []
         accumulated_logvar = []
+        accumulated_zmeaned = []
+        accumulated_mogpreds = []
 
     # Create the training object
     trainer = Trainer(
@@ -286,6 +279,8 @@ def main(
         finetune_inference=finetune_inference,
         accumulated_mean=accumulated_mean,
         accumulated_logvar=accumulated_logvar,
+        accumulated_zmeaned=accumulated_zmeaned,
+        accumulated_mogpreds=accumulated_mogpreds,
         **kwargs)
 
     # Kill the val data generators if val_every is set artificially high
@@ -311,6 +306,8 @@ def main(
                 vae_opt_dict = trainer.opt_vae.state_dict()
                 accumulated_mean = trainer.accumulated_mean
                 accumulated_logvar = trainer.accumulated_logvar
+                accumulated_zmeaned = trainer.accumulated_zmeaned
+                accumulated_mogpreds = trainer.accumulated_mogpreds
                 accumulated_labels = trainer.accumulated_labels
                 accumulated_class_probs = trainer.accumulated_class_probs
 
@@ -355,6 +352,8 @@ def main(
                 trainer.opt_vae.load_state_dict(vae_opt_dict)
                 trainer.accumulated_mean = accumulated_mean
                 trainer.accumulated_logvar = accumulated_logvar
+                trainer.accumulated_zmeaned = accumulated_zmeaned
+                trainer.accumulated_mogpreds = accumulated_mogpreds
                 trainer.accumulated_labels = accumulated_labels
                 trainer.accumulated_class_probs = accumulated_class_probs
             
@@ -389,6 +388,8 @@ def main(
                 vae_opt_dict = trainer.opt_vae.state_dict()
                 accumulated_mean = trainer.accumulated_mean
                 accumulated_logvar = trainer.accumulated_logvar
+                accumulated_zmeaned = trainer.accumulated_zmeaned
+                accumulated_mogpreds = trainer.accumulated_mogpreds
                 accumulated_labels = trainer.accumulated_labels
                 accumulated_class_probs = trainer.accumulated_class_probs
 
@@ -422,6 +423,8 @@ def main(
                 trainer.opt_vae.load_state_dict(vae_opt_dict)
                 trainer.accumulated_mean = accumulated_mean
                 trainer.accumulated_logvar = accumulated_logvar
+                trainer.accumulated_zmeaned = accumulated_zmeaned
+                trainer.accumulated_mogpreds = accumulated_mogpreds
                 trainer.accumulated_labels = accumulated_labels
                 trainer.accumulated_class_probs = accumulated_class_probs
 
@@ -450,6 +453,7 @@ class Trainer:
         inference_every: int,
         finetune_inference: bool,
         latent_dim: int,
+        mog_components: int,
         encode_token_samples: int,
         num_samples: int,
         transformer_seq_length: int,
@@ -463,10 +467,10 @@ class Trainer:
         inference_stride_sec_list: list,
         recent_display_iters: int,
         total_collected_latents: int,
-        running_reg_passes: int,
         classifier_num_pats: int,
         accumulated_mean,
         accumulated_logvar,
+        accumulated_zmeaned,
         **kwargs
     ) -> None:
         self.world_size = world_size
@@ -485,6 +489,7 @@ class Trainer:
         self.inference_every = inference_every
         self.finetune_inference = finetune_inference
         self.latent_dim = latent_dim
+        self.mog_components = mog_components
         self.encode_token_samples = encode_token_samples
         self.num_samples = num_samples
         self.transformer_seq_length = transformer_seq_length
@@ -499,10 +504,10 @@ class Trainer:
         self.inference_stride_sec_list = inference_stride_sec_list
         self.recent_display_iters = recent_display_iters
         self.total_collected_latents = total_collected_latents
-        self.running_reg_passes = running_reg_passes
         self.classifier_num_pats = classifier_num_pats
         self.accumulated_mean = accumulated_mean
         self.accumulated_logvar = accumulated_logvar
+        self.accumulated_zmeaned = accumulated_zmeaned
         self.wandb_run = wandb_run
         self.kwargs = kwargs
 
@@ -520,12 +525,16 @@ class Trainer:
         # Running Regulizer window for latent data
         if self.accumulated_mean == []:
             # If first initialziing, then start off with random
-            self.accumulated_mean = torch.randn(self.total_collected_latents, self.latent_dim).to(self.gpu_id)
-            self.accumulated_logvar = torch.randn(self.total_collected_latents, self.latent_dim).to(self.gpu_id)
+            self.accumulated_mean = torch.randn(self.total_collected_latents, self.mog_components, self.latent_dim).to(self.gpu_id)
+            self.accumulated_logvar = torch.randn(self.total_collected_latents, self.mog_components, self.latent_dim).to(self.gpu_id)
+            self.accumulated_zmeaned = torch.randn(self.total_collected_latents, self.latent_dim).to(self.gpu_id)
+            self.accumulated_mogpreds = torch.softmax(torch.randn(self.total_collected_latents, self.mog_components), dim=1).to(self.gpu_id)
         else: 
             # Ensure on proper device because loading from pickle
             self.accumulated_mean = self.accumulated_mean.to(self.gpu_id)
             self.accumulated_logvar = self.accumulated_logvar.to(self.gpu_id)
+            self.accumulated_zmeaned = self.accumulated_zmeaned.to(self.gpu_id)
+            self.accumulated_mogpreds = self.accumulated_mogpreds.to(self.gpu_id)
 
         # Running tab of update index
         self.next_update_index = 0
@@ -580,79 +589,73 @@ class Trainer:
         output_obj.close()
         print("Saved running logvars")
 
+        # Save Running Z
+        latents_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_running_zmeaned.pkl"
+        output_obj = open(latents_path, 'wb')
+        pickle.dump(self.accumulated_zmeaned, output_obj)
+        output_obj.close()
+        print("Saved running Z Token-Meaned")
+
+        # Save Running MoG Predictions 
+        latents_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_running_mogpreds.pkl"
+        output_obj = open(latents_path, 'wb')
+        pickle.dump(self.accumulated_mogpreds, output_obj)
+        output_obj.close()
+        print("Saved running MoG Predictions")
+
         print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
 
         if delete_old_checkpoints:
             utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch, **kwargs)
             print("Deleted old checkpoints, except epochs at end of reguaization annealing period")
     
-    def _sample_running_window(self, mean, logvar, random_observed_sampling, **kwargs):
-        self.accumulated_mean = self.accumulated_mean.detach() # Ensure detached before sampling
-        self.accumulated_logvar = self.accumulated_logvar.detach() # Ensure detached before sampling
-        num_new = mean.shape[0]
-        num_past = self.running_reg_passes - num_new
-        
-        if num_new == self.running_reg_passes:
-            return mean, logvar
-
-        elif num_new > self.running_reg_passes:
-            raise Exception(f"latent.shape[0] > self.running_reg_passes ({num_new} > {self.running_reg_passes})")
-
-        if random_observed_sampling: # RANDOM
-            random_past_idxs = torch.randperm(self.accumulated_mean.shape[0])[:num_past] 
-            past_mean_samples = self.accumulated_mean[random_past_idxs, :]
-
-            random_past_idxs = torch.randperm(self.accumulated_logvar.shape[0])[:num_past] 
-            past_logvar_samples = self.accumulated_logvar[random_past_idxs, :]
-
-        else: # NOT RANDOM
-            # Must check for rollover
-            if (self.next_update_index - num_past) >= 0:
-                past_mean_samples = self.accumulated_mean[self.next_update_index - num_past : self.next_update_index, :] # Use the next update index to know where the latest past samples are
-                past_logvar_samples = self.accumulated_logvar[self.next_update_index - num_past : self.next_update_index, :]
-
-            else: # Straddles end/start of indexes
-                num_past_from_start = self.next_update_index
-                num_past_from_end = num_past - num_past_from_start
-
-                past_mean_samples_from_start = self.accumulated_mean[:num_past_from_start, :]
-                past_mean_samples_from_end = self.accumulated_mean[-num_past_from_end:, :]
-
-                past_logvar_samples_from_start = self.accumulated_logvar[:num_past_from_start, :]
-                past_logvar_samples_from_end = self.accumulated_logvar[-num_past_from_end:, :]
-
-                past_mean_samples = torch.cat([past_mean_samples_from_end, past_mean_samples_from_start])
-                past_logvar_samples = torch.cat([past_logvar_samples_from_end, past_logvar_samples_from_start])
-
-        return torch.cat([past_mean_samples, mean]), torch.cat([past_logvar_samples, logvar])
-
     def _update_reg_window(
         self,
         mean,
-        logvar
-        ):
+        logvar,
+        zmeaned,
+        mogpreds):
+
+        '''
+        Collect most recent encoder outputs
+        Purely for plotting purpioses right now
+        (Historically was used as running regularization window, 
+        but cost got too expensive when switched to outputing K means and K logvars)
+
+        NOTE: Must be averaged across tokens before this function call
+        '''
 
         num_new_updates = mean.shape[0]
         if (self.next_update_index + num_new_updates) < self.total_collected_latents:
-            self.accumulated_mean[self.next_update_index: self.next_update_index + num_new_updates, :] = mean
-            self.accumulated_logvar[self.next_update_index: self.next_update_index + num_new_updates, :] = logvar
+            self.accumulated_mean[self.next_update_index: self.next_update_index + num_new_updates, :, :] = mean
+            self.accumulated_logvar[self.next_update_index: self.next_update_index + num_new_updates, :, :] = logvar
+            self.accumulated_zmeaned[self.next_update_index: self.next_update_index + num_new_updates, :] = zmeaned
+            self.accumulated_mogpreds[self.next_update_index: self.next_update_index + num_new_updates, :] = mogpreds
             self.next_update_index = self.next_update_index + num_new_updates
 
         else: # Rollover
             residual_num = (self.next_update_index + num_new_updates) % self.total_collected_latents
             end_num = num_new_updates - residual_num
 
-            self.accumulated_mean[self.next_update_index: self.next_update_index + end_num, :] = mean[:end_num, :]
-            self.accumulated_mean[0: residual_num, :] = mean[end_num:, :]
+            self.accumulated_mean[self.next_update_index: self.next_update_index + end_num, :] = mean[:end_num, :, :]
+            self.accumulated_mean[0: residual_num, :] = mean[end_num:, :, :]
 
-            self.accumulated_logvar[self.next_update_index: self.next_update_index + end_num, :] = logvar[:end_num, :]
-            self.accumulated_logvar[0: residual_num, :] = logvar[end_num:, :]
+            self.accumulated_logvar[self.next_update_index: self.next_update_index + end_num, :] = logvar[:end_num, :, :]
+            self.accumulated_logvar[0: residual_num, :] = logvar[end_num:, :, :]
+
+            self.accumulated_zmeaned[self.next_update_index: self.next_update_index + end_num, :] = zmeaned[:end_num, :]
+            self.accumulated_zmeaned[0: residual_num, :] = zmeaned[end_num:, :]
+
+            self.accumulated_mogpreds[self.next_update_index: self.next_update_index + end_num, :] = mogpreds[:end_num, :]
+            self.accumulated_mogpreds[0: residual_num, :] = mogpreds[end_num:, :]
 
             self.next_update_index = residual_num
 
         # Detach to allow next backpass
         self.accumulated_mean = self.accumulated_mean.detach() 
         self.accumulated_logvar = self.accumulated_logvar.detach() 
+        self.accumulated_zmeaned= self.accumulated_zmeaned.detach() 
+        self.accumulated_mogpreds = self.accumulated_mogpreds.detach() 
 
     def _run_export_embeddings(
         self, 
@@ -825,36 +828,39 @@ class Trainer:
             # Check for NaNs
             if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
 
-            ### VAE ENCODER: 1-shifted
+            # VAE ENCODER: 1-shifted
             # latent, class_probs_mean_of_latent, attW = self.vae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
-            mean, logvar, latent, class_probs_mean_of_latent, attW = self.vae(x, reverse=False, alpha=self.classifier_alpha) # No 1-shift if not causal masking
+            mean, logvar, mogpreds, attW = self.vae(x, reverse=False) # No 1-shift if not causal masking
             
-            ### VAE DECODER
-            x_hat = self.vae(latent, reverse=True, hash_pat_embedding=hash_pat_embedding)  
+            # REPARAMETERIZATION to Z (token-level) with MoG Selection/Loss
+            reg_loss, z_token = loss_functions.mog_loss(
+                encoder_means=mean, 
+                encoder_logvars=logvar, 
+                encoder_mogpreds=mogpreds,
+                mog_prior=self.vae.module.prior, 
+                weight=self.reg_weight,
+                **kwargs)
 
-            # # Pseudobatch the latent for regularization loss
-            # mean_batched = mean.reshape(mean.shape[0] * mean.shape[1], -1)
-            # logvar_batched = logvar.reshape(logvar.shape[0] * logvar.shape[1], -1)
-            # latent_batched = latent.reshape(latent.shape[0] * latent.shape[1], -1)
+            # VAE DECODER - at Token Level
+            x_hat = self.vae(z_token, reverse=True, hash_pat_embedding=hash_pat_embedding)  
 
-            mean_meaned = torch.mean(mean, dim=1)
-            logvar_meaned = torch.mean(logvar, dim=1)
+            # CLASSIFIER - on the mean of mus
+            z_meaned = torch.mean(z_token, dim=1)
+            class_probs_mean_of_latent = self.vae.module.adversarial_classifier(z_meaned, alpha=self.classifier_alpha)
 
-            # # Sample from the recent mean & logvar (otherwise batch would be ripple in ocean - without some past info batch cannot capure meaningful shape of latent)
-            mean_samples, logvar_samples = self._sample_running_window(mean_meaned, logvar_meaned, **kwargs) # Will require grad now 
-               
             # LOSSES
             recon_loss = loss_functions.recon_loss_function(
                 x=x, # No shift if not causal masking
                 x_hat=x_hat,
                 recon_weight=self.recon_weight)
 
-            reg_loss = loss_functions.mog_loss(  # Monte Carlo MoG
-                mean = mean_samples,
-                logvar = logvar_samples,
-                mog_prior = self.vae.module.prior,
-                weight = self.reg_weight,
-                **kwargs)
+            # reg_loss = loss_functions.mog_loss(  
+            #     z_meaned = z_meaned,
+            #     component_indices=component_indices,
+            #     encoder_logvars = logvar_samples,
+            #     mog_prior = self.vae.module.prior,
+            #     weight = self.reg_weight,
+            #     **kwargs)
 
             reg_entropy = loss_functions.mog_entropy_regularization(
                 weights = self.vae.module.prior.weights, 
@@ -875,9 +881,14 @@ class Trainer:
 
             # Not currently used, but is nice to see
             sparse_loss = loss_functions.sparse_l1_reg(
-                z=latent, 
+                z=z_meaned, 
                 sparse_weight=self.sparse_weight, 
                 **kwargs)
+
+            # For plotting visualization purposes
+            mean_tokenmeaned = torch.mean(mean, dim=1)
+            logvar_tokenmeaned = torch.mean(logvar, dim=1)
+            mogpreds_tokenmeaned = torch.mean(mogpreds, dim=1)
 
             # Do not backprop for pure validation (i.e. val unseen), but do for training & finetuning
             if not val_unseen: 
@@ -885,7 +896,7 @@ class Trainer:
                 loss.backward()    
                 torch.nn.utils.clip_grad_norm_(self.vae.module.prior.parameters(), max_norm=1.0) # Gradient clipping for MoG prior, prevent excessive updates even with strong regularization 
                 self.opt_vae.step()
-                self._update_reg_window(mean_meaned, logvar_meaned) # Update the buffers & detach() 
+                self._update_reg_window(mean_tokenmeaned, logvar_tokenmeaned, mogpreds_tokenmeaned) # Update the buffers & detach() 
 
             # Realtime terminal info and WandB 
             if (iter_curr%self.recent_display_iters==0):
@@ -916,7 +927,6 @@ class Trainer:
                         train_LR_vae=self.opt_vae.param_groups[0]['lr'], 
                         train_LR_classifier=self.opt_vae.param_groups[1]['lr'],
                         train_reg_Beta=self.reg_weight, 
-                        train_running_reg_passes=self.running_reg_passes,
                         train_ReconWeight=self.recon_weight,
                         train_AdversarialAlpha=self.classifier_alpha,
                         train_Sparse_weight=self.sparse_weight,
@@ -962,12 +972,12 @@ class Trainer:
                             print("WARNING: Loss is nan, no plots can be made")
                         else:
                             utils_functions.print_latent_realtime(
-                                mean = mean_samples.cpu().detach().numpy(), 
-                                logvar = logvar_samples.cpu().detach().numpy(),
-                                savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents",
-                                epoch = self.epoch,
+                                epoch = self.epoch, 
                                 iter_curr = iter_curr,
-                                file_name = file_name,
+                                mean = mean.cpu().detach().numpy(), 
+                                logvar = logvar.cpu().detach().numpy(),
+                                mogpreds = mogpreds.cpu().detach().numpy(),
+                                savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents", 
                                 **kwargs)
                             utils_functions.print_recon_realtime(
                                 # x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], 
@@ -1008,7 +1018,9 @@ class Trainer:
             # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
             iter_curr = iter_curr + 1
 
-        # Plot the full running latents
+        # Plot the full running latents at end of epoch 
+        # ALready meaned at the token level
+        # NOTE: not necessarily everything from epoch, the number of accumulated samples is defined by 'total_collected_latents'
         utils_functions.plot_mog_and_encoder_means(
             gpu_id = self.gpu_id, 
             mog_means = self.vae.module.prior.means.detach().cpu().numpy(), 
@@ -1016,6 +1028,8 @@ class Trainer:
             mog_weights = self.vae.module.prior.weights.detach().cpu().numpy(), 
             encoder_means = self.accumulated_mean.detach().cpu().numpy(),
             encoder_logvars = self.accumulated_logvar.detach().cpu().numpy(),
+            enocder_zmeaned = self.accumulated_zmeaned.detach().cpu().numpy(),
+            encoder_mogpreds = self.accumulated_mogpreds.detach().cpu().numpy(),
             savedir = self.model_dir + f"/realtime_plots/{dataset_string}/observed_latents",
             epoch = self.epoch,
             **kwargs)
