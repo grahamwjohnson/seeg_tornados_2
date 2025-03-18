@@ -62,113 +62,6 @@ class MoGPrior(nn.Module):
 
         return log_prob
 
-# class MoGPrior(nn.Module):
-#     def __init__(self, K, D, gumbel_softmax_temperature, **kwargs):
-#         """
-#         Mixture of Gaussians (MoG) prior with Gumbel-Softmax.
-#         K: Number of components
-#         D: Latent space dimensionality
-#         temperature: Temperature for Gumbel-Softmax
-#         """
-#         super(MoGPrior, self).__init__()
-#         self.K = K  # Number of mixture components
-#         self.D = D  # Latent dimension
-#         self.temperature = gumbel_softmax_temperature  # Temperature for Gumbel-Softmax
-
-#         # Initialize means, logvars, and weights
-#         self.means = nn.Parameter(torch.randn(K, D))  # Shape: (K, D)
-#         self.logvars = nn.Parameter(torch.zeros(K, D))  # Shape: (K, D)
-#         self.weights = nn.Parameter(torch.ones(K) / K)  # Shape: (K,)
-
-#     def forward(self, z):
-#         """
-#         Compute the log probability of z under the MoG prior using Gumbel-Softmax.
-#         z: Latent variable, shape (batch_size, D)
-#         """
-#         # Expand z to (batch_size, K, D) for broadcasting
-#         z = z.unsqueeze(1)  # Shape: (batch_size, 1, D)
-#         z = z.expand(-1, self.K, -1)  # Shape: (batch_size, K, D)
-
-#         # Compute log probability for each component
-#         log_probs = -0.5 * (
-#             self.logvars +
-#             torch.pow(z - self.means, 2) / torch.exp(self.logvars) +
-#             self.D * torch.log(2 * torch.tensor(torch.pi))
-#         )  # Shape: (batch_size, K, D)
-
-#         # Sum over dimensions to get log probability per component
-#         log_probs = log_probs.sum(dim=-1)  # Shape: (batch_size, K)
-
-#         # Add log weights and compute log mixture probability
-#         log_mixture_probs = torch.log_softmax(self.weights, dim=0)  # Shape: (K,)
-#         log_probs = log_probs + log_mixture_probs.unsqueeze(0)  # Shape: (batch_size, K)
-
-#         # Apply Gumbel-Softmax for discrete component selection
-#         gumbel_sample = self.gumbel_softmax(log_probs)
-
-#         # Log-sum-exp to get the log probability of the mixture
-#         log_prob = torch.logsumexp(log_probs, dim=1)  # Shape: (batch_size,)
-
-#         return log_prob, gumbel_sample
-
-#     def gumbel_softmax(self, logits):
-#         """
-#         Gumbel-Softmax sampling for discrete clustering.
-#         logits: Log probabilities for each MoG component.
-#         """
-#         # Gumbel noise
-#         noise = torch.rand_like(logits).to(logits.device)
-#         noise = -torch.log(-torch.log(noise + 1e-20) + 1e-20)
-        
-#         # Apply Gumbel noise to logits and sample with softmax
-#         gumbel_noise = logits + noise
-#         return F.softmax(gumbel_noise / self.temperature, dim=-1)
-
-# class MoGPrior(nn.Module):
-#     def __init__(self, K, D):
-#         """
-#         Mixture of Gaussians (MoG) prior.
-#         K: Number of components
-#         D: Latent space dimensionality
-#         """
-#         super(MoGPrior, self).__init__()
-#         self.K = K
-#         self.D = D
-
-#         # Initialize means, logvars, and weights
-#         self.means = nn.Parameter(torch.randn(K, D))  # Shape: (K, D)
-#         self.logvars = nn.Parameter(torch.zeros(K, D))  # Shape: (K, D)
-#         self.weights = nn.Parameter(torch.ones(K) / K)  # Shape: (K,)
-
-#     def forward(self, z):
-#         """
-#         Compute the log probability of z under the MoG prior.
-#         z: Latent variable, shape (batch_size, D)
-#         """
-
-#         # Expand z to (batch_size, K, D) for broadcasting
-#         z = z.unsqueeze(1)  # Shape: (batch_size, 1, D)
-#         z = z.expand(-1, self.K, -1)  # Shape: (batch_size, K, D)
-
-#         # Compute log probability for each component
-#         log_probs = -0.5 * (
-#             self.logvars +
-#             torch.pow(z - self.means, 2) / torch.exp(self.logvars) +
-#             self.D * torch.log(2 * torch.tensor(torch.pi))
-#         )  # Shape: (batch_size, K, D)
-
-#         # Sum over dimensions to get log probability per component
-#         log_probs = log_probs.sum(dim=-1)  # Shape: (batch_size, K)
-
-#         # Add log weights and compute log mixture probability
-#         log_mixture_probs = torch.log_softmax(self.weights, dim=0)  # Shape: (K,)
-#         log_probs = log_probs + log_mixture_probs.unsqueeze(0)  # Shape: (batch_size, K)
-
-#         # Log-sum-exp to get the log probability of the mixture
-#         log_prob = torch.logsumexp(log_probs, dim=1)  # Shape: (batch_size,)
-
-#         return log_prob
-
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
@@ -493,52 +386,6 @@ class VAE(nn.Module):
         # Non-linearity as needed
         self.silu = nn.SiLU()
 
-    # def reparameterize(self, mu, logvar):
-    #     """
-    #     Reparameterization trick to sample from N(mu, var) from N(0,1).
-    #     :param mu: (Tensor) Mean of the latent Gaussian [B x D]
-    #     :param logvar: (Tensor) Standard deviation of the latent Gaussian [B x D]
-    #     :return: (Tensor) [B x D]
-    #     """
-    #     std = torch.exp(0.5 * logvar)
-    #     eps = torch.randn_like(std)
-    #     return mu + eps * std
-
-    # def reparameterize(self, mus, logvars, mogpreds):
-    #     """
-    #     Reparameterization trick for MoG-VAE with token-level encoding:
-    #     - Selects a MoG component per token using mogpreds.
-    #     - Samples token-level latents for decoder.
-    #     - Computes the average latent for MoG regularization.
-
-    #     Args:
-    #         mus: (B, T, K, D) - Mean for each token and MoG component
-    #         logvars: (B, T, K, D) - Log-variance for each token and MoG component
-    #         mogpreds: (B, T, K) - MoG component probabilities per token (softmaxed)
-
-    #     Returns:
-    #         z_tokens: (B, T, D) - Sampled token-level latents
-    #         z_avg: (B, D) - Averaged latent for MoG regularization
-    #     """
-    #     B, T, K, D = mus.shape
-
-    #     # Sample one MoG component per token based on mogpreds
-    #     component_indices = torch.multinomial(mogpreds.view(B * T, K), 1).view(B, T)  # (B, T)
-
-    #     # Select corresponding mean and logvar for each token
-    #     selected_means = mus[torch.arange(B).unsqueeze(1), torch.arange(T).unsqueeze(0), component_indices]  # (B, T, D)
-    #     selected_logvars = logvars[torch.arange(B).unsqueeze(1), torch.arange(T).unsqueeze(0), component_indices]  # (B, T, D)
-
-    #     # Reparameterization trick
-    #     std = torch.exp(0.5 * selected_logvars)  # (B, T, D)
-    #     eps = torch.randn_like(std)  # (B, T, D)
-    #     z_tokens = selected_means + eps * std  # (B, T, D)
-
-    #     # Compute the average latent across tokens for MoG regularization
-    #     z_avg = z_tokens.mean(dim=1)  # (B, D)
-
-    #     return z_tokens, z_avg, component_indices
-
     def forward(self, x, reverse=False, hash_pat_embedding=-1):
 
         if reverse == False:
@@ -560,9 +407,7 @@ class VAE(nn.Module):
             mean = mean.view(-1, self.transformer_seq_length, self.mog_components, self.latent_dim)
             logvar = logvar.view(-1,self.transformer_seq_length, self.mog_components, self.latent_dim)
 
-            # Reparametrization Trick
             mogpreds = torch.softmax(mogpreds, dim=2)
-            # z_tokens, z_avg, component_indices = self.reparameterize(mean, logvar, mogpreds)
             
             return mean, logvar, mogpreds, attW
 

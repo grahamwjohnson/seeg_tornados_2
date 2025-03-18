@@ -65,7 +65,7 @@ class SEEG_Tornado_Dataset(Dataset):
         transformer_seq_length,
         encode_token_samples,
         random_pulls_in_batch, 
-        num_rand_hashes, 
+        num_rand_hashes,  
         padded_channels,
         latent_dim,
         num_forward_passes,

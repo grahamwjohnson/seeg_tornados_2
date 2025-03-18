@@ -20,10 +20,8 @@ import pickle
 import json
 import os
 import sys
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-import matplotlib.patches as mpatches
 from .latent_plotting import plot_latent
 import matplotlib.pylab as pl
 pl.switch_backend('agg')
@@ -38,13 +36,11 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import seaborn as sns
 import multiprocessing as mp
-from sklearn.datasets import load_iris
-from sklearn.metrics import roc_auc_score
 import math
-from scipy.stats import norm
 import matplotlib.colors as colors
 from sklearn.metrics import confusion_matrix
-from matplotlib.patches import Rectangle
+import matplotlib.colors as mcolors
+import cmasher as cmr
 
 # Local imports
 from models.VAE import print_models_flow
@@ -514,20 +510,21 @@ def pseudobatch_raw_data(x, token_samples):
     
     return x_batched
 
-def hash_to_vector(input_string, num_channels, latent_dim, modifier, hash_output_range):
+def hash_to_vector(input_string, num_channels, padded_channels, latent_dim, modifier, hash_output_range):
     """
     Generates a vector from a hash of the input string, scaled to an arbitrary range.
 
     Args:
         input_string (str): The input string to hash.
         num_channels (int): The number of channels (used for generating the ordered vector).
+        padded_channels (int): The total number of channels after padding with -1.
         latent_dim (int): The dimensionality of the output vector.
         modifier (str or int): A modifier to vary the output for the same input string.
         hash_output_range (tuple): The desired output range (e.g., (0, 2)).
 
     Returns:
         torch.Tensor: A vector of size latent_dim, scaled to the specified range.
-        list: A shuffled list of numbers from 0 to num_channels-1.
+        list: A shuffled list of numbers from 0 to num_channels-1, padded with -1 up to padded_channels.
     """
     # Incorporate the modifier into the input string to vary the output
     modified_input = f"{input_string}_{modifier}"
@@ -564,13 +561,192 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier, hash_output
     # Set the seed for deterministic shuffling based on the hash of the modified input string
     random.seed(int.from_bytes(hash_digest[:8], 'big'))  # Use first 8 bytes of hash as the seed
     random.shuffle(ordered_vector)  # Shuffle the list in place
+
+    # Pad the shuffled list with -1 up to padded_channels
+    padded_vector = ordered_vector.copy()
+    while len(padded_vector) < padded_channels:
+        # Insert -1 at a random position, but deterministically based on the hash
+        random.seed(int.from_bytes(hash_digest[len(padded_vector) % 8: (len(padded_vector) % 8) + 8], 'big'))
+        insert_index = random.randint(0, len(padded_vector))
+        padded_vector.insert(insert_index, -1)
+
+    return hashed_vector_tensor, padded_vector
+
+# def hash_to_vector(input_string, num_channels, padded_channels, latent_dim, modifier, hash_output_range):
+#     """
+#     Generates a vector from a hash of the input string, scaled to an arbitrary range.
+
+#     Args:
+#         input_string (str): The input string to hash.
+#         num_channels (int): The number of channels (used for generating the ordered vector).
+#         latent_dim (int): The dimensionality of the output vector.
+#         modifier (str or int): A modifier to vary the output for the same input string.
+#         hash_output_range (tuple): The desired output range (e.g., (0, 2)).
+
+#     Returns:
+#         torch.Tensor: A vector of size latent_dim, scaled to the specified range.
+#         list: A shuffled list of numbers from 0 to num_channels-1.
+#     """
+#     # Incorporate the modifier into the input string to vary the output
+#     modified_input = f"{input_string}_{modifier}"
+
+#     # Generate a SHA-256 hash from the modified input string
+#     hash_object = hashlib.sha256(modified_input.encode('utf-8'))
+#     hash_digest = hash_object.digest()  # 32 bytes (256 bits)
+
+#     # If latent_dim > 256, repeat the hash digest to ensure we have enough data
+#     extended_hash = (hash_digest * ((latent_dim // 32) + 1))[:latent_dim]  # Repeat and slice to exactly latent_dim bytes
     
-    return hashed_vector_tensor, ordered_vector
+#     # Generate a vector of size latent_dim
+#     hashed_vector = np.zeros(latent_dim)
+
+#     # Define the output range
+#     a, b = hash_output_range
+
+#     for i in range(latent_dim):
+#         # Use the i-th byte from the extended hash digest
+#         byte_value = extended_hash[i]
+        
+#         # Normalize the byte value to the range [0, 1]
+#         normalized_value = byte_value / 255.0  # Normalize to [0, 1]
+        
+#         # Scale the normalized value to the desired range [a, b]
+#         hashed_vector[i] = a + (b - a) * normalized_value
+
+#     # Convert hashed_vector to a PyTorch tensor
+#     hashed_vector_tensor = torch.tensor(hashed_vector, dtype=torch.float32)
+
+#     # Generate a vector of shuffled numbers 0 to num_channels-1
+#     ordered_vector = list(range(num_channels))
+    
+#     # Set the seed for deterministic shuffling based on the hash of the modified input string
+#     random.seed(int.from_bytes(hash_digest[:8], 'big'))  # Use first 8 bytes of hash as the seed
+#     random.shuffle(ordered_vector)  # Shuffle the list in place
+    
+#     return hashed_vector_tensor, ordered_vector
 
 
 # PLOTTING
 
-def plot_mog_and_encoder_means(gpu_id, mog_means, mog_logvars, mog_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, num_accumulated_plotting_dims=5, n_bins=100, **kwargs):
+def plot_prior(mog_means, mog_logvars, mog_weights, savedir, epoch, **kwargs):
+    """
+    Plot the MoG prior parameters (means, log variances, and weights) in a combined plot.
+
+    Args:
+        mog_means (np.ndarray): Means of the MoG components, shape (K, D).
+        mog_logvars (np.ndarray): Log variances of the MoG components, shape (K, D).
+        mog_weights (np.ndarray): Weights of the MoG components, shape (K,).
+        savedir (str): Directory to save the plot.
+        epoch (int): Current epoch (for labeling the plot).
+        **kwargs: Additional arguments (e.g., titles, colors).
+    """
+    # Ensure the save directory exists
+    os.makedirs(savedir, exist_ok=True)
+
+    # Extract dimensions
+    K, D = mog_means.shape  # K = number of components, D = latent dimension
+
+    # Create the combined plot
+    plt.figure(figsize=(15, 5))
+
+    # Subplot 1: Means
+    plt.subplot(1, 3, 1)
+    plt.imshow(mog_means, cmap=cmr.waterlily, aspect='auto', interpolation='none')
+    plt.colorbar(label='Mean Value')
+    plt.xlabel("Latent Dimension")
+    plt.ylabel("Component")
+    plt.yticks(range(K), labels=[str(i) for i in range(K)])  # Fix y-axis labels
+    plt.title("MoG Component Means")
+
+    # Subplot 2: Log Variances
+    plt.subplot(1, 3, 2)
+    plt.imshow(mog_logvars, cmap=sns.cubehelix_palette(as_cmap=True, reverse=True), aspect='auto', interpolation='none')
+    plt.colorbar(label='Log Variance')
+    plt.xlabel("Latent Dimension")
+    plt.ylabel("Component")
+    plt.yticks(range(K), labels=[str(i) for i in range(K)])  # Fix y-axis labels
+    plt.title("MoG Component Log Variances")
+
+    # Subplot 3: Weights
+    plt.subplot(1, 3, 3)
+    plt.bar(range(K), mog_weights, color='purple', alpha=0.5)
+    plt.xlabel("Component")
+    plt.ylabel("Weight")
+    plt.xticks(range(K), labels=[str(i) for i in range(K)])  # Fix x-axis labels
+    plt.title("MoG Component Weights")
+
+    # Add a suptitle for the combined plot
+    plt.suptitle(f"MoG Prior Visualization (Epoch {epoch})")
+    plt.tight_layout()
+    
+    if not os.path.exists(savedir): os.makedirs(savedir)
+    savename_jpg = f"{savedir}/Prior_epoch{epoch}.jpg"
+    pl.savefig(savename_jpg)
+    plt.close()
+
+def print_patmogweights_realtime(mogpreds, patidxs, savedir, epoch, iter_curr, **kwargs):
+    """
+    Plot stacked bar plots for MoG weights, colored by patient proportions.
+
+    Args:
+        mogpreds (np.ndarray): Softmaxed MoG weights, shape (num_samples, num_components).
+        patidxs (np.ndarray): Patient indices (class labels), shape (num_samples,).
+        savedir (str): Directory to save the plot.
+        epoch (int): Current epoch.
+        iter_curr (int): Current iteration.
+        file_name (str): Base name for the saved plot file.
+        **kwargs: Additional arguments (e.g., component names, colors).
+    """
+
+    # Get unique patient indices and MoG components
+    unique_patidxs = np.unique(patidxs)
+    num_components = mogpreds.shape[1]
+
+    # Accumulate MoG weights for each component, grouped by patient
+    component_sums = np.zeros((num_components, len(unique_patidxs)))
+    for i, patidx in enumerate(unique_patidxs):
+        mask = (patidxs == patidx)
+        component_sums[:, i] = np.sum(mogpreds[mask], axis=0)
+
+    # Sort patients by their total contribution (largest at the top)
+    sorted_indices = np.argsort(np.sum(component_sums, axis=0))[::-1]  # Reverse the order
+    component_sums = component_sums[:, sorted_indices]
+
+    # Create a stacked bar plot
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    # Define colors for patients
+    colors = list(mcolors.TABLEAU_COLORS.values())
+    if len(unique_patidxs) > len(colors):
+        colors = plt.cm.tab20.colors  # Use a larger colormap if needed
+
+    # Plot each component
+    bottom = np.zeros(num_components)
+    for i, patidx in enumerate(unique_patidxs[sorted_indices]):
+        ax.bar(
+            range(num_components),
+            component_sums[:, i],
+            bottom=bottom,
+            color=colors[i % len(colors)],
+            label=f"Patient {patidx}"
+        )
+        bottom += component_sums[:, i]
+
+    # Customize the plot
+    ax.set_xlabel("MoG Component")
+    ax.set_ylabel("Sum of MoG Weights")
+    ax.set_title(f"MoG Component Weights by Patient (Epoch {epoch}, Iter {iter_curr}) - {mogpreds.shape[0]} Embeddings")
+    ax.set_xticks(range(num_components))
+    ax.set_xticklabels([f"Comp {i}" for i in range(num_components)])
+    # ax.legend(title="Patient ID", bbox_to_anchor=(1.05, 1), loc='upper left')
+
+    # Save the plot
+    if not os.path.exists(savedir): os.makedirs(savedir)
+    savename_jpg = f"{savedir}/patmogweights_epoch{epoch}_iter{iter_curr}.jpg"
+    pl.savefig(savename_jpg)
+    pl.close(fig)
+
+def plot_mog_and_encoder_means(gpu_id, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, num_accumulated_plotting_dims=5, n_bins=100, **kwargs):
     """
     Plot distributions of encoder statistics across MoG components using histograms.
     Compares encoder statistics with MoG prior state and includes encoder_zmeaned visualization.
@@ -614,8 +790,7 @@ def plot_mog_and_encoder_means(gpu_id, mog_means, mog_logvars, mog_weights, enco
         ax = fig.add_subplot(4, num_accumulated_plotting_dims, d + 1)
         for k in range(K):
             ax.hist(encoder_means_flat[:, k, d], bins=n_bins, alpha=0.5, label=f'Comp {k}')
-        ax.axvline(mog_means[:, d].mean(), color='red', linestyle='--', alpha=0.7, label='MoG Prior Mean')
-        ax.set_title(f'Encoder Means (Dim {d}) (Color MoGComp)')
+        ax.set_title(f'Encoder Means (Dim {d}), Color MoGComp')
         ax.set_xlabel('Mean Value')
         ax.set_ylabel('Frequency')
 
@@ -624,8 +799,7 @@ def plot_mog_and_encoder_means(gpu_id, mog_means, mog_logvars, mog_weights, enco
         ax = fig.add_subplot(4, num_accumulated_plotting_dims, num_accumulated_plotting_dims + d + 1)
         for k in range(K):
             ax.hist(encoder_logvars_flat[:, k, d], bins=n_bins, alpha=0.5, label=f'Comp {k}')
-        ax.axvline(mog_logvars[:, d].mean(), color='red', linestyle='--', alpha=0.7, label='MoG Prior Logvar')
-        ax.set_title(f'Encoder Logvars (Dim {d}) (Color MoGComp)')
+        ax.set_title(f'Encoder Logvars (Dim {d}), Color MoGComp')
         ax.set_xlabel('Logvar Value')
         ax.set_ylabel('Frequency')
 
@@ -634,8 +808,7 @@ def plot_mog_and_encoder_means(gpu_id, mog_means, mog_logvars, mog_weights, enco
     ax = fig.add_subplot(4, 1, 3)  # Span all columns in row 3
     for k in range(K):
         ax.hist(encoder_mogpreds_flat[:, k], bins=n_bins, alpha=0.5, label=f'Comp {k}')
-        ax.axvline(mog_weights[k], color='red', linestyle='--', alpha=0.7, label=f'MoG Prior Weight (Comp {k})')
-    ax.set_title(f'Encoder MoG Predictions (Color is MoG Component)')
+    ax.set_title(f'Encoder MoG Predictions - Color is MoG Component')
     ax.set_xlabel('Weight Value')
     ax.set_ylabel('Frequency')
 
@@ -648,14 +821,13 @@ def plot_mog_and_encoder_means(gpu_id, mog_means, mog_logvars, mog_weights, enco
         ax.set_ylabel('Frequency')
         ax.legend()
 
-    # Adjust layout and save the plot
-    if not os.path.exists(savedir):
-        os.makedirs(savedir)
-    savename_jpg = f"{savedir}/ObservedLatents_epoch{epoch}_gpu{gpu_id}.jpg"
+    if gpu_id == 0: time.sleep(0.5) # avoid collisions
+    if not os.path.exists(savedir): os.makedirs(savedir)
+    savename_jpg = f"{savedir}/ObservedLatents_epoch{epoch}_numForwards{Batch}_gpu{gpu_id}.jpg"
     pl.savefig(savename_jpg)
     pl.close(fig)
 
-def print_latent_realtime(mean, logvar, mogpreds, savedir, epoch, iter_curr, n_bins=100, **kwargs):
+def print_latent_realtime(mean, logvar, mogpreds, savedir, epoch, iter_curr, n_bins=35, **kwargs):
     """
     Plot weighted means, logvars, and average MoG weights at the token level for the first 5 dimensions.
     Aggregates tokens across all batches, with separate histograms for each batch index.

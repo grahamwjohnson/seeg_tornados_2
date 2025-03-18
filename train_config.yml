@@ -49,16 +49,16 @@ transformer_seq_length: 64
 max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
 max_batch_size: kwargs['max_batch_size'] = kwargs['random_pulls_in_batch'] * kwargs['inference_batch_mult']
 n_layers: 4
-n_heads: 64
+n_heads: 128
 multiple_of: 256 
-ffn_dim_multiplier: 0.4 # Default is 1 to make FF layers account for ~2/3 of total parameter count
+ffn_dim_multiplier: 0.5 # Default is 1 to make FF layers account for ~2/3 of total parameter count
 attention_dropout: 0.1               
 encoder_transformer_activation: "silu"
 transformer_start_pos: 0 # Not currently coded up to work if > 0
 top_dims: kwargs['top_dims'] = kwargs['transformer_dim'] # kwargs['num_encode_concat_transformer_tokens'] * kwargs['transformer_dim']
-hidden_dims: 2048 # 4096
-latent_dim: 1024 # 2048
-decoder_base_dims: 256 # top dim of decoder is [encode_token_samples * decoder_base_dims]
+hidden_dims: 4096 # 4096
+latent_dim: 4096 # 2048
+decoder_base_dims: 512 # top dim of decoder is [encode_token_samples * decoder_base_dims]
 hash_output_range: kwargs['hash_output_range'] = (-2, 2)  # tuple, modify based on approximate range of prior
 recon_weight: 3 # 3
 LR_max_core: kwargs['LR_max_core'] = 1e-5 # 5e-7
@@ -72,17 +72,17 @@ adamW_beta1: 0.9
 adamW_beta2: 0.95 
 
 # PRIOR - VAE
-mog_components: 64 # Categorical sampling of single component with gumbel-softmax trick
-gumbel_softmax_temperature: 1000.0 # Higher means softer assignment to MoG, more exploratin of latent space, noisier embeddings
+mog_components: 4 # Categorical sampling of single component with gumbel-softmax trick
+gumbel_softmax_temperature: kwargs['gumbel_softmax_temperature'] = 1e3 # Higher means softer assignment to MoG, more exploratin of latent space, noisier embeddings
 entropy_weight: kwargs['entropy_weight'] = 1e-6 # Helps prevent mode collapse
-repulsion_weight: kwargs['repulsion_weight'] = 1e2 # Helps keep centers of guassians far apart
+repulsion_weight: kwargs['repulsion_weight'] = 1 # Helps keep centers of guassians far apart
 random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
 random_observed_numplots: 4 # On the end of epoch plot
-Reg_max: kwargs['Reg_max'] = 1e2 # 1e-2 # 1e-3 # 0.01 # 1e5 # 0.01 #0.1
+Reg_max: kwargs['Reg_max'] = 1e3 # 1e-2 # 1e-3 # 0.01 # 1e5 # 0.01 #0.1
 Reg_min: kwargs['Reg_min'] = 0
 Reg_stall_epochs: 0 # Min Reg weight rise until stall is complete
-Reg_epochs_AT_max: 15 # Maybe coincide with the wasserstein order switch epoch?
-Reg_epochs_TO_max: 5
+Reg_epochs_AT_max: 20 # Maybe coincide with the wasserstein order switch epoch?
+Reg_epochs_TO_max: 20
 
 # CLASSIFIER - Adversarial
 # Not currently being integrated in backprop (beyond the classifer weights themselves, i.e. reverse gradient alpha is 0)
@@ -90,7 +90,7 @@ classifier_hidden_dims: [2048, 1024, 512, 256]
 classifier_num_pats: 45 #    ########   Hardcoded  ########
 classifier_dropout: 0.1
 classifier_weight: 1 # OVERALL ADVERSARIAL training: i.e. reverse gradient (VAE) AND classifier power. # Should probably get into same ballpark as recon and Reg
-classifier_max: kwargs['classifier_max'] = 1e-3 
+classifier_max: kwargs['classifier_max'] = 1e-2 
 classifier_min: kwargs['classifier_min'] = 0 
 classifier_epochs_AT_max: 99999
 classifier_epochs_TO_max: 50
@@ -111,7 +111,7 @@ Sparse_epochs_TO_max: 0
 random_pulls_in_batch: 8 # BATCHSIZE
 train_forward_passes: 2048 # Independent of batchsize, just random pulls of data
 epochs_to_train: 999999 
-train_num_rand_hashes: 1  # Number of random channel orders, with deterministic hash embedding for each, a form of augmentation
+train_num_rand_hashes: 1024  # Number of random channel orders, with deterministic hash embedding for each, a form of augmentation
 
 # VALIDATION
 valfinetune_forward_passes: 2048 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes
@@ -133,7 +133,7 @@ inference_window_sec_list: [64, 64, 16, 16, 2]
 inference_stride_sec_list: [64, 2,  16, 2,  2] # Both window and stride must be multiple of input seconds to encoder,  (i.e. encode_token_samples * transformer_seq_length / FS)
 
 # PLOTTING
-total_collected_latents: 512  # Currently just for plotting at the end of an epoch
+total_collected_latents: 2048  # Currently just for plotting at the end of an epoch
 realtime_latent_printing: True
 num_realtime_channels_recon: 1 # Will be batch * this plotted
 realtime_printing_interval_train: 64

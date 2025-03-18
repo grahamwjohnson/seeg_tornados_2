@@ -24,6 +24,7 @@ from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
 from models.VAE import VAE
 
+
 '''
 @author: grahamwjohnson
 Developed between 2023-2025
@@ -201,6 +202,7 @@ def main(
     running_logvar_path = [],
     running_zmeaned_path = [],
     running_mogpreds_path = [],
+    running_patidxs_path = [],
     epochs_to_train: int = -1,
     **kwargs):
 
@@ -255,12 +257,17 @@ def main(
         # Load running logvar
         with open(running_mogpreds_path, "rb") as f: accumulated_mogpreds = pickle.load(f)
         print(f"[GPU{gpu_id}] Running MoG Predictions loaded from checkpoints")
+
+        # Load running patidxs
+        with open(running_patidxs_path, "rb") as f: accumulated_patidxs = pickle.load(f)
+        print(f"[GPU{gpu_id}] Running MoG Predictions loaded from checkpoints")
     
     else:
         accumulated_mean = []
         accumulated_logvar = []
         accumulated_zmeaned = []
         accumulated_mogpreds = []
+        accumulated_patidxs = []
 
     # Create the training object
     trainer = Trainer(
@@ -281,6 +288,7 @@ def main(
         accumulated_logvar=accumulated_logvar,
         accumulated_zmeaned=accumulated_zmeaned,
         accumulated_mogpreds=accumulated_mogpreds,
+        accumulated_patidxs=accumulated_patidxs,
         **kwargs)
 
     # Kill the val data generators if val_every is set artificially high
@@ -308,8 +316,7 @@ def main(
                 accumulated_logvar = trainer.accumulated_logvar
                 accumulated_zmeaned = trainer.accumulated_zmeaned
                 accumulated_mogpreds = trainer.accumulated_mogpreds
-                accumulated_labels = trainer.accumulated_labels
-                accumulated_class_probs = trainer.accumulated_class_probs
+                accumulated_patidxs = trainer.accumulated_patidxs
 
                 # FINETUNE on beginning of validation patients (currently only one epoch)
                 # Set to train and change LR to validate settings
@@ -354,8 +361,8 @@ def main(
                 trainer.accumulated_logvar = accumulated_logvar
                 trainer.accumulated_zmeaned = accumulated_zmeaned
                 trainer.accumulated_mogpreds = accumulated_mogpreds
-                trainer.accumulated_labels = accumulated_labels
-                trainer.accumulated_class_probs = accumulated_class_probs
+                trainer.accumulated_patidxs = accumulated_patidxs
+
             
             trainer.train_dataset.initiate_generator()
             trainer.valfinetune_dataset.initiate_generator()
@@ -390,8 +397,7 @@ def main(
                 accumulated_logvar = trainer.accumulated_logvar
                 accumulated_zmeaned = trainer.accumulated_zmeaned
                 accumulated_mogpreds = trainer.accumulated_mogpreds
-                accumulated_labels = trainer.accumulated_labels
-                accumulated_class_probs = trainer.accumulated_class_probs
+                accumulated_patidxs = trainer.accumulated_patidxs
 
                 # FINETUNE on beginning of validation patients (currently only one epoch)
                 # Set to train and change LR to validate settings
@@ -425,8 +431,7 @@ def main(
                 trainer.accumulated_logvar = accumulated_logvar
                 trainer.accumulated_zmeaned = accumulated_zmeaned
                 trainer.accumulated_mogpreds = accumulated_mogpreds
-                trainer.accumulated_labels = accumulated_labels
-                trainer.accumulated_class_probs = accumulated_class_probs
+                trainer.accumulated_patidxs = accumulated_patidxs
 
     # Kill the process after training loop completes
     print(f"[GPU{gpu_id}]: End of train loop, killing 'main' subprocess")
@@ -529,12 +534,14 @@ class Trainer:
             self.accumulated_logvar = torch.randn(self.total_collected_latents, self.mog_components, self.latent_dim).to(self.gpu_id)
             self.accumulated_zmeaned = torch.randn(self.total_collected_latents, self.latent_dim).to(self.gpu_id)
             self.accumulated_mogpreds = torch.softmax(torch.randn(self.total_collected_latents, self.mog_components), dim=1).to(self.gpu_id)
+            self.accumulated_patidxs = (torch.ones(self.total_collected_latents) * -1).to(self.gpu_id)
         else: 
             # Ensure on proper device because loading from pickle
             self.accumulated_mean = self.accumulated_mean.to(self.gpu_id)
             self.accumulated_logvar = self.accumulated_logvar.to(self.gpu_id)
             self.accumulated_zmeaned = self.accumulated_zmeaned.to(self.gpu_id)
             self.accumulated_mogpreds = self.accumulated_mogpreds.to(self.gpu_id)
+            self.accumulated_patidxs = self.accumulated_patidxs.to(self.gpu_id)
 
         # Running tab of update index
         self.next_update_index = 0
@@ -603,6 +610,13 @@ class Trainer:
         output_obj.close()
         print("Saved running MoG Predictions")
 
+        # Save Running Pat Idxs
+        latents_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_running_patidxs.pkl"
+        output_obj = open(latents_path, 'wb')
+        pickle.dump(self.accumulated_patidxs, output_obj)
+        output_obj.close()
+        print("Saved running Pat Idxs")
+
         print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
 
         if delete_old_checkpoints:
@@ -614,7 +628,8 @@ class Trainer:
         mean,
         logvar,
         zmeaned,
-        mogpreds):
+        mogpreds,
+        patidxs):
 
         '''
         Collect most recent encoder outputs
@@ -631,6 +646,7 @@ class Trainer:
             self.accumulated_logvar[self.next_update_index: self.next_update_index + num_new_updates, :, :] = logvar
             self.accumulated_zmeaned[self.next_update_index: self.next_update_index + num_new_updates, :] = zmeaned
             self.accumulated_mogpreds[self.next_update_index: self.next_update_index + num_new_updates, :] = mogpreds
+            self.accumulated_patidxs[self.next_update_index: self.next_update_index + num_new_updates] = patidxs
             self.next_update_index = self.next_update_index + num_new_updates
 
         else: # Rollover
@@ -649,6 +665,9 @@ class Trainer:
             self.accumulated_mogpreds[self.next_update_index: self.next_update_index + end_num, :] = mogpreds[:end_num, :]
             self.accumulated_mogpreds[0: residual_num, :] = mogpreds[end_num:, :]
 
+            self.accumulated_patidxs[self.next_update_index: self.next_update_index + end_num] = patidxs[:end_num]
+            self.accumulated_patidxs[0: residual_num] = patidxs[end_num:]
+
             self.next_update_index = residual_num
 
         # Detach to allow next backpass
@@ -656,6 +675,7 @@ class Trainer:
         self.accumulated_logvar = self.accumulated_logvar.detach() 
         self.accumulated_zmeaned = self.accumulated_zmeaned.detach() 
         self.accumulated_mogpreds = self.accumulated_mogpreds.detach() 
+        self.accumulated_patidxs = self.accumulated_patidxs.detach() 
 
     def _run_export_embeddings(
         self, 
@@ -725,11 +745,13 @@ class Trainer:
                     hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
                         input_string=dataset_curr.pat_ids[pat_idx], 
                         num_channels=num_channels_curr, 
+                        padded_channels=padded_channels,
                         latent_dim=self.latent_dim, 
                         modifier=rand_modifer,
                         hash_output_range=self.hash_output_range)
                     
                     # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
+                    raise Exception("Hash channel order now has -1 in it, need to code up")
 
                     # TODO: get rid of for loop like random data generator 
                     x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, padded_channels, self.encode_token_samples).to(self.gpu_id)
@@ -813,16 +835,14 @@ class Trainer:
             file_class_label = file_class_label.to(self.gpu_id)
             hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
         
-            # For Training: Update the Regulizer multiplier (BETA), and Learning Rate according for Heads Models and Core Model
+            # LR & WEIGHT SCHEDULES
             self.reg_weight, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
-            
             if (not val_finetune) & (not val_unseen): 
                 self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
                 self.opt_vae.param_groups[1]['lr'] = self.curr_LR_cls
-            
-            else: # For validation, do not consider classifier
-                self.classifier_alpha = 0
+            else: 
+                self.classifier_alpha = 0 # For validation, do not consider classifier
                 self.opt_vae.param_groups[1]['lr'] = 0
 
             # Check for NaNs
@@ -853,14 +873,6 @@ class Trainer:
                 x=x, # No shift if not causal masking
                 x_hat=x_hat,
                 recon_weight=self.recon_weight)
-
-            # reg_loss = loss_functions.mog_loss(  
-            #     z_meaned = z_meaned,
-            #     component_indices=component_indices,
-            #     encoder_logvars = logvar_samples,
-            #     mog_prior = self.vae.module.prior,
-            #     weight = self.reg_weight,
-            #     **kwargs)
 
             reg_entropy = loss_functions.mog_entropy_regularization(
                 weights = self.vae.module.prior.weights, 
@@ -896,7 +908,7 @@ class Trainer:
                 loss.backward()    
                 torch.nn.utils.clip_grad_norm_(self.vae.module.prior.parameters(), max_norm=1.0) # Gradient clipping for MoG prior, prevent excessive updates even with strong regularization 
                 self.opt_vae.step()
-                self._update_reg_window(mean_tokenmeaned, logvar_tokenmeaned, z_meaned, mogpreds_tokenmeaned) # Update the buffers & detach() 
+                self._update_reg_window(mean_tokenmeaned, logvar_tokenmeaned, z_meaned, mogpreds_tokenmeaned, file_class_label) # Update the buffers & detach() 
 
             # Realtime terminal info and WandB 
             if (iter_curr%self.recent_display_iters==0):
@@ -1015,6 +1027,16 @@ class Trainer:
                                     file_name = file_name,
                                     **kwargs)
 
+                                utils_functions.print_patmogweights_realtime(
+                                    mogpreds = self.accumulated_mogpreds.cpu().detach().numpy(),
+                                    patidxs = self.accumulated_patidxs.cpu().detach().numpy(),
+                                    savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_patmogweights",
+                                    epoch = self.epoch,
+                                    iter_curr = iter_curr,
+                                    **kwargs)
+                                
+
+
             # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
             iter_curr = iter_curr + 1
 
@@ -1023,14 +1045,19 @@ class Trainer:
         # NOTE: not necessarily everything from epoch, the number of accumulated samples is defined by 'total_collected_latents'
         utils_functions.plot_mog_and_encoder_means(
             gpu_id = self.gpu_id, 
-            mog_means = self.vae.module.prior.means.detach().cpu().numpy(), 
-            mog_logvars = self.vae.module.prior.logvars.detach().cpu().numpy(), 
-            mog_weights = self.vae.module.prior.weights.detach().cpu().numpy(), 
             encoder_means = self.accumulated_mean.detach().cpu().numpy(),
             encoder_logvars = self.accumulated_logvar.detach().cpu().numpy(),
             encoder_zmeaned = self.accumulated_zmeaned.detach().cpu().numpy(),
             encoder_mogpreds = self.accumulated_mogpreds.detach().cpu().numpy(),
             savedir = self.model_dir + f"/realtime_plots/{dataset_string}/observed_latents",
+            epoch = self.epoch,
+            **kwargs)
+        
+        if self.gpu_id == 0: utils_functions.plot_prior(
+            mog_means = self.vae.module.prior.means.detach().cpu().numpy(), 
+            mog_logvars = self.vae.module.prior.logvars.detach().cpu().numpy(), 
+            mog_weights = self.vae.module.prior.weights.detach().cpu().numpy(), 
+            savedir = self.model_dir + f"/realtime_plots/{dataset_string}/prior",
             epoch = self.epoch,
             **kwargs)
         

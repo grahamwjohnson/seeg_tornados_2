@@ -42,21 +42,24 @@ def load_data_sample(pat_idx, file_idx, start_idx, pat_fnames, pat_ids, latent_d
     hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
         input_string=pat_ids[pat_idx], 
         num_channels=data.shape[0], 
+        padded_channels=padded_channels,
         latent_dim=latent_dim, 
         modifier=rand_modifier,
         hash_output_range=hash_output_range)
 
-    # data_tensor_np = np.zeros((transformer_seq_length, padded_channels, encode_token_samples ), dtype=np.float16)
-    # # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times
-    # for embedding_idx in range(0, transformer_seq_length):
-    #     end_idx = start_idx + encode_token_samples * embedding_idx + encode_token_samples
-    #     data_tensor_np[embedding_idx, :len(hash_channel_order), :] = data[hash_channel_order, end_idx - encode_token_samples : end_idx]  # Padding implicit in zeros initialization
-
-    # initialize & fill the data tensor
-    end_idx = start_idx +  encode_token_samples * transformer_seq_length
-    data_tensor_np = np.zeros((padded_channels, transformer_seq_length * encode_token_samples ), dtype=np.float16)
-    data_tensor_np[ :len(hash_channel_order), :] = data[hash_channel_order, start_idx : end_idx]  # [Seq, padded_channels, autoencode_sample]
-    data_tensor_np = np.swapaxes(data_tensor_np.reshape(data_tensor_np.shape[0], transformer_seq_length, encode_token_samples), 0,1)
+    # # initialize & fill the data tensor
+    # end_idx = start_idx +  encode_token_samples * transformer_seq_length
+    # data_tensor_np = np.zeros((padded_channels, transformer_seq_length * encode_token_samples ), dtype=np.float16)
+    # data_tensor_np[ :len(hash_channel_order), :] = data[hash_channel_order, start_idx : end_idx]  # [Seq, padded_channels, autoencode_sample]
+    # data_tensor_np = np.swapaxes(data_tensor_np.reshape(data_tensor_np.shape[0], transformer_seq_length, encode_token_samples), 0,1)
+    
+    # Initialize & fill the data tensor
+    end_idx = start_idx + encode_token_samples * transformer_seq_length
+    data_tensor_np = np.zeros((padded_channels, transformer_seq_length * encode_token_samples), dtype=np.float16) # Create an empty data tensor with the correct shape
+    for i, channel_idx in enumerate(hash_channel_order): # Fill the data tensor according to hash_channel_order
+        if channel_idx != -1:  # Skip -1 (these positions will remain zero-padded)
+            data_tensor_np[i, :] = data[channel_idx, start_idx:end_idx]  # Assign data for valid channels
+    data_tensor_np = np.swapaxes(data_tensor_np.reshape(data_tensor_np.shape[0], transformer_seq_length, encode_token_samples), 0, 1)  # Reshape and swap axes
 
     # Add file info
     file_name = pat_fnames[pat_idx][file_idx].split("/")[-1].split(".")[0]

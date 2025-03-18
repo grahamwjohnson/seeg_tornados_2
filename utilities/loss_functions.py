@@ -61,7 +61,7 @@ def mog_loss(encoder_means, encoder_logvars, encoder_mogpreds, mog_prior, weight
     encoder_mogpreds: Encoder component predictions (softmaxed), shape (batch_size, T, K)
     mog_prior: Instance of MoGPrior
     weight: Weight of the KL loss
-    temperature: Temperature for Gumbel-Softmax (controls the sharpness of the distribution)
+    temperature: Temperature for Gumbel-Softmax (controls the sharpness of the distribution, higher --> noisier MoG predeictions)
     """
     batch_size, T, K, D = encoder_means.shape
 
