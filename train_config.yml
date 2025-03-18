@@ -3,8 +3,8 @@
 num_gpus: 2
  
 # DATASET
-continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
-cont_train_model_dir: '/media/glommy1/model_runs/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train100.0_val0.0/murrelet_Sun_Mar_16_23_14_49_2025' 
+continue_existing_training: True  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+cont_train_model_dir: '/media/glommy1/model_runs/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train100.0_val0.0/greendarnerdragonfly_Tue_Mar_18_00_25_01_2025' 
 print_dataset_bargraphs: False # Rough visualization of all data timestamps/types  for each patient. Typically set to False if not the first run of model, but may want true if adding new patients
 pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats' #   2pats'     # 10pats' 
 train_val_pat_perc: kwargs['train_val_pat_perc'] = [1.00, 0.0] #[0.5, 0.5] # [0.8, 0.2]
