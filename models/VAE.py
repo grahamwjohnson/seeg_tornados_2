@@ -262,7 +262,7 @@ class GradientReversal(nn.Module):
         return GradientReversalLayer.apply(x, alpha)
 
 class LinearWithDropout(nn.Module):
-    def __init__(self, input_dim, output_dim, dropout_prob=0.5):
+    def __init__(self, input_dim, output_dim, dropout_prob=0.1):
         super(LinearWithDropout, self).__init__()
         self.linear = nn.Linear(input_dim, output_dim)
         self.dropout = nn.Dropout(dropout_prob)
@@ -303,6 +303,33 @@ class AdversarialClassifier(nn.Module):
         for layer in self.mlp_layers:
             mu = layer(mu)
         return self.softmax(mu)
+
+# Define the MoG Predictor 
+class MoGPredictor(nn.Module):
+    def __init__(self, top_dim, mogpred_hidden_dim_list, num_mog_components, mog_predictor_dropout, **kwargs):
+        super(MoGPredictor, self).__init__()
+
+        self.dropout = mog_predictor_dropout
+        self.mlp_layers = nn.ModuleList()
+
+        # Input layer
+        self.mlp_layers.append(nn.Linear(top_dim, mogpred_hidden_dim_list[0]))
+        self.mlp_layers.append(nn.SiLU())
+        self.mlp_layers.append(RMSNorm(mogpred_hidden_dim_list[0]))
+
+        # Hidden layers
+        for i in range(len(mogpred_hidden_dim_list) - 1):
+            self.mlp_layers.append(LinearWithDropout(mogpred_hidden_dim_list[i], mogpred_hidden_dim_list[i + 1], self.dropout))
+            self.mlp_layers.append(nn.SiLU())
+            self.mlp_layers.append(RMSNorm(mogpred_hidden_dim_list[i + 1]))
+
+        # Output layer
+        self.mlp_layers.append(nn.Linear(mogpred_hidden_dim_list[-1], num_mog_components)) # No activation and no norm
+
+    def forward(self, x):
+        for layer in self.mlp_layers:
+            x = layer(x)
+        return x # Do NOT softmax here, Gumbel-Softmax trick needs logits 
 
 class VAE(nn.Module):
     '''
@@ -367,10 +394,10 @@ class VAE(nn.Module):
         # Right before latent space
         self.mean_encode_layer = nn.Linear(self.hidden_dims, self.mog_components * self.latent_dim, bias=True)  
         self.logvar_encode_layer = nn.Linear(self.hidden_dims, self.mog_components * self.latent_dim, bias=True) 
-        self.mogpreds_layer = nn.Sequential(
-            nn.Linear(self.hidden_dims, self.mog_components, bias=True),
-            nn.SiLU(),
-            RMSNorm(self.mog_components))
+        self.mogpreds_layer = MoGPredictor(
+            top_dim=self.hidden_dims,
+            num_mog_components=self.mog_components,
+            **kwargs)
 
         # Decoder
         self.decoder = Decoder_MLP(
@@ -406,8 +433,6 @@ class VAE(nn.Module):
             mean, logvar, mogpreds = self.mean_encode_layer(y), self.logvar_encode_layer(y), self.mogpreds_layer(y)
             mean = mean.view(-1, self.transformer_seq_length, self.mog_components, self.latent_dim)
             logvar = logvar.view(-1,self.transformer_seq_length, self.mog_components, self.latent_dim)
-
-            mogpreds = torch.softmax(mogpreds, dim=2)
             
             return mean, logvar, mogpreds, attW
 

@@ -5,6 +5,23 @@ from geomloss import SamplesLoss
 '''
 @author: grahamwjohnson
 '''
+def mogpreds_entropy_loss(mogpreds_softmax, mogpreds_entropy_weight, **kwargs):
+    """
+    Compute the entropy loss for MoG predictions.
+    mogpreds_softmax: MoG component probabilities, shape (batch_size, T, K)
+    mogpreds_entropy_weight: Weight for the entropy loss
+    """
+    # Ensure mogpreds_softmax is a valid probability distribution
+    assert torch.all(mogpreds_softmax >= 0), "mogpreds_softmax contains negative values"
+    assert torch.allclose(mogpreds_softmax.sum(dim=-1), torch.ones_like(mogpreds_softmax.sum(dim=-1))), "mogpreds_softmax does not sum to 1"
+
+    # Clamp mogpreds_softmax to avoid log(0)
+    mogpreds_softmax = torch.clamp(mogpreds_softmax, min=1e-10, max=1.0)
+
+    # Compute entropy loss
+    entropy = -torch.sum(mogpreds_softmax * torch.log(mogpreds_softmax), dim=-1).mean()
+
+    return (-1) * mogpreds_entropy_weight * entropy # Negative entropy, to maximize entropy in MoG predictions
 
 def mog_entropy_regularization(weights, logvars, entropy_weight, **kwargs):
     """
@@ -58,10 +75,10 @@ def mog_loss(encoder_means, encoder_logvars, encoder_mogpreds, mog_prior, weight
     Compute the KL divergence between q(z|x) and the MoG prior p(z).
     encoder_means: Encoder means, shape (batch_size, T, K, D)
     encoder_logvars: Encoder log-variances, shape (batch_size, T, K, D)
-    encoder_mogpreds: Encoder component predictions (softmaxed), shape (batch_size, T, K)
+    encoder_mogpreds: Encoder component logits, shape (batch_size, T, K)
     mog_prior: Instance of MoGPrior
     weight: Weight of the KL loss
-    temperature: Temperature for Gumbel-Softmax (controls the sharpness of the distribution, higher --> noisier MoG predeictions)
+    gumbel_softmax_temperature: Temperature for Gumbel-Softmax
     """
     batch_size, T, K, D = encoder_means.shape
 
@@ -70,12 +87,15 @@ def mog_loss(encoder_means, encoder_logvars, encoder_mogpreds, mog_prior, weight
     gumbel_noise = -torch.log(-torch.log(torch.rand_like(encoder_mogpreds)))  # Shape: (batch_size, T, K)
 
     # Apply Gumbel-Softmax
-    logits = (torch.log(encoder_mogpreds + 1e-10) + gumbel_noise)  # Shape: (batch_size, T, K)
+    logits = encoder_mogpreds + gumbel_noise  # Add Gumbel noise to raw logits
+    logits = torch.clamp(logits, min=-10, max=10)  # Clamp logits to avoid extreme values
     component_weights = torch.softmax(logits / gumbel_softmax_temperature, dim=-1)  # Shape: (batch_size, T, K)
+    component_weights = torch.clamp(component_weights, min=1e-10, max=1.0)  # Avoid log(0)
 
     # Step 2: Compute weighted means and log-variances for each token
     selected_means = torch.sum(encoder_means * component_weights.unsqueeze(-1), dim=2)  # Shape: (batch_size, T, D)
     selected_logvars = torch.sum(encoder_logvars * component_weights.unsqueeze(-1), dim=2)  # Shape: (batch_size, T, D)
+    selected_logvars = torch.clamp(selected_logvars, min=-10, max=10)  # Clamp logvars to avoid extreme values
 
     # Step 3: Reparameterization trick to sample z at the TOKEN level
     eps = torch.randn_like(selected_means)  # Shape: (batch_size, T, D)
@@ -126,19 +146,5 @@ def sparse_l1_reg(z, sparse_weight, **kwargs):
 def adversarial_loss_function(probs, labels, classifier_weight):
     adversarial_loss = nn.functional.cross_entropy(probs, labels) / torch.log(torch.tensor(probs.shape[1]))
     return classifier_weight * adversarial_loss
-
-# def KL_divergence(mu, logvar, weight):
-#     if torch.isnan(mu).any(): raise ValueError("NaN detected in OBSERVED tensors for Sinkhorn loss!")
-#     if torch.isinf(mu).any(): raise ValueError("Inf detected in OBSERVED tensors for Sinkhorn loss!")
-#     if torch.isnan(logvar).any(): raise ValueError("NaN detected in PRIOR tensors for Sinkhorn loss!")
-#     if torch.isinf(logvar).any(): raise ValueError("Inf detected in PRIOR tensors for Sinkhorn loss!")
-
-#     batch_size, latent_dim = mu.shape
-
-#     # KL Divergence loss
-#     kl_divergence = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    
-#     return weight * kl_divergence / (batch_size *  latent_dim)
-
 
 
