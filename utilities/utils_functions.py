@@ -632,69 +632,7 @@ def plot_prior(mog_means, mog_logvars, mog_weights, savedir, epoch, **kwargs):
     pl.savefig(savename_jpg)
     plt.close()
 
-def print_patmogweights_realtime(mogpreds_softmax, patidxs, savedir, epoch, iter_curr, **kwargs):
-    """
-    Plot stacked bar plots for MoG weights, colored by patient proportions.
-
-    Args:
-        mogpreds_softmax (np.ndarray): Softmaxed MoG weights, shape (num_samples, num_components).
-        patidxs (np.ndarray): Patient indices (class labels), shape (num_samples,).
-        savedir (str): Directory to save the plot.
-        epoch (int): Current epoch.
-        iter_curr (int): Current iteration.
-        file_name (str): Base name for the saved plot file.
-        **kwargs: Additional arguments (e.g., component names, colors).
-    """
-
-    # Get unique patient indices and MoG components
-    unique_patidxs = np.unique(patidxs)
-    num_components = mogpreds_softmax.shape[1]
-
-    # Accumulate MoG weights for each component, grouped by patient
-    component_sums = np.zeros((num_components, len(unique_patidxs)))
-    for i, patidx in enumerate(unique_patidxs):
-        mask = (patidxs == patidx)
-        component_sums[:, i] = np.sum(mogpreds_softmax[mask], axis=0)
-
-    # Sort patients by their total contribution (largest at the top)
-    sorted_indices = np.argsort(np.sum(component_sums, axis=0))[::-1]  # Reverse the order
-    component_sums = component_sums[:, sorted_indices]
-
-    # Create a stacked bar plot
-    fig, ax = plt.subplots(figsize=(12, 8))
-
-    # Define colors for patients
-    colors = list(mcolors.TABLEAU_COLORS.values())
-    if len(unique_patidxs) > len(colors):
-        colors = plt.cm.tab20.colors  # Use a larger colormap if needed
-
-    # Plot each component
-    bottom = np.zeros(num_components)
-    for i, patidx in enumerate(unique_patidxs[sorted_indices]):
-        ax.bar(
-            range(num_components),
-            component_sums[:, i],
-            bottom=bottom,
-            color=colors[i % len(colors)],
-            label=f"Patient {patidx}"
-        )
-        bottom += component_sums[:, i]
-
-    # Customize the plot
-    ax.set_xlabel("MoG Component")
-    ax.set_ylabel("Sum of MoG Weights")
-    ax.set_title(f"MoG Component Weights by Patient (Epoch {epoch}, Iter {iter_curr}) - {mogpreds_softmax.shape[0]} Embeddings")
-    ax.set_xticks(range(num_components))
-    ax.set_xticklabels([f"Comp {i}" for i in range(num_components)])
-    # ax.legend(title="Patient ID", bbox_to_anchor=(1.05, 1), loc='upper left')
-
-    # Save the plot
-    if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = f"{savedir}/patmogweights_epoch{epoch}_iter{iter_curr}.jpg"
-    pl.savefig(savename_jpg)
-    pl.close(fig)
-
-def plot_mog_and_encoder_means(gpu_id, encoder_means, encoder_logvars, encoder_mogpreds_softmax, encoder_zmeaned, savedir, epoch, num_accumulated_plotting_dims=5, n_bins=100, **kwargs):
+def plot_observed(gpu_id, encoder_means, encoder_logvars, encoder_mogpreds_softmax, encoder_zmeaned, savedir, epoch, num_accumulated_plotting_dims=5, n_bins=100, **kwargs):
     """
     Plot distributions of encoder statistics across MoG components using histograms.
     Compares encoder statistics with MoG prior state and includes encoder_zmeaned visualization.
@@ -759,11 +697,12 @@ def plot_mog_and_encoder_means(gpu_id, encoder_means, encoder_logvars, encoder_m
     ax.set_title(f'Encoder MoG Predictions - Color is MoG Component')
     ax.set_xlabel('Weight Value')
     ax.set_ylabel('Frequency')
+    ax.legend()
 
     # Plot 4: Distribution of encoder_zmeaned (aggregated latent representation, first `num_accumulated_plotting_dims` dims)
     for d in range(num_accumulated_plotting_dims):
         ax = fig.add_subplot(4, num_accumulated_plotting_dims, 3 * num_accumulated_plotting_dims + d + 1)
-        ax.hist(encoder_zmeaned_flat[:, d], bins=n_bins, alpha=0.5, label=f'Dim {d}')
+        ax.hist(encoder_zmeaned_flat[:, d], bins=n_bins, alpha=0.5, color='gray', label=f'Dim {d}')
         ax.set_title(f'encoder_zmeaned (Dim {d})')
         ax.set_xlabel('Latent Value')
         ax.set_ylabel('Frequency')
@@ -772,6 +711,68 @@ def plot_mog_and_encoder_means(gpu_id, encoder_means, encoder_logvars, encoder_m
     if gpu_id == 0: time.sleep(0.5) # avoid collisions
     if not os.path.exists(savedir): os.makedirs(savedir)
     savename_jpg = f"{savedir}/ObservedLatents_epoch{epoch}_numForwards{Batch}_gpu{gpu_id}.jpg"
+    pl.savefig(savename_jpg)
+    pl.close(fig)
+
+def print_patmogweights_realtime(mogpreds_softmax, patidxs, savedir, epoch, iter_curr, **kwargs):
+    """
+    Plot stacked bar plots for MoG weights, colored by patient proportions.
+
+    Args:
+        mogpreds_softmax (np.ndarray): Softmaxed MoG weights, shape (num_samples, num_components).
+        patidxs (np.ndarray): Patient indices (class labels), shape (num_samples,).
+        savedir (str): Directory to save the plot.
+        epoch (int): Current epoch.
+        iter_curr (int): Current iteration.
+        file_name (str): Base name for the saved plot file.
+        **kwargs: Additional arguments (e.g., component names, colors).
+    """
+
+    # Get unique patient indices and MoG components
+    unique_patidxs = np.unique(patidxs)
+    num_components = mogpreds_softmax.shape[1]
+
+    # Accumulate MoG weights for each component, grouped by patient
+    component_sums = np.zeros((num_components, len(unique_patidxs)))
+    for i, patidx in enumerate(unique_patidxs):
+        mask = (patidxs == patidx)
+        component_sums[:, i] = np.sum(mogpreds_softmax[mask], axis=0)
+
+    # Sort patients by their total contribution (largest at the top)
+    sorted_indices = np.argsort(np.sum(component_sums, axis=0))[::-1]  # Reverse the order
+    component_sums = component_sums[:, sorted_indices]
+
+    # Create a stacked bar plot
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    # Define colors for patients
+    colors = list(mcolors.TABLEAU_COLORS.values())
+    if len(unique_patidxs) > len(colors):
+        colors = plt.cm.tab20.colors  # Use a larger colormap if needed
+
+    # Plot each component
+    bottom = np.zeros(num_components)
+    for i, patidx in enumerate(unique_patidxs[sorted_indices]):
+        ax.bar(
+            range(num_components),
+            component_sums[:, i],
+            bottom=bottom,
+            color=colors[i % len(colors)],
+            label=f"Patient {patidx}"
+        )
+        bottom += component_sums[:, i]
+
+    # Customize the plot
+    ax.set_xlabel("MoG Component")
+    ax.set_ylabel("Sum of MoG Weights")
+    ax.set_title(f"MoG Component Weights by Patient (Epoch {epoch}, Iter {iter_curr}) - {mogpreds_softmax.shape[0]} Embeddings")
+    ax.set_xticks(range(num_components))
+    ax.set_xticklabels([f"Comp {i}" for i in range(num_components)])
+    # ax.legend(title="Patient ID", bbox_to_anchor=(1.05, 1), loc='upper left')
+
+    # Save the plot
+    if not os.path.exists(savedir): os.makedirs(savedir)
+    savename_jpg = f"{savedir}/patmogweights_epoch{epoch}_iter{iter_curr}.jpg"
     pl.savefig(savename_jpg)
     pl.close(fig)
 
@@ -906,83 +907,6 @@ def print_latent_realtime(mean, logvar, mogpreds_softmax, prior_means, prior_log
     savename_jpg = f"{savedir}/RealtimeLatents_epoch{epoch}_iter{iter_curr}.jpg"
     plt.savefig(savename_jpg)
     plt.close(fig)
-
-# def print_latent_realtime(mean, logvar, mogpreds_softmax, savedir, epoch, iter_curr, n_bins=35, **kwargs):
-#     """
-#     Plot weighted means, logvars, and average MoG weights at the token level for the first 5 dimensions.
-#     Aggregates tokens across all batches, with separate histograms for each batch index.
-#     Weighting is done separately for each batch.
-    
-#     Args:
-#         mean: Encoder means, shape (batch_size, T, K, D)
-#         logvar: Encoder log-variances, shape (batch_size, T, K, D)
-#         mogpreds_softmax: MoG component probabilities, shape (batch_size, T, K)
-#         savedir: Directory to save the plots
-#         epoch: Current epoch
-#         iter_curr: Current iteration
-#         n_bins: Number of bins for histograms (default: 100)
-#         **kwargs: Additional arguments
-#     """
-#     batch_size, T, K, D = mean.shape
-
-#     # Weight the means and logvars by MoG predictions separately for each batch
-#     weighted_mean = np.zeros((batch_size, T, D))  # Shape: (batch_size, T, D)
-#     weighted_logvar = np.zeros((batch_size, T, D))  # Shape: (batch_size, T, D)
-
-#     for b in range(batch_size):
-#         # Weight the means and logvars for the current batch
-#         weighted_mean[b] = np.sum(mean[b] * mogpreds_softmax[b][:, :, np.newaxis], axis=1)  # Shape: (T, D)
-#         weighted_logvar[b] = np.sum(logvar[b] * mogpreds_softmax[b][:, :, np.newaxis], axis=1)  # Shape: (T, D)
-
-#     # Compute the average MoG weights across all tokens for each batch
-#     avg_mogpreds_softmax = np.mean(mogpreds_softmax, axis=1)  # Shape: (batch_size, K)
-
-#     # Compute the 95% confidence intervals for the MoG weights
-#     ci_mogpreds_softmax = 1.96 * np.std(mogpreds_softmax, axis=1) / np.sqrt(T)  # Shape: (batch_size, K)
-
-#     # Plot the first 5 dimensions
-#     num_dims = min(5, D)
-#     fig = plt.figure(figsize=(28, 5 * num_dims))  # Wider figure to accommodate 7 columns
-
-#     for d in range(num_dims):
-#         # Plot weighted means (first column)
-#         ax1 = plt.subplot2grid((num_dims, 7), (d, 0), colspan=1)
-#         for b in range(batch_size):
-#             ax1.hist(weighted_mean[b, :, d], bins=n_bins, alpha=0.4, label=f'Batch {b}')
-#         ax1.set_title(f'Weighted Mean (Dim {d})')
-#         ax1.set_xlabel('Value')
-#         ax1.set_ylabel('Frequency')
-#         ax1.set_xlim(-5, 5)  # Set x-axis range from -5 to 5
-
-#         # Plot weighted logvars (second column)
-#         ax2 = plt.subplot2grid((num_dims, 7), (d, 1), colspan=1)
-#         for b in range(batch_size):
-#             ax2.hist(weighted_logvar[b, :, d], bins=n_bins, alpha=0.4, label=f'Batch {b}')
-#         ax2.set_title(f'Weighted Logvar (Dim {d})')
-#         ax2.set_xlabel('Value')
-#         ax2.set_ylabel('Frequency')
-
-#         # Plot average MoG weights with 95% CI (columns 2–6, single subplot spanning 5 columns)
-#         if d == 0:  # Only create this subplot once
-#             ax3 = plt.subplot2grid((num_dims, 7), (d, 2), colspan=5, rowspan=num_dims)
-#             for b in range(batch_size):
-#                 # Plot bars with error bars
-#                 ax3.bar(np.arange(K) + 0.1 * b, avg_mogpreds_softmax[b], width=0.1, alpha=0.4, label=f'Batch {b}')
-#                 ax3.errorbar(np.arange(K) + 0.1 * b, avg_mogpreds_softmax[b], yerr=ci_mogpreds_softmax[b], fmt='none', 
-#                              ecolor='darkgray', capsize=3, capthick=1, elinewidth=1)
-#             ax3.set_title(f'Average MoG Weights (Across Tokens) with 95% CI\nToken-Level MoG-Weighted Means & Logvars: Single Forward Passes')
-#             ax3.set_xlabel('MoG Component')
-#             ax3.set_ylabel('Average Token Weight')
-#             ax3.set_xticks(np.arange(K))  # Show all MoG component indices on the x-axis
-#             ax3.legend()
-
-#     # Adjust layout and save the plot
-#     plt.tight_layout()
-#     if not os.path.exists(savedir):
-#         os.makedirs(savedir)
-#     savename_jpg = f"{savedir}/RealtimeLatents_epoch{epoch}_iter{iter_curr}.jpg"
-#     plt.savefig(savename_jpg)
-#     plt.close(fig)
 
 def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_realtime_channels_recon, num_recon_samples, **kwargs):
 

@@ -904,7 +904,7 @@ class Trainer:
                 labels=file_class_label,
                 classifier_weight=self.classifier_weight)
 
-            loss = recon_loss + reg_loss + prior_entropy + prior_repulsion + adversarial_loss + mogpreds_entropy_loss + mogpreds_intrasequence_consistency_loss
+            loss = recon_loss + reg_loss + prior_entropy + prior_repulsion + adversarial_loss # + mogpreds_entropy_loss + mogpreds_intrasequence_consistency_loss
 
             # NOT BEING USED
             sparse_loss = loss_functions.sparse_l1_reg(
@@ -1068,7 +1068,7 @@ class Trainer:
         # Plot the full running latents at end of epoch 
         # ALready meaned at the token level
         # NOTE: not necessarily everything from epoch, the number of accumulated samples is defined by 'total_collected_latents'
-        utils_functions.plot_mog_and_encoder_means(
+        utils_functions.plot_observed(
             gpu_id = self.gpu_id, 
             encoder_means = self.accumulated_mean.detach().cpu().numpy(),
             encoder_logvars = self.accumulated_logvar.detach().cpu().numpy(),
