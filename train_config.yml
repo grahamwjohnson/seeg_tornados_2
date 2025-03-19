@@ -76,16 +76,18 @@ mog_components: 4 # Softmax sampling of components with gumbel-softmax trick
 mogpred_hidden_dim_list: [2048, 1024, 512, 256] # Top should probably be same/smaller than hidden dim of encoder, bottom bigger than mog_components
 mog_predictor_dropout: 0.1
 gumbel_softmax_temperature: kwargs['gumbel_softmax_temperature'] = 1 # Higher means softer assignment to MoG, more exploratin of latent space, noisier embeddings
-mogpreds_entropy_weight: kwargs['mogpreds_entropy_weight'] = 1e-1 # Encourages mogpreds to be uniform
+mogpreds_entropy_weight: kwargs['mogpreds_entropy_weight'] = 1e-2 # Encourages overall mogpreds to to be uniform
+mogpreds_consistency_weight: kwargs['mogpreds_consistency_weight'] = 1 # Encourgaes tokens within same sequence to map to same place in universe
+mogpreds_diversity_weight: kwargs['mogpreds_diversity_weight'] = 0.5 # Encourages sequences to be far apart from eachother in universe
 entropy_weight: kwargs['entropy_weight'] = 1e-6 # Helps prevent mode collapse in PRIOR
 repulsion_weight: kwargs['repulsion_weight'] = 1 # Helps keep centers of PRIOR guassians far apart, need to scale with number of MoG components 
 random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
 random_observed_numplots: 4 # On the end of epoch plot
-Reg_max: kwargs['Reg_max'] = 1e1 # Nightcrawler 5e2 
+Reg_max: kwargs['Reg_max'] = 1e2 # Nightcrawler 5e2 
 Reg_min: kwargs['Reg_min'] = 0
 Reg_stall_epochs: 0 # Min Reg weight rise until stall is complete
-Reg_epochs_AT_max: 20 # Maybe coincide with the wasserstein order switch epoch?
-Reg_epochs_TO_max: 20
+Reg_epochs_AT_max: 15 # Maybe coincide with the wasserstein order switch epoch?
+Reg_epochs_TO_max: 5
 
 # CLASSIFIER - Adversarial
 # Not currently being integrated in backprop (beyond the classifer weights themselves, i.e. reverse gradient alpha is 0)
@@ -93,8 +95,8 @@ classifier_hidden_dims: [2048, 1024, 512, 256]
 classifier_num_pats: 45 #    ########   Hardcoded  ########
 classifier_dropout: 0.1
 classifier_weight: 1 # OVERALL ADVERSARIAL training: i.e. reverse gradient (VAE) AND classifier power. # Should probably get into same ballpark as recon and Reg
-classifier_max: kwargs['classifier_max'] = 1e-2 
-classifier_min: kwargs['classifier_min'] = 0 
+classifier_alpha_max: kwargs['classifier_alpha_max'] = 1e-3 # Alpha of reverse gradient 
+classifier_alpha_min: kwargs['classifier_alpha_min'] = 0 
 classifier_epochs_AT_max: 99999
 classifier_epochs_TO_max: 50
 classifier_rise_first: True

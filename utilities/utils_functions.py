@@ -41,6 +41,7 @@ import matplotlib.colors as colors
 from sklearn.metrics import confusion_matrix
 import matplotlib.colors as mcolors
 import cmasher as cmr
+from scipy.stats import gaussian_kde
 
 # Local imports
 from models.VAE import print_models_flow
@@ -202,7 +203,7 @@ def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         Reg_max, Reg_min, Reg_epochs_TO_max, Reg_epochs_AT_max, Reg_stall_epochs,
         classifier_weight, 
-        classifier_max, classifier_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
+        classifier_alpha_max, classifier_alpha_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier, 
         Sparse_max, Sparse_min, Sparse_epochs_TO_max, Sparse_epochs_AT_max, 
         LR_max_core, LR_min_core, 
@@ -217,7 +218,7 @@ def LR_and_weight_schedules(
     LR_val_cls = LR_min_classifier
 
     # *** Classifier Alpha ###
-    classifier_range = classifier_max - classifier_min
+    classifier_range = classifier_alpha_max - classifier_alpha_min
     classifier_epoch_period = classifier_epochs_TO_max + classifier_epochs_AT_max
 
     if classifier_rise_first: # START with rise
@@ -228,11 +229,11 @@ def LR_and_weight_schedules(
     # Calculate alpha value for where in period we are
     if classifier_epoch_residual < classifier_epochs_TO_max:
         classifier_state_length = classifier_epochs_TO_max 
-        classifier_floor = classifier_min + classifier_range * (classifier_epoch_residual/classifier_state_length)
+        classifier_floor = classifier_alpha_min + classifier_range * (classifier_epoch_residual/classifier_state_length)
         classifier_ceil = classifier_floor + classifier_range * (1) /classifier_state_length
         classifier_val = classifier_floor + (iter_curr/iters_per_epoch) * (classifier_ceil - classifier_floor)
     else:
-        classifier_val = classifier_max
+        classifier_val = classifier_alpha_max
 
 
     # *** Reg SCHEDULE ***
@@ -774,7 +775,7 @@ def plot_mog_and_encoder_means(gpu_id, encoder_means, encoder_logvars, encoder_m
     pl.savefig(savename_jpg)
     pl.close(fig)
 
-def print_latent_realtime(mean, logvar, mogpreds_softmax, savedir, epoch, iter_curr, n_bins=35, **kwargs):
+def print_latent_realtime(mean, logvar, mogpreds_softmax, prior_means, prior_logvars, prior_weights, savedir, epoch, iter_curr, n_bins=35, **kwargs):
     """
     Plot weighted means, logvars, and average MoG weights at the token level for the first 5 dimensions.
     Aggregates tokens across all batches, with separate histograms for each batch index.
@@ -784,6 +785,9 @@ def print_latent_realtime(mean, logvar, mogpreds_softmax, savedir, epoch, iter_c
         mean: Encoder means, shape (batch_size, T, K, D)
         logvar: Encoder log-variances, shape (batch_size, T, K, D)
         mogpreds_softmax: MoG component probabilities, shape (batch_size, T, K)
+        prior_means: MoG prior means, shape (K, D)
+        prior_logvars: MoG prior log-variances, shape (K, D)
+        prior_weights: MoG prior weights, shape (K,)
         savedir: Directory to save the plots
         epoch: Current epoch
         iter_curr: Current iteration
@@ -811,37 +815,89 @@ def print_latent_realtime(mean, logvar, mogpreds_softmax, savedir, epoch, iter_c
     num_dims = min(5, D)
     fig = plt.figure(figsize=(28, 5 * num_dims))  # Wider figure to accommodate 7 columns
 
+    # Define a consistent color palette for batches
+    batch_colors = plt.cm.tab10.colors[:batch_size]  # Use tab10 colormap for up to 10 batches
+
+    # Define a distinct color palette for prior KDEs
+    prior_kde_colors = plt.cm.Set2.colors[:K]  # Use Set2 colormap for up to 8 components
+
+    # Store legend handles and labels for the right plot
+    legend_handles = []
+    legend_labels = []
+
     for d in range(num_dims):
-        # Plot weighted means (first column)
+        # Plot weighted means with KDEs for each MoG prior component (first column)
         ax1 = plt.subplot2grid((num_dims, 7), (d, 0), colspan=1)
+        
+        # Compute KDEs for each MoG prior component (scaled by prior weights)
+        x_vals = np.linspace(-5, 5, 1000)  # Range for KDE plots
+        kde_vals_all = []  # Store all KDE values for scaling
+        for k in range(K):
+            # Compute KDE for the current MoG component
+            samples = np.random.normal(
+                loc=prior_means[k, d],
+                scale=np.sqrt(np.exp(prior_logvars[k, d])),  # Scale by variance
+                size=int(1e3)  # Fixed number of samples for KDE
+            )
+            kde = gaussian_kde(samples)
+            kde_vals = kde(x_vals) * prior_weights[k]  # Scale KDE by prior weight
+            kde_vals_all.append(kde_vals)
+            line, = ax1.plot(x_vals, kde_vals, linestyle='--', color=prior_kde_colors[k], alpha=0.6)
+            if d == 0:  # Add KDE legend entries only once
+                legend_handles.append(line)
+                legend_labels.append(f'Prior Comp {k}')
+        
+        # Compute the maximum KDE value for scaling
+        max_kde = np.max(kde_vals_all)
+
+        # Plot weighted means as line representations (first column)
+        hist_vals_all = []  # Store all histogram values for normalization
         for b in range(batch_size):
-            ax1.hist(weighted_mean[b, :, d], bins=n_bins, alpha=0.4, label=f'Batch {b}')
+            hist, bin_edges = np.histogram(weighted_mean[b, :, d], bins=n_bins, range=(-5, 5), density=True)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            hist_vals_all.append(hist)
+        
+        # Normalize histograms by their maximum value and scale to match KDEs
+        max_hist = np.max(hist_vals_all)
+        for b in range(batch_size):
+            hist_normalized = (hist_vals_all[b] / max_hist) * max_kde  # Normalize and scale
+            line, = ax1.plot(bin_centers, hist_normalized, alpha=0.4, color=batch_colors[b])
+            if d == 0:  # Add batch legend entries only once
+                legend_handles.append(line)
+                legend_labels.append(f'Batch {b}')
+        
         ax1.set_title(f'Weighted Mean (Dim {d})')
         ax1.set_xlabel('Value')
-        ax1.set_ylabel('Frequency')
+        ax1.set_ylabel('Density')
         ax1.set_xlim(-5, 5)  # Set x-axis range from -5 to 5
 
-        # Plot weighted logvars (second column)
+        # Plot weighted logvars as line representations (second column)
         ax2 = plt.subplot2grid((num_dims, 7), (d, 1), colspan=1)
         for b in range(batch_size):
-            ax2.hist(weighted_logvar[b, :, d], bins=n_bins, alpha=0.4, label=f'Batch {b}')
+            hist, bin_edges = np.histogram(weighted_logvar[b, :, d], bins=n_bins, density=True)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            ax2.plot(bin_centers, hist, alpha=0.4, color=batch_colors[b])
+        
         ax2.set_title(f'Weighted Logvar (Dim {d})')
         ax2.set_xlabel('Value')
-        ax2.set_ylabel('Frequency')
+        ax2.set_ylabel('Density')
 
         # Plot average MoG weights with 95% CI (columns 2–6, single subplot spanning 5 columns)
         if d == 0:  # Only create this subplot once
             ax3 = plt.subplot2grid((num_dims, 7), (d, 2), colspan=5, rowspan=num_dims)
             for b in range(batch_size):
                 # Plot bars with error bars
-                ax3.bar(np.arange(K) + 0.1 * b, avg_mogpreds_softmax[b], width=0.1, alpha=0.4, label=f'Batch {b}')
+                bar = ax3.bar(np.arange(K) + 0.1 * b, avg_mogpreds_softmax[b], width=0.1, alpha=0.4, 
+                              color=batch_colors[b])
                 ax3.errorbar(np.arange(K) + 0.1 * b, avg_mogpreds_softmax[b], yerr=ci_mogpreds_softmax[b], fmt='none', 
                              ecolor='darkgray', capsize=3, capthick=1, elinewidth=1)
             ax3.set_title(f'Average MoG Weights (Across Tokens) with 95% CI\nToken-Level MoG-Weighted Means & Logvars: Single Forward Passes')
             ax3.set_xlabel('MoG Component')
             ax3.set_ylabel('Average Token Weight')
             ax3.set_xticks(np.arange(K))  # Show all MoG component indices on the x-axis
-            ax3.legend()
+
+            # Add the combined legend to the right plot
+            ax3.legend(legend_handles, legend_labels, loc='upper right')
 
     # Adjust layout and save the plot
     plt.tight_layout()
@@ -850,6 +906,83 @@ def print_latent_realtime(mean, logvar, mogpreds_softmax, savedir, epoch, iter_c
     savename_jpg = f"{savedir}/RealtimeLatents_epoch{epoch}_iter{iter_curr}.jpg"
     plt.savefig(savename_jpg)
     plt.close(fig)
+
+# def print_latent_realtime(mean, logvar, mogpreds_softmax, savedir, epoch, iter_curr, n_bins=35, **kwargs):
+#     """
+#     Plot weighted means, logvars, and average MoG weights at the token level for the first 5 dimensions.
+#     Aggregates tokens across all batches, with separate histograms for each batch index.
+#     Weighting is done separately for each batch.
+    
+#     Args:
+#         mean: Encoder means, shape (batch_size, T, K, D)
+#         logvar: Encoder log-variances, shape (batch_size, T, K, D)
+#         mogpreds_softmax: MoG component probabilities, shape (batch_size, T, K)
+#         savedir: Directory to save the plots
+#         epoch: Current epoch
+#         iter_curr: Current iteration
+#         n_bins: Number of bins for histograms (default: 100)
+#         **kwargs: Additional arguments
+#     """
+#     batch_size, T, K, D = mean.shape
+
+#     # Weight the means and logvars by MoG predictions separately for each batch
+#     weighted_mean = np.zeros((batch_size, T, D))  # Shape: (batch_size, T, D)
+#     weighted_logvar = np.zeros((batch_size, T, D))  # Shape: (batch_size, T, D)
+
+#     for b in range(batch_size):
+#         # Weight the means and logvars for the current batch
+#         weighted_mean[b] = np.sum(mean[b] * mogpreds_softmax[b][:, :, np.newaxis], axis=1)  # Shape: (T, D)
+#         weighted_logvar[b] = np.sum(logvar[b] * mogpreds_softmax[b][:, :, np.newaxis], axis=1)  # Shape: (T, D)
+
+#     # Compute the average MoG weights across all tokens for each batch
+#     avg_mogpreds_softmax = np.mean(mogpreds_softmax, axis=1)  # Shape: (batch_size, K)
+
+#     # Compute the 95% confidence intervals for the MoG weights
+#     ci_mogpreds_softmax = 1.96 * np.std(mogpreds_softmax, axis=1) / np.sqrt(T)  # Shape: (batch_size, K)
+
+#     # Plot the first 5 dimensions
+#     num_dims = min(5, D)
+#     fig = plt.figure(figsize=(28, 5 * num_dims))  # Wider figure to accommodate 7 columns
+
+#     for d in range(num_dims):
+#         # Plot weighted means (first column)
+#         ax1 = plt.subplot2grid((num_dims, 7), (d, 0), colspan=1)
+#         for b in range(batch_size):
+#             ax1.hist(weighted_mean[b, :, d], bins=n_bins, alpha=0.4, label=f'Batch {b}')
+#         ax1.set_title(f'Weighted Mean (Dim {d})')
+#         ax1.set_xlabel('Value')
+#         ax1.set_ylabel('Frequency')
+#         ax1.set_xlim(-5, 5)  # Set x-axis range from -5 to 5
+
+#         # Plot weighted logvars (second column)
+#         ax2 = plt.subplot2grid((num_dims, 7), (d, 1), colspan=1)
+#         for b in range(batch_size):
+#             ax2.hist(weighted_logvar[b, :, d], bins=n_bins, alpha=0.4, label=f'Batch {b}')
+#         ax2.set_title(f'Weighted Logvar (Dim {d})')
+#         ax2.set_xlabel('Value')
+#         ax2.set_ylabel('Frequency')
+
+#         # Plot average MoG weights with 95% CI (columns 2–6, single subplot spanning 5 columns)
+#         if d == 0:  # Only create this subplot once
+#             ax3 = plt.subplot2grid((num_dims, 7), (d, 2), colspan=5, rowspan=num_dims)
+#             for b in range(batch_size):
+#                 # Plot bars with error bars
+#                 ax3.bar(np.arange(K) + 0.1 * b, avg_mogpreds_softmax[b], width=0.1, alpha=0.4, label=f'Batch {b}')
+#                 ax3.errorbar(np.arange(K) + 0.1 * b, avg_mogpreds_softmax[b], yerr=ci_mogpreds_softmax[b], fmt='none', 
+#                              ecolor='darkgray', capsize=3, capthick=1, elinewidth=1)
+#             ax3.set_title(f'Average MoG Weights (Across Tokens) with 95% CI\nToken-Level MoG-Weighted Means & Logvars: Single Forward Passes')
+#             ax3.set_xlabel('MoG Component')
+#             ax3.set_ylabel('Average Token Weight')
+#             ax3.set_xticks(np.arange(K))  # Show all MoG component indices on the x-axis
+#             ax3.legend()
+
+#     # Adjust layout and save the plot
+#     plt.tight_layout()
+#     if not os.path.exists(savedir):
+#         os.makedirs(savedir)
+#     savename_jpg = f"{savedir}/RealtimeLatents_epoch{epoch}_iter{iter_curr}.jpg"
+#     plt.savefig(savename_jpg)
+#     plt.close(fig)
 
 def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_realtime_channels_recon, num_recon_samples, **kwargs):
 

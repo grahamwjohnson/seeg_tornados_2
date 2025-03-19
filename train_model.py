@@ -880,8 +880,12 @@ class Trainer:
                 x=x, # No shift if not causal masking
                 x_hat=x_hat,
                 recon_weight=self.recon_weight)
-
+            
             mogpreds_entropy_loss = loss_functions.mogpreds_entropy_loss(
+                mogpreds_softmax=mogpreds_softmax,
+                **kwargs)
+            
+            mogpreds_intrasequence_consistency_loss = loss_functions.mogpreds_intrasequence_consistency_loss(
                 mogpreds_softmax=mogpreds_softmax,
                 **kwargs)
 
@@ -900,12 +904,17 @@ class Trainer:
                 labels=file_class_label,
                 classifier_weight=self.classifier_weight)
 
-            loss = recon_loss + reg_loss + mogpreds_entropy_loss + prior_entropy + prior_repulsion + adversarial_loss 
+            loss = recon_loss + reg_loss + prior_entropy + prior_repulsion + adversarial_loss + mogpreds_entropy_loss + mogpreds_intrasequence_consistency_loss
 
-            # Not currently used, but is nice to see
+            # NOT BEING USED
             sparse_loss = loss_functions.sparse_l1_reg(
                 z=z_tokenmeaned, 
                 sparse_weight=self.sparse_weight, 
+                **kwargs)
+
+            # NOT BEING USED
+            mogpreds_intersequence_diversity_loss = loss_functions.mogpreds_intersequence_diversity_loss(
+                mogpreds_softmax=mogpreds_softmax,
                 **kwargs)
 
             # For plotting visualization purposes
@@ -944,6 +953,8 @@ class Trainer:
                         train_recon_loss=recon_loss, 
                         train_reg_loss=reg_loss, 
                         train_mogpreds_entropy_loss=mogpreds_entropy_loss,
+                        train_mogpreds_intrasequence_consistency_loss = mogpreds_intrasequence_consistency_loss,
+                        train_mogpreds_intersequence_diversity_loss = mogpreds_intersequence_diversity_loss,
                         train_gumbel_softmax_temperature=kwargs['gumbel_softmax_temperature'], # TODO: probably should schedule an annealing pattern
                         train_prior_entropy_loss=prior_entropy,
                         train_prior_repulsion_loss=prior_repulsion,
@@ -1002,6 +1013,9 @@ class Trainer:
                                 mean = mean.cpu().detach().numpy(), 
                                 logvar = logvar.cpu().detach().numpy(),
                                 mogpreds_softmax = mogpreds_softmax.cpu().detach().numpy(),
+                                prior_means = self.vae.module.prior.means.detach().cpu().numpy(), 
+                                prior_logvars = self.vae.module.prior.logvars.detach().cpu().numpy(), 
+                                prior_weights = self.vae.module.prior.weights.detach().cpu().numpy(), 
                                 savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents", 
                                 **kwargs)
                             utils_functions.print_recon_realtime(

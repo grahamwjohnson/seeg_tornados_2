@@ -5,9 +5,72 @@ from geomloss import SamplesLoss
 '''
 @author: grahamwjohnson
 '''
+
+def mogpreds_intersequence_diversity_loss(mogpreds_softmax, mogpreds_diversity_weight, **kwargs):
+    """
+    Compute the diversity loss for MoG predictions, promoting sequences to be far apart in the latent space.
+    mogpreds_softmax: MoG component probabilities, shape (batch_size, T, K)
+    mogpreds_diversity_weight: Weight for the diversity loss
+    """
+    # Ensure mogpreds_softmax is a valid probability distribution
+    assert torch.all(mogpreds_softmax >= 0), "mogpreds_softmax contains negative values"
+    assert torch.allclose(mogpreds_softmax.sum(dim=-1), torch.ones_like(mogpreds_softmax.sum(dim=-1))), "mogpreds_softmax does not sum to 1"
+
+    # Clamp mogpreds_softmax to avoid log(0)
+    mogpreds_softmax = torch.clamp(mogpreds_softmax, min=1e-10, max=1.0)
+
+    # Compute the mean prediction for each sequence (across time steps)
+    # Shape: (batch_size, T, K) -> (batch_size, K)
+    mean_mogpreds = mogpreds_softmax.mean(dim=1)
+
+    # Compute pairwise cosine similarity between sequences
+    # Shape: (batch_size, K) -> (batch_size, batch_size)
+    cosine_sim = torch.nn.functional.cosine_similarity(
+        mean_mogpreds.unsqueeze(1),  # Shape: (batch_size, 1, K)
+        mean_mogpreds.unsqueeze(0),  # Shape: (1, batch_size, K)
+        dim=-1
+    )
+
+    # Exclude self-similarity (diagonal elements)
+    batch_size = mean_mogpreds.shape[0]
+    mask = 1 - torch.eye(batch_size, device=mean_mogpreds.device)  # Mask for off-diagonal elements
+    cosine_sim = cosine_sim * mask
+
+    # Compute the average pairwise similarity (excluding self-similarity)
+    avg_pairwise_sim = cosine_sim.sum() / (batch_size * (batch_size - 1))
+
+    # Diversity loss: minimize average pairwise similarity
+    diversity_loss = avg_pairwise_sim
+
+    # Return the diversity loss (weighted)
+    return mogpreds_diversity_weight * diversity_loss
+
+def mogpreds_intrasequence_consistency_loss(mogpreds_softmax, mogpreds_consistency_weight, **kwargs):
+    """
+    Compute the consistency loss for MoG predictions, rewarding similar mogpreds WITHIN sequences.
+    mogpreds_softmax: MoG component probabilities, shape (batch_size, T, K)
+    mogpreds_consistency_weight: Weight for the consistency loss
+    """
+    # Ensure mogpreds_softmax is a valid probability distribution
+    assert torch.all(mogpreds_softmax >= 0), "mogpreds_softmax contains negative values"
+    assert torch.allclose(mogpreds_softmax.sum(dim=-1), torch.ones_like(mogpreds_softmax.sum(dim=-1))), "mogpreds_softmax does not sum to 1"
+
+    # Clamp mogpreds_softmax to avoid log(0)
+    mogpreds_softmax = torch.clamp(mogpreds_softmax, min=1e-10, max=1.0)
+
+    # Compute the variance of mogpreds within each sequence
+    # Shape: (batch_size, T, K) -> (batch_size, K)
+    variance = torch.var(mogpreds_softmax, dim=1)
+
+    # Average the variance across components and sequences
+    consistency_loss = variance.mean()
+
+    # Return the consistency loss (weighted)
+    return mogpreds_consistency_weight * consistency_loss
+
 def mogpreds_entropy_loss(mogpreds_softmax, mogpreds_entropy_weight, **kwargs):
     """
-    Compute the entropy loss for MoG predictions.
+    Compute the entropy loss for MoG predictions, promoting entropy ACROSS sequences.
     mogpreds_softmax: MoG component probabilities, shape (batch_size, T, K)
     mogpreds_entropy_weight: Weight for the entropy loss
     """
@@ -18,10 +81,15 @@ def mogpreds_entropy_loss(mogpreds_softmax, mogpreds_entropy_weight, **kwargs):
     # Clamp mogpreds_softmax to avoid log(0)
     mogpreds_softmax = torch.clamp(mogpreds_softmax, min=1e-10, max=1.0)
 
-    # Compute entropy loss
-    entropy = -torch.sum(mogpreds_softmax * torch.log(mogpreds_softmax), dim=-1).mean()
+    # Aggregate predictions across sequences (batch and time dimensions)
+    # Shape: (batch_size * T, K) -> (K,)
+    aggregated_probs = mogpreds_softmax.mean(dim=(0, 1))  # Average over batch and time
 
-    return (-1) * mogpreds_entropy_weight * entropy # Negative entropy, to maximize entropy in MoG predictions
+    # Compute entropy of the aggregated distribution
+    entropy = -torch.sum(aggregated_probs * torch.log(aggregated_probs))
+
+    # Return the negative entropy (to maximize entropy across sequences)
+    return (-1) * mogpreds_entropy_weight * entropy
 
 def mog_entropy_regularization(weights, logvars, entropy_weight, **kwargs):
     """
