@@ -47,6 +47,7 @@ def gmvae_kl_loss(z, encoder_means, encoder_logvars, encoder_mogpreds, prior_mea
 
     return kl_divergence.mean() * weight  # Return the mean KL loss across the batch
 
+
 def mogpreds_intersequence_diversity_loss(mogpreds, mogpreds_diversity_weight, **kwargs):
     """
     Compute the diversity loss for MoG predictions, promoting sequences to be far apart in the latent space.

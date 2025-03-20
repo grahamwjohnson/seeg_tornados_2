@@ -17,23 +17,105 @@ import torch.distributions as dist
 2023-2025 
 
 '''
+
+from geomloss import SamplesLoss  # Import GeomLoss for Sinkhorn computation
+
 class MoGPrior(nn.Module):
-    def __init__(self, K, latent_dim):
+    def __init__(self, K, latent_dim, prior_initial_mean_spread, prior_initial_logvar, wasserstein_order=2, sinkhorn_eps=0.01, sinkhorn_niter=10, **kwargs):
         """
-        Mixture of Gaussians (MoG) prior.
+        Mixture of Gaussians (MoG) prior with Wasserstein stabilization using Sinkhorn loss.
         Inputs:
             K: Number of mixture components.
             latent_dim: Dimensionality of the latent space.
+            prior_initial_mean_spread: Spread for uniform initialization of prior means.
+            prior_initial_logvar: Initial log variance for all components.
+            sinkhorn_eps: Entropic regularization coefficient for Sinkhorn loss.
+            sinkhorn_niter: Number of iterations for Sinkhorn solver.
         """
         super(MoGPrior, self).__init__()
         self.K = K
         self.latent_dim = latent_dim
-        initial_logvar = -2
+        self.wasserstein_order = wasserstein_order
+        self.sinkhorn_eps = sinkhorn_eps
+        self.sinkhorn_niter = sinkhorn_niter
+
+        # Uniformly initialize means in the range (-initial_mean_spread, initial_mean_spread)
+        prior_means = (torch.rand(K, latent_dim) * 2 * prior_initial_mean_spread) - prior_initial_mean_spread
 
         # Initialize means, logvars, and weights
-        self.means = nn.Parameter(torch.randn(K, latent_dim))  # [K, latent_dim]
-        self.logvars = nn.Parameter(torch.ones(K, latent_dim) * initial_logvar)  # [K, latent_dim]
+        self.means = nn.Parameter(prior_means)  # [K, latent_dim]
+        self.logvars = nn.Parameter(torch.ones(K, latent_dim) * prior_initial_logvar)  # [K, latent_dim]
         self.weights = nn.Parameter(torch.ones(K) / K)  # [K]
+
+        # Define Sinkhorn loss function
+        self.sinkhorn_loss = SamplesLoss(loss="sinkhorn", p=self.wasserstein_order, blur=sinkhorn_eps, scaling=0.9, debias=True, backend="tensorized")
+
+    def sample_prior(self, batch_size, gumbel_temp=1.0):
+        """
+        Sample from the MoG prior using Gumbel-Softmax for differentiable component selection.
+        
+        Inputs:
+            batch_size: Number of samples to generate.
+            gumbel_temp: Temperature parameter for Gumbel-Softmax.
+        
+        Returns:
+            z_prior: Differentiable samples from the MoG prior [batch_size, latent_dim]
+            component_probs: Soft assignments of each sample to the MoG components [batch_size, K]
+        """
+        # Sample Gumbel noise and apply softmax to get soft component selection
+        gumbel_noise = -torch.log(-torch.log(torch.rand(batch_size, self.K, device=self.weights.device) + 1e-20) + 1e-20)
+        logits = torch.log_softmax(self.weights, dim=0) + gumbel_noise
+        component_probs = F.gumbel_softmax(logits, tau=gumbel_temp, hard=False)  # [batch_size, K], fully differentiable
+
+        # Compute mixture samples using soft probabilities
+        chosen_means = torch.matmul(component_probs, self.means)  # [batch_size, latent_dim]
+        chosen_logvars = torch.matmul(component_probs, self.logvars)  # [batch_size, latent_dim]
+
+        # Sample from Gaussian with chosen means and logvars
+        eps = torch.randn_like(chosen_means)
+        z_prior = chosen_means + eps * torch.exp(0.5 * chosen_logvars)  # [batch_size, latent_dim]
+
+        return z_prior, component_probs
+
+    def sinkhorn_loss_fraction(self, z, weight):
+        """
+        Compute the Sinkhorn loss between sampled latent vectors and the MoG prior.
+        Inputs:
+            z: Resampled latent embeddings [batch_size, latent_dim]
+        Returns:
+            sinkhorn_loss: Wasserstein distance between samples and prior.
+        """
+        batch_size = z.shape[0]
+
+        # Sample from the prior using Gumbel-Softmax
+        z_prior, _ = self.sample_prior(batch_size)
+
+        # Compute Sinkhorn loss (Wasserstein distance between z_samples and z_prior)
+        sinkhorn_loss = self.sinkhorn_loss(z, z_prior)
+
+        return sinkhorn_loss * weight
+
+# class MoGPrior(nn.Module):
+#     def __init__(self, K, latent_dim, prior_initial_mean_spread, prior_initial_logvar, **kwargs):
+#         """
+#         Mixture of Gaussians (MoG) prior.
+#         Inputs:
+#             K: Number of mixture components.
+#             latent_dim: Dimensionality of the latent space.
+#         """
+#         super(MoGPrior, self).__init__()
+#         self.K = K
+#         self.latent_dim = latent_dim
+#         self.prior_initial_mean_spread = prior_initial_mean_spread
+#         self.prior_initial_logvar = prior_initial_logvar
+
+#         # Uniform (i.e. rand, not randn) means from (-initial_mean_spread, initial_mean_spread)
+#         prior_means = (torch.rand(K, latent_dim) * prior_initial_mean_spread*2) - prior_initial_mean_spread
+
+#         # Initialize means, logvars, and weights
+#         self.means = nn.Parameter(prior_means)  # [K, latent_dim]
+#         self.logvars = nn.Parameter(torch.ones(K, latent_dim) * prior_initial_logvar)  # [K, latent_dim]
+#         self.weights = nn.Parameter(torch.ones(K) / K)  # [K]
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -295,9 +377,9 @@ class MoGPredictor(nn.Module):
             x = layer(x)
         return x # Do NOT softmax here, Gumbel-Softmax trick needs logits 
 
-class VAE(nn.Module):
+class GMVAE(nn.Module):
     '''
-    VAE Reverseable Encoder/Decoder 
+    GMVAE Reverseable Encoder/Decoder 
     '''
     def __init__(
         self, 
@@ -319,7 +401,7 @@ class VAE(nn.Module):
         gpu_id=None,  
         **kwargs):
 
-        super(VAE, self).__init__()
+        super(GMVAE, self).__init__()
 
         self.gpu_id = gpu_id
         self.encode_token_samples = encode_token_samples
@@ -341,7 +423,8 @@ class VAE(nn.Module):
         # Prior
         self.prior = MoGPrior(
             K = self.mog_components,
-            latent_dim = self.latent_dim)
+            latent_dim = self.latent_dim,
+            **kwargs)
 
         # Raw CrossAttention Head
         self.encoder_head = Encoder_TimeSeriesWithCrossAttention(
@@ -395,7 +478,7 @@ class VAE(nn.Module):
             # TRANSFORMER
             y, attW = self.transformer_encoder(y, start_pos=self.transformer_start_pos, return_attW = True)
 
-            # VAE CORE
+            # GMVAE CORE
             y = self.top_to_hidden(y)
             y = self.silu(y)
             y = self.norm_hidden(y)
@@ -430,36 +513,65 @@ class VAE(nn.Module):
 
             return y
 
+    # def sample_z(self, encoder_means, encoder_logvars, encoder_mogpreds, gumbel_softmax_temperature):
+    #     """
+    #     Sample z from the posterior using the Gumbel-Softmax trick and reparameterization.
+        
+    #     encoder_means: [batch, components, latent_dim] - Posterior means for each MoG component.
+    #     encoder_logvars: [batch, components, latent_dim] - Posterior logvars for each MoG component.
+    #     encoder_mogpreds: [batch, components] - Component logits for the MoG posterior.
+    #     gumbel_softmax_temperature: Temperature for Gumbel-Softmax.
+        
+    #     Returns:
+    #         z: [batch, latent_dim] - Sampled latent variable.
+    #     """
+    #     # Step 1: Gumbel-Softmax for differentiable component selection
+    #     gumbel_noise = -torch.log(-torch.log(torch.rand_like(encoder_mogpreds)))
+    #     logits = (encoder_mogpreds + gumbel_noise) / gumbel_softmax_temperature  # Scale by temperature
+    #     log_component_weights = F.log_softmax(logits, dim=-1)  # [batch, components]
+    #     component_weights = torch.exp(log_component_weights)  # [batch, components]
+
+    #     # Step 2: Select the means and logvars for the selected component
+    #     selected_means = torch.sum(encoder_means * component_weights.unsqueeze(-1), dim=1)  # [batch, latent_dim]
+    #     selected_logvars = torch.sum(encoder_logvars * component_weights.unsqueeze(-1), dim=1)  # [batch, latent_dim]
+
+    #     # Step 3: Reparameterization trick to sample z from the selected Gaussian component
+    #     eps = torch.randn_like(selected_means)
+    #     z = selected_means + eps * torch.exp(0.5 * selected_logvars)  # [batch, latent_dim]
+
+    #     # Step 4: Clamp to ensure stability
+    #     z = torch.clamp(z, min=self.mean_lims[0], max=self.mean_lims[1])
+
+    #     return z
+
     def sample_z(self, encoder_means, encoder_logvars, encoder_mogpreds, gumbel_softmax_temperature):
         """
         Sample z from the posterior using the Gumbel-Softmax trick and reparameterization.
-        
+
         encoder_means: [batch, components, latent_dim] - Posterior means for each MoG component.
         encoder_logvars: [batch, components, latent_dim] - Posterior logvars for each MoG component.
         encoder_mogpreds: [batch, components] - Component logits for the MoG posterior.
         gumbel_softmax_temperature: Temperature for Gumbel-Softmax.
-        
+
         Returns:
             z: [batch, latent_dim] - Sampled latent variable.
+            component_weights: [batch, components] - Soft assignments of each sample to the MoG components.
         """
         # Step 1: Gumbel-Softmax for differentiable component selection
-        gumbel_noise = -torch.log(-torch.log(torch.rand_like(encoder_mogpreds)))
-        logits = (encoder_mogpreds + gumbel_noise) / gumbel_softmax_temperature  # Scale by temperature
-        log_component_weights = F.log_softmax(logits, dim=-1)  # [batch, components]
-        component_weights = torch.exp(log_component_weights)  # [batch, components]
+        component_weights = F.gumbel_softmax(encoder_mogpreds, tau=gumbel_softmax_temperature, hard=False)  # [batch, components]
 
-        # Step 2: Select the means and logvars for the selected component
+        # Step 2: Compute soft-selected means and logvars
         selected_means = torch.sum(encoder_means * component_weights.unsqueeze(-1), dim=1)  # [batch, latent_dim]
         selected_logvars = torch.sum(encoder_logvars * component_weights.unsqueeze(-1), dim=1)  # [batch, latent_dim]
 
-        # Step 3: Reparameterization trick to sample z from the selected Gaussian component
+        # Step 3: Reparameterization trick to sample z
         eps = torch.randn_like(selected_means)
         z = selected_means + eps * torch.exp(0.5 * selected_logvars)  # [batch, latent_dim]
 
-        # Step 4: Clamp to ensure stability
+        # Step 4: Clamp for stability (optional, depends on your constraints)
         z = torch.clamp(z, min=self.mean_lims[0], max=self.mean_lims[1])
 
-        return z
+        return z, component_weights
 
 def print_models_flow(x, **kwargs):
     '''
@@ -471,13 +583,13 @@ def print_models_flow(x, **kwargs):
     file_class_label = torch.tensor([0]*x.shape[0]) # dummy
 
     # Build the WAE
-    vae = VAE(**kwargs) 
+    gmvae = GMVAE(**kwargs) 
 
     # Run through Encoder
     print(f"INPUT TO <ENC>\n"
     f"x:{x.shape}")
-    z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, attW = vae(x, reverse=False)  
-    summary(vae, input_size=(x.shape), depth=999, device="cpu")
+    z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, attW = gmvae(x, reverse=False)  
+    summary(gmvae, input_size=(x.shape), depth=999, device="cpu")
     print(
     f"z_pseudobatch:{z_pseudobatch.shape}\n",
     f"mean_pseudobatch:{mean_pseudobatch.shape}\n"
@@ -490,9 +602,9 @@ def print_models_flow(x, **kwargs):
         encoder_means=mean_pseudobatch, 
         encoder_logvars=logvar_pseudobatch, 
         encoder_mogpreds=mogpreds_pseudobatch, 
-        prior_means=vae.prior.means, 
-        prior_logvars=vae.prior.logvars, 
-        prior_weights=vae.prior.weights, 
+        prior_means=gmvae.prior.means, 
+        prior_logvars=gmvae.prior.logvars, 
+        prior_weights=gmvae.prior.weights, 
         weight=1,
         **kwargs)
     
@@ -503,7 +615,7 @@ def print_models_flow(x, **kwargs):
 
     # CLASSIFIER - on the mean of Z tokens
     z_meaned = torch.mean(z_token, dim=1)
-    class_probs_mean_of_latent = vae.adversarial_classifier(z_meaned, alpha=1)
+    class_probs_mean_of_latent = gmvae.adversarial_classifier(z_meaned, alpha=1)
 
     # Adversarial loss
     adversarial_loss = adversarial_loss_function(class_probs_mean_of_latent, file_class_label, classifier_weight = 1)
@@ -515,11 +627,11 @@ def print_models_flow(x, **kwargs):
     print(f"\n\n\nINPUT TO <WAE - Decoder Mode> \n"
     f"z:{z_token.shape}\n"
     f"hash_pat_embedding:{hash_pat_embedding.shape}\n")
-    summary(vae, input_data=[z_token, True, hash_pat_embedding], depth=999, device="cpu")
-    core_out = vae(z_token, reverse=True, hash_pat_embedding=hash_pat_embedding)  
+    summary(gmvae, input_data=[z_token, True, hash_pat_embedding], depth=999, device="cpu")
+    core_out = gmvae(z_token, reverse=True, hash_pat_embedding=hash_pat_embedding)  
     print(f"decoder_out:{core_out.shape}\n")
 
-    del vae
+    del gmvae
 
 if __name__ == "__main__":
 
@@ -536,7 +648,7 @@ if __name__ == "__main__":
 
     x = torch.rand(batchsize, in_channels, data_length, len(kernel_sizes))
 
-    vae = VAE(
+    gmvae = GMVAE(
         encode_token_samples=data_length,
         in_channels=in_channels,
         kernel_sizes=kernel_sizes, 
@@ -548,5 +660,5 @@ if __name__ == "__main__":
         **kwargs
     )
 
-    print(f"Are the weights of encoder and decoder tied? {torch.allclose(vae.top_to_hidden.weight.T, vae.hidden_to_top.weight)}")
+    print(f"Are the weights of encoder and decoder tied? {torch.allclose(gmvae.top_to_hidden.weight.T, gmvae.hidden_to_top.weight)}")
 

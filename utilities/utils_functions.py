@@ -44,7 +44,7 @@ import cmasher as cmr
 from scipy.stats import gaussian_kde
 
 # Local imports
-from models.VAE import print_models_flow
+from models.GMVAE import print_models_flow
 
 def fill_hist_by_channel(data_in: np.ndarray, histo_bin_edges: np.ndarray, zero_island_delete_idxs: list):
 
@@ -167,8 +167,20 @@ def create_metadata_subtitle(plot_dict):
     ", Compression: " + str(plot_dict["dec_compression_ratio"]) + 
     ", Input Stride: " + str(plot_dict["input_stride"]))
 
-def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_size, LR_epochs_TO_max, LR_epochs_AT_max, iters_per_epoch, LR_rise_first=True):
+def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_size, epoch_stall, LR_epochs_TO_max, LR_epochs_AT_max, iters_per_epoch, LR_rise_first=True):
 
+    # Shift the epoch by the stall:
+    if epoch < epoch_stall:
+        if LR_rise_first: 
+            return LR_min
+        else:
+            return LR_max
+    
+    else: # Shift epoch so that new epoch 0 is equal to epoch stall, schedule starts from there
+        epoch = epoch - epoch_stall
+    
+    assert epoch >=0, f"Error in epoch stall, calculated shifted epoch to be {epoch}"
+    
     # Adjust max and min based on gamma value
     LR_gamma_iter = np.floor(epoch / manual_step_size)
     gamma_curr = manual_gamma ** LR_gamma_iter 
@@ -202,18 +214,16 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         Reg_max, Reg_min, Reg_epochs_TO_max, Reg_epochs_AT_max, Reg_stall_epochs,
+        WassersteinBeta_max, WassersteinBeta_min, WassersteinBeta_stall_epochs, WassersteinBeta_taper_epochs,
         mogpreds_entropy_weight_max, mogpreds_entropy_weight_min, mogpreds_entropy_weight_taper_epochs,
         classifier_weight, 
         classifier_alpha_max, classifier_alpha_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier, 
         Sparse_max, Sparse_min, Sparse_epochs_TO_max, Sparse_epochs_AT_max, 
-        LR_max_core, LR_min_core, 
-        LR_epochs_TO_max_core, LR_epochs_AT_max_core, 
-        manual_gamma_core, manual_step_size_core,
+        LR_max_core, LR_min_core, LR_epochs_stall_core, LR_epochs_TO_max_core, LR_epochs_AT_max_core,  manual_gamma_core, manual_step_size_core,
+        LR_max_prior, LR_min_prior, LR_epochs_stall_prior, LR_epochs_TO_max_prior, LR_epochs_AT_max_prior,  manual_gamma_prior, manual_step_size_prior,
         Reg_rise_first=True, Sparse_rise_first=True, LR_rise_first=True, **kwargs):
             
-
-
     # MoG Prediction Entropy TAPER
     if epoch >= mogpreds_entropy_weight_taper_epochs:
         mogpred_entropy_val = mogpreds_entropy_weight_min
@@ -247,64 +257,56 @@ def LR_and_weight_schedules(
     else:
         classifier_val = classifier_alpha_max
 
-
     # *** Reg SCHEDULE ***
 
     # If within the stall, send out Reg_min
     if epoch < Reg_stall_epochs:
         Reg_val = Reg_min
-
-    # After stall
-    else:
+    
+    else: # After stall
         Reg_epoch_period = Reg_epochs_TO_max + Reg_epochs_AT_max
         Reg_epoch_residual = (epoch - Reg_stall_epochs) % Reg_epoch_period # Shift for the stall epochs
-
-        # Reg_range = 10**Reg_max - 10**Reg_min
         Reg_range = Reg_max - Reg_min
-
-        # START with rise
-        # Logarithmic rise
-        if Reg_rise_first: 
+        if Reg_rise_first: # START with rise
             if Reg_epoch_residual < Reg_epochs_TO_max:
-
                 Reg_state_length = Reg_epochs_TO_max 
                 Reg_floor = Reg_min + Reg_range * (Reg_epoch_residual/Reg_state_length)
                 Reg_ceil = Reg_floor + Reg_range * (1) /Reg_state_length
                 Reg_val = Reg_floor + (iter_curr/iters_per_epoch) * (Reg_ceil - Reg_floor)
             else:
                 Reg_val = Reg_max
+        else: raise Exception("ERROR: not coded up")
 
-        else:
-            raise Exception("ERROR: not coded up")
-
-
+    # *** Wasserstein Taper SCHEDULE ***
+    if epoch < WassersteinBeta_stall_epochs:
+        W_val = WassersteinBeta_max  # If within the stall, send out Max
+    elif epoch >= WassersteinBeta_taper_epochs:
+        W_val = WassersteinBeta_min
+    else:
+        W_total_taper_iters = iters_per_epoch * WassersteinBeta_taper_epochs
+        W_iter_curr = (epoch - WassersteinBeta_stall_epochs) * iters_per_epoch + iter_curr
+        W_range = WassersteinBeta_max - WassersteinBeta_min
+        W_val = WassersteinBeta_max - W_range * (W_iter_curr/W_total_taper_iters)
+        assert W_val >= 0, f"Wassertstein weight must be >0, got {W_val}"
+                
    # *** Sparse Weight ***
-
     Sparse_epoch_period = Sparse_epochs_TO_max + Sparse_epochs_AT_max
     Sparse_epoch_residual = epoch % Sparse_epoch_period
-
-    Sparse_range = 10**Sparse_max - 10**Sparse_min
-    # Sparse_range = Sparse_max - Sparse_min
-
-    # START with rise
-    # Logarithmic rise
-    if Sparse_rise_first: 
+    Sparse_range = Sparse_max - Sparse_min
+    if Sparse_rise_first:  # START with rise
         if Sparse_epoch_residual < Sparse_epochs_TO_max:
             # Sparse_state_length = Sparse_epochs_AT_max
             # Sparse_ceil = Sparse_max - ( Sparse_range * (Sparse_epoch_residual/Sparse_state_length) )
             # Sparse_floor = Sparse_ceil - ( Sparse_range * (Sparse_epoch_residual + 1) /Sparse_state_length)
             # Sparse_val = Sparse_ceil - iter_curr/iters_per_epoch * (Sparse_ceil - Sparse_floor) 
-
             Sparse_state_length = Sparse_epochs_TO_max 
-            Sparse_floor = 10 ** Sparse_min + Sparse_range * (Sparse_epoch_residual/Sparse_state_length)
+            Sparse_floor = Sparse_min + Sparse_range * (Sparse_epoch_residual/Sparse_state_length)
             Sparse_ceil = Sparse_floor + Sparse_range * (1) /Sparse_state_length
-            Sparse_val = math.log10(Sparse_floor + iter_curr/iters_per_epoch * (Sparse_ceil - Sparse_floor))
+            Sparse_val = Sparse_floor + iter_curr/iters_per_epoch * (Sparse_ceil - Sparse_floor)
         else:
             Sparse_val = Sparse_max
-
-    else:
-        raise Exception("ERROR: not coded up")
-
+    else: raise Exception("ERROR: not coded up")
+        
 
     # *** LR SCHEDULES ***
 
@@ -316,13 +318,29 @@ def LR_and_weight_schedules(
         epoch=epoch, 
         manual_gamma=manual_gamma_core, 
         manual_step_size=manual_step_size_core, 
+        epoch_stall=LR_epochs_stall_core,
         LR_epochs_TO_max=LR_epochs_TO_max_core,  
         LR_epochs_AT_max=LR_epochs_AT_max_core, 
         iters_per_epoch=iters_per_epoch,
         LR_rise_first=LR_rise_first 
     )
+
+    # PRIOR
+    LR_val_prior = LR_subfunction(
+        iter_curr=iter_curr,
+        LR_min=LR_min_prior,
+        LR_max=LR_max_prior,
+        epoch=epoch, 
+        manual_gamma=manual_gamma_prior, 
+        manual_step_size=manual_step_size_prior, 
+        epoch_stall=LR_epochs_stall_prior,
+        LR_epochs_TO_max=LR_epochs_TO_max_prior,  
+        LR_epochs_AT_max=LR_epochs_AT_max_prior, 
+        iters_per_epoch=iters_per_epoch,
+        LR_rise_first=LR_rise_first 
+    )
             
-    return Reg_val, LR_val_core, LR_val_cls, mogpred_entropy_val, Sparse_val, classifier_weight, classifier_val
+    return W_val, Reg_val, LR_val_core, LR_val_prior, LR_val_cls, mogpred_entropy_val, Sparse_val, classifier_weight, classifier_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
@@ -2234,8 +2252,8 @@ def initialize_directories(
         print(f"Resuming training after saved epoch: {str(max_epoch)}")
         
         # Construct the proper file names to get CORE state dicts
-        kwargs['vae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae.pt'
-        kwargs['vae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_vae_opt.pt'
+        kwargs['gmvae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_gmvae.pt'
+        kwargs['gmvae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_gmvae_opt.pt'
 
         # Proper names for running latents 
         kwargs['running_mean_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_means.pkl'
