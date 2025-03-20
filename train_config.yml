@@ -75,10 +75,10 @@ adamW_beta2: 0.95
 mog_components: 4 # Softmax sampling of components with gumbel-softmax trick
 mogpred_hidden_dim_list: [2048, 1024, 512] # Top should probably be same/smaller than hidden dim of encoder, bottom bigger than mog_components
 mog_predictor_dropout: 0.1
-mean_lims: [-5, 5] 
-logvar_lims: [-5, 1] 
+mean_lims: [-5, 5] # Make sure the prior's mean/logvars make sense with this limit
+logvar_lims: [-5, 1] # Important to cap logvar on high end or KL divergence calculaton itself becomes unstable and will give very negative numbers
 gumbel_softmax_temperature: kwargs['gumbel_softmax_temperature'] = 2 # Higher means softer assignment to MoG, more exploratin of latent space, noisier embeddings
-mogpreds_entropy_weight_max: kwargs['mogpreds_entropy_weight_max'] = 0.01 # Encourages overall mogpreds to to be uniform
+mogpreds_entropy_weight_max: kwargs['mogpreds_entropy_weight_max'] = 0.1 # Encourages overall mogpreds to to be uniform
 mogpreds_entropy_weight_min: kwargs['mogpreds_entropy_weight_min'] = 0 # Encourages overall mogpreds to to be uniform
 mogpreds_entropy_weight_taper_epochs: 5 # Encourages overall mogpreds to to be uniform
 mogpreds_consistency_weight: kwargs['mogpreds_consistency_weight'] = 1 # Encourgaes tokens within same sequence to map to same place in universe
@@ -87,7 +87,7 @@ entropy_weight: kwargs['entropy_weight'] = 1e-6 # Helps prevent mode collapse in
 repulsion_weight: kwargs['repulsion_weight'] = 1 # Helps keep centers of PRIOR guassians far apart, need to scale with number of MoG components 
 random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
 random_observed_numplots: 4 # On the end of epoch plot
-Reg_max: kwargs['Reg_max'] = 1e-1 # Nightcrawler 5e2 
+Reg_max: kwargs['Reg_max'] = 1 
 Reg_min: kwargs['Reg_min'] = 0
 Reg_stall_epochs: 0 # Min Reg weight rise until stall is complete
 Reg_epochs_AT_max: 10 # Maybe coincide with the wasserstein order switch epoch?
@@ -118,7 +118,7 @@ Sparse_epochs_TO_max: 0
 
 # TRAINING 
 random_pulls_in_batch: 8 # BATCHSIZE
-train_forward_passes: 2048 # Independent of batchsize, just random pulls of data
+train_forward_passes: 1024 # Independent of batchsize, just random pulls of data
 epochs_to_train: 999999 
 train_num_rand_hashes: 1024  # Number of random channel orders, with deterministic hash embedding for each, a form of augmentation
 

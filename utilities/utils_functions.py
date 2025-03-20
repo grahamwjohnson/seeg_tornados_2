@@ -644,7 +644,7 @@ def plot_prior(prior_means, prior_logvars, prior_weights, savedir, epoch, **kwar
     pl.savefig(savename_jpg)
     plt.close()
 
-def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, num_accumulated_plotting_dims=5, n_bins=200, **kwargs):
+def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, mean_lims, logvar_lims, num_accumulated_plotting_dims=5, n_bins=200, **kwargs):
     """
     Plot distributions of encoder statistics across MoG components using histograms.
     Compares encoder statistics with MoG prior state and includes encoder_zmeaned visualization.
@@ -705,7 +705,7 @@ def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_mea
         max_hist = np.max([np.max(h) for h in hist_vals])
 
         # Compute KDEs for the prior means
-        x_vals = np.linspace(-5, 5, 1000)  # Range for KDE plots
+        x_vals = np.linspace(mean_lims[0], mean_lims[1], 1000)  # Range for KDE plots
         kde_vals_all = []  # Store all KDE values for scaling
         for k in range(K):
             # Compute KDE for the current MoG component
@@ -729,7 +729,7 @@ def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_mea
         ax.set_title(f'Encoder Means (Dim {d}), Color MoGComp')
         ax.set_xlabel('Mean Value')
         ax.set_ylabel('Frequency')
-        ax.set_xlim(-5, 5)  # Set x-axis range from -5 to 5
+        ax.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range from -5 to 5
         if d == 0:
             ax.legend()
 
@@ -741,7 +741,7 @@ def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_mea
         ax.set_title(f'Encoder Logvars (Dim {d}), Color MoGComp')
         ax.set_xlabel('Logvar Value')
         ax.set_ylabel('Frequency')
-        ax.set_xlim(-5, 5)  # Set x-axis range from -5 to 5
+        ax.set_xlim(logvar_lims[0], logvar_lims[1])  # Set x-axis range from -5 to 5
 
     # Plot 3: Distribution of Encoder MoG Predictions vs MoG Prior Weights (for each MoG component)
     # Span all columns for the MoG predictions plot
@@ -760,7 +760,7 @@ def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_mea
         ax.set_title(f'encoder_zmeaned (Dim {d})')
         ax.set_xlabel('Latent Value')
         ax.set_ylabel('Frequency')
-        ax.set_xlim(-5, 5)  # Set x-axis range from -5 to 5
+        ax.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range from -5 to 5
         ax.legend()
 
     if gpu_id == 0: time.sleep(0.5) # avoid collisions
@@ -933,7 +933,7 @@ def print_latent_realtime(mean, logvar, mogpreds, prior_means, prior_logvars, pr
         ax1.set_title(f'Re-sampled Weighted Mean (Dim {d})')
         ax1.set_xlabel('Value')
         ax1.set_ylabel('Density')
-        ax1.set_xlim(-5, 5)  # Set x-axis range from -5 to 5
+        ax1.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range from -5 to 5
 
         # Plot re-sampled weighted logvars as histograms (second column)
         ax2 = plt.subplot2grid((num_dims, 7), (d, 1), colspan=1)
@@ -945,7 +945,7 @@ def print_latent_realtime(mean, logvar, mogpreds, prior_means, prior_logvars, pr
         ax2.set_title(f'Re-sampled Weighted Logvar (Dim {d})')
         ax2.set_xlabel('Value')
         ax2.set_ylabel('Density')
-        ax2.set_xlim(-5, 5)
+        ax2.set_xlim(logvar_lims[0], logvar_lims[1])
 
         # Plot average MoG weights with 95% CI (columns 2–6, single subplot spanning 5 columns)
         if d == 0:  # Only create this subplot once
