@@ -6,6 +6,37 @@ import torch.nn.functional as F
 @author: grahamwjohnson
 '''
 
+def logvar_entropy_loss(logvars, weight, **kwargs):
+    '''
+    Encourages diversity in logvars across all dimensions and MoG components by maximizing entropy.
+
+    Only using in the conext of Wasserstein initialization to prevent all the logvars from clumping at minimum of clamp range
+
+    Args:
+        logvars: Tensor of shape [batch, mog_component, latent_dimension]
+        weight: Weight for the entropy loss term.
+
+    Returns:
+        loss: Scalar tensor representing the entropy loss.
+    '''
+    # Flatten logvars to treat all values as a single distribution
+    flat_logvars = logvars.view(-1)  # Shape: [batch * mog_component * latent_dimension]
+
+    # Compute probabilities using softmax
+    probs = F.softmax(flat_logvars, dim=0)  # Shape: [batch * mog_component * latent_dimension]
+
+    # Compute entropy
+    entropy = -torch.sum(probs * torch.log(probs + 1e-10))  # Add small epsilon for numerical stability
+
+    # # Compute variance
+    # variance = torch.var(flat_logvars, unbiased=True)
+    # variance_loss = -variance # Maximize variance by minimizing negative variance
+
+    # Maximize entropy by minimizing negative entropy
+    loss = -entropy * weight
+
+    return loss 
+
 def gmvae_kl_loss(z, encoder_means, encoder_logvars, encoder_mogpreds, prior_means, prior_logvars, prior_weights, weight, **kwargs):
     """
     GM-VAE KL-Divergence Loss Function with Prior Parameters

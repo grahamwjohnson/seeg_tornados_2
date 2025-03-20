@@ -21,7 +21,7 @@ import torch.distributions as dist
 from geomloss import SamplesLoss  # Import GeomLoss for Sinkhorn computation
 
 class MoGPrior(nn.Module):
-    def __init__(self, K, latent_dim, prior_initial_mean_spread, prior_initial_logvar, wasserstein_order=2, sinkhorn_eps=0.01, sinkhorn_niter=10, **kwargs):
+    def __init__(self, K, latent_dim, prior_initial_mean_spread, prior_initial_logvar, mean_lims, Wasserstein_order, Wasserstein_Sinkhorn_eps, **kwargs):
         """
         Mixture of Gaussians (MoG) prior with Wasserstein stabilization using Sinkhorn loss.
         Inputs:
@@ -35,10 +35,10 @@ class MoGPrior(nn.Module):
         super(MoGPrior, self).__init__()
         self.K = K
         self.latent_dim = latent_dim
-        self.wasserstein_order = wasserstein_order
-        self.sinkhorn_eps = sinkhorn_eps
-        self.sinkhorn_niter = sinkhorn_niter
-
+        self.Wasserstein_order = Wasserstein_order
+        self.sinkhorn_eps = Wasserstein_Sinkhorn_eps
+        self.mean_lims = mean_lims
+        
         # Uniformly initialize means in the range (-initial_mean_spread, initial_mean_spread)
         prior_means = (torch.rand(K, latent_dim) * 2 * prior_initial_mean_spread) - prior_initial_mean_spread
 
@@ -48,7 +48,7 @@ class MoGPrior(nn.Module):
         self.weights = nn.Parameter(torch.ones(K) / K)  # [K]
 
         # Define Sinkhorn loss function
-        self.sinkhorn_loss = SamplesLoss(loss="sinkhorn", p=self.wasserstein_order, blur=sinkhorn_eps, scaling=0.9, debias=True, backend="tensorized")
+        self.sinkhorn_loss = SamplesLoss(loss="sinkhorn", p=self.Wasserstein_order, blur=self.sinkhorn_eps, scaling=0.9, debias=True, backend="tensorized")
 
     def sample_prior(self, batch_size, gumbel_temp=1.0):
         """
@@ -75,6 +75,8 @@ class MoGPrior(nn.Module):
         eps = torch.randn_like(chosen_means)
         z_prior = chosen_means + eps * torch.exp(0.5 * chosen_logvars)  # [batch_size, latent_dim]
 
+        z_prior = torch.clamp(z_prior, min=self.mean_lims[0], max=self.mean_lims[1])
+
         return z_prior, component_probs
 
     def sinkhorn_loss_fraction(self, z, weight):
@@ -93,29 +95,7 @@ class MoGPrior(nn.Module):
         # Compute Sinkhorn loss (Wasserstein distance between z_samples and z_prior)
         sinkhorn_loss = self.sinkhorn_loss(z, z_prior)
 
-        return sinkhorn_loss * weight
-
-# class MoGPrior(nn.Module):
-#     def __init__(self, K, latent_dim, prior_initial_mean_spread, prior_initial_logvar, **kwargs):
-#         """
-#         Mixture of Gaussians (MoG) prior.
-#         Inputs:
-#             K: Number of mixture components.
-#             latent_dim: Dimensionality of the latent space.
-#         """
-#         super(MoGPrior, self).__init__()
-#         self.K = K
-#         self.latent_dim = latent_dim
-#         self.prior_initial_mean_spread = prior_initial_mean_spread
-#         self.prior_initial_logvar = prior_initial_logvar
-
-#         # Uniform (i.e. rand, not randn) means from (-initial_mean_spread, initial_mean_spread)
-#         prior_means = (torch.rand(K, latent_dim) * prior_initial_mean_spread*2) - prior_initial_mean_spread
-
-#         # Initialize means, logvars, and weights
-#         self.means = nn.Parameter(prior_means)  # [K, latent_dim]
-#         self.logvars = nn.Parameter(torch.ones(K, latent_dim) * prior_initial_logvar)  # [K, latent_dim]
-#         self.weights = nn.Parameter(torch.ones(K) / K)  # [K]
+        return (sinkhorn_loss * weight) / (self.latent_dim * self.K)
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -424,6 +404,7 @@ class GMVAE(nn.Module):
         self.prior = MoGPrior(
             K = self.mog_components,
             latent_dim = self.latent_dim,
+            mean_lims = self.mean_lims,
             **kwargs)
 
         # Raw CrossAttention Head
@@ -486,9 +467,16 @@ class GMVAE(nn.Module):
             mean = mean.view(-1, self.transformer_seq_length, self.mog_components, self.latent_dim)
             logvar = logvar.view(-1,self.transformer_seq_length, self.mog_components, self.latent_dim)
 
-            # Apply constrtains to mean/logvar
-            mean = torch.clamp(mean, min=self.mean_lims[0], max=self.mean_lims[1])
-            logvar = torch.clamp(logvar, min=self.logvar_lims[0], max=self.logvar_lims[1])
+            # # Apply constrtains to mean/logvar
+            # mean = torch.clamp(mean, min=self.mean_lims[0], max=self.mean_lims[1])
+            # logvar = torch.clamp(logvar, min=self.logvar_lims[0], max=self.logvar_lims[1])
+            mean_scale = (self.mean_lims[1] - self.mean_lims[0]) / 2
+            mean_shift = (self.mean_lims[0] + self.mean_lims[1]) / 2
+            mean = F.tanh(mean) * mean_scale + mean_shift
+
+            logvar_scale = (self.logvar_lims[1] - self.logvar_lims[0]) / 2
+            logvar_shift = (self.logvar_lims[0] + self.logvar_lims[1]) / 2
+            logvar = F.tanh(logvar) * logvar_scale + logvar_shift
 
             # Now sample z
             mean_pseudobatch = mean.reshape(mean.shape[0]*mean.shape[1], mean.shape[2], mean.shape[3])
@@ -499,7 +487,7 @@ class GMVAE(nn.Module):
             mogpreds_pseudobatch_softmax = torch.softmax(mogpreds_pseudobatch, dim=-1) 
 
             # Z is clipped for stability
-            z_pseudobatch = self.sample_z(mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, gumbel_softmax_temperature=self.temperature)
+            z_pseudobatch, _ = self.sample_z(mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, gumbel_softmax_temperature=self.temperature)
             
             return z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch_softmax, attW
 
@@ -576,11 +564,10 @@ class GMVAE(nn.Module):
 def print_models_flow(x, **kwargs):
     '''
     Builds models on CPU and prints sizes of forward passes with random data as inputs
+
+    No losses are computed, just data flow through model
     
     '''
-
-    pat_num_channels = x.shape[2] 
-    file_class_label = torch.tensor([0]*x.shape[0]) # dummy
 
     # Build the WAE
     gmvae = GMVAE(**kwargs) 
@@ -596,30 +583,13 @@ def print_models_flow(x, **kwargs):
     f"logvar_pseudobatch:{logvar_pseudobatch.shape}\n"
     f"mogpreds_pseudobatch:{mogpreds_pseudobatch.shape}\n"
     f"attW:{attW.shape}\n")
-
-    reg_loss = gmvae_kl_loss(
-        z = z_pseudobatch,
-        encoder_means=mean_pseudobatch, 
-        encoder_logvars=logvar_pseudobatch, 
-        encoder_mogpreds=mogpreds_pseudobatch, 
-        prior_means=gmvae.prior.means, 
-        prior_logvars=gmvae.prior.logvars, 
-        prior_weights=gmvae.prior.weights, 
-        weight=1,
-        **kwargs)
     
-    print(reg_loss)
-
     z_token = z_pseudobatch.split(kwargs['transformer_seq_length'], dim=0)
     z_token = torch.stack(z_token, dim=0)
 
     # CLASSIFIER - on the mean of Z tokens
     z_meaned = torch.mean(z_token, dim=1)
     class_probs_mean_of_latent = gmvae.adversarial_classifier(z_meaned, alpha=1)
-
-    # Adversarial loss
-    adversarial_loss = adversarial_loss_function(class_probs_mean_of_latent, file_class_label, classifier_weight = 1)
-    print(f"Adversarial Loss: {adversarial_loss}")
 
     # Run through WAE decoder
     hash_pat_embedding = torch.rand(x.shape[0], z_token.shape[2])

@@ -832,6 +832,7 @@ class Trainer:
         val_unseen,
         realtime_latent_printing,
         realtime_printing_interval,
+        Wasserstein_logvar_entropy_weight,
         **kwargs):
 
         '''
@@ -840,6 +841,8 @@ class Trainer:
 
         IMPORTANT: Takes in a *DataLoader*, not a *Dataset*
         '''
+
+        self.wasserstein_logvar_entropy_weight = Wasserstein_logvar_entropy_weight
 
         print(f"[GPU{self.gpu_id}] encode_token_samples: {self.encode_token_samples}")
 
@@ -853,7 +856,7 @@ class Trainer:
             hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
         
             # LR & WEIGHT SCHEDULES
-            self.wasserstein_weight, self.reg_weight, self.curr_LR_core, self.curr_LR_prior, self.curr_LR_cls, self.mogpreds_entropy_weight, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
+            self.wasserstein_weight, self.reg_weight, self.curr_LR_core, self.curr_LR_prior, self.curr_LR_cls, self.mogpreds_entropy_weight, self.sparse_weight, self.classifier_weight, self.classifier_alpha, logvar_lims_override = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
             if (not val_finetune) & (not val_unseen): 
                 self.opt_gmvae.param_groups[0]['lr'] = self.curr_LR_core
@@ -863,11 +866,16 @@ class Trainer:
                 self.classifier_alpha = 0 # For validation, do not consider classifier
                 self.opt_gmvae.param_groups[2]['lr'] = 0
 
+            # Check for logvar_lims override
+            if logvar_lims_override != None:
+                self.gmvae.module.logvar_lims = logvar_lims_override
+            else:
+                self.gmvae.module.logvar_lims = kwargs['logvar_lims'] # from config file
+
             # Check for NaNs
             if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
 
-            # GMVAE ENCODER: 
-            # latent, class_probs_mean_of_latent, attW = self.gmvae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
+            # GM-VAE ENCODER: 
             z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, attW = self.gmvae(x, reverse=False) # No 1-shift if not causal masking
 
             # Reshape variables back to token level 
@@ -888,9 +896,20 @@ class Trainer:
             class_probs_mean_of_latent = self.gmvae.module.adversarial_classifier(z_tokenmeaned, alpha=self.classifier_alpha)
    
             # LOSSES
-            wassertstein_loss = self.gmvae.module.prior.sinkhorn_loss_fraction( # Used as a taper to stabilize the posterior at beginning of training
-                z=z_pseudobatch,
-                weight=self.wasserstein_weight)
+            if self.wasserstein_weight > 0:
+                wassertstein_loss = self.gmvae.module.prior.sinkhorn_loss_fraction( # Used as a taper to stabilize the posterior at beginning of training
+                    z=z_pseudobatch,
+                    weight=self.wasserstein_weight)
+
+                wasserstein_logvar_entropy_loss = loss_functions.logvar_entropy_loss(
+                    logvars = logvar_pseudobatch,
+                    weight = self.wasserstein_logvar_entropy_weight,
+                    **kwargs)    
+                
+            else: # Do not waste compute on Sinkhorn estimation of Wasserstein distance if not using 
+                wassertstein_loss = 0
+                wasserstein_logvar_entropy_loss = 0
+                self.wasserstein_logvar_entropy_weight = 0
 
             reg_loss = loss_functions.gmvae_kl_loss(
                 z = z_pseudobatch,
@@ -928,7 +947,7 @@ class Trainer:
                 labels=file_class_label,
                 classifier_weight=self.classifier_weight)
 
-            loss = wassertstein_loss + recon_loss + reg_loss + prior_entropy + prior_repulsion + adversarial_loss + mogpreds_entropy_loss  # mogpreds_intrasequence_consistency_loss
+            loss = wassertstein_loss + wasserstein_logvar_entropy_loss + recon_loss + reg_loss + prior_entropy + prior_repulsion + adversarial_loss + mogpreds_entropy_loss  # mogpreds_intrasequence_consistency_loss
 
             # NOT BEING USED
             mogpreds_intrasequence_consistency_loss = loss_functions.mogpreds_intrasequence_consistency_loss(
@@ -981,6 +1000,8 @@ class Trainer:
                         train_attention_dropout=attention_dropout,
                         train_loss=loss,
                         train_wassertstein_loss = wassertstein_loss,
+                        train_wasserstein_logvar_entropy_loss = wasserstein_logvar_entropy_loss,
+                        train_wasserstein_logvar_entropy_weight = self.wasserstein_logvar_entropy_weight,
                         train_recon_loss=recon_loss, 
                         train_reg_loss=reg_loss, 
                         train_mogpreds_entropy_loss=mogpreds_entropy_loss,
@@ -1006,7 +1027,9 @@ class Trainer:
                     metrics = dict(
                         val_finetune_attention_dropout=attention_dropout,
                         val_finetune_loss=loss, 
-                        val_wassertstein_loss = wassertstein_loss,
+                        val_finetune_wassertstein_loss = wassertstein_loss,
+                        val_finetune_wasserstein_logvar_entropy_loss = wasserstein_logvar_entropy_loss,
+                        val_finetune_wasserstein_logvar_entropy_weight = self.wasserstein_logvar_entropy_weight,
                         val_finetune_recon_loss=recon_loss, 
                         val_finetune_reg_loss=reg_loss, 
                         val_finetune_sparse_loss=sparse_loss,
@@ -1025,6 +1048,8 @@ class Trainer:
                         val_unseen_attention_dropout=attention_dropout,
                         val_unseen_loss=loss, 
                         val_unseen_wassertstein_loss = wassertstein_loss,
+                        val_unseen_wasserstein_logvar_entropy_loss = wasserstein_logvar_entropy_loss,
+                        val_unseen_wasserstein_logvar_entropy_weight = self.wasserstein_logvar_entropy_weight,
                         val_unseen_recon_loss=recon_loss, 
                         val_unseen_reg_loss=reg_loss, 
                         val_unseen_sparse_loss=sparse_loss,

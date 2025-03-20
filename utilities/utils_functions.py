@@ -214,7 +214,7 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         Reg_max, Reg_min, Reg_epochs_TO_max, Reg_epochs_AT_max, Reg_stall_epochs,
-        WassersteinBeta_max, WassersteinBeta_min, WassersteinBeta_stall_epochs, WassersteinBeta_taper_epochs,
+        Wasserstein_override_epochs, Wasserstein_override_LR, WassersteinBeta_max, WassersteinBeta_min, WassersteinBeta_taper_epochs, Wassertstein_logvar_lims,
         mogpreds_entropy_weight_max, mogpreds_entropy_weight_min, mogpreds_entropy_weight_taper_epochs,
         classifier_weight, 
         classifier_alpha_max, classifier_alpha_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
@@ -223,7 +223,64 @@ def LR_and_weight_schedules(
         LR_max_core, LR_min_core, LR_epochs_stall_core, LR_epochs_TO_max_core, LR_epochs_AT_max_core,  manual_gamma_core, manual_step_size_core,
         LR_max_prior, LR_min_prior, LR_epochs_stall_prior, LR_epochs_TO_max_prior, LR_epochs_AT_max_prior,  manual_gamma_prior, manual_step_size_prior,
         Reg_rise_first=True, Sparse_rise_first=True, LR_rise_first=True, **kwargs):
-            
+
+    # LOGVAR OVVERRIDE during Wasserstein influence 
+    # Must calculate before epoch is globally shifted
+    if epoch < (Wasserstein_override_epochs + WassersteinBeta_taper_epochs):
+        logvar_lims_override = Wassertstein_logvar_lims
+    else: logvar_lims_override = None
+
+    # WASSERSTEIN OVERRIDE OF ALL LR AND WEIGHTS 
+    # Stabilized posterior at beginning of training to approximate prior
+    # KL has no hope to do this by itself with randomized posterior weights (Search "Vanderbilt Wasserstein" on Youtube)
+    if epoch < Wasserstein_override_epochs:
+        W_val = WassersteinBeta_max
+        Reg_val = 0
+        LR_val_core = Wasserstein_override_LR
+        LR_val_prior = LR_max_prior # Allow prior to shift to fit posterior
+        LR_val_cls = 0
+        mogpred_entropy_val = mogpreds_entropy_weight_max * 100 # Want to keep entropy high for MoG predictions during Wasserstein override
+        Sparse_val = 0
+        classifier_weight = 0
+        classifier_val = 0
+        return W_val, Reg_val, LR_val_core, LR_val_prior, LR_val_cls, mogpred_entropy_val, Sparse_val, classifier_weight, classifier_val, logvar_lims_override
+
+    else: # globally shift in epoch in this function
+        epoch = epoch - Wasserstein_override_epochs
+        assert epoch >= 0
+
+    # # *** Wasserstein Taper SCHEDULE ***
+    # # NOTE: This starts AFTER the Wasserstein override
+    # if epoch >= WassersteinBeta_taper_epochs:
+    #     W_val = WassersteinBeta_min
+    # else:
+    #     W_total_taper_iters = iters_per_epoch * WassersteinBeta_taper_epochs
+    #     W_iter_curr = epoch * iters_per_epoch + iter_curr
+    #     W_range = WassersteinBeta_max - WassersteinBeta_min
+    #     W_val = WassersteinBeta_max - W_range * (W_iter_curr/W_total_taper_iters)
+    #     assert W_val >= 0, f"Wassertstein weight must be >0, got {W_val}"
+
+    # *** Wasserstein Taper SCHEDULE ***
+    # NOTE: This starts AFTER the Wasserstein override
+    if epoch >= WassersteinBeta_taper_epochs:
+        W_val = WassersteinBeta_min
+    else:
+        W_total_taper_iters = iters_per_epoch * WassersteinBeta_taper_epochs
+        W_iter_curr = epoch * iters_per_epoch + iter_curr
+
+        # Normalize the current iteration to [0, 1]
+        t = W_iter_curr / W_total_taper_iters
+
+        # Inverse exponential decay formula
+        decay_rate = 5.0  # Adjust this to control the steepness of the initial drop
+        W_range = WassersteinBeta_max - WassersteinBeta_min
+        W_val = WassersteinBeta_min + W_range * math.exp(-decay_rate * t)
+
+        # Ensure W_val is within bounds
+        W_val = max(W_val, WassersteinBeta_min)
+        assert W_val >= 0, f"Wasserstein weight must be >= 0, got {W_val}"
+
+
     # MoG Prediction Entropy TAPER
     if epoch >= mogpreds_entropy_weight_taper_epochs:
         mogpred_entropy_val = mogpreds_entropy_weight_min
@@ -276,18 +333,6 @@ def LR_and_weight_schedules(
             else:
                 Reg_val = Reg_max
         else: raise Exception("ERROR: not coded up")
-
-    # *** Wasserstein Taper SCHEDULE ***
-    if epoch < WassersteinBeta_stall_epochs:
-        W_val = WassersteinBeta_max  # If within the stall, send out Max
-    elif epoch >= WassersteinBeta_taper_epochs:
-        W_val = WassersteinBeta_min
-    else:
-        W_total_taper_iters = iters_per_epoch * WassersteinBeta_taper_epochs
-        W_iter_curr = (epoch - WassersteinBeta_stall_epochs) * iters_per_epoch + iter_curr
-        W_range = WassersteinBeta_max - WassersteinBeta_min
-        W_val = WassersteinBeta_max - W_range * (W_iter_curr/W_total_taper_iters)
-        assert W_val >= 0, f"Wassertstein weight must be >0, got {W_val}"
                 
    # *** Sparse Weight ***
     Sparse_epoch_period = Sparse_epochs_TO_max + Sparse_epochs_AT_max
@@ -339,8 +384,8 @@ def LR_and_weight_schedules(
         iters_per_epoch=iters_per_epoch,
         LR_rise_first=LR_rise_first 
     )
-            
-    return W_val, Reg_val, LR_val_core, LR_val_prior, LR_val_cls, mogpred_entropy_val, Sparse_val, classifier_weight, classifier_val
+
+    return W_val, Reg_val, LR_val_core, LR_val_prior, LR_val_cls, mogpred_entropy_val, Sparse_val, classifier_weight, classifier_val, logvar_lims_override
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
@@ -948,7 +993,7 @@ def print_latent_realtime(mean, logvar, mogpreds, prior_means, prior_logvars, pr
                 legend_handles.append(line)
                 legend_labels.append(f'Batch {b}')
         
-        ax1.set_title(f'Re-sampled Weighted Mean (Dim {d})')
+        ax1.set_title(f'Weighted Posterior Mean (Dim {d})')
         ax1.set_xlabel('Value')
         ax1.set_ylabel('Density')
         ax1.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range from -5 to 5
@@ -960,7 +1005,7 @@ def print_latent_realtime(mean, logvar, mogpreds, prior_means, prior_logvars, pr
             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
             ax2.plot(bin_centers, hist, alpha=0.4, color=batch_colors[b])
         
-        ax2.set_title(f'Re-sampled Weighted Logvar (Dim {d})')
+        ax2.set_title(f'Weighted Posterior Logvar (Dim {d})')
         ax2.set_xlabel('Value')
         ax2.set_ylabel('Density')
         ax2.set_xlim(logvar_lims[0], logvar_lims[1])
