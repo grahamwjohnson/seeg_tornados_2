@@ -202,6 +202,7 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         Reg_max, Reg_min, Reg_epochs_TO_max, Reg_epochs_AT_max, Reg_stall_epochs,
+        mogpreds_entropy_weight_max, mogpreds_entropy_weight_min, mogpreds_entropy_weight_taper_epochs,
         classifier_weight, 
         classifier_alpha_max, classifier_alpha_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier, 
@@ -211,6 +212,17 @@ def LR_and_weight_schedules(
         manual_gamma_core, manual_step_size_core,
         Reg_rise_first=True, Sparse_rise_first=True, LR_rise_first=True, **kwargs):
             
+
+
+    # MoG Prediction Entropy TAPER
+    if epoch >= mogpreds_entropy_weight_taper_epochs:
+        mogpred_entropy_val = mogpreds_entropy_weight_min
+    else:
+        mogpreds_entropy_range = mogpreds_entropy_weight_max - mogpreds_entropy_weight_min
+        total_mogpreds_entropy_iters = mogpreds_entropy_weight_taper_epochs * iters_per_epoch
+        iter_mogpred_curr = epoch * iters_per_epoch + iter_curr
+        mogpred_entropy_val = mogpreds_entropy_weight_max - mogpreds_entropy_range * (iter_mogpred_curr / total_mogpreds_entropy_iters) 
+
     # *** Classifier Weight ###
     classifier_weight = classifier_weight # Dummy pass
 
@@ -310,7 +322,7 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first 
     )
             
-    return Reg_val, LR_val_core, LR_val_cls, Sparse_val, classifier_weight, classifier_val
+    return Reg_val, LR_val_core, LR_val_cls, mogpred_entropy_val, Sparse_val, classifier_weight, classifier_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
@@ -576,14 +588,14 @@ def hash_to_vector(input_string, num_channels, padded_channels, latent_dim, modi
 
 # PLOTTING
 
-def plot_prior(mog_means, mog_logvars, mog_weights, savedir, epoch, **kwargs):
+def plot_prior(prior_means, prior_logvars, prior_weights, savedir, epoch, **kwargs):
     """
     Plot the MoG prior parameters (means, log variances, and weights) in a combined plot.
 
     Args:
-        mog_means (np.ndarray): Means of the MoG components, shape (K, D).
-        mog_logvars (np.ndarray): Log variances of the MoG components, shape (K, D).
-        mog_weights (np.ndarray): Weights of the MoG components, shape (K,).
+        prior_means (np.ndarray): Means of the MoG components, shape (K, D).
+        prior_logvars (np.ndarray): Log variances of the MoG components, shape (K, D).
+        prior_weights (np.ndarray): Weights of the MoG components, shape (K,).
         savedir (str): Directory to save the plot.
         epoch (int): Current epoch (for labeling the plot).
         **kwargs: Additional arguments (e.g., titles, colors).
@@ -592,14 +604,14 @@ def plot_prior(mog_means, mog_logvars, mog_weights, savedir, epoch, **kwargs):
     os.makedirs(savedir, exist_ok=True)
 
     # Extract dimensions
-    K, D = mog_means.shape  # K = number of components, D = latent dimension
+    K, D = prior_means.shape  # K = number of components, D = latent dimension
 
     # Create the combined plot
     plt.figure(figsize=(15, 5))
 
     # Subplot 1: Means
     plt.subplot(1, 3, 1)
-    plt.imshow(mog_means, cmap=cmr.waterlily, aspect='auto', interpolation='none')
+    plt.imshow(prior_means, cmap=cmr.waterlily, aspect='auto', interpolation='none')
     plt.colorbar(label='Mean Value')
     plt.xlabel("Latent Dimension")
     plt.ylabel("Component")
@@ -608,7 +620,7 @@ def plot_prior(mog_means, mog_logvars, mog_weights, savedir, epoch, **kwargs):
 
     # Subplot 2: Log Variances
     plt.subplot(1, 3, 2)
-    plt.imshow(mog_logvars, cmap=sns.cubehelix_palette(as_cmap=True, reverse=True), aspect='auto', interpolation='none')
+    plt.imshow(prior_logvars, cmap=sns.cubehelix_palette(as_cmap=True, reverse=True), aspect='auto', interpolation='none')
     plt.colorbar(label='Log Variance')
     plt.xlabel("Latent Dimension")
     plt.ylabel("Component")
@@ -617,7 +629,7 @@ def plot_prior(mog_means, mog_logvars, mog_weights, savedir, epoch, **kwargs):
 
     # Subplot 3: Weights
     plt.subplot(1, 3, 3)
-    plt.bar(range(K), mog_weights, color='purple', alpha=0.5)
+    plt.bar(range(K), prior_weights, color='purple', alpha=0.5)
     plt.xlabel("Component")
     plt.ylabel("Weight")
     plt.xticks(range(K), labels=[str(i) for i in range(K)])  # Fix x-axis labels
@@ -632,7 +644,7 @@ def plot_prior(mog_means, mog_logvars, mog_weights, savedir, epoch, **kwargs):
     pl.savefig(savename_jpg)
     plt.close()
 
-def plot_observed(gpu_id, encoder_means, encoder_logvars, encoder_mogpreds_softmax, encoder_zmeaned, savedir, epoch, num_accumulated_plotting_dims=5, n_bins=100, **kwargs):
+def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, encoder_mogpreds_softmax, encoder_zmeaned, savedir, epoch, num_accumulated_plotting_dims=5, n_bins=200, **kwargs):
     """
     Plot distributions of encoder statistics across MoG components using histograms.
     Compares encoder statistics with MoG prior state and includes encoder_zmeaned visualization.
@@ -640,12 +652,12 @@ def plot_observed(gpu_id, encoder_means, encoder_logvars, encoder_mogpreds_softm
     
     Args:
         gpu_id: GPU ID (for logging purposes)
-        mog_means: MoG prior means, shape (K, D)
-        mog_logvars: MoG prior log-variances, shape (K, D)
-        mog_weights: MoG prior weights, shape (K,)
+        prior_means: MoG prior means, shape (K, D)
+        prior_logvars: MoG prior log-variances, shape (K, D)
+        prior_weights: MoG prior weights, shape (K,)
         encoder_means: Encoder means, shape (Batch, K, D)
         encoder_logvars: Encoder log-variances, shape (Batch, K, D)
-        encoder_mogpreds: Encoder MoG predictions, shape (Batch, K)
+        encoder_mogpreds_softmax: Encoder MoG predictions, shape (Batch, K)
         encoder_zmeaned: Aggregated latent representation, shape (Batch, D)
         savedir: Directory to save the plots
         epoch: Current epoch
@@ -656,6 +668,9 @@ def plot_observed(gpu_id, encoder_means, encoder_logvars, encoder_mogpreds_softm
     Batch, K, D = encoder_means.shape  # Batch size, number of MoG components, and latent dimension
 
     # Validate input shapes
+    assert prior_means.shape == (K, D), f"prior_means must have shape (K, D), but got {prior_means.shape}"
+    assert prior_logvars.shape == (K, D), f"prior_logvars must have shape (K, D), but got {prior_logvars.shape}"
+    assert prior_weights.shape == (K,), f"prior_weights must have shape (K,), but got {prior_weights.shape}"
     assert encoder_means.shape == (Batch, K, D), f"encoder_means must have shape (Batch, K, D), but got {encoder_means.shape}"
     assert encoder_logvars.shape == (Batch, K, D), f"encoder_logvars must have shape (Batch, K, D), but got {encoder_logvars.shape}"
     assert encoder_mogpreds_softmax.shape == (Batch, K), f"encoder_mogpreds_softmax must have shape (Batch, K), but got {encoder_mogpreds_softmax.shape}"
@@ -669,31 +684,70 @@ def plot_observed(gpu_id, encoder_means, encoder_logvars, encoder_mogpreds_softm
     encoder_zmeaned_flat = encoder_zmeaned.reshape(-1, D)  # Shape: (Batch, D) -> (Batch * 1, D)
 
     # Create a figure with subplots
-    fig = pl.figure(figsize=(5 * num_accumulated_plotting_dims, 20))
+    fig = plt.figure(figsize=(5 * num_accumulated_plotting_dims, 20))
+
+    # Define a consistent color palette for MoG components
+    component_colors = plt.cm.tab10.colors[:K]  # Use tab10 colormap for up to 10 components
 
     # Plot 1: Distribution of Encoder Means vs MoG Prior Means (for each MoG component, first `num_accumulated_plotting_dims` dims)
     for d in range(num_accumulated_plotting_dims):
         ax = fig.add_subplot(4, num_accumulated_plotting_dims, d + 1)
+        
+        # Plot encoder means as histograms
+        hist_vals = []
         for k in range(K):
-            ax.hist(encoder_means_flat[:, k, d], bins=n_bins, alpha=0.5, label=f'Comp {k}')
+            hist, bin_edges = np.histogram(encoder_means_flat[:, k, d], bins=n_bins, range=(-5, 5), density=True)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            hist_vals.append(hist)
+            ax.hist(encoder_means_flat[:, k, d], bins=n_bins, range=(-5, 5), density=True, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
+
+        # Find the tallest histogram for scaling
+        max_hist = np.max([np.max(h) for h in hist_vals])
+
+        # Compute KDEs for the prior means
+        x_vals = np.linspace(-5, 5, 1000)  # Range for KDE plots
+        kde_vals_all = []  # Store all KDE values for scaling
+        for k in range(K):
+            # Compute KDE for the current MoG component
+            samples = np.random.normal(
+                loc=prior_means[k, d],
+                scale=np.sqrt(np.exp(prior_logvars[k, d])),  # Scale by variance
+                size=int(1e3)  # Fixed number of samples for KDE
+            )
+            kde = gaussian_kde(samples)
+            kde_vals = kde(x_vals) * prior_weights[k]  # Scale KDE by prior weight
+            kde_vals_all.append(kde_vals)
+        
+        # Find the maximum KDE value across all components
+        max_kde = np.max([np.max(kde_vals) for kde_vals in kde_vals_all])
+
+        # Scale all KDEs to match the tallest histogram while preserving relative scaling
+        for k in range(K):
+            kde_vals = kde_vals_all[k] * (max_hist / max_kde)
+            ax.plot(x_vals, kde_vals, linestyle='--', color=component_colors[k], alpha=0.8, label=f'Prior Comp {k}' if d == 0 else None)
+        
         ax.set_title(f'Encoder Means (Dim {d}), Color MoGComp')
         ax.set_xlabel('Mean Value')
         ax.set_ylabel('Frequency')
+        ax.set_xlim(-5, 5)  # Set x-axis range from -5 to 5
+        if d == 0:
+            ax.legend()
 
     # Plot 2: Distribution of Encoder Logvars vs MoG Prior Logvars (for each MoG component, first `num_accumulated_plotting_dims` dims)
     for d in range(num_accumulated_plotting_dims):
         ax = fig.add_subplot(4, num_accumulated_plotting_dims, num_accumulated_plotting_dims + d + 1)
         for k in range(K):
-            ax.hist(encoder_logvars_flat[:, k, d], bins=n_bins, alpha=0.5, label=f'Comp {k}')
+            ax.hist(encoder_logvars_flat[:, k, d], bins=n_bins, range=(-5, 5), alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
         ax.set_title(f'Encoder Logvars (Dim {d}), Color MoGComp')
         ax.set_xlabel('Logvar Value')
         ax.set_ylabel('Frequency')
+        ax.set_xlim(-5, 5)  # Set x-axis range from -5 to 5
 
     # Plot 3: Distribution of Encoder MoG Predictions vs MoG Prior Weights (for each MoG component)
     # Span all columns for the MoG predictions plot
     ax = fig.add_subplot(4, 1, 3)  # Span all columns in row 3
     for k in range(K):
-        ax.hist(encoder_mogpreds_softmax_flat[:, k], bins=n_bins, alpha=0.5, label=f'Comp {k}')
+        ax.hist(encoder_mogpreds_softmax_flat[:, k], bins=n_bins, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
     ax.set_title(f'Encoder MoG Predictions - Color is MoG Component')
     ax.set_xlabel('Weight Value')
     ax.set_ylabel('Frequency')
@@ -702,17 +756,18 @@ def plot_observed(gpu_id, encoder_means, encoder_logvars, encoder_mogpreds_softm
     # Plot 4: Distribution of encoder_zmeaned (aggregated latent representation, first `num_accumulated_plotting_dims` dims)
     for d in range(num_accumulated_plotting_dims):
         ax = fig.add_subplot(4, num_accumulated_plotting_dims, 3 * num_accumulated_plotting_dims + d + 1)
-        ax.hist(encoder_zmeaned_flat[:, d], bins=n_bins, alpha=0.5, color='gray', label=f'Dim {d}')
+        ax.hist(encoder_zmeaned_flat[:, d], bins=n_bins, range=(-5, 5), alpha=0.5, color='gray', label=f'Dim {d}')
         ax.set_title(f'encoder_zmeaned (Dim {d})')
         ax.set_xlabel('Latent Value')
         ax.set_ylabel('Frequency')
+        ax.set_xlim(-5, 5)  # Set x-axis range from -5 to 5
         ax.legend()
 
     if gpu_id == 0: time.sleep(0.5) # avoid collisions
     if not os.path.exists(savedir): os.makedirs(savedir)
     savename_jpg = f"{savedir}/ObservedLatents_epoch{epoch}_numForwards{Batch}_gpu{gpu_id}.jpg"
-    pl.savefig(savename_jpg)
-    pl.close(fig)
+    plt.savefig(savename_jpg)
+    plt.close(fig)
 
 def print_patmogweights_realtime(mogpreds_softmax, patidxs, savedir, epoch, iter_curr, **kwargs):
     """
@@ -776,12 +831,12 @@ def print_patmogweights_realtime(mogpreds_softmax, patidxs, savedir, epoch, iter
     pl.savefig(savename_jpg)
     pl.close(fig)
 
-def print_latent_realtime(mean, logvar, mogpreds_softmax, prior_means, prior_logvars, prior_weights, savedir, epoch, iter_curr, n_bins=35, **kwargs):
+def print_latent_realtime(mean, logvar, mogpreds_softmax, prior_means, prior_logvars, prior_weights, savedir, epoch, iter_curr, n_bins=35, mean_lims=5, logvar_lims=5, **kwargs):
     """
-    Plot weighted means, logvars, and average MoG weights at the token level for the first 5 dimensions.
+    Plot re-sampled weighted means, logvars, and average MoG weights at the token level for the first 5 dimensions.
     Aggregates tokens across all batches, with separate histograms for each batch index.
-    Weighting is done separately for each batch.
-    
+    Re-samples components using numpy.random.multinomial to properly weight the means and logvars.
+
     Args:
         mean: Encoder means, shape (batch_size, T, K, D)
         logvar: Encoder log-variances, shape (batch_size, T, K, D)
@@ -792,19 +847,27 @@ def print_latent_realtime(mean, logvar, mogpreds_softmax, prior_means, prior_log
         savedir: Directory to save the plots
         epoch: Current epoch
         iter_curr: Current iteration
-        n_bins: Number of bins for histograms (default: 100)
+        n_bins: Number of bins for histograms (default: 35)
         **kwargs: Additional arguments
     """
     batch_size, T, K, D = mean.shape
 
-    # Weight the means and logvars by MoG predictions separately for each batch
+    # Re-sample components using numpy.random.multinomial
     weighted_mean = np.zeros((batch_size, T, D))  # Shape: (batch_size, T, D)
     weighted_logvar = np.zeros((batch_size, T, D))  # Shape: (batch_size, T, D)
 
+    assert np.min(weighted_mean) > -mean_lims, f"got mean of {np.min(weighted_mean)}, which is lower than stated limit of {-mean_lims}"
+    assert np.max(weighted_mean) < mean_lims,  f"got mean of {np.max(weighted_mean)}, which is higher than stated limit of {mean_lims}"
+    assert np.min(weighted_logvar) > -logvar_lims, f"got logvar of {np.min(weighted_logvar)}, which is lower than stated limit of {-logvar_lims}"
+    assert np.max(weighted_logvar) < logvar_lims, f"got logvar of {np.max(weighted_logvar)}, which is higher than stated limit of {logvar_lims}"
+
     for b in range(batch_size):
-        # Weight the means and logvars for the current batch
-        weighted_mean[b] = np.sum(mean[b] * mogpreds_softmax[b][:, :, np.newaxis], axis=1)  # Shape: (T, D)
-        weighted_logvar[b] = np.sum(logvar[b] * mogpreds_softmax[b][:, :, np.newaxis], axis=1)  # Shape: (T, D)
+        for t in range(T):
+            # Sample a component index based on MoG probabilities
+            component_idx = np.random.choice(K, p=mogpreds_softmax[b, t])
+            # Use the sampled component's mean and logvar
+            weighted_mean[b, t] = mean[b, t, component_idx]
+            weighted_logvar[b, t] = logvar[b, t, component_idx]
 
     # Compute the average MoG weights across all tokens for each batch
     avg_mogpreds_softmax = np.mean(mogpreds_softmax, axis=1)  # Shape: (batch_size, K)
@@ -827,7 +890,7 @@ def print_latent_realtime(mean, logvar, mogpreds_softmax, prior_means, prior_log
     legend_labels = []
 
     for d in range(num_dims):
-        # Plot weighted means with KDEs for each MoG prior component (first column)
+        # Plot re-sampled weighted means with KDEs for each MoG prior component (first column)
         ax1 = plt.subplot2grid((num_dims, 7), (d, 0), colspan=1)
         
         # Compute KDEs for each MoG prior component (scaled by prior weights)
@@ -851,7 +914,7 @@ def print_latent_realtime(mean, logvar, mogpreds_softmax, prior_means, prior_log
         # Compute the maximum KDE value for scaling
         max_kde = np.max(kde_vals_all)
 
-        # Plot weighted means as line representations (first column)
+        # Plot re-sampled weighted means as histograms (first column)
         hist_vals_all = []  # Store all histogram values for normalization
         for b in range(batch_size):
             hist, bin_edges = np.histogram(weighted_mean[b, :, d], bins=n_bins, range=(-5, 5), density=True)
@@ -867,21 +930,22 @@ def print_latent_realtime(mean, logvar, mogpreds_softmax, prior_means, prior_log
                 legend_handles.append(line)
                 legend_labels.append(f'Batch {b}')
         
-        ax1.set_title(f'Weighted Mean (Dim {d})')
+        ax1.set_title(f'Re-sampled Weighted Mean (Dim {d})')
         ax1.set_xlabel('Value')
         ax1.set_ylabel('Density')
         ax1.set_xlim(-5, 5)  # Set x-axis range from -5 to 5
 
-        # Plot weighted logvars as line representations (second column)
+        # Plot re-sampled weighted logvars as histograms (second column)
         ax2 = plt.subplot2grid((num_dims, 7), (d, 1), colspan=1)
         for b in range(batch_size):
             hist, bin_edges = np.histogram(weighted_logvar[b, :, d], bins=n_bins, density=True)
             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
             ax2.plot(bin_centers, hist, alpha=0.4, color=batch_colors[b])
         
-        ax2.set_title(f'Weighted Logvar (Dim {d})')
+        ax2.set_title(f'Re-sampled Weighted Logvar (Dim {d})')
         ax2.set_xlabel('Value')
         ax2.set_ylabel('Density')
+        ax2.set_xlim(-5, 5)
 
         # Plot average MoG weights with 95% CI (columns 2–6, single subplot spanning 5 columns)
         if d == 0:  # Only create this subplot once

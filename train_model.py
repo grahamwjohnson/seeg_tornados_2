@@ -201,7 +201,7 @@ def main(
     running_mean_path = [],
     running_logvar_path = [],
     running_zmeaned_path = [],
-    running_mogpreds_softmax_path = [],
+    running_mogpreds_path = [],
     running_patidxs_path = [],
     epochs_to_train: int = -1,
     **kwargs):
@@ -255,7 +255,7 @@ def main(
         print(f"[GPU{gpu_id}] Running Z Token-Averaged loaded from checkpoints")
 
         # Load running mog predictions
-        with open(running_mogpreds_softmax_path, "rb") as f: accumulated_mogpreds_softmax = pickle.load(f)
+        with open(running_mogpreds_path, "rb") as f: accumulated_mogpreds = pickle.load(f)
         print(f"[GPU{gpu_id}] Running MoG Predictions loaded from checkpoints")
 
         # Load running patidxs
@@ -266,7 +266,7 @@ def main(
         accumulated_mean = []
         accumulated_logvar = []
         accumulated_zmeaned = []
-        accumulated_mogpreds_softmax = []
+        accumulated_mogpreds = []
         accumulated_patidxs = []
 
     # Create the training object
@@ -287,7 +287,7 @@ def main(
         accumulated_mean=accumulated_mean,
         accumulated_logvar=accumulated_logvar,
         accumulated_zmeaned=accumulated_zmeaned,
-        accumulated_mogpreds_softmax=accumulated_mogpreds_softmax,
+        accumulated_mogpreds=accumulated_mogpreds,
         accumulated_patidxs=accumulated_patidxs,
         **kwargs)
 
@@ -315,7 +315,7 @@ def main(
                 accumulated_mean = trainer.accumulated_mean
                 accumulated_logvar = trainer.accumulated_logvar
                 accumulated_zmeaned = trainer.accumulated_zmeaned
-                accumulated_mogpreds_softmax = trainer.accumulated_mogpreds_softmax
+                accumulated_mogpreds = trainer.accumulated_mogpreds
                 accumulated_patidxs = trainer.accumulated_patidxs
 
                 # FINETUNE on beginning of validation patients (currently only one epoch)
@@ -360,7 +360,7 @@ def main(
                 trainer.accumulated_mean = accumulated_mean
                 trainer.accumulated_logvar = accumulated_logvar
                 trainer.accumulated_zmeaned = accumulated_zmeaned
-                trainer.accumulated_mogpreds_softmax = accumulated_mogpreds_softmax
+                trainer.accumulated_mogpreds = accumulated_mogpreds
                 trainer.accumulated_patidxs = accumulated_patidxs
 
             
@@ -396,7 +396,7 @@ def main(
                 accumulated_mean = trainer.accumulated_mean
                 accumulated_logvar = trainer.accumulated_logvar
                 accumulated_zmeaned = trainer.accumulated_zmeaned
-                accumulated_mogpreds_softmax = trainer.accumulated_mogpreds_softmax
+                accumulated_mogpreds = trainer.accumulated_mogpreds
                 accumulated_patidxs = trainer.accumulated_patidxs
 
                 # FINETUNE on beginning of validation patients (currently only one epoch)
@@ -430,7 +430,7 @@ def main(
                 trainer.accumulated_mean = accumulated_mean
                 trainer.accumulated_logvar = accumulated_logvar
                 trainer.accumulated_zmeaned = accumulated_zmeaned
-                trainer.accumulated_mogpreds_softmax = accumulated_mogpreds_softmax
+                trainer.accumulated_mogpreds = accumulated_mogpreds
                 trainer.accumulated_patidxs = accumulated_patidxs
 
     # Kill the process after training loop completes
@@ -476,7 +476,7 @@ class Trainer:
         accumulated_mean,
         accumulated_logvar,
         accumulated_zmeaned,
-        accumulated_mogpreds_softmax,
+        accumulated_mogpreds,
         accumulated_patidxs,
         **kwargs
     ) -> None:
@@ -515,7 +515,7 @@ class Trainer:
         self.accumulated_mean = accumulated_mean
         self.accumulated_logvar = accumulated_logvar
         self.accumulated_zmeaned = accumulated_zmeaned
-        self.accumulated_mogpreds_softmax = accumulated_mogpreds_softmax
+        self.accumulated_mogpreds = accumulated_mogpreds
         self.accumulated_patidxs = accumulated_patidxs
         self.wandb_run = wandb_run
         self.kwargs = kwargs
@@ -537,14 +537,14 @@ class Trainer:
             self.accumulated_mean = torch.randn(self.total_collected_latents, self.mog_components, self.latent_dim).to(self.gpu_id)
             self.accumulated_logvar = torch.randn(self.total_collected_latents, self.mog_components, self.latent_dim).to(self.gpu_id)
             self.accumulated_zmeaned = torch.randn(self.total_collected_latents, self.latent_dim).to(self.gpu_id)
-            self.accumulated_mogpreds_softmax = torch.softmax(torch.randn(self.total_collected_latents, self.mog_components), dim=1).to(self.gpu_id)
+            self.accumulated_mogpreds = torch.softmax(torch.randn(self.total_collected_latents, self.mog_components), dim=1).to(self.gpu_id)
             self.accumulated_patidxs = (torch.ones(self.total_collected_latents) * -1).to(self.gpu_id)
         else: 
             # Ensure on proper device because loading from pickle
             self.accumulated_mean = self.accumulated_mean.to(self.gpu_id)
             self.accumulated_logvar = self.accumulated_logvar.to(self.gpu_id)
             self.accumulated_zmeaned = self.accumulated_zmeaned.to(self.gpu_id)
-            self.accumulated_mogpreds_softmax = self.accumulated_mogpreds_softmax.to(self.gpu_id)
+            self.accumulated_mogpreds = self.accumulated_mogpreds.to(self.gpu_id)
             self.accumulated_patidxs = self.accumulated_patidxs.to(self.gpu_id)
 
         # Running tab of update index
@@ -608,9 +608,9 @@ class Trainer:
         print("Saved running Z Token-Meaned")
 
         # Save Running MoG Predictions 
-        latents_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_running_mogpreds_softmax.pkl"
+        latents_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_running_mogpreds.pkl"
         output_obj = open(latents_path, 'wb')
-        pickle.dump(self.accumulated_mogpreds_softmax, output_obj)
+        pickle.dump(self.accumulated_mogpreds, output_obj)
         output_obj.close()
         print("Saved running MoG Predictions")
 
@@ -632,7 +632,7 @@ class Trainer:
         mean,
         logvar,
         zmeaned,
-        mogpreds_softmax,
+        mogpreds,
         patidxs):
 
         '''
@@ -649,7 +649,7 @@ class Trainer:
             self.accumulated_mean[self.next_update_index: self.next_update_index + num_new_updates, :, :] = mean
             self.accumulated_logvar[self.next_update_index: self.next_update_index + num_new_updates, :, :] = logvar
             self.accumulated_zmeaned[self.next_update_index: self.next_update_index + num_new_updates, :] = zmeaned
-            self.accumulated_mogpreds_softmax[self.next_update_index: self.next_update_index + num_new_updates, :] = mogpreds_softmax
+            self.accumulated_mogpreds[self.next_update_index: self.next_update_index + num_new_updates, :] = mogpreds
             self.accumulated_patidxs[self.next_update_index: self.next_update_index + num_new_updates] = patidxs
             self.next_update_index = self.next_update_index + num_new_updates
 
@@ -666,8 +666,8 @@ class Trainer:
             self.accumulated_zmeaned[self.next_update_index: self.next_update_index + end_num, :] = zmeaned[:end_num, :]
             self.accumulated_zmeaned[0: residual_num, :] = zmeaned[end_num:, :]
 
-            self.accumulated_mogpreds_softmax[self.next_update_index: self.next_update_index + end_num, :] = mogpreds_softmax[:end_num, :]
-            self.accumulated_mogpreds_softmax[0: residual_num, :] = mogpreds_softmax[end_num:, :]
+            self.accumulated_mogpreds[self.next_update_index: self.next_update_index + end_num, :] = mogpreds[:end_num, :]
+            self.accumulated_mogpreds[0: residual_num, :] = mogpreds[end_num:, :]
 
             self.accumulated_patidxs[self.next_update_index: self.next_update_index + end_num] = patidxs[:end_num]
             self.accumulated_patidxs[0: residual_num] = patidxs[end_num:]
@@ -678,7 +678,7 @@ class Trainer:
         self.accumulated_mean = self.accumulated_mean.detach() 
         self.accumulated_logvar = self.accumulated_logvar.detach() 
         self.accumulated_zmeaned = self.accumulated_zmeaned.detach() 
-        self.accumulated_mogpreds_softmax = self.accumulated_mogpreds_softmax.detach() 
+        self.accumulated_mogpreds = self.accumulated_mogpreds.detach() 
         self.accumulated_patidxs = self.accumulated_patidxs.detach() 
 
     def _run_export_embeddings(
@@ -840,7 +840,7 @@ class Trainer:
             hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
         
             # LR & WEIGHT SCHEDULES
-            self.reg_weight, self.curr_LR_core, self.curr_LR_cls, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
+            self.reg_weight, self.curr_LR_core, self.curr_LR_cls, self.mogpreds_entropy_weight, self.sparse_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
             if (not val_finetune) & (not val_unseen): 
                 self.opt_vae.param_groups[0]['lr'] = self.curr_LR_core
@@ -854,19 +854,17 @@ class Trainer:
 
             # VAE ENCODER: 1-shifted
             # latent, class_probs_mean_of_latent, attW = self.vae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)
-            mean, logvar, mogpreds, attW = self.vae(x, reverse=False) # No 1-shift if not causal masking
-            
-            # Softmax for later use, but be sure to pass RAW logits (no softmax) to function 'mog_loss', whereas 'mogpreds_entropy_loss' takes softmax values
-            mogpreds_softmax = torch.softmax(mogpreds, dim=2)
+            z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, attW = self.vae(x, reverse=False) # No 1-shift if not causal masking
 
-            # REPARAMETERIZATION to Z (token-level) with MoG Selection/Loss
-            reg_loss, z_token = loss_functions.mog_loss(
-                encoder_means=mean, 
-                encoder_logvars=logvar, 
-                encoder_mogpreds=mogpreds, # NOT softmaxed yet
-                mog_prior=self.vae.module.prior, 
-                weight=self.reg_weight,
-                **kwargs)
+            # Reshape variables back to token level 
+            z_token = z_pseudobatch.split(self.transformer_seq_length, dim=0)
+            z_token = torch.stack(z_token, dim=0)
+            mogpreds = mogpreds_pseudobatch.split(self.transformer_seq_length, dim=0)
+            mogpreds = torch.stack(mogpreds, dim=0)
+            mean = mean_pseudobatch.split(self.transformer_seq_length, dim=0)
+            mean = torch.stack(mean, dim=0)
+            logvar = logvar_pseudobatch.split(self.transformer_seq_length, dim=0)
+            logvar = torch.stack(logvar, dim=0)
 
             # VAE DECODER - at Token Level
             x_hat = self.vae(z_token, reverse=True, hash_pat_embedding=hash_pat_embedding)  
@@ -874,19 +872,27 @@ class Trainer:
             # CLASSIFIER - on the mean of Z
             z_tokenmeaned = torch.mean(z_token, dim=1)
             class_probs_mean_of_latent = self.vae.module.adversarial_classifier(z_tokenmeaned, alpha=self.classifier_alpha)
-
+   
             # LOSSES
+            reg_loss = loss_functions.gmvae_kl_loss(
+                z = z_pseudobatch,
+                encoder_means=mean_pseudobatch, 
+                encoder_logvars=logvar_pseudobatch, 
+                encoder_mogpreds=mogpreds_pseudobatch, # NOT softmaxed yet
+                prior_means=self.vae.module.prior.means, 
+                prior_logvars=self.vae.module.prior.logvars, 
+                prior_weights=self.vae.module.prior.weights, 
+                weight=self.reg_weight,
+                **kwargs)
+
             recon_loss = loss_functions.recon_loss_function(
                 x=x, # No shift if not causal masking
                 x_hat=x_hat,
                 recon_weight=self.recon_weight)
             
             mogpreds_entropy_loss = loss_functions.mogpreds_entropy_loss(
-                mogpreds_softmax=mogpreds_softmax,
-                **kwargs)
-            
-            mogpreds_intrasequence_consistency_loss = loss_functions.mogpreds_intrasequence_consistency_loss(
-                mogpreds_softmax=mogpreds_softmax,
+                mogpreds=mogpreds,
+                mogpreds_entropy_weight=self.mogpreds_entropy_weight,
                 **kwargs)
 
             prior_entropy = loss_functions.mog_entropy_regularization(
@@ -904,7 +910,12 @@ class Trainer:
                 labels=file_class_label,
                 classifier_weight=self.classifier_weight)
 
-            loss = recon_loss + reg_loss + prior_entropy + prior_repulsion + adversarial_loss # + mogpreds_entropy_loss + mogpreds_intrasequence_consistency_loss
+            loss = recon_loss + reg_loss + prior_entropy + prior_repulsion + adversarial_loss + mogpreds_entropy_loss  # mogpreds_intrasequence_consistency_loss
+
+            # NOT BEING USED
+            mogpreds_intrasequence_consistency_loss = loss_functions.mogpreds_intrasequence_consistency_loss(
+                mogpreds=mogpreds,
+                **kwargs)
 
             # NOT BEING USED
             sparse_loss = loss_functions.sparse_l1_reg(
@@ -914,21 +925,22 @@ class Trainer:
 
             # NOT BEING USED
             mogpreds_intersequence_diversity_loss = loss_functions.mogpreds_intersequence_diversity_loss(
-                mogpreds_softmax=mogpreds_softmax,
+                mogpreds=mogpreds,
                 **kwargs)
 
             # For plotting visualization purposes
             mean_tokenmeaned = torch.mean(mean, dim=1)
             logvar_tokenmeaned = torch.mean(logvar, dim=1)
-            mogpreds_sofmaxed_tokenmeaned = torch.mean(mogpreds_softmax, dim=1)
+            mogpreds_logsofmaxed_tokenmeaned = torch.mean(mogpreds, dim=1)
 
             # Do not backprop for pure validation (i.e. val unseen), but do for training & finetuning
             if not val_unseen: 
                 self._zero_all_grads()
                 loss.backward()    
-                torch.nn.utils.clip_grad_norm_(self.vae.module.prior.parameters(), max_norm=1.0) # Gradient clipping for MoG prior, prevent excessive updates even with strong regularization 
+                torch.nn.utils.clip_grad_norm_(self.vae.module.parameters(), max_norm=1.0)
+                # torch.nn.utils.clip_grad_norm_(self.vae.module.prior.parameters(), max_norm=1.0) # Gradient clipping for MoG prior, prevent excessive updates even with strong regularization 
                 self.opt_vae.step()
-                self._update_reg_window(mean_tokenmeaned, logvar_tokenmeaned, z_tokenmeaned, mogpreds_sofmaxed_tokenmeaned, file_class_label) # Update the buffers & detach() 
+                self._update_reg_window(mean_tokenmeaned, logvar_tokenmeaned, z_tokenmeaned, mogpreds_logsofmaxed_tokenmeaned, file_class_label) # Update the buffers & detach() 
 
             # Realtime terminal info and WandB 
             if (iter_curr%self.recent_display_iters==0):
@@ -953,6 +965,7 @@ class Trainer:
                         train_recon_loss=recon_loss, 
                         train_reg_loss=reg_loss, 
                         train_mogpreds_entropy_loss=mogpreds_entropy_loss,
+                        train_mogpreds_entropy_weight = self.mogpreds_entropy_weight,
                         train_mogpreds_intrasequence_consistency_loss = mogpreds_intrasequence_consistency_loss,
                         train_mogpreds_intersequence_diversity_loss = mogpreds_intersequence_diversity_loss,
                         train_gumbel_softmax_temperature=kwargs['gumbel_softmax_temperature'], # TODO: probably should schedule an annealing pattern
@@ -1012,7 +1025,7 @@ class Trainer:
                                 iter_curr = iter_curr,
                                 mean = mean.cpu().detach().numpy(), 
                                 logvar = logvar.cpu().detach().numpy(),
-                                mogpreds_softmax = mogpreds_softmax.cpu().detach().numpy(),
+                                mogpreds = mogpreds.cpu().detach().numpy(),
                                 prior_means = self.vae.module.prior.means.detach().cpu().numpy(), 
                                 prior_logvars = self.vae.module.prior.logvars.detach().cpu().numpy(), 
                                 prior_weights = self.vae.module.prior.weights.detach().cpu().numpy(), 
@@ -1055,7 +1068,7 @@ class Trainer:
                                     **kwargs)
 
                                 utils_functions.print_patmogweights_realtime(
-                                    mogpreds_softmax = self.accumulated_mogpreds_softmax.cpu().detach().numpy(),
+                                    mogpreds = self.accumulated_mogpreds.cpu().detach().numpy(),
                                     patidxs = self.accumulated_patidxs.cpu().detach().numpy(),
                                     savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_patmogweights",
                                     epoch = self.epoch,
@@ -1070,18 +1083,21 @@ class Trainer:
         # NOTE: not necessarily everything from epoch, the number of accumulated samples is defined by 'total_collected_latents'
         utils_functions.plot_observed(
             gpu_id = self.gpu_id, 
+            prior_means = self.vae.module.prior.means.detach().cpu().numpy(), 
+            prior_logvars = self.vae.module.prior.logvars.detach().cpu().numpy(), 
+            prior_weights = self.vae.module.prior.weights.detach().cpu().numpy(), 
             encoder_means = self.accumulated_mean.detach().cpu().numpy(),
             encoder_logvars = self.accumulated_logvar.detach().cpu().numpy(),
             encoder_zmeaned = self.accumulated_zmeaned.detach().cpu().numpy(),
-            encoder_mogpreds_softmax = self.accumulated_mogpreds_softmax.detach().cpu().numpy(),
+            encoder_mogpreds = self.accumulated_mogpreds.detach().cpu().numpy(),
             savedir = self.model_dir + f"/realtime_plots/{dataset_string}/observed_latents",
             epoch = self.epoch,
             **kwargs)
         
         if self.gpu_id == 0: utils_functions.plot_prior(
-            mog_means = self.vae.module.prior.means.detach().cpu().numpy(), 
-            mog_logvars = self.vae.module.prior.logvars.detach().cpu().numpy(), 
-            mog_weights = self.vae.module.prior.weights.detach().cpu().numpy(), 
+            prior_means = self.vae.module.prior.means.detach().cpu().numpy(), 
+            prior_logvars = self.vae.module.prior.logvars.detach().cpu().numpy(), 
+            prior_weights = self.vae.module.prior.weights.detach().cpu().numpy(), 
             savedir = self.model_dir + f"/realtime_plots/{dataset_string}/prior",
             epoch = self.epoch,
             **kwargs)

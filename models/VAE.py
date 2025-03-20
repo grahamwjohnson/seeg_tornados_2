@@ -9,7 +9,7 @@ from torchinfo import summary
 # Local imports
 from .Transformer import ModelArgs, Transformer, RMSNorm
 from utilities.loss_functions import adversarial_loss_function
-from utilities.loss_functions import mog_loss
+from utilities.loss_functions import gmvae_kl_loss
 import torch.distributions as dist
 
 '''
@@ -17,50 +17,96 @@ import torch.distributions as dist
 2023-2025 
 
 '''
-
 class MoGPrior(nn.Module):
-    def __init__(self, K, D, **kwargs):
+    def __init__(self, K, latent_dim):
         """
         Mixture of Gaussians (MoG) prior.
-        K: Number of components
-        D: Latent space dimensionality
+        Inputs:
+            K: Number of mixture components.
+            latent_dim: Dimensionality of the latent space.
         """
         super(MoGPrior, self).__init__()
-        self.K = K  # Number of mixture components
-        self.D = D  # Latent dimension
+        self.K = K
+        self.latent_dim = latent_dim
 
         # Initialize means, logvars, and weights
-        self.means = nn.Parameter(torch.randn(K, D))  # Shape: (K, D)
-        self.logvars = nn.Parameter(torch.zeros(K, D))  # Shape: (K, D)
-        self.weights = nn.Parameter(torch.ones(K) / K)  # Shape: (K,)
+        self.means = nn.Parameter(torch.randn(K, latent_dim))  # [K, latent_dim]
+        self.logvars = nn.Parameter(torch.zeros(K, latent_dim))  # [K, latent_dim]
+        self.weights = nn.Parameter(torch.ones(K) / K)  # [K]
 
-    def forward(self, z):
-        """
-        Compute the log probability of z under the MoG prior.
-        z: Latent variable, shape (batch_size, D)
-        """
-        # Expand z to (batch_size, K, D) for broadcasting
-        z = z.unsqueeze(1)  # Shape: (batch_size, 1, D)
-        z = z.expand(-1, self.K, -1)  # Shape: (batch_size, K, D)
+    # def forward(self, z):
+    #     """
+    #     Compute the log probability of z under the MoG prior.
+    #     Inputs:
+    #         z: [B, latent_dim] - Latent variable.
+    #     Outputs:
+    #         log_prob: [B] - Log probability of z under the MoG prior.
+    #     """
+    #     B = z.shape[0]
 
-        # Compute log probability for each component
-        log_probs = -0.5 * (
-            self.logvars +
-            torch.pow(z - self.means, 2) / torch.exp(self.logvars) +
-            self.D * torch.log(2 * torch.tensor(torch.pi))
-        )  # Shape: (batch_size, K, D)
+    #     # Expand z to [B, K, latent_dim] for broadcasting
+    #     z = z.unsqueeze(1)  # [B, 1, latent_dim]
+    #     z = z.expand(-1, self.K, -1)  # [B, K, latent_dim]
 
-        # Sum over dimensions to get log probability per component
-        log_probs = log_probs.sum(dim=-1)  # Shape: (batch_size, K)
+    #     # Compute log probability for each component
+    #     log_probs = -0.5 * (
+    #         self.logvars +
+    #         torch.pow(z - self.means, 2) / torch.exp(self.logvars) +
+    #         self.latent_dim * torch.log(2 * torch.tensor(torch.pi))
+    #     ).mean(dim=-1)  # [B, K]
 
-        # Add log weights and compute log mixture probability
-        log_mixture_probs = torch.log_softmax(self.weights, dim=0)  # Shape: (K,)
-        log_probs = log_probs + log_mixture_probs.unsqueeze(0)  # Shape: (batch_size, K)
+    #     # Add log weights and compute log mixture probability
+    #     log_mixture_probs = torch.log_softmax(self.weights, dim=0)  # [K]
+    #     log_probs = log_probs + log_mixture_probs.unsqueeze(0)  # [B, K]
 
-        # Log-sum-exp to get the log probability of the mixture
-        log_prob = torch.logsumexp(log_probs, dim=1)  # Shape: (batch_size,)
+    #     # Log-sum-exp to get the log probability of the mixture
+    #     log_prob = torch.logsumexp(log_probs, dim=1)  # [B]
 
-        return log_prob
+    #     return log_prob
+
+# class MoGPrior(nn.Module):
+#     def __init__(self, K, D, **kwargs):
+#         """
+#         Mixture of Gaussians (MoG) prior.
+#         K: Number of components
+#         D: Latent space dimensionality
+#         """
+#         super(MoGPrior, self).__init__()
+#         self.K = K  # Number of mixture components
+#         self.D = D  # Latent dimension
+
+#         # Initialize means, logvars, and weights
+#         self.means = nn.Parameter(torch.randn(K, D))  # Shape: (K, D)
+#         self.logvars = nn.Parameter(torch.zeros(K, D))  # Shape: (K, D)
+#         self.weights = nn.Parameter(torch.ones(K) / K)  # Shape: (K,)
+
+#     def forward(self, z):
+#         """
+#         Compute the log probability of z under the MoG prior.
+#         z: Latent variable, shape (batch_size, D)
+#         """
+#         # Expand z to (batch_size, K, D) for broadcasting
+#         z = z.unsqueeze(1)  # Shape: (batch_size, 1, D)
+#         z = z.expand(-1, self.K, -1)  # Shape: (batch_size, K, D)
+
+#         # Compute log probability for each component
+#         log_probs = -0.5 * (
+#             self.logvars +
+#             torch.pow(z - self.means, 2) / torch.exp(self.logvars) +
+#             self.D * torch.log(2 * torch.tensor(torch.pi))
+#         )  # Shape: (batch_size, K, D)
+
+#         # Sum over dimensions to get log probability per component
+#         log_probs = log_probs.sum(dim=-1)  # Shape: (batch_size, K)
+
+#         # Add log weights and compute log mixture probability
+#         log_mixture_probs = torch.log_softmax(self.weights, dim=0)  # Shape: (K,)
+#         log_probs = log_probs + log_mixture_probs.unsqueeze(0)  # Shape: (batch_size, K)
+
+#         # Log-sum-exp to get the log probability of the mixture
+#         log_prob = torch.logsumexp(log_probs, dim=1)  # Shape: (batch_size,)
+
+#         return log_prob
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -349,6 +395,9 @@ class VAE(nn.Module):
         latent_dim, 
         decoder_base_dims,
         mog_components,
+        mean_lims,
+        logvar_lims,
+        gumbel_softmax_temperature,
         gpu_id=None,  
         **kwargs):
 
@@ -367,12 +416,14 @@ class VAE(nn.Module):
         self.latent_dim = latent_dim 
         self.decoder_base_dims = decoder_base_dims
         self.mog_components = mog_components
+        self.mean_lims = mean_lims
+        self.logvar_lims = logvar_lims
+        self.temperature = gumbel_softmax_temperature
 
         # Prior
         self.prior = MoGPrior(
             K = self.mog_components,
-            D = self.latent_dim,
-            **kwargs)
+            latent_dim = self.latent_dim)
 
         # Raw CrossAttention Head
         self.encoder_head = Encoder_TimeSeriesWithCrossAttention(
@@ -433,8 +484,23 @@ class VAE(nn.Module):
             mean, logvar, mogpreds = self.mean_encode_layer(y), self.logvar_encode_layer(y), self.mogpreds_layer(y)
             mean = mean.view(-1, self.transformer_seq_length, self.mog_components, self.latent_dim)
             logvar = logvar.view(-1,self.transformer_seq_length, self.mog_components, self.latent_dim)
+
+            # Apply constrtains to logvar
+            logvar = F.tanh(logvar) * self.logvar_lims
+            mean = F.tanh(mean) * self.mean_lims
+
+            # Now sample z
+            mean_pseudobatch = mean.reshape(mean.shape[0]*mean.shape[1], mean.shape[2], mean.shape[3])
+            logvar_pseudobatch = logvar.reshape(logvar.shape[0]*logvar.shape[1], logvar.shape[2], logvar.shape[3])
+            mogpreds_pseudobatch = mogpreds.reshape(mogpreds.shape[0]*mogpreds.shape[1], mogpreds.shape[2])
+
+            # Softmax the mogpreds for later use
+            mogpreds_pseudobatch_softmax = torch.softmax(mogpreds_pseudobatch, dim=-1) 
+
+            # Z is clipped
+            z_pseudobatch = self.sample_z(mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, gumbel_softmax_temperature=self.temperature)
             
-            return mean, logvar, mogpreds, attW
+            return z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch_softmax, attW
 
         elif reverse == True:
 
@@ -445,6 +511,37 @@ class VAE(nn.Module):
             y = self.decoder(y).transpose(2,3)  # Comes out as [batch, token, waveform, num_channels] --> [batch, token, num_channels, waveform]
 
             return y
+
+    def sample_z(self, encoder_means, encoder_logvars, encoder_mogpreds, gumbel_softmax_temperature):
+        """
+        Sample z from the posterior using the Gumbel-Softmax trick and reparameterization.
+        
+        encoder_means: [batch, components, latent_dim] - Posterior means for each MoG component.
+        encoder_logvars: [batch, components, latent_dim] - Posterior logvars for each MoG component.
+        encoder_mogpreds: [batch, components] - Component logits for the MoG posterior.
+        gumbel_softmax_temperature: Temperature for Gumbel-Softmax.
+        
+        Returns:
+            z: [batch, latent_dim] - Sampled latent variable.
+        """
+        # Step 1: Gumbel-Softmax for differentiable component selection
+        gumbel_noise = -torch.log(-torch.log(torch.rand_like(encoder_mogpreds)))
+        logits = (encoder_mogpreds + gumbel_noise) / gumbel_softmax_temperature  # Scale by temperature
+        log_component_weights = F.log_softmax(logits, dim=-1)  # [batch, components]
+        component_weights = torch.exp(log_component_weights)  # [batch, components]
+
+        # Step 2: Select the means and logvars for the selected component
+        selected_means = torch.sum(encoder_means * component_weights.unsqueeze(-1), dim=1)  # [batch, latent_dim]
+        selected_logvars = torch.sum(encoder_logvars * component_weights.unsqueeze(-1), dim=1)  # [batch, latent_dim]
+
+        # Step 3: Reparameterization trick to sample z from the selected Gaussian component
+        eps = torch.randn_like(selected_means)
+        z = selected_means + eps * torch.exp(0.5 * selected_logvars)  # [batch, latent_dim]
+
+        # Step 4: Clamp to ensure stability
+        z = torch.clamp(z, min=-self.mean_lims, max=self.mean_lims)
+
+        return z
 
 def print_models_flow(x, **kwargs):
     '''
@@ -461,21 +558,30 @@ def print_models_flow(x, **kwargs):
     # Run through Encoder
     print(f"INPUT TO <ENC>\n"
     f"x:{x.shape}")
-    mean, logvar, mogpreds, attW = vae(x, reverse=False)  
+    z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, attW = vae(x, reverse=False)  
     summary(vae, input_size=(x.shape), depth=999, device="cpu")
     print(
-    f"mean:{mean.shape}\n"
-    f"logvar:{logvar.shape}\n"
-    f"mogpreds:{mogpreds.shape}\n"
+    f"z_pseudobatch:{z_pseudobatch.shape}\n",
+    f"mean_pseudobatch:{mean_pseudobatch.shape}\n"
+    f"logvar_pseudobatch:{logvar_pseudobatch.shape}\n"
+    f"mogpreds_pseudobatch:{mogpreds_pseudobatch.shape}\n"
     f"attW:{attW.shape}\n")
 
-    reg_loss, z_token = mog_loss(
-        encoder_means=mean, 
-        encoder_logvars=logvar, 
-        encoder_mogpreds=mogpreds,
-        mog_prior=vae.prior, 
+    reg_loss = gmvae_kl_loss(
+        z = z_pseudobatch,
+        encoder_means=mean_pseudobatch, 
+        encoder_logvars=logvar_pseudobatch, 
+        encoder_mogpreds=mogpreds_pseudobatch, 
+        prior_means=vae.prior.means, 
+        prior_logvars=vae.prior.logvars, 
+        prior_weights=vae.prior.weights, 
         weight=1,
         **kwargs)
+    
+    print(reg_loss)
+
+    z_token = z_pseudobatch.split(kwargs['transformer_seq_length'], dim=0)
+    z_token = torch.stack(z_token, dim=0)
 
     # CLASSIFIER - on the mean of Z tokens
     z_meaned = torch.mean(z_token, dim=1)
