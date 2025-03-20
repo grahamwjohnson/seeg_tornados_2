@@ -28,85 +28,12 @@ class MoGPrior(nn.Module):
         super(MoGPrior, self).__init__()
         self.K = K
         self.latent_dim = latent_dim
+        initial_logvar = -2
 
         # Initialize means, logvars, and weights
         self.means = nn.Parameter(torch.randn(K, latent_dim))  # [K, latent_dim]
-        self.logvars = nn.Parameter(torch.zeros(K, latent_dim))  # [K, latent_dim]
+        self.logvars = nn.Parameter(torch.ones(K, latent_dim) * initial_logvar)  # [K, latent_dim]
         self.weights = nn.Parameter(torch.ones(K) / K)  # [K]
-
-    # def forward(self, z):
-    #     """
-    #     Compute the log probability of z under the MoG prior.
-    #     Inputs:
-    #         z: [B, latent_dim] - Latent variable.
-    #     Outputs:
-    #         log_prob: [B] - Log probability of z under the MoG prior.
-    #     """
-    #     B = z.shape[0]
-
-    #     # Expand z to [B, K, latent_dim] for broadcasting
-    #     z = z.unsqueeze(1)  # [B, 1, latent_dim]
-    #     z = z.expand(-1, self.K, -1)  # [B, K, latent_dim]
-
-    #     # Compute log probability for each component
-    #     log_probs = -0.5 * (
-    #         self.logvars +
-    #         torch.pow(z - self.means, 2) / torch.exp(self.logvars) +
-    #         self.latent_dim * torch.log(2 * torch.tensor(torch.pi))
-    #     ).mean(dim=-1)  # [B, K]
-
-    #     # Add log weights and compute log mixture probability
-    #     log_mixture_probs = torch.log_softmax(self.weights, dim=0)  # [K]
-    #     log_probs = log_probs + log_mixture_probs.unsqueeze(0)  # [B, K]
-
-    #     # Log-sum-exp to get the log probability of the mixture
-    #     log_prob = torch.logsumexp(log_probs, dim=1)  # [B]
-
-    #     return log_prob
-
-# class MoGPrior(nn.Module):
-#     def __init__(self, K, D, **kwargs):
-#         """
-#         Mixture of Gaussians (MoG) prior.
-#         K: Number of components
-#         D: Latent space dimensionality
-#         """
-#         super(MoGPrior, self).__init__()
-#         self.K = K  # Number of mixture components
-#         self.D = D  # Latent dimension
-
-#         # Initialize means, logvars, and weights
-#         self.means = nn.Parameter(torch.randn(K, D))  # Shape: (K, D)
-#         self.logvars = nn.Parameter(torch.zeros(K, D))  # Shape: (K, D)
-#         self.weights = nn.Parameter(torch.ones(K) / K)  # Shape: (K,)
-
-#     def forward(self, z):
-#         """
-#         Compute the log probability of z under the MoG prior.
-#         z: Latent variable, shape (batch_size, D)
-#         """
-#         # Expand z to (batch_size, K, D) for broadcasting
-#         z = z.unsqueeze(1)  # Shape: (batch_size, 1, D)
-#         z = z.expand(-1, self.K, -1)  # Shape: (batch_size, K, D)
-
-#         # Compute log probability for each component
-#         log_probs = -0.5 * (
-#             self.logvars +
-#             torch.pow(z - self.means, 2) / torch.exp(self.logvars) +
-#             self.D * torch.log(2 * torch.tensor(torch.pi))
-#         )  # Shape: (batch_size, K, D)
-
-#         # Sum over dimensions to get log probability per component
-#         log_probs = log_probs.sum(dim=-1)  # Shape: (batch_size, K)
-
-#         # Add log weights and compute log mixture probability
-#         log_mixture_probs = torch.log_softmax(self.weights, dim=0)  # Shape: (K,)
-#         log_probs = log_probs + log_mixture_probs.unsqueeze(0)  # Shape: (batch_size, K)
-
-#         # Log-sum-exp to get the log probability of the mixture
-#         log_prob = torch.logsumexp(log_probs, dim=1)  # Shape: (batch_size,)
-
-#         return log_prob
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -263,17 +190,8 @@ class Decoder_MLP(nn.Module):
             RMSNorm(decoder_base_dims * decode_samples),
             nn.Linear(decoder_base_dims * decode_samples, decoder_base_dims * decode_samples),
             nn.SiLU(),
-            RMSNorm(decoder_base_dims * decode_samples),
-            # nn.Linear(decoder_base_dims * decode_samples * 2, decoder_base_dims * decode_samples * 4),
-            # nn.SiLU(),
-            # RMSNorm(decoder_base_dims * decode_samples * 4),
-            # nn.Linear(decoder_base_dims * decode_samples * 4, decoder_base_dims * decode_samples * 4),
-            # nn.SiLU(),
-            # RMSNorm(decoder_base_dims * decode_samples * 4),
-            # nn.Linear(decoder_base_dims * decode_samples * 4, decoder_base_dims * decode_samples * 4),
-            # nn.SiLU(),
-            # RMSNorm(decoder_base_dims * decode_samples * 4)
-            )        
+            RMSNorm(decoder_base_dims * decode_samples))
+                
         # Now FC without norms, after reshaping so that each token is seperated
         self.non_autoregressive_output = nn.Sequential(
             nn.Linear(decoder_base_dims, output_channels),
@@ -485,9 +403,9 @@ class VAE(nn.Module):
             mean = mean.view(-1, self.transformer_seq_length, self.mog_components, self.latent_dim)
             logvar = logvar.view(-1,self.transformer_seq_length, self.mog_components, self.latent_dim)
 
-            # Apply constrtains to logvar
-            logvar = F.tanh(logvar) * self.logvar_lims
-            mean = F.tanh(mean) * self.mean_lims
+            # Apply constrtains to mean/logvar
+            mean = torch.clamp(mean, min=self.mean_lims[0], max=self.mean_lims[1])
+            logvar = torch.clamp(logvar, min=self.logvar_lims[0], max=self.logvar_lims[1])
 
             # Now sample z
             mean_pseudobatch = mean.reshape(mean.shape[0]*mean.shape[1], mean.shape[2], mean.shape[3])
@@ -497,7 +415,7 @@ class VAE(nn.Module):
             # Softmax the mogpreds for later use
             mogpreds_pseudobatch_softmax = torch.softmax(mogpreds_pseudobatch, dim=-1) 
 
-            # Z is clipped
+            # Z is clipped for stability
             z_pseudobatch = self.sample_z(mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, gumbel_softmax_temperature=self.temperature)
             
             return z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch_softmax, attW
@@ -539,7 +457,7 @@ class VAE(nn.Module):
         z = selected_means + eps * torch.exp(0.5 * selected_logvars)  # [batch, latent_dim]
 
         # Step 4: Clamp to ensure stability
-        z = torch.clamp(z, min=-self.mean_lims, max=self.mean_lims)
+        z = torch.clamp(z, min=self.mean_lims[0], max=self.mean_lims[1])
 
         return z
 

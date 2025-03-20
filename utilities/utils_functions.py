@@ -644,7 +644,7 @@ def plot_prior(prior_means, prior_logvars, prior_weights, savedir, epoch, **kwar
     pl.savefig(savename_jpg)
     plt.close()
 
-def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, encoder_mogpreds_softmax, encoder_zmeaned, savedir, epoch, num_accumulated_plotting_dims=5, n_bins=200, **kwargs):
+def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, num_accumulated_plotting_dims=5, n_bins=200, **kwargs):
     """
     Plot distributions of encoder statistics across MoG components using histograms.
     Compares encoder statistics with MoG prior state and includes encoder_zmeaned visualization.
@@ -657,7 +657,7 @@ def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_mea
         prior_weights: MoG prior weights, shape (K,)
         encoder_means: Encoder means, shape (Batch, K, D)
         encoder_logvars: Encoder log-variances, shape (Batch, K, D)
-        encoder_mogpreds_softmax: Encoder MoG predictions, shape (Batch, K)
+        encoder_mogpreds: Encoder MoG predictions, shape (Batch, K)
         encoder_zmeaned: Aggregated latent representation, shape (Batch, D)
         savedir: Directory to save the plots
         epoch: Current epoch
@@ -673,14 +673,14 @@ def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_mea
     assert prior_weights.shape == (K,), f"prior_weights must have shape (K,), but got {prior_weights.shape}"
     assert encoder_means.shape == (Batch, K, D), f"encoder_means must have shape (Batch, K, D), but got {encoder_means.shape}"
     assert encoder_logvars.shape == (Batch, K, D), f"encoder_logvars must have shape (Batch, K, D), but got {encoder_logvars.shape}"
-    assert encoder_mogpreds_softmax.shape == (Batch, K), f"encoder_mogpreds_softmax must have shape (Batch, K), but got {encoder_mogpreds_softmax.shape}"
+    assert encoder_mogpreds.shape == (Batch, K), f"encoder_mogpreds must have shape (Batch, K), but got {encoder_mogpreds.shape}"
     assert encoder_zmeaned.shape == (Batch, D), f"encoder_zmeaned must have shape (Batch, D), but got {encoder_zmeaned.shape}"
     assert num_accumulated_plotting_dims <= D, f"num_accumulated_plotting_dims ({num_accumulated_plotting_dims}) cannot exceed latent dimension D ({D})"
 
     # Flatten the batch dimension to treat all batches as a single dataset
     encoder_means_flat = encoder_means.reshape(-1, K, D)  # Shape: (Batch, K, D) -> (Batch * 1, K, D)
     encoder_logvars_flat = encoder_logvars.reshape(-1, K, D)  # Shape: (Batch, K, D) -> (Batch * 1, K, D)
-    encoder_mogpreds_softmax_flat = encoder_mogpreds_softmax.reshape(-1, K)  # Shape: (Batch, K) -> (Batch * 1, K)
+    encoder_mogpreds_flat = encoder_mogpreds.reshape(-1, K)  # Shape: (Batch, K) -> (Batch * 1, K)
     encoder_zmeaned_flat = encoder_zmeaned.reshape(-1, D)  # Shape: (Batch, D) -> (Batch * 1, D)
 
     # Create a figure with subplots
@@ -747,7 +747,7 @@ def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_mea
     # Span all columns for the MoG predictions plot
     ax = fig.add_subplot(4, 1, 3)  # Span all columns in row 3
     for k in range(K):
-        ax.hist(encoder_mogpreds_softmax_flat[:, k], bins=n_bins, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
+        ax.hist(encoder_mogpreds_flat[:, k], bins=n_bins, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
     ax.set_title(f'Encoder MoG Predictions - Color is MoG Component')
     ax.set_xlabel('Weight Value')
     ax.set_ylabel('Frequency')
@@ -769,12 +769,12 @@ def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_mea
     plt.savefig(savename_jpg)
     plt.close(fig)
 
-def print_patmogweights_realtime(mogpreds_softmax, patidxs, savedir, epoch, iter_curr, **kwargs):
+def print_patmogweights_realtime(mogpreds, patidxs, savedir, epoch, iter_curr, **kwargs):
     """
     Plot stacked bar plots for MoG weights, colored by patient proportions.
 
     Args:
-        mogpreds_softmax (np.ndarray): Softmaxed MoG weights, shape (num_samples, num_components).
+        mogpreds (np.ndarray): Softmaxed MoG weights, shape (num_samples, num_components).
         patidxs (np.ndarray): Patient indices (class labels), shape (num_samples,).
         savedir (str): Directory to save the plot.
         epoch (int): Current epoch.
@@ -785,13 +785,13 @@ def print_patmogweights_realtime(mogpreds_softmax, patidxs, savedir, epoch, iter
 
     # Get unique patient indices and MoG components
     unique_patidxs = np.unique(patidxs)
-    num_components = mogpreds_softmax.shape[1]
+    num_components = mogpreds.shape[1]
 
     # Accumulate MoG weights for each component, grouped by patient
     component_sums = np.zeros((num_components, len(unique_patidxs)))
     for i, patidx in enumerate(unique_patidxs):
         mask = (patidxs == patidx)
-        component_sums[:, i] = np.sum(mogpreds_softmax[mask], axis=0)
+        component_sums[:, i] = np.sum(mogpreds[mask], axis=0)
 
     # Sort patients by their total contribution (largest at the top)
     sorted_indices = np.argsort(np.sum(component_sums, axis=0))[::-1]  # Reverse the order
@@ -820,7 +820,7 @@ def print_patmogweights_realtime(mogpreds_softmax, patidxs, savedir, epoch, iter
     # Customize the plot
     ax.set_xlabel("MoG Component")
     ax.set_ylabel("Sum of MoG Weights")
-    ax.set_title(f"MoG Component Weights by Patient (Epoch {epoch}, Iter {iter_curr}) - {mogpreds_softmax.shape[0]} Embeddings")
+    ax.set_title(f"MoG Component Weights by Patient (Epoch {epoch}, Iter {iter_curr}) - {mogpreds.shape[0]} Embeddings")
     ax.set_xticks(range(num_components))
     ax.set_xticklabels([f"Comp {i}" for i in range(num_components)])
     # ax.legend(title="Patient ID", bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -831,7 +831,7 @@ def print_patmogweights_realtime(mogpreds_softmax, patidxs, savedir, epoch, iter
     pl.savefig(savename_jpg)
     pl.close(fig)
 
-def print_latent_realtime(mean, logvar, mogpreds_softmax, prior_means, prior_logvars, prior_weights, savedir, epoch, iter_curr, n_bins=35, mean_lims=5, logvar_lims=5, **kwargs):
+def print_latent_realtime(mean, logvar, mogpreds, prior_means, prior_logvars, prior_weights, savedir, epoch, iter_curr,  mean_lims, logvar_lims, n_bins=35, **kwargs):
     """
     Plot re-sampled weighted means, logvars, and average MoG weights at the token level for the first 5 dimensions.
     Aggregates tokens across all batches, with separate histograms for each batch index.
@@ -840,7 +840,7 @@ def print_latent_realtime(mean, logvar, mogpreds_softmax, prior_means, prior_log
     Args:
         mean: Encoder means, shape (batch_size, T, K, D)
         logvar: Encoder log-variances, shape (batch_size, T, K, D)
-        mogpreds_softmax: MoG component probabilities, shape (batch_size, T, K)
+        mogpreds: MoG component probabilities, shape (batch_size, T, K)
         prior_means: MoG prior means, shape (K, D)
         prior_logvars: MoG prior log-variances, shape (K, D)
         prior_weights: MoG prior weights, shape (K,)
@@ -856,24 +856,24 @@ def print_latent_realtime(mean, logvar, mogpreds_softmax, prior_means, prior_log
     weighted_mean = np.zeros((batch_size, T, D))  # Shape: (batch_size, T, D)
     weighted_logvar = np.zeros((batch_size, T, D))  # Shape: (batch_size, T, D)
 
-    assert np.min(weighted_mean) > -mean_lims, f"got mean of {np.min(weighted_mean)}, which is lower than stated limit of {-mean_lims}"
-    assert np.max(weighted_mean) < mean_lims,  f"got mean of {np.max(weighted_mean)}, which is higher than stated limit of {mean_lims}"
-    assert np.min(weighted_logvar) > -logvar_lims, f"got logvar of {np.min(weighted_logvar)}, which is lower than stated limit of {-logvar_lims}"
-    assert np.max(weighted_logvar) < logvar_lims, f"got logvar of {np.max(weighted_logvar)}, which is higher than stated limit of {logvar_lims}"
+    assert np.min(weighted_mean) > mean_lims[0], f"got mean of {np.min(weighted_mean)}, which is lower than stated limit of {mean_lims[0]}"
+    assert np.max(weighted_mean) < mean_lims[1],  f"got mean of {np.max(weighted_mean)}, which is higher than stated limit of {mean_lims[1]}"
+    assert np.min(weighted_logvar) > logvar_lims[0], f"got logvar of {np.min(weighted_logvar)}, which is lower than stated limit of {logvar_lims[0]}"
+    assert np.max(weighted_logvar) < logvar_lims[1], f"got logvar of {np.max(weighted_logvar)}, which is higher than stated limit of {logvar_lims[1]}"
 
     for b in range(batch_size):
         for t in range(T):
             # Sample a component index based on MoG probabilities
-            component_idx = np.random.choice(K, p=mogpreds_softmax[b, t])
+            component_idx = np.random.choice(K, p=mogpreds[b, t])
             # Use the sampled component's mean and logvar
             weighted_mean[b, t] = mean[b, t, component_idx]
             weighted_logvar[b, t] = logvar[b, t, component_idx]
 
     # Compute the average MoG weights across all tokens for each batch
-    avg_mogpreds_softmax = np.mean(mogpreds_softmax, axis=1)  # Shape: (batch_size, K)
+    avg_mogpreds = np.mean(mogpreds, axis=1)  # Shape: (batch_size, K)
 
     # Compute the 95% confidence intervals for the MoG weights
-    ci_mogpreds_softmax = 1.96 * np.std(mogpreds_softmax, axis=1) / np.sqrt(T)  # Shape: (batch_size, K)
+    ci_mogpreds = 1.96 * np.std(mogpreds, axis=1) / np.sqrt(T)  # Shape: (batch_size, K)
 
     # Plot the first 5 dimensions
     num_dims = min(5, D)
@@ -952,9 +952,9 @@ def print_latent_realtime(mean, logvar, mogpreds_softmax, prior_means, prior_log
             ax3 = plt.subplot2grid((num_dims, 7), (d, 2), colspan=5, rowspan=num_dims)
             for b in range(batch_size):
                 # Plot bars with error bars
-                bar = ax3.bar(np.arange(K) + 0.1 * b, avg_mogpreds_softmax[b], width=0.1, alpha=0.4, 
+                bar = ax3.bar(np.arange(K) + 0.1 * b, avg_mogpreds[b], width=0.1, alpha=0.4, 
                               color=batch_colors[b])
-                ax3.errorbar(np.arange(K) + 0.1 * b, avg_mogpreds_softmax[b], yerr=ci_mogpreds_softmax[b], fmt='none', 
+                ax3.errorbar(np.arange(K) + 0.1 * b, avg_mogpreds[b], yerr=ci_mogpreds[b], fmt='none', 
                              ecolor='darkgray', capsize=3, capthick=1, elinewidth=1)
             ax3.set_title(f'Average MoG Weights (Across Tokens) with 95% CI\nToken-Level MoG-Weighted Means & Logvars: Single Forward Passes')
             ax3.set_xlabel('MoG Component')
@@ -2241,7 +2241,7 @@ def initialize_directories(
         kwargs['running_mean_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_means.pkl'
         kwargs['running_logvar_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_logvars.pkl'
         kwargs['running_zmeaned_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_zmeaned.pkl'
-        kwargs['running_mogpreds_softmax_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_mogpreds_softmax.pkl' 
+        kwargs['running_mogpreds_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_mogpreds.pkl' 
         kwargs['running_patidxs_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_patidxs.pkl' 
 
         # Set the start epoch 1 greater than max trained

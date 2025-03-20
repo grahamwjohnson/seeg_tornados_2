@@ -60,9 +60,9 @@ hidden_dims: 4096 # 4096
 latent_dim: 4096 # 2048
 decoder_base_dims: 512 # top dim of decoder is [encode_token_samples * decoder_base_dims]
 hash_output_range: kwargs['hash_output_range'] = (-2, 2)  # tuple, modify based on approximate range of prior
-recon_weight: 0 # 3
-LR_max_core: kwargs['LR_max_core'] = 1e-5 # 5e-7
-LR_min_core: kwargs['LR_min_core'] = 1e-5 # 1e-8 
+recon_weight: 3 # 3 means that meaningful recon usually starts when recon loss is below 0.5
+LR_max_core: kwargs['LR_max_core'] = 5e-7 # 5e-7
+LR_min_core: kwargs['LR_min_core'] = 5e-7 # 1e-8 
 LR_epochs_TO_max_core: 1
 LR_epochs_AT_max_core: 1
 manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
@@ -75,10 +75,10 @@ adamW_beta2: 0.95
 mog_components: 4 # Softmax sampling of components with gumbel-softmax trick
 mogpred_hidden_dim_list: [2048, 1024, 512] # Top should probably be same/smaller than hidden dim of encoder, bottom bigger than mog_components
 mog_predictor_dropout: 0.1
-mean_lims: 5 #[-5,5]
-logvar_lims: 5 # [-5,5]
+mean_lims: [-5, 5] 
+logvar_lims: [-5, 1] 
 gumbel_softmax_temperature: kwargs['gumbel_softmax_temperature'] = 2 # Higher means softer assignment to MoG, more exploratin of latent space, noisier embeddings
-mogpreds_entropy_weight_max: kwargs['mogpreds_entropy_weight_max'] = 0 # Encourages overall mogpreds to to be uniform
+mogpreds_entropy_weight_max: kwargs['mogpreds_entropy_weight_max'] = 0.01 # Encourages overall mogpreds to to be uniform
 mogpreds_entropy_weight_min: kwargs['mogpreds_entropy_weight_min'] = 0 # Encourages overall mogpreds to to be uniform
 mogpreds_entropy_weight_taper_epochs: 5 # Encourages overall mogpreds to to be uniform
 mogpreds_consistency_weight: kwargs['mogpreds_consistency_weight'] = 1 # Encourgaes tokens within same sequence to map to same place in universe
@@ -87,11 +87,11 @@ entropy_weight: kwargs['entropy_weight'] = 1e-6 # Helps prevent mode collapse in
 repulsion_weight: kwargs['repulsion_weight'] = 1 # Helps keep centers of PRIOR guassians far apart, need to scale with number of MoG components 
 random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
 random_observed_numplots: 4 # On the end of epoch plot
-Reg_max: kwargs['Reg_max'] = 1e5 # Nightcrawler 5e2 
+Reg_max: kwargs['Reg_max'] = 1e-1 # Nightcrawler 5e2 
 Reg_min: kwargs['Reg_min'] = 0
 Reg_stall_epochs: 0 # Min Reg weight rise until stall is complete
-Reg_epochs_AT_max: 99999 # Maybe coincide with the wasserstein order switch epoch?
-Reg_epochs_TO_max: 0
+Reg_epochs_AT_max: 10 # Maybe coincide with the wasserstein order switch epoch?
+Reg_epochs_TO_max: 10
 
 # CLASSIFIER - Adversarial
 # Not currently being integrated in backprop (beyond the classifer weights themselves, i.e. reverse gradient alpha is 0)

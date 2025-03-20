@@ -16,33 +16,36 @@ def gmvae_kl_loss(z, encoder_means, encoder_logvars, encoder_mogpreds, prior_mea
         encoder_logvars (Tensor): Log variances of the Gaussian mixture components (batch, mog_component, latent_dimension).
         encoder_mogpreds (Tensor): Mixture probabilities (already softmaxed) (batch, mog_component).
         prior_means (Tensor): Means of the prior Gaussian components (mog_component, latent_dimension).
-        prior_logvars (Tensor): Log variances of the prior Gaussian components (mog_component, latent_dimension).
+        prior_logvars (Tensor): Log variances of the prior Gaussian components (mog_component).
         prior_weights (Tensor): Mixture weights of the prior distribution (mog_component).
 
     Returns:
         kl_loss (Tensor): KL divergence loss term.
     """
+    batch_size, mog_component, latent_dim = encoder_means.shape
+
     # Expand z to align with encoder_means and encoder_logvars
     z = z.unsqueeze(1)  # Reshape z to (batch, 1, latent_dimension)
 
-    # Compute the encoder log probability for each mixture component
+    # Compute log probability of z under encoder components
     log_prob_encoder = -0.5 * (encoder_logvars + (z - encoder_means) ** 2 / encoder_logvars.exp())
-    log_prob_encoder = log_prob_encoder.sum(dim=2)  # Sum over the latent dimensions (batch, mog_component)
+    log_prob_encoder = log_prob_encoder.mean(dim=2)  # Sum over the latent dimensions (batch, mog_component)
 
-    # Compute the prior log probability for each mixture component
-    prior_means = prior_means.unsqueeze(0)  # Add batch dimension to prior_means (1, mog_component, latent_dimension)
-    prior_logvars = prior_logvars.unsqueeze(0)  # Add batch dimension to prior_logvars (1, mog_component, latent_dimension)
+    # Compute log probability of z under prior components
+    prior_means = prior_means.unsqueeze(0)  # (1, mog_component, latent_dimension)
+    prior_logvars = prior_logvars.unsqueeze(0)  # (1, mog_component, latent_dimension)
+    
     log_prob_prior = -0.5 * (prior_logvars + (z - prior_means) ** 2 / prior_logvars.exp())
-    log_prob_prior = log_prob_prior.sum(dim=2)  # Sum over the latent dimensions (batch, mog_component)
-    
-    # Incorporate prior_weights into the prior probabilities
-    log_prior_weights = torch.log(prior_weights + 1e-10)  # Add stability term
-    log_prob_prior += log_prior_weights  # Add log mixture weights to prior log probabilities
-    
-    # Combine mixture probabilities and compute KL divergence
-    kl_divergence = torch.sum(encoder_mogpreds * (log_prob_encoder - log_prob_prior), dim=1)  # KL divergence (batch)
+    log_prob_prior = log_prob_prior.mean(dim=2)  # (batch, mog_component)
 
-    return kl_divergence.mean() * weight # Return the mean KL loss across the batch
+    # Incorporate prior mixture weights
+    log_prior_weights = torch.log(prior_weights + 1e-6)  # Add small value for numerical stability
+    log_prob_prior += log_prior_weights  # (batch, mog_component)
+
+    # Compute KL divergence
+    kl_divergence = torch.sum(encoder_mogpreds * (log_prob_encoder - log_prob_prior), dim=1)  # (batch)
+
+    return kl_divergence.mean() * weight  # Return the mean KL loss across the batch
 
 def mogpreds_intersequence_diversity_loss(mogpreds, mogpreds_diversity_weight, **kwargs):
     """
