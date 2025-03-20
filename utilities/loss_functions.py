@@ -6,6 +6,29 @@ import torch.nn.functional as F
 @author: grahamwjohnson
 '''
 
+def mean_matching_loss(mean_posterior, mean_prior, weight):
+    """
+    Compute the mean-matching loss between posterior and prior means.
+    
+    Args:
+        mean_posterior: Posterior means, shape [batch_size, K, latent_dim].
+        mean_prior: Prior means, shape [K, latent_dim].
+        weight: Weight for the mean-matching loss.
+    
+    Returns:
+        Mean-matching loss (scalar).
+    """
+    
+    # Expand prior means to match the batch size of posterior means
+    batch_size = mean_posterior.size(0)
+    mean_prior_expanded = mean_prior.unsqueeze(0).expand(batch_size, -1, -1)  # Shape: [batch_size, K, latent_dim]
+
+    # Compute mean squared error (MSE) between posterior and prior means
+    loss = F.mse_loss(mean_posterior, mean_prior_expanded, reduction='mean')
+
+    # Apply weight
+    return weight * loss
+
 def logvar_entropy_loss(logvars, weight, **kwargs):
     '''
     Encourages diversity in logvars across all dimensions and MoG components by maximizing entropy.

@@ -219,6 +219,7 @@ def LR_and_weight_schedules(
         classifier_weight, 
         classifier_alpha_max, classifier_alpha_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier, 
+        mean_match_loss_max,
         Sparse_max, Sparse_min, Sparse_epochs_TO_max, Sparse_epochs_AT_max, 
         LR_max_core, LR_min_core, LR_epochs_stall_core, LR_epochs_TO_max_core, LR_epochs_AT_max_core,  manual_gamma_core, manual_step_size_core,
         LR_max_prior, LR_min_prior, LR_epochs_stall_prior, LR_epochs_TO_max_prior, LR_epochs_AT_max_prior,  manual_gamma_prior, manual_step_size_prior,
@@ -239,11 +240,12 @@ def LR_and_weight_schedules(
         LR_val_core = Wasserstein_override_LR
         LR_val_prior = LR_max_prior # Allow prior to shift to fit posterior
         LR_val_cls = 0
-        mogpred_entropy_val = mogpreds_entropy_weight_max * 100 # Want to keep entropy high for MoG predictions during Wasserstein override
+        mean_match_val = mean_match_loss_max
+        mogpred_entropy_val = mogpreds_entropy_weight_max # Want to keep entropy high for MoG predictions during Wasserstein override
         Sparse_val = 0
         classifier_weight = 0
         classifier_val = 0
-        return W_val, Reg_val, LR_val_core, LR_val_prior, LR_val_cls, mogpred_entropy_val, Sparse_val, classifier_weight, classifier_val, logvar_lims_override
+        return mean_match_val, W_val, Reg_val, LR_val_core, LR_val_prior, LR_val_cls, mogpred_entropy_val, Sparse_val, classifier_weight, classifier_val, logvar_lims_override
 
     else: # globally shift in epoch in this function
         epoch = epoch - Wasserstein_override_epochs
@@ -279,6 +281,15 @@ def LR_and_weight_schedules(
         # Ensure W_val is within bounds
         W_val = max(W_val, WassersteinBeta_min)
         assert W_val >= 0, f"Wasserstein weight must be >= 0, got {W_val}"
+
+
+
+
+    # Mean_Match Weight # TODO: implement schedule
+    mean_match_val = mean_match_loss_max
+
+
+
 
 
     # MoG Prediction Entropy TAPER
@@ -385,7 +396,7 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first 
     )
 
-    return W_val, Reg_val, LR_val_core, LR_val_prior, LR_val_cls, mogpred_entropy_val, Sparse_val, classifier_weight, classifier_val, logvar_lims_override
+    return mean_match_val, W_val, Reg_val, LR_val_core, LR_val_prior, LR_val_cls, mogpred_entropy_val, Sparse_val, classifier_weight, classifier_val, logvar_lims_override
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop

@@ -21,7 +21,7 @@ import torch.distributions as dist
 from geomloss import SamplesLoss  # Import GeomLoss for Sinkhorn computation
 
 class MoGPrior(nn.Module):
-    def __init__(self, K, latent_dim, prior_initial_mean_spread, prior_initial_logvar, mean_lims, Wasserstein_order, Wasserstein_Sinkhorn_eps, **kwargs):
+    def __init__(self, K, latent_dim, prior_initial_mean_spread, prior_initial_logvar, mean_lims, Wasserstein_order, Wasserstein_Sinkhorn_eps, gumbel_softmax_temperature, **kwargs):
         """
         Mixture of Gaussians (MoG) prior with Wasserstein stabilization using Sinkhorn loss.
         Inputs:
@@ -38,6 +38,7 @@ class MoGPrior(nn.Module):
         self.Wasserstein_order = Wasserstein_order
         self.sinkhorn_eps = Wasserstein_Sinkhorn_eps
         self.mean_lims = mean_lims
+        self.gumbel_softmax_temperature = gumbel_softmax_temperature
         
         # Uniformly initialize means in the range (-initial_mean_spread, initial_mean_spread)
         prior_means = (torch.rand(K, latent_dim) * 2 * prior_initial_mean_spread) - prior_initial_mean_spread
@@ -50,13 +51,13 @@ class MoGPrior(nn.Module):
         # Define Sinkhorn loss function
         self.sinkhorn_loss = SamplesLoss(loss="sinkhorn", p=self.Wasserstein_order, blur=self.sinkhorn_eps, scaling=0.9, debias=True, backend="tensorized")
 
-    def sample_prior(self, batch_size, gumbel_temp=1.0):
+    def sample_prior(self, batch_size):
         """
         Sample from the MoG prior using Gumbel-Softmax for differentiable component selection.
         
         Inputs:
             batch_size: Number of samples to generate.
-            gumbel_temp: Temperature parameter for Gumbel-Softmax.
+            self.gumbel_softmax_temperature: Temperature parameter for Gumbel-Softmax.
         
         Returns:
             z_prior: Differentiable samples from the MoG prior [batch_size, latent_dim]
@@ -65,7 +66,7 @@ class MoGPrior(nn.Module):
         # Sample Gumbel noise and apply softmax to get soft component selection
         gumbel_noise = -torch.log(-torch.log(torch.rand(batch_size, self.K, device=self.weights.device) + 1e-20) + 1e-20)
         logits = torch.log_softmax(self.weights, dim=0) + gumbel_noise
-        component_probs = F.gumbel_softmax(logits, tau=gumbel_temp, hard=False)  # [batch_size, K], fully differentiable
+        component_probs = F.gumbel_softmax(logits, tau=self.gumbel_softmax_temperature, hard=False)  # [batch_size, K], fully differentiable
 
         # Compute mixture samples using soft probabilities
         chosen_means = torch.matmul(component_probs, self.means)  # [batch_size, latent_dim]
@@ -405,6 +406,7 @@ class GMVAE(nn.Module):
             K = self.mog_components,
             latent_dim = self.latent_dim,
             mean_lims = self.mean_lims,
+            gumbel_softmax_temperature=gumbel_softmax_temperature,
             **kwargs)
 
         # Raw CrossAttention Head
@@ -486,7 +488,7 @@ class GMVAE(nn.Module):
             # Softmax the mogpreds for later use
             mogpreds_pseudobatch_softmax = torch.softmax(mogpreds_pseudobatch, dim=-1) 
 
-            # Z is clipped for stability
+            # Z is not currently constrained 
             z_pseudobatch, _ = self.sample_z(mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, gumbel_softmax_temperature=self.temperature)
             
             return z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch_softmax, attW
@@ -556,9 +558,11 @@ class GMVAE(nn.Module):
         eps = torch.randn_like(selected_means)
         z = selected_means + eps * torch.exp(0.5 * selected_logvars)  # [batch, latent_dim]
 
-        # Step 4: Clamp for stability (optional, depends on your constraints)
-        z = torch.clamp(z, min=self.mean_lims[0], max=self.mean_lims[1])
-
+        # # Step 4: Tanh for stability (optional, depends on your constraints)
+        # mean_scale = (self.mean_lims[1] - self.mean_lims[0]) / 2
+        # mean_shift = (self.mean_lims[0] + self.mean_lims[1]) / 2
+        # z = F.tanh(z) * mean_scale + mean_shift
+        
         return z, component_weights
 
 def print_models_flow(x, **kwargs):

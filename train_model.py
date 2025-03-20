@@ -856,7 +856,7 @@ class Trainer:
             hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
         
             # LR & WEIGHT SCHEDULES
-            self.wasserstein_weight, self.reg_weight, self.curr_LR_core, self.curr_LR_prior, self.curr_LR_cls, self.mogpreds_entropy_weight, self.sparse_weight, self.classifier_weight, self.classifier_alpha, logvar_lims_override = utils_functions.LR_and_weight_schedules(
+            self.mean_match_weight, self.wasserstein_weight, self.reg_weight, self.curr_LR_core, self.curr_LR_prior, self.curr_LR_cls, self.mogpreds_entropy_weight, self.sparse_weight, self.classifier_weight, self.classifier_alpha, logvar_lims_override = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
             if (not val_finetune) & (not val_unseen): 
                 self.opt_gmvae.param_groups[0]['lr'] = self.curr_LR_core
@@ -911,6 +911,11 @@ class Trainer:
                 wasserstein_logvar_entropy_loss = 0
                 self.wasserstein_logvar_entropy_weight = 0
 
+            mean_match_loss = loss_functions.mean_matching_loss(
+                mean_posterior = mean_pseudobatch,
+                mean_prior = self.gmvae.module.prior.means,
+                weight=self.mean_match_weight)
+
             reg_loss = loss_functions.gmvae_kl_loss(
                 z = z_pseudobatch,
                 encoder_means=mean_pseudobatch, 
@@ -947,7 +952,7 @@ class Trainer:
                 labels=file_class_label,
                 classifier_weight=self.classifier_weight)
 
-            loss = wassertstein_loss + wasserstein_logvar_entropy_loss + recon_loss + reg_loss + prior_entropy + prior_repulsion + adversarial_loss + mogpreds_entropy_loss  # mogpreds_intrasequence_consistency_loss
+            loss = mean_match_loss + wassertstein_loss + wasserstein_logvar_entropy_loss + recon_loss + reg_loss + prior_entropy + prior_repulsion + adversarial_loss + mogpreds_entropy_loss  # mogpreds_intrasequence_consistency_loss
 
             # NOT BEING USED
             mogpreds_intrasequence_consistency_loss = loss_functions.mogpreds_intrasequence_consistency_loss(
@@ -1004,6 +1009,8 @@ class Trainer:
                         train_wasserstein_logvar_entropy_weight = self.wasserstein_logvar_entropy_weight,
                         train_recon_loss=recon_loss, 
                         train_reg_loss=reg_loss, 
+                        train_mean_match_loss = mean_match_loss,
+                        train_mean_match_weight = self.mean_match_weight,
                         train_mogpreds_entropy_loss=mogpreds_entropy_loss,
                         train_mogpreds_entropy_weight = self.mogpreds_entropy_weight,
                         train_mogpreds_intrasequence_consistency_loss = mogpreds_intrasequence_consistency_loss,
@@ -1032,6 +1039,8 @@ class Trainer:
                         val_finetune_wasserstein_logvar_entropy_weight = self.wasserstein_logvar_entropy_weight,
                         val_finetune_recon_loss=recon_loss, 
                         val_finetune_reg_loss=reg_loss, 
+                        val_finetune_mean_match_loss = mean_match_loss,
+                        val_finetune_mean_match_weight = self.mean_match_weight,
                         val_finetune_sparse_loss=sparse_loss,
                         val_finetune_LR_gmvae=self.opt_gmvae.param_groups[0]['lr'], 
                         val_finetune_LR_prior=self.opt_gmvae.param_groups[1]['lr'], 
@@ -1052,6 +1061,8 @@ class Trainer:
                         val_unseen_wasserstein_logvar_entropy_weight = self.wasserstein_logvar_entropy_weight,
                         val_unseen_recon_loss=recon_loss, 
                         val_unseen_reg_loss=reg_loss, 
+                        val_unseen_mean_match_loss = mean_match_loss,
+                        val_unseen_mean_match_weight = self.mean_match_weight,
                         val_unseen_sparse_loss=sparse_loss,
                         val_unseen_LR_gmvae=self.opt_gmvae.param_groups[0]['lr'], 
                         val_unseen_LR_prior=self.opt_gmvae.param_groups[1]['lr'],

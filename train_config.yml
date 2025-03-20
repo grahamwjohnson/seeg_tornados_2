@@ -61,8 +61,8 @@ latent_dim: 4096 # 2048
 decoder_base_dims: 512 # top dim of decoder is [encode_token_samples * decoder_base_dims]
 hash_output_range: kwargs['hash_output_range'] = (-2, 2)  # tuple, modify based on approximate range of prior
 recon_weight: 3 # 3 means that meaningful recon usually starts when recon loss is below 0.5
-LR_max_core: kwargs['LR_max_core'] = 1e-7 # 5e-7
-LR_min_core: kwargs['LR_min_core'] = 1e-7 # 1e-8 
+LR_max_core: kwargs['LR_max_core'] = 1e-5 # 5e-7
+LR_min_core: kwargs['LR_min_core'] = 1e-5 # 1e-8 
 LR_epochs_stall_core: 0
 LR_epochs_TO_max_core: 99999
 LR_epochs_AT_max_core: 0
@@ -80,9 +80,9 @@ mean_lims: [-5, 5] # Make sure the prior's mean/logvars make sense with this lim
 logvar_lims: [-3, 1] # Important to cap logvar on high end or KL divergence calculaton itself becomes unstable and will give very negative numbers
 prior_initial_mean_spread: 3  # Uniform (e.g. value of 2 will be uniform [-2, 2])
 prior_initial_logvar: -1 
-gumbel_softmax_temperature: kwargs['gumbel_softmax_temperature'] = 2 # Higher means softer assignment to MoG, more exploratin of latent space, noisier embeddings
-mogpreds_entropy_weight_max: kwargs['mogpreds_entropy_weight_max'] = 0.1 # Encourages overall mogpreds to to be uniform
-mogpreds_entropy_weight_min: kwargs['mogpreds_entropy_weight_min'] = 0.001 # Encourages overall mogpreds to to be uniform
+gumbel_softmax_temperature: kwargs['gumbel_softmax_temperature'] = 1 # Higher means softer assignment to MoG, A relatively low vaue (0.5) seams essential during W2 burn to help the posterior know which 'knobs' below to which component)
+mogpreds_entropy_weight_max: kwargs['mogpreds_entropy_weight_max'] = 0 # Encourages overall mogpreds to to be uniform
+mogpreds_entropy_weight_min: kwargs['mogpreds_entropy_weight_min'] = 0 # Encourages overall mogpreds to to be uniform
 mogpreds_entropy_weight_taper_epochs: 50 # Encourages overall mogpreds to to be uniform
 mogpreds_consistency_weight: kwargs['mogpreds_consistency_weight'] = 1 # Encourgaes tokens within same sequence to map to same place in universe
 mogpreds_diversity_weight: kwargs['mogpreds_diversity_weight'] = 0.5 # Encourages sequences to be far apart from eachother in universe
@@ -111,13 +111,14 @@ adamW_beta2_prior: 0.95
 # This is done with a Sinkhorn approximation of the Wasserstein distance which has a linear loss topology even when distributions are far apart/non-overlapping
 # Also allows encoder/decoder to rapidly get to recon-all-zeros state without posterior collapse
 # KL divergence alone could never do this so rapidly and stably with random posterior weights. 
-Wasserstein_override_epochs: 2 # Completely changes all LR and loss weights to stabilize posterior at beginning of training
-Wasserstein_override_LR: kwargs['Wasserstein_override_LR'] = 1e-7
-WassersteinBeta_max: kwargs['WassersteinBeta_max'] = 1 
-WassersteinBeta_min: kwargs['WassersteinBeta_min'] = 0
-Wassertstein_logvar_lims: [-3,1] # Of posterior, keeps the z_posterior fuzzy so KL doesn't collapse immediately after Wasserstein initialization due to very low logvar_lims, minimum should be about to what prior logvar is initialized 
-Wasserstein_logvar_entropy_weight: kwargs['Wasserstein_logvar_entropy_weight'] = 1 # Encourages logvars of posterior during initiazation to not just concentrate at lower limit of logvar_lims 
+Wasserstein_override_epochs: 1 # Completely changes all LR and loss weights to stabilize posterior at beginning of training
 WassersteinBeta_taper_epochs: 1 # Taper begins after override is complete
+Wasserstein_override_LR: kwargs['Wasserstein_override_LR'] = 1e-5
+WassersteinBeta_max: kwargs['WassersteinBeta_max'] = 10
+WassersteinBeta_min: kwargs['WassersteinBeta_min'] = 0
+mean_match_loss_max: kwargs['mean_match_loss_max'] = 10 # Helps assign componets to correct 'knob' in z_posterior
+Wassertstein_logvar_lims: [0.5, 1] # Of posterior, keeps the z_posterior fuzzy so KL doesn't collapse immediately after Wasserstein initialization due to very low logvar_lims, minimum should be about to what prior logvar is initialized 
+Wasserstein_logvar_entropy_weight: kwargs['Wasserstein_logvar_entropy_weight'] = 0 # Encourages logvars of posterior during initiazation to not just concentrate at lower limit of logvar_lims 
 Wasserstein_Sinkhorn_eps: 0.05 # The blur, should be within magnitude of std of MoG components in prior
 Wasserstein_order: 2 # 1 is EMD (more local structure), 2 is W2-distance (more global structure)
 
