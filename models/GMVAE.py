@@ -3,14 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import numpy as np
-from torch import Tensor
 from torchinfo import summary
 
 # Local imports
 from .Transformer import ModelArgs, Transformer, RMSNorm
-from utilities.loss_functions import adversarial_loss_function
-from utilities.loss_functions import gmvae_kl_loss
-import torch.distributions as dist
 
 '''
 @author: grahamwjohnson
@@ -21,7 +17,7 @@ import torch.distributions as dist
 from geomloss import SamplesLoss  # Import GeomLoss for Sinkhorn computation
 
 class MoGPrior(nn.Module):
-    def __init__(self, K, latent_dim, prior_initial_mean_spread, prior_initial_logvar, mean_lims, Wasserstein_order, Wasserstein_Sinkhorn_eps, gumbel_softmax_temperature, **kwargs):
+    def __init__(self, K, latent_dim, prior_initial_mean_spread, prior_initial_logvar, mean_lims, gumbel_softmax_temperature, **kwargs):
         """
         Mixture of Gaussians (MoG) prior with Wasserstein stabilization using Sinkhorn loss.
         Inputs:
@@ -35,8 +31,6 @@ class MoGPrior(nn.Module):
         super(MoGPrior, self).__init__()
         self.K = K
         self.latent_dim = latent_dim
-        self.Wasserstein_order = Wasserstein_order
-        self.sinkhorn_eps = Wasserstein_Sinkhorn_eps
         self.mean_lims = mean_lims
         self.gumbel_softmax_temperature = gumbel_softmax_temperature
         
@@ -47,9 +41,6 @@ class MoGPrior(nn.Module):
         self.means = nn.Parameter(prior_means)  # [K, latent_dim]
         self.logvars = nn.Parameter(torch.ones(K, latent_dim) * prior_initial_logvar)  # [K, latent_dim]
         self.weightlogits = nn.Parameter(torch.ones(K) / K)  # [K] # STore as logits, will softmax before use
-
-        # Define Sinkhorn loss function
-        self.sinkhorn_loss = SamplesLoss(loss="sinkhorn", p=self.Wasserstein_order, blur=self.sinkhorn_eps, scaling=0.9, debias=True, backend="tensorized")
 
     def sample_prior(self, batch_size):
         """
@@ -80,24 +71,6 @@ class MoGPrior(nn.Module):
         z_prior = torch.clamp(z_prior, min=self.mean_lims[0], max=self.mean_lims[1])
 
         return z_prior, component_probs
-
-    def sinkhorn_loss_fraction(self, z, weight):
-        """
-        Compute the Sinkhorn loss between sampled latent vectors of posterior and the MoG prior.
-        Inputs:
-            z: Resampled latent embeddings from encoder [batch_size, latent_dim]
-        Returns:
-            sinkhorn_loss: Wasserstein distance between encoder samples and prior.
-        """
-        batch_size = z.shape[0]
-
-        # Sample from the prior using Gumbel-Softmax
-        z_prior, _ = self.sample_prior(batch_size)
-
-        # Compute Sinkhorn loss (Wasserstein distance between z_samples and z_prior)
-        sinkhorn_loss = self.sinkhorn_loss(z, z_prior)
-
-        return (sinkhorn_loss * weight) / (self.latent_dim * self.K)
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -145,11 +118,8 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
     def __init__(self, 
         # in_channels, 
         padded_channels,
-        crattn_embed_dim,
-        crattn_num_highdim_heads,
-        crattn_num_highdim_layers,
-        crattn_num_lowdim_heads,
-        crattn_num_lowdim_layers,
+        crattn_num_heads,
+        crattn_num_layers,
         crattn_max_seq_len,
         crattn_dropout, 
         **kwargs):
@@ -158,35 +128,15 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         
         # self.in_channels = in_channels
         self.padded_channels = padded_channels
-        self.embed_dim = crattn_embed_dim
-        self.num_highdim_heads = crattn_num_highdim_heads
-        self.num_highdim_layers = crattn_num_highdim_layers
-        self.num_lowdim_heads = crattn_num_lowdim_heads
-        self.num_lowdim_layers = crattn_num_lowdim_layers
+        self.num_heads = crattn_num_heads
+        self.num_layers = crattn_num_layers
         self.max_seq_len = crattn_max_seq_len
         self.dropout = crattn_dropout
 
         # Input Cross-attention Layer 
-        self.highdim_attention_layers = nn.ModuleList([
-            TimeSeriesCrossAttentionLayer(self.padded_channels, self.num_highdim_heads, self.dropout)
-            for _ in range(self.num_highdim_layers)
-        ])
-
-        # Convert to embed dims
-        self.high_to_low_dims = nn.Sequential(
-            nn.Linear(self.padded_channels, self.padded_channels * 2),
-            nn.SiLU(),
-            nn.Linear(self.padded_channels * 2, self.padded_channels),
-            nn.SiLU(),
-            nn.Linear(self.padded_channels, self.embed_dim),
-            nn.SiLU()
-        )
-
-        # Embed-Dim Cross-attention layers
-        self.lowdim_attention_layers = nn.ModuleList([
-            TimeSeriesCrossAttentionLayer(self.embed_dim, self.num_lowdim_heads, self.dropout)
-            for _ in range(self.num_lowdim_layers)
-        ])
+        self.attention_layers = nn.ModuleList([
+            TimeSeriesCrossAttentionLayer(self.padded_channels, self.num_heads, self.dropout)
+            for _ in range(self.num_layers)])
         
         # Positional encoding
         self.positional_encoding = self._get_positional_encoding(self.max_seq_len, self.padded_channels)
@@ -208,35 +158,22 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         # inputs: a single time series of shape (batch_size, num_channels, seq_len)        
         # in_channels = x.shape[1]
 
-        # # Step 1: pad the channel dimension
-        # padding = (0, 0, 0, self.padded_channels - in_channels, 0, 0) # (dim0 left padding, dim0 right padding... etc.)
-        # x = F.pad(x, padding, mode='constant', value=0)
-
-        # Step 2: Permute to (batch_size, seq_len, padded_channels)
+        # Permute to (batch_size, seq_len, padded_channels)
         x = x.permute(0, 2, 1)  # Shape: (batch_size, seq_len, padded_channels)
         
-        # Step 3: Add positional encoding
+        # Add positional encoding
         x = x + self.positional_encoding[:, :x.size(1), :].to(x.device)
         
-        # Step 4: Reshape for multi-head attention (seq_len, batch_size, high_dim)
+        # Reshape for multi-head attention (seq_len, batch_size, high_dim)
         x = x.permute(1, 0, 2)  # Shape: (seq_len, batch_size, padded_channels)
 
-        # Step 5: Apply Input Cross-Attention at PADDED dimension 
-        for layer in self.highdim_attention_layers:
-            x = layer(x, x, x)  # Cross-attention (q=k=v)
-
-        # Step 6: Convert from padded channel dims to embed dims
-        x = self.high_to_low_dims(x)
-
-        # Step 7: Apply Embed-Dim Cross-Attention Layers
-        for layer in self.lowdim_attention_layers:
+        # Apply Input Cross-Attention 
+        for layer in self.attention_layers:
             x = layer(x, x, x)  # Cross-attention (q=k=v)
 
         x = x.permute(1, 0, 2)  # Return to shape (batch_size, seq_len, low_dim)
 
         return x.flatten(start_dim=1) # (batch, seq_len * low_dim)
-        # return torch.mean(x, dim=1)
-        # return x[:,-1,:] # Return last in sequence (should be embedded with meaning)
 
 class Decoder_MLP(nn.Module):
     def __init__(self, gpu_id, latent_dim, decoder_base_dims, output_channels, decode_samples):
@@ -334,25 +271,25 @@ class AdversarialClassifier(nn.Module):
 
 # Define the MoG Predictor 
 class MoGPredictor(nn.Module):
-    def __init__(self, top_dim, mogpred_hidden_dim_list, num_mog_components, mog_predictor_dropout, **kwargs):
+    def __init__(self, top_dim, posterior_mogpredictor_hidden_dim_list, num_prior_mog_components, posterior_mogpredictor_dropout, **kwargs):
         super(MoGPredictor, self).__init__()
 
-        self.dropout = mog_predictor_dropout
+        self.dropout = posterior_mogpredictor_dropout
         self.mlp_layers = nn.ModuleList()
 
         # Input layer
-        self.mlp_layers.append(nn.Linear(top_dim, mogpred_hidden_dim_list[0]))
+        self.mlp_layers.append(nn.Linear(top_dim, posterior_mogpredictor_hidden_dim_list[0]))
         self.mlp_layers.append(nn.SiLU())
-        self.mlp_layers.append(RMSNorm(mogpred_hidden_dim_list[0]))
+        self.mlp_layers.append(RMSNorm(posterior_mogpredictor_hidden_dim_list[0]))
 
         # Hidden layers
-        for i in range(len(mogpred_hidden_dim_list) - 1):
-            self.mlp_layers.append(LinearWithDropout(mogpred_hidden_dim_list[i], mogpred_hidden_dim_list[i + 1], self.dropout))
+        for i in range(len(posterior_mogpredictor_hidden_dim_list) - 1):
+            self.mlp_layers.append(LinearWithDropout(posterior_mogpredictor_hidden_dim_list[i], posterior_mogpredictor_hidden_dim_list[i + 1], self.dropout))
             self.mlp_layers.append(nn.SiLU())
-            self.mlp_layers.append(RMSNorm(mogpred_hidden_dim_list[i + 1]))
+            self.mlp_layers.append(RMSNorm(posterior_mogpredictor_hidden_dim_list[i + 1]))
 
         # Output layer
-        self.mlp_layers.append(nn.Linear(mogpred_hidden_dim_list[-1], num_mog_components)) # No activation and no norm
+        self.mlp_layers.append(nn.Linear(posterior_mogpredictor_hidden_dim_list[-1], num_prior_mog_components)) # No activation and no norm
 
     def forward(self, x):
         for layer in self.mlp_layers:
@@ -367,7 +304,6 @@ class GMVAE(nn.Module):
         self, 
         encode_token_samples,
         padded_channels,
-        crattn_embed_dim,
         transformer_seq_length,
         transformer_start_pos,
         transformer_dim,
@@ -376,7 +312,7 @@ class GMVAE(nn.Module):
         hidden_dims,
         latent_dim, 
         decoder_base_dims,
-        mog_components,
+        prior_mog_components,
         mean_lims,
         logvar_lims,
         gumbel_softmax_temperature,
@@ -388,7 +324,6 @@ class GMVAE(nn.Module):
         self.gpu_id = gpu_id
         self.encode_token_samples = encode_token_samples
         self.padded_channels = padded_channels
-        self.crattn_embed_dim = crattn_embed_dim
         self.transformer_seq_length = transformer_seq_length
         self.transformer_start_pos = transformer_start_pos
         self.transformer_dim = transformer_dim
@@ -397,14 +332,14 @@ class GMVAE(nn.Module):
         self.hidden_dims = hidden_dims
         self.latent_dim = latent_dim 
         self.decoder_base_dims = decoder_base_dims
-        self.mog_components = mog_components
+        self.prior_mog_components = prior_mog_components
         self.mean_lims = mean_lims
         self.logvar_lims = logvar_lims
         self.temperature = gumbel_softmax_temperature
 
         # Prior
         self.prior = MoGPrior(
-            K = self.mog_components,
+            K = self.prior_mog_components,
             latent_dim = self.latent_dim,
             mean_lims = self.mean_lims,
             gumbel_softmax_temperature=gumbel_softmax_temperature,
@@ -412,8 +347,7 @@ class GMVAE(nn.Module):
 
         # Raw CrossAttention Head
         self.encoder_head = Encoder_TimeSeriesWithCrossAttention(
-            padded_channels=self.padded_channels, 
-            crattn_embed_dim=self.crattn_embed_dim, 
+            padded_channels=self.padded_channels,
             **kwargs)
 
         # Transformer - dimension is same as output of cross attention
@@ -423,16 +357,16 @@ class GMVAE(nn.Module):
             activation=self.encoder_transformer_activation, 
             **kwargs))
 
-        # Core Encoder
+        # Encoder/Posterior
         self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=True)
         self.norm_hidden = RMSNorm(dim=self.hidden_dims)
 
         # Right before latent space
-        self.mean_encode_layer = nn.Linear(self.hidden_dims, self.mog_components * self.latent_dim, bias=True)  
-        self.logvar_encode_layer = nn.Linear(self.hidden_dims, self.mog_components * self.latent_dim, bias=True) 
+        self.mean_encode_layer = nn.Linear(self.hidden_dims, self.prior_mog_components * self.latent_dim, bias=True)  
+        self.logvar_encode_layer = nn.Linear(self.hidden_dims, self.prior_mog_components * self.latent_dim, bias=True) 
         self.mogpreds_layer = MoGPredictor(
             top_dim=self.hidden_dims,
-            num_mog_components=self.mog_components,
+            num_prior_mog_components=self.prior_mog_components,
             **kwargs)
 
         # Decoder
@@ -467,12 +401,10 @@ class GMVAE(nn.Module):
             y = self.silu(y)
             y = self.norm_hidden(y)
             mean, logvar, mogpreds = self.mean_encode_layer(y), self.logvar_encode_layer(y), self.mogpreds_layer(y)
-            mean = mean.view(-1, self.transformer_seq_length, self.mog_components, self.latent_dim)
-            logvar = logvar.view(-1,self.transformer_seq_length, self.mog_components, self.latent_dim)
+            mean = mean.view(-1, self.transformer_seq_length, self.prior_mog_components, self.latent_dim)
+            logvar = logvar.view(-1,self.transformer_seq_length, self.prior_mog_components, self.latent_dim)
 
-            # # Apply constrtains to mean/logvar
-            # mean = torch.clamp(mean, min=self.mean_lims[0], max=self.mean_lims[1])
-            # logvar = torch.clamp(logvar, min=self.logvar_lims[0], max=self.logvar_lims[1])
+            # Apply constrtains to mean/logvar
             mean_scale = (self.mean_lims[1] - self.mean_lims[0]) / 2
             mean_shift = (self.mean_lims[0] + self.mean_lims[1]) / 2
             mean = F.tanh(mean) * mean_scale + mean_shift
@@ -481,7 +413,7 @@ class GMVAE(nn.Module):
             logvar_shift = (self.logvar_lims[0] + self.logvar_lims[1]) / 2
             logvar = F.tanh(logvar) * logvar_scale + logvar_shift
 
-            # Now sample z
+            # Now sample z posterior
             mean_pseudobatch = mean.reshape(mean.shape[0]*mean.shape[1], mean.shape[2], mean.shape[3])
             logvar_pseudobatch = logvar.reshape(logvar.shape[0]*logvar.shape[1], logvar.shape[2], logvar.shape[3])
             mogpreds_pseudobatch = mogpreds.reshape(mogpreds.shape[0]*mogpreds.shape[1], mogpreds.shape[2])
@@ -570,8 +502,8 @@ def print_models_flow(x, **kwargs):
     f"z:{z_token.shape}\n"
     f"hash_pat_embedding:{hash_pat_embedding.shape}\n")
     summary(gmvae, input_data=[z_token, True, hash_pat_embedding], depth=999, device="cpu")
-    core_out = gmvae(z_token, reverse=True, hash_pat_embedding=hash_pat_embedding)  
-    print(f"decoder_out:{core_out.shape}\n")
+    posterior_out = gmvae(z_token, reverse=True, hash_pat_embedding=hash_pat_embedding)  
+    print(f"decoder_out:{posterior_out.shape}\n")
 
     del gmvae
 

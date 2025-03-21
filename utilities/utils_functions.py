@@ -96,7 +96,7 @@ def print_model_summary(model):
 def create_metadata_subtitle(plot_dict):
 
     return ("\nLR: " + str(plot_dict["LR_curr"]) + 
-    "\nReg Multiplier: " + str(round(plot_dict["Reg_multiplier"],4)) + 
+    "\nKL_divergence Multiplier: " + str(round(plot_dict["KL_divergence_multiplier"],4)) + 
     "\nPre/Postictal Color: " + str(plot_dict["plot_preictal_color"]) + "/" + str(plot_dict["plot_postictal_color"]) + " sec" + 
     ", File Attention Pre/Postictal: " + str(plot_dict["preictal_classify_sec"]) + "/" + str(plot_dict["postictal_classify_sec"]) + " sec" + 
     "\nInput Samples: " + str(plot_dict["input_samples"]) + 
@@ -151,76 +151,26 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
-        Reg_max, Reg_min, Reg_epochs_TO_max, Reg_epochs_AT_max, Reg_stall_epochs,
-        Wasserstein_override_epochs, Wasserstein_override_LR, WassersteinBeta_max, WassersteinBeta_min, WassersteinBeta_taper_epochs, Wassertstein_logvar_lims,
-        mogpreds_entropy_weight_max, mogpreds_entropy_weight_min, mogpreds_entropy_weight_taper_epochs,
+        KL_divergence_max_weight, KL_divergence_min_weight, KL_divergence_epochs_TO_max, KL_divergence_epochs_AT_max, KL_divergence_stall_epochs,
+        posterior_mogpreds_entropy_weight_max, posterior_mogpreds_entropy_weight_min, posterior_mogpreds_entropy_weight_taper_epochs,
         classifier_weight, 
         classifier_alpha_max, classifier_alpha_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier, 
-        meanlogvar_match_loss_max, meanlogvar_match_loss_min, 
-        Sparse_max, Sparse_min, Sparse_epochs_TO_max, Sparse_epochs_AT_max, 
-        LR_max_core, LR_min_core, LR_epochs_stall_core, LR_epochs_TO_max_core, LR_epochs_AT_max_core,  manual_gamma_core, manual_step_size_core,
+        mean_match_static_weight, 
+        logvar_match_static_weight, 
+        posterior_mogpreds_intersequence_diversity_weight,
+        LR_max_posterior, LR_min_posterior, LR_epochs_stall_posterior, LR_epochs_TO_max_posterior, LR_epochs_AT_max_posterior,  manual_gamma_posterior, manual_step_size_posterior,
         LR_max_prior, LR_min_prior, LR_epochs_stall_prior, LR_epochs_TO_max_prior, LR_epochs_AT_max_prior,  manual_gamma_prior, manual_step_size_prior,
-        Reg_rise_first=True, Sparse_rise_first=True, LR_rise_first=True, **kwargs):
-
-    # LOGVAR OVVERRIDE during Wasserstein influence 
-    # Must calculate before epoch is globally shifted
-    if epoch < (Wasserstein_override_epochs + WassersteinBeta_taper_epochs):
-        logvar_lims_override = Wassertstein_logvar_lims
-    else: logvar_lims_override = None
-
-    # WASSERSTEIN OVERRIDE OF ALL LR AND WEIGHTS 
-    # Stabilized posterior at beginning of training to approximate prior
-    # KL has no hope to do this by itself with randomized posterior weights (Search "Vanderbilt Wasserstein" on Youtube)
-    if epoch < Wasserstein_override_epochs:
-        W_val = WassersteinBeta_max
-        Reg_val = 0
-        LR_val_core = Wasserstein_override_LR
-        LR_val_prior = LR_max_prior # Allow prior to shift to fit posterior
-        LR_val_cls = 0
-        MM_val = meanlogvar_match_loss_max
-        mogpred_entropy_val = mogpreds_entropy_weight_max # Want to keep entropy high for MoG predictions during Wasserstein override
-        Sparse_val = 0
-        classifier_weight = 0
-        classifier_val = 0
-        return MM_val, W_val, Reg_val, LR_val_core, LR_val_prior, LR_val_cls, mogpred_entropy_val, Sparse_val, classifier_weight, classifier_val, logvar_lims_override
-
-    else: # globally shift in epoch in this function
-        epoch = epoch - Wasserstein_override_epochs
-        MM_val = meanlogvar_match_loss_min
-        assert epoch >= 0
-
-    # *** Wasserstein and Mean/Logvar match taper Taper SCHEDULE ***
-    # NOTE: This starts AFTER the Wasserstein override
-    if epoch >= WassersteinBeta_taper_epochs:
-        W_val = WassersteinBeta_min
-    else:
-        W_total_taper_iters = iters_per_epoch * WassersteinBeta_taper_epochs
-        W_iter_curr = epoch * iters_per_epoch + iter_curr
-
-        # Normalize the current iteration to [0, 1]
-        t = W_iter_curr / W_total_taper_iters
-
-        # Inverse exponential decay formula
-        decay_rate = 5.0  # Adjust this to control the steepness of the initial drop
-        W_range = WassersteinBeta_max - WassersteinBeta_min
-        W_val = WassersteinBeta_min + W_range * math.exp(-decay_rate * t)
-
-        MM_range = meanlogvar_match_loss_max - meanlogvar_match_loss_min
-        MM_val = meanlogvar_match_loss_min + MM_range * math.exp(-decay_rate * t)
-
-        # Ensure W_val is within bounds
-        W_val = max(W_val, WassersteinBeta_min)
-        MM_val = max(MM_val, meanlogvar_match_loss_min)
+        KL_divergence_rise_first=True, LR_rise_first=True, **kwargs):
 
     # MoG Prediction Entropy TAPER
-    if epoch >= mogpreds_entropy_weight_taper_epochs:
-        mogpred_entropy_val = mogpreds_entropy_weight_min
+    if epoch >= posterior_mogpreds_entropy_weight_taper_epochs:
+        mogpred_entropy_val = posterior_mogpreds_entropy_weight_min
     else:
-        mogpreds_entropy_range = mogpreds_entropy_weight_max - mogpreds_entropy_weight_min
-        total_mogpreds_entropy_iters = mogpreds_entropy_weight_taper_epochs * iters_per_epoch
+        posterior_mogpreds_entropy_range = posterior_mogpreds_entropy_weight_max - posterior_mogpreds_entropy_weight_min
+        total_posterior_mogpreds_entropy_iters = posterior_mogpreds_entropy_weight_taper_epochs * iters_per_epoch
         iter_mogpred_curr = epoch * iters_per_epoch + iter_curr
-        mogpred_entropy_val = mogpreds_entropy_weight_max - mogpreds_entropy_range * (iter_mogpred_curr / total_mogpreds_entropy_iters) 
+        mogpred_entropy_val = posterior_mogpreds_entropy_weight_max - posterior_mogpreds_entropy_range * (iter_mogpred_curr / total_posterior_mogpreds_entropy_iters) 
 
     # *** Classifier Weight ###
     classifier_weight = classifier_weight # Dummy pass
@@ -246,58 +196,39 @@ def LR_and_weight_schedules(
     else:
         classifier_val = classifier_alpha_max
 
-    # *** Reg SCHEDULE ***
+    # *** KL_divergence SCHEDULE ***
 
-    # If within the stall, send out Reg_min
-    if epoch < Reg_stall_epochs:
-        Reg_val = Reg_min
+    # If within the stall, send out KL_divergence_min_weight
+    if epoch < KL_divergence_stall_epochs:
+        KL_divergence_val = KL_divergence_min_weight
     
     else: # After stall
-        Reg_epoch_period = Reg_epochs_TO_max + Reg_epochs_AT_max
-        Reg_epoch_residual = (epoch - Reg_stall_epochs) % Reg_epoch_period # Shift for the stall epochs
-        Reg_range = Reg_max - Reg_min
-        if Reg_rise_first: # START with rise
-            if Reg_epoch_residual < Reg_epochs_TO_max:
-                Reg_state_length = Reg_epochs_TO_max 
-                Reg_floor = Reg_min + Reg_range * (Reg_epoch_residual/Reg_state_length)
-                Reg_ceil = Reg_floor + Reg_range * (1) /Reg_state_length
-                Reg_val = Reg_floor + (iter_curr/iters_per_epoch) * (Reg_ceil - Reg_floor)
+        KL_divergence_epoch_period = KL_divergence_epochs_TO_max + KL_divergence_epochs_AT_max
+        KL_divergence_epoch_residual = (epoch - KL_divergence_stall_epochs) % KL_divergence_epoch_period # Shift for the stall epochs
+        KL_divergence_range = KL_divergence_max_weight - KL_divergence_min_weight
+        if KL_divergence_rise_first: # START with rise
+            if KL_divergence_epoch_residual < KL_divergence_epochs_TO_max:
+                KL_divergence_state_length = KL_divergence_epochs_TO_max 
+                KL_divergence_floor = KL_divergence_min_weight + KL_divergence_range * (KL_divergence_epoch_residual/KL_divergence_state_length)
+                KL_divergence_ceil = KL_divergence_floor + KL_divergence_range * (1) /KL_divergence_state_length
+                KL_divergence_val = KL_divergence_floor + (iter_curr/iters_per_epoch) * (KL_divergence_ceil - KL_divergence_floor)
             else:
-                Reg_val = Reg_max
+                KL_divergence_val = KL_divergence_max_weight
         else: raise Exception("ERROR: not coded up")
                 
-   # *** Sparse Weight ***
-    Sparse_epoch_period = Sparse_epochs_TO_max + Sparse_epochs_AT_max
-    Sparse_epoch_residual = epoch % Sparse_epoch_period
-    Sparse_range = Sparse_max - Sparse_min
-    if Sparse_rise_first:  # START with rise
-        if Sparse_epoch_residual < Sparse_epochs_TO_max:
-            # Sparse_state_length = Sparse_epochs_AT_max
-            # Sparse_ceil = Sparse_max - ( Sparse_range * (Sparse_epoch_residual/Sparse_state_length) )
-            # Sparse_floor = Sparse_ceil - ( Sparse_range * (Sparse_epoch_residual + 1) /Sparse_state_length)
-            # Sparse_val = Sparse_ceil - iter_curr/iters_per_epoch * (Sparse_ceil - Sparse_floor) 
-            Sparse_state_length = Sparse_epochs_TO_max 
-            Sparse_floor = Sparse_min + Sparse_range * (Sparse_epoch_residual/Sparse_state_length)
-            Sparse_ceil = Sparse_floor + Sparse_range * (1) /Sparse_state_length
-            Sparse_val = Sparse_floor + iter_curr/iters_per_epoch * (Sparse_ceil - Sparse_floor)
-        else:
-            Sparse_val = Sparse_max
-    else: raise Exception("ERROR: not coded up")
-        
-
     # *** LR SCHEDULES ***
 
     # CORE
-    LR_val_core = LR_subfunction(
+    LR_val_posterior = LR_subfunction(
         iter_curr=iter_curr,
-        LR_min=LR_min_core,
-        LR_max=LR_max_core,
+        LR_min=LR_min_posterior,
+        LR_max=LR_max_posterior,
         epoch=epoch, 
-        manual_gamma=manual_gamma_core, 
-        manual_step_size=manual_step_size_core, 
-        epoch_stall=LR_epochs_stall_core,
-        LR_epochs_TO_max=LR_epochs_TO_max_core,  
-        LR_epochs_AT_max=LR_epochs_AT_max_core, 
+        manual_gamma=manual_gamma_posterior, 
+        manual_step_size=manual_step_size_posterior, 
+        epoch_stall=LR_epochs_stall_posterior,
+        LR_epochs_TO_max=LR_epochs_TO_max_posterior,  
+        LR_epochs_AT_max=LR_epochs_AT_max_posterior, 
         iters_per_epoch=iters_per_epoch,
         LR_rise_first=LR_rise_first 
     )
@@ -317,7 +248,7 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first 
     )
 
-    return MM_val, W_val, Reg_val, LR_val_core, LR_val_prior, LR_val_cls, mogpred_entropy_val, Sparse_val, classifier_weight, classifier_val, logvar_lims_override
+    return  mean_match_static_weight, logvar_match_static_weight, KL_divergence_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, posterior_mogpreds_intersequence_diversity_weight, classifier_weight, classifier_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
@@ -764,7 +695,9 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
     plt.savefig(savename_jpg)
     plt.close(fig)
 
-def print_patmogweights_realtime(mogpreds, patidxs, savedir, epoch, iter_curr, **kwargs):
+# Global dictionary to store patient ID to color mappings
+PATIENT_COLOR_MAP = {}
+def print_patposteriorweights_cumulative(mogpreds, patidxs, savedir, epoch, iter_curr, **kwargs):
     """
     Plot stacked bar plots for MoG weights, colored by patient proportions.
 
@@ -774,9 +707,9 @@ def print_patmogweights_realtime(mogpreds, patidxs, savedir, epoch, iter_curr, *
         savedir (str): Directory to save the plot.
         epoch (int): Current epoch.
         iter_curr (int): Current iteration.
-        file_name (str): Base name for the saved plot file.
         **kwargs: Additional arguments (e.g., component names, colors).
     """
+    global PATIENT_COLOR_MAP
 
     # Get unique patient indices and MoG components
     unique_patidxs = np.unique(patidxs)
@@ -788,10 +721,6 @@ def print_patmogweights_realtime(mogpreds, patidxs, savedir, epoch, iter_curr, *
         mask = (patidxs == patidx)
         component_sums[:, i] = np.sum(mogpreds[mask], axis=0)
 
-    # Sort patients by their total contribution (largest at the top)
-    sorted_indices = np.argsort(np.sum(component_sums, axis=0))[::-1]  # Reverse the order
-    component_sums = component_sums[:, sorted_indices]
-
     # Create a stacked bar plot
     fig, ax = plt.subplots(figsize=(12, 8))
 
@@ -800,14 +729,19 @@ def print_patmogweights_realtime(mogpreds, patidxs, savedir, epoch, iter_curr, *
     if len(unique_patidxs) > len(colors):
         colors = plt.cm.tab20.colors  # Use a larger colormap if needed
 
+    # Assign colors to patients (reuse existing mappings or create new ones)
+    for patidx in unique_patidxs:
+        if patidx not in PATIENT_COLOR_MAP:
+            PATIENT_COLOR_MAP[patidx] = colors[len(PATIENT_COLOR_MAP) % len(colors)]
+
     # Plot each component
     bottom = np.zeros(num_components)
-    for i, patidx in enumerate(unique_patidxs[sorted_indices]):
+    for i, patidx in enumerate(unique_patidxs):
         ax.bar(
             range(num_components),
             component_sums[:, i],
             bottom=bottom,
-            color=colors[i % len(colors)],
+            color=PATIENT_COLOR_MAP[patidx],
             label=f"Patient {patidx}"
         )
         bottom += component_sums[:, i]
@@ -818,15 +752,15 @@ def print_patmogweights_realtime(mogpreds, patidxs, savedir, epoch, iter_curr, *
     ax.set_title(f"MoG Component Weights by Patient (Epoch {epoch}, Iter {iter_curr}) - {mogpreds.shape[0]} Embeddings")
     ax.set_xticks(range(num_components))
     ax.set_xticklabels([f"Comp {i}" for i in range(num_components)])
-    # ax.legend(title="Patient ID", bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax.legend(title="Patient ID", bbox_to_anchor=(1.05, 1), loc='upper left')
 
     # Save the plot
     if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = f"{savedir}/patmogweights_epoch{epoch}_iter{iter_curr}.jpg"
-    pl.savefig(savename_jpg)
-    pl.close(fig)
+    savename_jpg = f"{savedir}/patposteriorweights_epoch{epoch}_iter{iter_curr}.jpg"
+    plt.savefig(savename_jpg, bbox_inches='tight')
+    plt.close(fig)
 
-def print_latent_realtime(mean, logvar, mogpreds, prior_means, prior_logvars, prior_weights, savedir, epoch, iter_curr,  mean_lims, logvar_lims, n_bins=35, **kwargs):
+def print_latent_singlebatch(mean, logvar, mogpreds, prior_means, prior_logvars, prior_weights, savedir, epoch, iter_curr,  mean_lims, logvar_lims, n_bins=35, **kwargs):
     """
     Plot re-sampled weighted means, logvars, and average MoG weights at the token level for the first 5 dimensions.
     Aggregates tokens across all batches, with separate histograms for each batch index.
@@ -967,7 +901,7 @@ def print_latent_realtime(mean, logvar, mogpreds, prior_means, prior_logvars, pr
     plt.savefig(savename_jpg)
     plt.close(fig)
 
-def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_realtime_channels_recon, num_recon_samples, **kwargs):
+def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_singlebatch_channels_recon, num_recon_samples, **kwargs):
 
     x_hat = x_hat.detach().cpu().numpy()
     x = x.detach().cpu().numpy()
@@ -986,13 +920,13 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_rea
     np.random.seed(seed=None) 
     r = np.arange(0,x_hat_fused.shape[1])
     np.random.shuffle(r)
-    random_ch_idxs = r[0:num_realtime_channels_recon]
+    random_ch_idxs = r[0:num_singlebatch_channels_recon]
 
     # Make new grid/fig
     if x_fused.shape[2] > num_recon_samples:
-        gs = gridspec.GridSpec(batchsize, num_realtime_channels_recon * 2) # *2 because beginning and end of transformer sequence
+        gs = gridspec.GridSpec(batchsize, num_singlebatch_channels_recon * 2) # *2 because beginning and end of transformer sequence
     else:
-        sqrt_num = int(np.ceil(np.sqrt(batchsize * num_realtime_channels_recon)))
+        sqrt_num = int(np.ceil(np.sqrt(batchsize * num_singlebatch_channels_recon)))
         gs = gridspec.GridSpec(sqrt_num, sqrt_num) 
         subplot_iter = 0
 
@@ -1048,7 +982,7 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_rea
 
     pl.close('all') 
 
-def print_classprobs_realtime(class_probs, class_labels, savedir, epoch, iter_curr, file_name, classifier_num_pats, **kwargs):
+def print_classprobs_singlebatch(class_probs, class_labels, savedir, epoch, iter_curr, file_name, classifier_num_pats, **kwargs):
     batchsize = class_probs.shape[0]
 
     class_probs_cpu = class_probs.detach().cpu().numpy()
@@ -1099,7 +1033,7 @@ def print_classprobs_realtime(class_probs, class_labels, savedir, epoch, iter_cu
 
         pl.close('all') 
 
-def print_confusion_realtime(class_probs, class_labels, savedir, epoch, iter_curr, classifier_num_pats, **kwargs):
+def print_confusion_singlebatch(class_probs, class_labels, savedir, epoch, iter_curr, classifier_num_pats, **kwargs):
     batchsize = class_probs.shape[0]
 
     class_probs_cpu = class_probs.detach().cpu().numpy()
@@ -1125,7 +1059,7 @@ def print_confusion_realtime(class_probs, class_labels, savedir, epoch, iter_cur
 
     pl.close('all') 
 
-def print_attention_realtime(epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, **kwargs):
+def print_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, **kwargs):
 
     scores_byLayer_meanHeads = scores_byLayer_meanHeads.detach().cpu().numpy()
 
@@ -1484,7 +1418,7 @@ def filename_to_datetimes(list_file_names):
             stop_datetimes[i] = datetime.datetime(int(bD[4:8]), int(bD[0:2]), int(bD[2:4]), int(bT[0:2]), int(bT[2:4]), int(bT[4:6]), int(int(bT[6:8])*1e4))
         return start_datetimes, stop_datetimes
 
-def delete_old_checkpoints(dir: str, curr_epoch: int, Reg_stall_epochs, Reg_epochs_AT_max, Reg_epochs_TO_max, **kwargs):
+def delete_old_checkpoints(dir: str, curr_epoch: int, KL_divergence_stall_epochs, KL_divergence_epochs_AT_max, KL_divergence_epochs_TO_max, **kwargs):
 
     # SAVE_KEYWORDS = ["hdbscan", "pacmap"]
 
@@ -1503,8 +1437,8 @@ def delete_old_checkpoints(dir: str, curr_epoch: int, Reg_stall_epochs, Reg_epoc
     #             save_epochs.append(epoch_nums[i])
     #             break
 
-    # Reg Epoch cycle save - save the last epoch in a Reg annealing cycle
-    mod_val = Reg_stall_epochs + Reg_epochs_AT_max + Reg_epochs_TO_max - 1
+    # KL_divergence Epoch cycle save - save the last epoch in a KL_divergence annealing cycle
+    mod_val = KL_divergence_stall_epochs + KL_divergence_epochs_AT_max + KL_divergence_epochs_TO_max - 1
     for x in epoch_nums:
         if (x % mod_val == 0) & (curr_epoch > 0):
             save_epochs.append(x)
@@ -2184,28 +2118,6 @@ def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_wo
         persistent_workers=persistent_workers
     )
 
-def assemble_model_save_path(base_path: str,
-                        bipole_or_monopole: str,
-                        channel_scale_style: str,
-                        freq_bands_str: str,
-                        scale_type: str,
-                        scale_epoch_str: str,
-                        duration_stride_str: str,
-                        # pat_id: str,
-                        **kwargs):
-    
-    # Check that strings fall within acceptable options
-    if (bipole_or_monopole != 'Bipole_datasets') & (bipole_or_monopole != 'Monopole_datasets'):
-        raise Exception("Assemble path error: 'bipole_or_monopole' must equal: 'Bipole_datasets' or 'Monopole_datasets' ")
-    
-    if (channel_scale_style != 'Same_Scale_For_All_Channels') & (channel_scale_style != 'By_Channel_Scale'):
-        raise Exception("Assemble path error: 'channel_scale_style' must equal: 'Same_Scale_For_All_Channels' or 'By_Channel_Scale' ")
-    
-    if (scale_type != 'LinearScale') & (scale_type != 'HyperTanScaling') & (scale_type != 'CubeRootScale') & (scale_type != 'HistEqualScale'):
-        raise Exception("Assemble path error: 'scale_type' must equal: 'LinearScale', 'HyperTanScaling', 'CubeRootScale' or 'HistEqualScale'")
-    
-    return base_path + '/' + bipole_or_monopole + '/' + channel_scale_style + '/' + scale_type + '/' + scale_epoch_str + f'/{freq_bands_str}/' + duration_stride_str # + '/' + pat_id
-
 def initialize_directories(
         run_notes,
         cont_train_model_dir,
@@ -2229,15 +2141,15 @@ def initialize_directories(
         print(f"Resuming training after saved epoch: {str(max_epoch)}")
         
         # Construct the proper file names to get CORE state dicts
-        kwargs['gmvae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_gmvae.pt'
-        kwargs['gmvae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_gmvae_opt.pt'
+        kwargs['gmvae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_gmvae.pt'
+        kwargs['gmvae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_gmvae_opt.pt'
 
         # Proper names for running latents 
-        kwargs['running_mean_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_means.pkl'
-        kwargs['running_logvar_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_logvars.pkl'
-        kwargs['running_zmeaned_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_zmeaned.pkl'
-        kwargs['running_mogpreds_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_mogpreds.pkl' 
-        kwargs['running_patidxs_path'] = check_dir + f'/Epoch_{str(max_epoch)}/core_checkpoints/checkpoint_epoch{str(max_epoch)}_running_patidxs.pkl' 
+        kwargs['running_mean_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_means.pkl'
+        kwargs['running_logvar_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_logvars.pkl'
+        kwargs['running_zmeaned_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_zmeaned.pkl'
+        kwargs['running_mogpreds_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_mogpreds.pkl' 
+        kwargs['running_patidxs_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_patidxs.pkl' 
 
         # Set the start epoch 1 greater than max trained
         kwargs['start_epoch'] = (max_epoch + 1) 
@@ -2273,8 +2185,6 @@ def run_setup(**kwargs):
         print(f"Deleted tmp directory: {t}")
 
     # All Time Data file to get event timestamps
-    kwargs['root_save_dir'] = assemble_model_save_path(**kwargs)
-    # kwargs['data_dir'] = kwargs['root_save_dir'] + kwargs['data_dir_subfolder']
     kwargs['run_params_dir_name'] = get_training_dir_name(**kwargs)
 
     # Set world size to number of GPUs in system available to CUDA

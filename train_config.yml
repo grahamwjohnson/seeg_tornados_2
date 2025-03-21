@@ -1,25 +1,20 @@
-# Grahamwjohnon
+# Grahamwjohnon  
+# Created Feb 2023
 
 num_gpus: 2
  
 # DATASET
 continue_existing_training: False  
-cont_train_model_dir: '/media/glommy1/model_runs/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train100.0_val0.0/heterodontosaurus_Fri_Mar_21_02_14_34_2025' 
+cont_train_model_dir: '/media/glommy1/tornadoes/trained_models/dataset_train100.0_val0.0/snowmonkey_Fri_Mar_21_09_39_05_2025' 
 print_dataset_bargraphs: False # Rough visualization of all data timestamps/types for each patient. Slows down initialization. Typically set to False if not the first run of new model
-pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats' # parent directory where all pats data is stored
+pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats' # parent directory where all pats data is stored
 train_val_pat_perc: kwargs['train_val_pat_perc'] = [1.00, 0.0] # Will define patient level train/val split of datasets
 pat_num_channels_LUT: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/pats_num_channels_LUT.csv'
 num_samples: kwargs['num_samples'] = 1024*512 # Within each data pickle file
 FS: 512             
 atd_file: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/all_time_data_01092023_112957.csv'
 data_dir_subfolder: '/scaled_data_epochs'
-base_path: '/media/glommy1/model_runs'
-scale_type: 'HistEqualScale'  # 'LinearScale', 'HyperTanScaling', 'CubeRootScale', 'HistEqualScale'
-channel_scale_style: 'By_Channel_Scale' # 'Same_Scale_For_All_Channels' # By_Channel_Scale # If using multiple freq bands, the preprocessing script rescaales, so be careful and should use 'by channel' scaling 
-bipole_or_monopole: 'Bipole_datasets'
-scale_epoch_str: 'data_normalized_to_first_24_hours' # 'data_normalized_to_first_24_hours' # 'data_normalized_to_first_seizure_centered_24_hours' # , 'Dictated by preprocessing: Should probably decide to have duration match 'train_hours_desired', but do not HAVE to
-duration_stride_str: 'Mobo_pats'
-freq_bands_str: 'wholeband' # 1to12Hz_12to59Hz_61to179Hz, wholeband
+root_save_dir: '/media/glommy1/tornadoes' # Where the outputs of run will be stored
 intrapatient_dataset_style: 2 # 1 all data (no SPES), 2 all data (with SPES), 3 ONLY SPES
 train_hour_dataset_range: kwargs['train_hour_dataset_range'] = [-1, -1]  # [-1, -1] means all, [X, -1] means from X to end
 rand_name_json: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/utilities/animals.json'
@@ -36,15 +31,12 @@ nested_max_workers: 16 # For the get batch subprocess
 
 # CORE MODEL: Wasserstein Autoencoder (VAE)
 encode_token_samples: 16 
-padded_channels: 256 #input padded to allow for different number of channels, also the top level embed dim
-crattn_embed_dim: 256  # This times encode_token_samples will be transformer dims e.g. 32*32 = 1024
-crattn_num_highdim_heads: 8 # at padding dimension
-crattn_num_highdim_layers: 4 # at padding dimension
-crattn_num_lowdim_heads: 8 # at embed dim dimension
-crattn_num_lowdim_layers: 4 # at embed dim dimension
+padded_channels: 256 # input channels randomly padded up to this number to allow for different number of channels, this is the cross-attention dimension
+crattn_num_heads: 8 # at padding dimension
+crattn_num_layers: 8 # at padding dimension
 crattn_max_seq_len: kwargs['crattn_max_seq_len'] = kwargs['encode_token_samples']
 crattn_dropout: 0.1 
-transformer_dim: kwargs['transformer_dim'] = kwargs['crattn_embed_dim'] * kwargs['encode_token_samples']
+transformer_dim: kwargs['transformer_dim'] = kwargs['padded_channels'] * kwargs['encode_token_samples']
 transformer_seq_length: 64
 max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
 max_batch_size: kwargs['max_batch_size'] = kwargs['random_pulls_in_batch'] * kwargs['inference_batch_mult']
@@ -61,74 +53,58 @@ latent_dim: 4096 # 2048
 decoder_base_dims: 512 # top dim of decoder is [encode_token_samples * decoder_base_dims]
 hash_output_range: kwargs['hash_output_range'] = (-2, 2)  # tuple, modify based on approximate range of prior
 recon_weight: 3 # 3 means that meaningful recon usually starts when recon loss is below 0.5
-LR_max_core: kwargs['LR_max_core'] = 1e-5 # 5e-7
-LR_min_core: kwargs['LR_min_core'] = 1e-5 # 1e-8 
-LR_epochs_stall_core: 0
-LR_epochs_TO_max_core: 99999
-LR_epochs_AT_max_core: 0
-manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
-manual_step_size_core: 99999
-core_weight_decay: 0.1
+LR_max_posterior: kwargs['LR_max_posterior'] = 1e-5 # 5e-7
+LR_min_posterior: kwargs['LR_min_posterior'] = 1e-6 # 1e-8 
+LR_epochs_stall_posterior: 0
+LR_epochs_TO_max_posterior: 1
+LR_epochs_AT_max_posterior: 2
+manual_gamma_posterior: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
+manual_step_size_posterior: 99999
+posterior_weight_decay: 0.1
 adamW_beta1: 0.9
 adamW_beta2: 0.95 
 
 # PRIOR - VAE
-mog_components: 4 # Softmax sampling of components with gumbel-softmax trick
-mogpred_hidden_dim_list: [2048, 1024, 512] # Top should probably be same/smaller than hidden dim of encoder, bottom bigger than mog_components
-mog_predictor_dropout: 0.1
+prior_mog_components: 4 # Softmax sampling of components with gumbel-softmax trick
+posterior_mogpredictor_hidden_dim_list: [2048, 1024, 512] # Top should probably be same/smaller than hidden dim of encoder, bottom bigger than prior_prior_mog_components
+posterior_mogpredictor_dropout: 0.1
 mean_lims: [-5, 5] # Make sure the prior's mean/logvars make sense with this limit
 logvar_lims: [-3, 1] # Important to cap logvar on high end or KL divergence calculaton itself becomes unstable and will give very negative numbers
 prior_initial_mean_spread: 3  # Uniform (e.g. value of 2 will be uniform [-2, 2])
 prior_initial_logvar: 0 
 gumbel_softmax_temperature: kwargs['gumbel_softmax_temperature'] = 1 # Higher means softer assignment to MoG, A relatively low vaue (0.5) seams essential during W2 burn to help the posterior know which 'knobs' below to which component)
-mogpreds_entropy_weight_max: kwargs['mogpreds_entropy_weight_max'] = 0.1 # Encourages overall mogpreds to to be uniform
-mogpreds_entropy_weight_min: kwargs['mogpreds_entropy_weight_min'] = 0
-mogpreds_entropy_weight_taper_epochs: 50 
-mogpreds_consistency_weight: kwargs['mogpreds_consistency_weight'] = 1 # Encourgaes tokens within same sequence to map to same place in universe
-mogpreds_diversity_weight: kwargs['mogpreds_diversity_weight'] = 0.5 # Encourages sequences to be far apart from eachother in universe
-entropy_weight: kwargs['entropy_weight'] = 1e-5 # Helps prevent mode collapse in PRIOR
-repulsion_weight: kwargs['repulsion_weight'] = 1e-1 # Helps keep centers of PRIOR guassians far apart, need to scale with number of MoG components 
+posterior_mogpreds_entropy_weight_max: kwargs['posterior_mogpreds_entropy_weight_max'] = 0.1 # Encourages overall mogpreds to to be uniform
+posterior_mogpreds_entropy_weight_min: kwargs['posterior_mogpreds_entropy_weight_min'] = 0
+posterior_mogpreds_entropy_weight_taper_epochs: 50 
+posterior_mogpreds_intersequence_diversity_weight: kwargs['posterior_mogpreds_intersequence_diversity_weight'] = 0.1 # static
+prior_entropy_weight: kwargs['prior_entropy_weight'] = 1e-6 # Helps prevent mode collapse in PRIOR
+prior_repulsion_weight: kwargs['prior_repulsion_weight'] = 1e-1 # Helps keep centers of PRIOR guassians far apart, need to scale with number of MoG components 
 random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
 random_observed_numplots: 4 # On the end of epoch plot
-Reg_max: kwargs['Reg_max'] = 1e-3 # 1e-4 maybe
-Reg_min: kwargs['Reg_min'] = 0
-Reg_stall_epochs: 0 # Min Reg weight rise until stall is complete
-Reg_epochs_AT_max: 20 # Maybe coincide with the wasserstein order switch epoch?
-Reg_epochs_TO_max: 10
-LR_max_prior: kwargs['LR_max_prior'] = kwargs['LR_max_core'] 
-LR_min_prior: kwargs['LR_min_prior'] = kwargs['LR_min_core'] 
-LR_epochs_stall_prior: kwargs['LR_epochs_stall_prior'] = kwargs['Wasserstein_override_epochs'] + kwargs['WassersteinBeta_taper_epochs'] # Wait until Wasserstein influence is gone before allowing prior to train
-LR_epochs_TO_max_prior: 99999
-LR_epochs_AT_max_prior: 0
+mean_match_static_weight: kwargs['mean_match_static_weight'] = 1e-3
+logvar_match_static_weight: kwargs['logvar_match_static_weight'] = 1e-2
+KL_divergence_max_weight: kwargs['KL_divergence_max_weight'] = 5e-4 # 1e-4 maybe
+KL_divergence_min_weight: kwargs['KL_divergence_min_weight'] = 0
+KL_divergence_stall_epochs: 5 # Min KL_divergence weight rise until stall is complete
+KL_divergence_epochs_AT_max: 25 # Maybe coincide with the wasserstein order switch epoch?
+KL_divergence_epochs_TO_max: 25
+LR_max_prior: kwargs['LR_max_prior'] = 1e-6
+LR_min_prior: kwargs['LR_min_prior'] = 0
+LR_epochs_stall_prior: 1 # Don't let it get whipped around while model posterior is getting establish
+LR_epochs_TO_max_prior: 1
+LR_epochs_AT_max_prior: 99999
 manual_gamma_prior: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
 manual_step_size_prior: 99999
 prior_weight_decay: 0.1
 adamW_beta1_prior: 0.9
 adamW_beta2_prior: 0.95
 
-# WASSERTSETIN POSTERIOR INITIALIZATION
-# Brings the posterior model weights to produce z_posterior in approximate structure of z_prior
-# This is done with a Sinkhorn approximation of the Wasserstein distance which has a linear loss topology even when distributions are far apart/non-overlapping
-# Also allows encoder/decoder to rapidly get to recon-all-zeros state without posterior collapse
-# KL divergence alone could never do this so rapidly and stably with random posterior weights. 
-Wasserstein_override_epochs: 0 # Completely changes all LR and loss weights to stabilize posterior at beginning of training
-WassersteinBeta_taper_epochs: 0 # Taper begins after override is complete
-Wasserstein_override_LR: kwargs['Wasserstein_override_LR'] = 1e-6
-WassersteinBeta_max: kwargs['WassersteinBeta_max'] = 1e-1
-WassersteinBeta_min: kwargs['WassersteinBeta_min'] = 0
-meanlogvar_match_loss_max: kwargs['meanlogvar_match_loss_max'] = 1e-1 # 1e-1 # Helps assign componets to correct 'knob' in z_posterior, fast negative exponential decay
-meanlogvar_match_loss_min: kwargs['meanlogvar_match_loss_min'] = 0 
-Wassertstein_logvar_lims: [-3, 1] # Of posterior, keeps the z_posterior fuzzy so KL doesn't collapse immediately after Wasserstein initialization due to very low logvar_lims, minimum should be about to what prior logvar is initialized 
-Wasserstein_logvar_entropy_weight: kwargs['Wasserstein_logvar_entropy_weight'] = 0 # Encourages logvars of posterior during initiazation to not just concentrate at lower limit of logvar_lims 
-Wasserstein_Sinkhorn_eps: 0.05 # The blur, should be within magnitude of std of MoG components in prior
-Wasserstein_order: 2 # 1 is EMD (more local structure), 2 is W2-distance (more global structure)
-
 # CLASSIFIER - Adversarial
 # Not currently being integrated in backprop (beyond the classifer weights themselves, i.e. reverse gradient alpha is 0)
 classifier_hidden_dims: [2048, 1024, 512]
 classifier_num_pats: 45 #    ########   Hardcoded  ########
 classifier_dropout: 0.1
-classifier_weight: 1 # OVERALL ADVERSARIAL training: i.e. reverse gradient (VAE) AND classifier power. # Should probably get into same ballpark as recon and Reg
+classifier_weight: 1 # OVERALL ADVERSARIAL training: i.e. reverse gradient (VAE) AND classifier power. # Should probably get into same ballpark as recon and KL_divergence
 classifier_alpha_max: kwargs['classifier_alpha_max'] = 1e-3 # Alpha of reverse gradient 
 classifier_alpha_min: kwargs['classifier_alpha_min'] = 0 
 classifier_epochs_AT_max: 99999
@@ -138,13 +114,6 @@ LR_min_classifier: kwargs['LR_min_classifier'] = 1e-4 # 5e-7
 classifier_weight_decay: 0
 classifier_adamW_beta1: 0.9
 classifier_adamW_beta2: 0.999
-
-# SPARSITY
-# Not currently being integrated in backprop
-Sparse_max: kwargs['Sparse_max'] = 1e-7 # 1e-6 # 1e-3 #1 #1e-6 # 1e-3  ############# Check if loss is actually used!!! May be commented out in training script ###############
-Sparse_min: kwargs['Sparse_min'] = 0
-Sparse_epochs_AT_max: 99999
-Sparse_epochs_TO_max: 0
 
 # TRAINING 
 random_pulls_in_batch: 8 # BATCHSIZE
@@ -174,13 +143,13 @@ inference_stride_sec_list: [64, 2,  16, 2,  2] # Both window and stride must be 
 
 # PLOTTING
 total_collected_latents: 1024  # Currently just for plotting at the end of an epoch
-realtime_latent_printing: True
-num_realtime_channels_recon: 1 # Will be batch * this plotted
-realtime_printing_interval_train: 64 
-realtime_printing_interval_val: 64
+singlebatch_latent_printing: True
+num_singlebatch_channels_recon: 1 # Will be batch * this plotted
+singlebatch_printing_interval_train: 64 
+singlebatch_printing_interval_val: 64
 num_recon_samples: 256 # this will limit how much is shown in recon plots, ERROR if not enough samples, pulls from START and END of transformer sequence 
 num_rand_recon_plots: 4
-num_realtime_dims: 5
+num_singlebatch_dims: 5
 num_accumulated_plotting_dims: 5
 recent_display_iters: 5 # How often to print to console when training & how often to log to WandB
 

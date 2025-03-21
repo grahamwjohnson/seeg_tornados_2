@@ -123,11 +123,11 @@ def gmvae_kl_loss(z, encoder_means, encoder_logvars, encoder_mogpreds, prior_mea
 
     return kl_divergence.mean() * weight  # Return the mean KL loss across the batch
 
-def mogpreds_intersequence_diversity_loss(mogpreds, mogpreds_diversity_weight):
+def posterior_mogpreds_intersequence_diversity_loss(mogpreds, weight):
     """
     Compute the diversity loss for MoG predictions, promoting sequences to be far apart in the latent space.
     mogpreds: MoG component probabilities, shape (batch_size, T, K)
-    mogpreds_diversity_weight: Weight for the diversity loss
+    weight: Weight for the diversity loss
     """
     # Ensure mogpreds is a valid probability distribution
     assert torch.all(mogpreds >= 0), "mogpreds contains negative values"
@@ -160,36 +160,13 @@ def mogpreds_intersequence_diversity_loss(mogpreds, mogpreds_diversity_weight):
     diversity_loss = avg_pairwise_sim
 
     # Return the diversity loss (weighted)
-    return mogpreds_diversity_weight * diversity_loss
+    return weight * diversity_loss
 
-def mogpreds_intrasequence_consistency_loss(mogpreds, mogpreds_consistency_weight, **kwargs):
-    """
-    Compute the consistency loss for MoG predictions, rewarding similar mogpreds WITHIN sequences.
-    mogpreds: MoG component probabilities, shape (batch_size, T, K)
-    mogpreds_consistency_weight: Weight for the consistency loss
-    """
-    # Ensure mogpreds is a valid probability distribution
-    assert torch.all(mogpreds >= 0), "mogpreds contains negative values"
-    assert torch.allclose(mogpreds.sum(dim=-1), torch.ones_like(mogpreds.sum(dim=-1))), "mogpreds does not sum to 1"
-
-    # Clamp mogpreds to avoid log(0)
-    mogpreds = torch.clamp(mogpreds, min=1e-10, max=1.0)
-
-    # Compute the variance of mogpreds within each sequence
-    # Shape: (batch_size, T, K) -> (batch_size, K)
-    variance = torch.var(mogpreds, dim=1)
-
-    # Average the variance across components and sequences
-    consistency_loss = variance.mean()
-
-    # Return the consistency loss (weighted)
-    return mogpreds_consistency_weight * consistency_loss
-
-def mogpreds_entropy_loss(mogpreds, mogpreds_entropy_weight, **kwargs):
+def posterior_mogpreds_entropy_loss(mogpreds, posterior_mogpreds_entropy_weight, **kwargs):
     """
     Compute the entropy loss for MoG predictions, promoting entropy across the entire dataset.
     mogpreds: MoG component probabilities, shape (batch_size, T, K)
-    mogpreds_entropy_weight: Weight for the entropy loss
+    posterior_mogpreds_entropy_weight: Weight for the entropy loss
     """
     # Ensure mogpreds is a valid probability distribution
     assert torch.all(mogpreds >= 0), "mogpreds contains negative values"
@@ -206,9 +183,9 @@ def mogpreds_entropy_loss(mogpreds, mogpreds_entropy_weight, **kwargs):
     entropy = -torch.sum(aggregated_probs * torch.log(aggregated_probs))
 
     # Return the negative entropy (maximize entropy to promote diverse component usage)
-    return -mogpreds_entropy_weight * entropy
+    return -posterior_mogpreds_entropy_weight * entropy
 
-def mog_entropy_regularization(weights, logvars, entropy_weight, **kwargs):
+def prior_entropy_regularization(weights, logvars, prior_entropy_weight, **kwargs):
     """
     Computes the entropy of the MoG prior, considering weights and log-variances.
 
@@ -230,9 +207,9 @@ def mog_entropy_regularization(weights, logvars, entropy_weight, **kwargs):
     # Weighted sum of Gaussian entropies
     mog_entropy = torch.sum(probs * gaussian_entropies)  # Scalar
 
-    return entropy_weight * (-mog_entropy) # Negative entropy (minimization) 
+    return prior_entropy_weight * (-mog_entropy) # Negative entropy (minimization) 
 
-def mog_repulsion_regularization(weights, means, repulsion_weight, **kwargs):
+def prior_repulsion_regularization(weights, means, prior_repulsion_weight, **kwargs):
     """
     Computes the entropy of the MoG prior, considering weights, means, and log-variances.
 
@@ -253,118 +230,7 @@ def mog_repulsion_regularization(weights, means, repulsion_weight, **kwargs):
     
     repulsion_term = torch.sum(probs.unsqueeze(0) * probs.unsqueeze(1) * torch.exp(-mean_sq_dists))  # Scalar
 
-    return repulsion_weight * repulsion_term  
-
-# def mog_loss(encoder_means, encoder_logvars, encoder_mogpreds, mog_prior, weight, gumbel_softmax_temperature, **kwargs):
-#     """
-#     Compute the KL divergence between q(z|x) and the MoG prior p(z).
-#     Inputs:
-#         encoder_means: [B, K, latent_dim] - Means of the posterior mixture components.
-#         encoder_logvars: [B, K, latent_dim] - Log variances of the posterior mixture components.
-#         encoder_mogpreds: [B, K] - Logits for the component weights.
-#         mog_prior: Instance of MoGPrior.
-#         weight: Weight for the KL divergence term.
-#         gumbel_softmax_temperature: Temperature for Gumbel-Softmax.
-#     Outputs:
-#         normalized_loss: Scalar loss value.
-#         z: [B, latent_dim] - Sampled latent variable.
-#     """
-#     B, K, latent_dim = encoder_means.shape
-
-#     # Step 1: Gumbel-Softmax for differentiable component selection
-#     gumbel_noise = -torch.log(-torch.log(torch.rand_like(encoder_mogpreds)))
-#     logits = (encoder_mogpreds + gumbel_noise) / gumbel_softmax_temperature  # Scale by temperature
-#     log_component_weights = F.log_softmax(logits, dim=-1)  # [B, K]
-#     component_weights = torch.exp(log_component_weights)  # [B, K]
-
-#     # Step 2: Compute posterior means and logvars using component weights
-#     selected_means = torch.sum(encoder_means * component_weights.unsqueeze(-1), dim=1)  # [B, latent_dim]
-#     selected_logvars = torch.sum(encoder_logvars * component_weights.unsqueeze(-1), dim=1)  # [B, latent_dim]
-#     selected_logvars = torch.clamp(selected_logvars, min=-5, max=5)  # Clamp logvars for stability
-
-#     # Step 3: Reparameterization trick to sample z
-#     eps = torch.randn_like(selected_means)
-#     z = selected_means + eps * torch.exp(0.5 * selected_logvars)  # [B, latent_dim]
-#     z = torch.clamp(z, min=-10, max=10)  # Clamp z to prevent extreme values
-
-#     # Step 4: Compute log q(z|x) (posterior)
-#     log_qzx_per_component = -0.5 * (
-#         encoder_logvars +
-#         torch.pow(z.unsqueeze(1) - encoder_means, 2) / torch.exp(encoder_logvars) +
-#         torch.log(2 * torch.tensor(torch.pi))  # Remove D from the constant term
-#     ).mean(dim=-1)  # [B, K]
-
-#     log_qzx = torch.logsumexp(log_component_weights + log_qzx_per_component, dim=-1) + 1e-6  # To avoid log(0) # [B]
-
-#     # Step 5: Compute log p(z) (prior)
-#     log_pz = mog_prior(z)  # [B]
-
-#     # Step 6: Compute KL divergence
-#     kl_div = log_qzx - log_pz  # [B]
-#     kl_div = kl_div.mean() / (latent_dim * B) # Scalar
-
-#     if kl_div < 0:
-#         raise Exception("ERROR: DEBUGGING - negative values of kl")
-
-#     # Step 7: Normalize the loss
-#     normalized_loss = weight * kl_div
-
-#     return normalized_loss, z
-
-# def mog_loss(encoder_means, encoder_logvars, encoder_mogpreds, mog_prior, weight, gumbel_softmax_temperature, **kwargs):
-#     """
-#     Compute the KL divergence between q(z|x) and the MoG prior p(z).
-#     encoder_means: Encoder means, shape (batch_size, T, K, D)
-#     encoder_logvars: Encoder log-variances, shape (batch_size, T, K, D)
-#     encoder_mogpreds: Encoder component logits, shape (batch_size, T, K)
-#     mog_prior: Instance of MoGPrior
-#     weight: Weight of the KL loss
-#     gumbel_softmax_temperature: Temperature for Gumbel-Softmax
-#     """
-#     batch_size, T, K, D = encoder_means.shape
-
-#     # Step 1: Use Gumbel-Softmax to sample component weights DIFFERENTIABLY
-#     # Generate Gumbel noise
-#     gumbel_noise = -torch.log(-torch.log(torch.rand_like(encoder_mogpreds)))  # Shape: (batch_size, T, K)
-
-#     # Apply Gumbel-Softmax
-#     logits = encoder_mogpreds + gumbel_noise  # Add Gumbel noise to raw logits
-#     logits = torch.clamp(logits, min=-10, max=10)  # Clamp logits to avoid extreme values
-#     component_weights = torch.softmax(logits / gumbel_softmax_temperature, dim=-1)  # Shape: (batch_size, T, K)
-#     component_weights = torch.clamp(component_weights, min=1e-10, max=1.0)  # Avoid log(0)
-
-#     # Step 2: Compute weighted means and log-variances for each token
-#     selected_means = torch.sum(encoder_means * component_weights.unsqueeze(-1), dim=2)  # Shape: (batch_size, T, D)
-#     selected_logvars = torch.sum(encoder_logvars * component_weights.unsqueeze(-1), dim=2)  # Shape: (batch_size, T, D)
-#     selected_logvars = torch.clamp(selected_logvars, min=-10, max=10)  # Clamp logvars to avoid extreme values
-
-#     # Step 3: Reparameterization trick to sample z at the TOKEN level
-#     eps = torch.randn_like(selected_means)  # Shape: (batch_size, T, D)
-#     z_token = selected_means + eps * torch.exp(0.5 * selected_logvars)  # Shape: (batch_size, T, D)
-
-#     # Step 4: Compute log q(z|x) at the TOKEN level
-#     log_qzx = -0.5 * (
-#         selected_logvars +
-#         torch.pow(z_token - selected_means, 2) / torch.exp(selected_logvars) +
-#         D * torch.log(2 * torch.tensor(torch.pi))
-#     ).sum(dim=-1)  # Shape: (batch_size, T)
-
-#     # Step 5: Compute log p(z) under the MoG prior at the TOKEN level
-#     z_flat = z_token.view(-1, D)  # Shape: (batch_size * T, D)
-#     log_pz = mog_prior(z_flat)  # Shape: (batch_size * T,)
-#     log_pz = log_pz.view(batch_size, T)  # Shape: (batch_size, T)
-
-#     # Step 6: Compute KL divergence at the TOKEN level
-#     kl_div = log_qzx - log_pz  # Shape: (batch_size, T)
-
-#     # Step 7: Average KL divergence over tokens and batch for global regularization
-#     kl_div = kl_div.mean()  # Scalar
-
-#     # Step 8: Normalize the loss by the number of tokens and latent dimensions
-#     normalized_loss = weight * kl_div / (batch_size * T * D)
-
-#     # Step 9: Return the loss, token-level z, and other values
-#     return normalized_loss, z_token
+    return prior_repulsion_weight * repulsion_term  
 
 def recon_loss_function(x, x_hat, recon_weight):
     # recon_loss = LogCosh_weight * LogCosh_loss_fn(x, x_hat) 
@@ -372,13 +238,6 @@ def recon_loss_function(x, x_hat, recon_weight):
     # loss_fn = nn.L1Loss(reduction='mean')
     recon_loss = loss_fn(x, x_hat) 
     return recon_weight * recon_loss
-
-# def transformer_loss_function(target_embeddings, out_embeddings, transformer_weight):
-#     criterion = nn.CosineSimilarity(dim = 2)
-#     transformer_loss = 1 - criterion(target_embeddings, out_embeddings).mean()
-#     # loss_fn = nn.MSELoss(reduction='mean')
-#     # transformer_loss = transformer_weight * loss_fn(target_embeddings, out_embeddings) 
-#     return transformer_weight * transformer_loss #/ in_embeddings.shape[0] / in_embeddings.shape[1] # normalize by batch size and seq length 
 
 def sparse_l1_reg(z, sparse_weight, **kwargs):
     l1_penalty = torch.sum(torch.abs(z))  # L1 norm
