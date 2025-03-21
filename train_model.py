@@ -928,7 +928,7 @@ class Trainer:
                 encoder_mogpreds=mogpreds_pseudobatch, # NOT softmaxed yet
                 prior_means=self.gmvae.module.prior.means, 
                 prior_logvars=self.gmvae.module.prior.logvars, 
-                prior_weights=self.gmvae.module.prior.weights, 
+                prior_weights=torch.softmax(self.gmvae.module.prior.weightlogits, dim=0), 
                 weight=self.reg_weight,
                 **kwargs)
 
@@ -942,13 +942,17 @@ class Trainer:
                 mogpreds_entropy_weight=self.mogpreds_entropy_weight,
                 **kwargs)
 
+            mogpreds_intersequence_diversity_loss = loss_functions.mogpreds_intersequence_diversity_loss(
+                mogpreds=mogpreds,
+                mogpreds_diversity_weight = 0.1)  ############################################################## HARDCODED ###############################################
+
             prior_entropy = loss_functions.mog_entropy_regularization(
-                weights = self.gmvae.module.prior.weights, 
+                weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0), 
                 logvars = self.gmvae.module.prior.logvars, 
                 **kwargs)
             
             prior_repulsion = loss_functions.mog_repulsion_regularization(
-                weights = self.gmvae.module.prior.weights, 
+                weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0), 
                 means = self.gmvae.module.prior.means, 
                 **kwargs)
 
@@ -957,9 +961,6 @@ class Trainer:
                 labels=file_class_label,
                 classifier_weight=self.classifier_weight)
 
-            mogpreds_intersequence_diversity_loss = loss_functions.mogpreds_intersequence_diversity_loss(
-                mogpreds=mogpreds,
-                mogpreds_diversity_weight = 0.1)  ############################################################## HARDCODED ###############################################
 
             loss = mean_match_loss + logvar_match_loss + wassertstein_loss + wasserstein_logvar_entropy_loss + recon_loss + reg_loss + prior_entropy + prior_repulsion + adversarial_loss + mogpreds_entropy_loss + mogpreds_intersequence_diversity_loss  # mogpreds_intrasequence_consistency_loss
 
@@ -1098,7 +1099,7 @@ class Trainer:
                                 mogpreds = mogpreds.cpu().detach().numpy(),
                                 prior_means = self.gmvae.module.prior.means.detach().cpu().numpy(), 
                                 prior_logvars = self.gmvae.module.prior.logvars.detach().cpu().numpy(), 
-                                prior_weights = self.gmvae.module.prior.weights.detach().cpu().numpy(), 
+                                prior_weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0).detach().cpu().numpy(), 
                                 savedir = self.model_dir + f"/realtime_plots/{dataset_string}/realtime_latents", 
                                 **kwargs)
                             utils_functions.print_recon_realtime(
@@ -1149,25 +1150,25 @@ class Trainer:
             iter_curr = iter_curr + 1
 
         # Plot the full running latents at end of epoch 
-        # ALready meaned at the token level
-        # NOTE: not necessarily everything from epoch, the number of accumulated samples is defined by 'total_collected_latents'
-        utils_functions.plot_observed(
+        # Already meaned at the token level
+        # Not necessarily everything from epoch, the number of accumulated samples is defined by 'total_collected_latents'
+        utils_functions.plot_posterior( # Plot all GPUs
             gpu_id = self.gpu_id, 
             prior_means = self.gmvae.module.prior.means.detach().cpu().numpy(), 
             prior_logvars = self.gmvae.module.prior.logvars.detach().cpu().numpy(), 
-            prior_weights = self.gmvae.module.prior.weights.detach().cpu().numpy(), 
+            prior_weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0).detach().cpu().numpy(), 
             encoder_means = self.accumulated_mean.detach().cpu().numpy(),
             encoder_logvars = self.accumulated_logvar.detach().cpu().numpy(),
             encoder_zmeaned = self.accumulated_zmeaned.detach().cpu().numpy(),
             encoder_mogpreds = self.accumulated_mogpreds.detach().cpu().numpy(),
-            savedir = self.model_dir + f"/realtime_plots/{dataset_string}/observed_latents",
+            savedir = self.model_dir + f"/realtime_plots/{dataset_string}/posterior",
             epoch = self.epoch,
             **kwargs)
         
         if self.gpu_id == 0: utils_functions.plot_prior(
             prior_means = self.gmvae.module.prior.means.detach().cpu().numpy(), 
             prior_logvars = self.gmvae.module.prior.logvars.detach().cpu().numpy(), 
-            prior_weights = self.gmvae.module.prior.weights.detach().cpu().numpy(), 
+            prior_weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0).detach().cpu().numpy(), 
             savedir = self.model_dir + f"/realtime_plots/{dataset_string}/prior",
             epoch = self.epoch,
             **kwargs)

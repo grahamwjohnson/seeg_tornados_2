@@ -46,7 +46,7 @@ class MoGPrior(nn.Module):
         # Initialize means, logvars, and weights
         self.means = nn.Parameter(prior_means)  # [K, latent_dim]
         self.logvars = nn.Parameter(torch.ones(K, latent_dim) * prior_initial_logvar)  # [K, latent_dim]
-        self.weights = nn.Parameter(torch.ones(K) / K)  # [K]
+        self.weightlogits = nn.Parameter(torch.ones(K) / K)  # [K] # STore as logits, will softmax before use
 
         # Define Sinkhorn loss function
         self.sinkhorn_loss = SamplesLoss(loss="sinkhorn", p=self.Wasserstein_order, blur=self.sinkhorn_eps, scaling=0.9, debias=True, backend="tensorized")
@@ -64,8 +64,8 @@ class MoGPrior(nn.Module):
             component_probs: Soft assignments of each sample to the MoG components [batch_size, K]
         """
         # Sample Gumbel noise and apply softmax to get soft component selection
-        gumbel_noise = -torch.log(-torch.log(torch.rand(batch_size, self.K, device=self.weights.device) + 1e-20) + 1e-20)
-        logits = torch.log_softmax(self.weights, dim=0) + gumbel_noise
+        gumbel_noise = -torch.log(-torch.log(torch.rand(batch_size, self.K, device=self.weightlogits.device) + 1e-20) + 1e-20)
+        logits = torch.log_softmax(self.weightlogits, dim=0) + gumbel_noise
         component_probs = F.gumbel_softmax(logits, tau=self.gumbel_softmax_temperature, hard=False)  # [batch_size, K], fully differentiable
 
         # Compute mixture samples using soft probabilities
@@ -486,7 +486,7 @@ class GMVAE(nn.Module):
             logvar_pseudobatch = logvar.reshape(logvar.shape[0]*logvar.shape[1], logvar.shape[2], logvar.shape[3])
             mogpreds_pseudobatch = mogpreds.reshape(mogpreds.shape[0]*mogpreds.shape[1], mogpreds.shape[2])
 
-            # Softmax the mogpreds for later use
+            # Softmax the mogpreds 
             mogpreds_pseudobatch_softmax = torch.softmax(mogpreds_pseudobatch, dim=-1) 
 
             # Z is not currently constrained 

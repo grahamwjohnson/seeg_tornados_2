@@ -93,7 +93,7 @@ def gmvae_kl_loss(z, encoder_means, encoder_logvars, encoder_mogpreds, prior_mea
         encoder_mogpreds (Tensor): Mixture probabilities (already softmaxed) (batch, mog_component).
         prior_means (Tensor): Means of the prior Gaussian components (mog_component, latent_dimension).
         prior_logvars (Tensor): Log variances of the prior Gaussian components (mog_component).
-        prior_weights (Tensor): Mixture weights of the prior distribution (mog_component).
+        prior_weights (Tensor): Mixture weights of the prior distribution (mog_component). ALREADY softmaxed before being passed in. 
 
     Returns:
         kl_loss (Tensor): KL divergence loss term.

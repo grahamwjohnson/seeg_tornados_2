@@ -85,46 +85,6 @@ def get_num_channels(pat_id, pat_num_channels_LUT):
 
     return int(df.loc[df['pat_id'] == pat_id, 'num_channels'].iloc[0])
 
-def epoch_contains_pacmap_hdbscan(model_dir, epoch, return_paths=False):
-
-    needed_files = [
-        f'checkpoint_epoch{epoch}_hdbscan.pkl',
-        f'checkpoint_epoch{epoch}_PaCMAP.ann',
-        f'checkpoint_epoch{epoch}_PaCMAP.pkl',
-        f'checkpoint_epoch{epoch}_PaCMAP_MedDim.ann',
-        f'checkpoint_epoch{epoch}_PaCMAP_MedDim.pkl',
-        f'checkpoint_epoch{epoch}_PCA.pkl',
-        f'checkpoint_epoch{epoch}_pre_PaCMAP_stride_sec.pkl',
-        f'checkpoint_epoch{epoch}_pre_PaCMAP_window_sec.pkl',
-        f'checkpoint_epoch{epoch}_xy_lims.pkl',
-        f'checkpoint_epoch{epoch}_xy_lims_RAW_DIMS.pkl',
-        f'checkpoint_epoch{epoch}_xy_lims_PCA.pkl',
-    ]
-
-    found_file_paths = [''] * len(needed_files)
-
-
-    check_dir = model_dir + "/checkpoints"
-
-    for i in range(len(needed_files)):
-        curr_file = needed_files[i]
-        possible_matches = glob.glob(f'{check_dir}/{curr_file}')
-        num_matches = len(possible_matches)
-        if num_matches == 1:
-            # print(f"Found {curr_file}")
-            found_file_paths[i] = possible_matches[0]
-        elif num_matches > 1: 
-            raise Exception(f"Found more than 1 match for {curr_file}, this should never happen")
-        else:
-            print(f"Did NOT Find {curr_file}, cannot conduct inference")
-            if return_paths: return False, found_file_paths
-            else: return False
-    
-    if return_paths: 
-        return True, found_file_paths
-    else: 
-        return True
-
 def print_model_summary(model):
     print("Calculating model summary")
     summary(model, num_classes=1)
@@ -132,28 +92,6 @@ def print_model_summary(model):
     mem_bufs = sum([buf.nelement() * buf.element_size() for buf in model.buffers()])
     mem = (mem_params + mem_bufs) / 1e9  # in bytes
     print("Expected GPU memory requirement (parameters + buffers): " + str(mem) +" GB")
-
-def reset_batch_vars(num_channels, latent_dim, decode_samples, len_train_data, manual_batch_size, gpu_id):
-    iters_per_backprop = len_train_data * manual_batch_size
-    backprop_iter = 0
-    backprop_x = torch.zeros(num_channels, decode_samples * iters_per_backprop).to(gpu_id)
-    backprop_xhat = torch.zeros(num_channels,  decode_samples * iters_per_backprop).to(gpu_id)
-    backprop_mean = torch.zeros(latent_dim, iters_per_backprop).to(gpu_id)
-    backprop_logvar = torch.zeros(latent_dim, iters_per_backprop).to(gpu_id)
-
-    return iters_per_backprop, backprop_iter, backprop_x, backprop_xhat, backprop_mean, backprop_logvar
-
-def initalize_val_vars(gpu_id, batch_size, mini_batch_window_size, mini_batch_stride, decode_samples, num_channels, latent_dim, num_forward_iters, num_data_time_elements):
-    # val_label = torch.zeros(num_files, num_forward_iters).detach() 
-    val_latent = torch.zeros(batch_size, latent_dim, num_forward_iters, dtype=torch.float32).detach()    
-    val_mean = torch.zeros(batch_size, latent_dim, num_forward_iters, dtype=torch.float32).detach()
-    val_logvar = torch.zeros(batch_size, latent_dim, num_forward_iters, dtype=torch.float32).detach()
-    val_x = torch.zeros(batch_size, num_channels, num_data_time_elements).detach()
-    val_xhat = torch.zeros(batch_size, num_channels, num_data_time_elements).detach()
-    val_start_datetimes = [datetime.datetime.min]*batch_size
-    val_stop_datetimes = [datetime.datetime.min]*batch_size
-
-    return val_x, val_xhat, val_latent, val_mean, val_logvar, val_start_datetimes, val_stop_datetimes
 
 def create_metadata_subtitle(plot_dict):
 
@@ -701,7 +639,7 @@ def plot_prior(prior_means, prior_logvars, prior_weights, savedir, epoch, **kwar
     pl.savefig(savename_jpg)
     plt.close()
 
-def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, mean_lims, logvar_lims, num_accumulated_plotting_dims=5, n_bins=200, **kwargs):
+def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, mean_lims, logvar_lims, num_accumulated_plotting_dims=5, n_bins=200, **kwargs):
     """
     Plot distributions of encoder statistics across MoG components using histograms.
     Compares encoder statistics with MoG prior state and includes encoder_zmeaned visualization.
@@ -822,7 +760,7 @@ def plot_observed(gpu_id, prior_means, prior_logvars, prior_weights, encoder_mea
 
     if gpu_id == 0: time.sleep(0.5) # avoid collisions
     if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = f"{savedir}/ObservedLatents_epoch{epoch}_numForwards{Batch}_gpu{gpu_id}.jpg"
+    savename_jpg = f"{savedir}/posterior_epoch{epoch}_numForwards{Batch}_gpu{gpu_id}.jpg"
     plt.savefig(savename_jpg)
     plt.close(fig)
 
