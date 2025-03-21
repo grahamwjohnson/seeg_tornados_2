@@ -207,7 +207,6 @@ class Decoder_MLP(nn.Module):
         
         return x_na
 
-# Gradient Reversal Layer
 class GradientReversalLayer(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, alpha):
@@ -218,7 +217,6 @@ class GradientReversalLayer(torch.autograd.Function):
     def backward(ctx, grad_output):
         return -ctx.alpha * grad_output, None # None is for alpha 
 
-# Wrapper for Gradient Reversal
 class GradientReversal(nn.Module):
     def __init__(self):
         super(GradientReversal, self).__init__()
@@ -237,7 +235,6 @@ class LinearWithDropout(nn.Module):
         x = self.dropout(x)  # Apply dropout internally
         return x
 
-# Define the Adversarial Classifier with Gradient Reversal
 class AdversarialClassifier(nn.Module):
     def __init__(self, latent_dim, classifier_hidden_dims, classifier_num_pats, classifier_dropout, **kwargs):
         super(AdversarialClassifier, self).__init__()
@@ -269,7 +266,6 @@ class AdversarialClassifier(nn.Module):
             mu = layer(mu)
         return self.softmax(mu)
 
-# Define the MoG Predictor 
 class MoGPredictor(nn.Module):
     def __init__(self, top_dim, posterior_mogpredictor_hidden_dim_list, num_prior_mog_components, posterior_mogpredictor_dropout, **kwargs):
         super(MoGPredictor, self).__init__()

@@ -72,11 +72,13 @@ mean_lims: [-5, 5] # Make sure the prior's mean/logvars make sense with this lim
 logvar_lims: [-3, 1] # Important to cap logvar on high end or KL divergence calculaton itself becomes unstable and will give very negative numbers
 prior_initial_mean_spread: 3  # Uniform (e.g. value of 2 will be uniform [-2, 2])
 prior_initial_logvar: 0 
-gumbel_softmax_temperature: kwargs['gumbel_softmax_temperature'] = 1 # Higher means softer assignment to MoG, A relatively low vaue (0.5) seams essential during W2 burn to help the posterior know which 'knobs' below to which component)
-posterior_mogpreds_entropy_weight_max: kwargs['posterior_mogpreds_entropy_weight_max'] = 0.1 # Encourages overall mogpreds to to be uniform
-posterior_mogpreds_entropy_weight_min: kwargs['posterior_mogpreds_entropy_weight_min'] = 0
+gumbel_softmax_temperature: kwargs['gumbel_softmax_temperature'] = 2 # Higher means softer assignment to MoG, A relatively low vaue (0.5) seams essential during W2 burn to help the posterior know which 'knobs' below to which component)
+posterior_mogpreds_entropy_weight_max: 0.1 # Encourages overall mogpreds to to be uniform
+posterior_mogpreds_entropy_weight_min: 0
 posterior_mogpreds_entropy_weight_taper_epochs: 50 
-posterior_mogpreds_intersequence_diversity_weight: kwargs['posterior_mogpreds_intersequence_diversity_weight'] = 0.1 # static
+posterior_mogpreds_intersequence_diversity_weight_max: 0.1 # Encourages batchwise diveristy among mogpreds
+posterior_mogpreds_intersequence_diversity_weight_min: 0
+posterior_mogpreds_intersequence_diversity_weight_taper_epochs: 50
 prior_entropy_weight: kwargs['prior_entropy_weight'] = 1e-6 # Helps prevent mode collapse in PRIOR
 prior_repulsion_weight: kwargs['prior_repulsion_weight'] = 1e-1 # Helps keep centers of PRIOR guassians far apart, need to scale with number of MoG components 
 random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
@@ -86,7 +88,7 @@ logvar_match_static_weight: kwargs['logvar_match_static_weight'] = 1e-2
 KL_divergence_max_weight: kwargs['KL_divergence_max_weight'] = 5e-4 # 1e-4 maybe
 KL_divergence_min_weight: kwargs['KL_divergence_min_weight'] = 0
 KL_divergence_stall_epochs: 5 # Min KL_divergence weight rise until stall is complete
-KL_divergence_epochs_AT_max: 25 # Maybe coincide with the wasserstein order switch epoch?
+KL_divergence_epochs_AT_max: 25 
 KL_divergence_epochs_TO_max: 25
 LR_max_prior: kwargs['LR_max_prior'] = 1e-6
 LR_min_prior: kwargs['LR_min_prior'] = 0
