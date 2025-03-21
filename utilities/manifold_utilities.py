@@ -1452,8 +1452,6 @@ def kohonen_subfunction_pytorch(
 
     return axes, som
 
-
-
 def compute_histograms(data, min_val, max_val, B):
     """
     Compute histogram bin counts for each dimension of a 2D array.

@@ -437,47 +437,6 @@ def plot_latent(
         cbar_CLUSTER = plt.colorbar(cluster_ax.collections[0], ax=cluster_ax, cmap=cmap_CLUSTER, orientation='horizontal', shrink=0.7, label='Cluster Index')
         # cbar_CLUSTER.ax.set_xticklabels(labels)
 
-
-
-        # DEBUGGING
-        # import os
-        # plt.savefig(f"{os.getcwd()}/test.jpg")
-
-        # plt.close()
-        # fig = plt.figure(figsize=(26, 26))
-        # gs = gridspec.GridSpec(2, 2, figure=fig)
-        # ax = fig.add_subplot(gs[0, 0]) 
-        # interCont_ax = fig.add_subplot(gs[0, 1]) 
-        # seiztype_ax = fig.add_subplot(gs[1, 0]) 
-
-    # # Special SPES colorbar
-    # else:
-    #     # Cut the Gray colormap
-    #     spes_cmin = 0.2 # 0.4 for Greys
-    #     spes_cmax = 1
-    #     # cmap = plt.get_cmap('Greys')
-    #     cmap = plt.get_cmap('YlOrBr')
-    #     norm = matplotlib.colors.Normalize(vmin=spes_cmin, vmax =spes_cmax)
-    #     #generate colors from original colormap in the range equivalent to [vmin, vamx] 
-    #     colors = cmap(np.linspace(1.-(spes_cmax-spes_cmin)/float(spes_cmax), 1, cmap.N))
-    #     # Create a new colormap from those colors
-    #     color_map = matplotlib.colors.LinearSegmentedColormap.from_list('cut_Greys', colors)
-
-
-    #     c_toplot=np.linspace(spes_cmin, spes_cmax,  c_toplot.shape[0])
-    #     spes_sc = ax.scatter(lat_data_windowed_toplot[0,:], lat_data_windowed_toplot[1,:], c=c_toplot, alpha=plot_alpha, s=s_plot, cmap=color_map, norm=norm, edgecolors='none')
-    #     ax.set_title('Latent Space')
-
-    #     cbar_spes = plt.colorbar(spes_sc, ax=ax, ticks=[spes_cmin, spes_cmax], orientation='vertical')
-    #     cbar_spes.ax.set_yticklabels(['Start\nSPES', 'Stop\nSPES'])
-
-    #     ax.set_ylabel("Latent Var 1")
-    #     ax.set_xlabel("Latent Var 0")
-    #     ax.set_aspect('equal')
-    #     if not auto_scale_plot:
-    #         ax.set_xlim(-1, 1)
-    #         ax.set_ylim(-1, 1)
-
     # Return all axes    
     xy_lims = [ax.get_xlim(), ax.get_ylim()]
     return ax, interCont_ax, seiztype_ax, time_ax, cluster_ax, xy_lims

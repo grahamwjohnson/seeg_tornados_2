@@ -24,6 +24,52 @@ from utilities import utils_functions
 pd.set_option('display.max_rows', None)
 
 class JSONLinesLogger:
+    """
+    A logger class that writes structured log entries to a gzipped JSONL (JSON Lines) file.
+
+    This class provides functionality to log structured data entries to a gzipped file, 
+    where each log entry is written as a JSON object on a separate line. The log file 
+    is initialized with a header row if it doesn't already exist, and every log entry 
+    is timestamped for tracking when it was logged.
+
+    Attributes:
+    -----------
+    filename : str
+        The name of the gzipped log file where log entries will be stored.
+
+    Methods:
+    --------
+    __init__(self, filename):
+        Initializes the logger and sets the log file name. If the log file doesn't exist, 
+        it is created with a header entry.
+
+    initialize_file(self):
+        Initializes the log file if it doesn't already exist. The file is created with a 
+        header row containing predefined columns and a timestamp indicating when the file 
+        was initialized.
+
+    log(self, data):
+        Appends a new log entry to the log file. Each entry contains a timestamp and the 
+        provided data, which is written as a JSON object on a new line.
+
+    Usage Example:
+    --------------
+    # Create a logger for a file called 'log.jsonl'
+    logger = JSONLinesLogger('log.jsonl')
+
+    # Log some data
+    logger.log({
+        "file_class": "example_class",
+        "random_hash_modifier": "123abc",
+        "start_idx": 0,
+        "encode_token_samples": 10,
+        "end_idx": 10,
+        "file_name": "example_file.txt"
+    })
+    
+    The log entries are appended to 'log.jsonl' with a timestamp.
+    """
+    
     def __init__(self, filename):
         self.filename = filename
         self.initialize_file()
@@ -48,6 +94,96 @@ class JSONLinesLogger:
 
 # Seizure based datset curation
 class SEEG_Tornado_Dataset(Dataset):
+    """
+    A PyTorch Dataset class for handling SEEG (stereoelectroencephalography) data in the context of the Tornado project.
+    This dataset is designed to manage and process SEEG recordings from multiple patients, enabling efficient loading,
+    transformation, and batching of data for training and evaluation of machine learning models.
+
+    The dataset supports two modes of operation:
+    1. **Single-Patient Sequential Mode**: Loads data sequentially from a single patient.
+    2. **Multi-Patient Random Generation Mode**: Randomly generates batches of data from multiple patients using a
+       background process for efficient data loading.
+
+    Key Features:
+    - Supports loading SEEG data from `.pkl` files.
+    - Handles patient-specific data splits (train/val/test) based on seizure annotations or time ranges.
+    - Manages padded channels and latent dimensions for consistent input shapes.
+    - Provides options for random data generation and logging for reproducibility.
+
+    Args:
+        gpu_id (int): The GPU ID used for logging and data processing.
+        pat_list (list): List of patient IDs.
+        pat_dirs (list): List of directories containing patient-specific data.
+        FS (int): Sampling frequency of the SEEG data.
+        atd_file (str): Path to the annotation file containing seizure and SPES (Single Pulse Electrical Stimulation) information.
+        pat_num_channels_LUT (dict): Lookup table mapping patient IDs to their respective number of channels.
+        data_dir_subfolder (str): Subfolder within each patient directory containing the SEEG data files.
+        intrapatient_dataset_style (list): A 2-element list specifying the dataset style and split:
+            - First element (int):
+                - 0: Seizures with pre- and post-ictal taper (no SPES).
+                - 1: All data (no SPES).
+                - 2: All data (with SPES).
+                - 3: Only SPES.
+            - Second element (int):
+                - 0: Train dataset.
+                - 1: Validation dataset.
+                - 2: Test dataset.
+                - 3: All files.
+        hour_dataset_range (list): Time range (in hours) for filtering data files.
+        dataset_pic_dir (str): Directory for saving dataset visualization or metadata.
+        num_samples (int): Total number of samples in the dataset.
+        transformer_seq_length (int): Sequence length for transformer-based models.
+        encode_token_samples (int): Number of samples used for encoding tokens.
+        random_pulls_in_batch (bool): Whether to randomly pull data within a batch.
+        num_rand_hashes (int): Number of random hashes for data generation.
+        padded_channels (int): Number of padded channels for consistent input shapes.
+        latent_dim (int): Latent dimension of the data.
+        num_forward_passes (int): Number of forward passes for random data generation.
+        random_gen_script_path (str): Path to the script for random data generation.
+        env_python_path (str): Path to the Python executable for running the random generator script.
+        data_logger_enabled (bool): Whether to enable data logging.
+        data_logger_file (str): File path for saving data logs.
+        **kwargs: Additional keyword arguments for flexibility.
+
+    Attributes:
+        gpu_id (int): The GPU ID used for logging and data processing.
+        num_samples (int): Total number of samples in the dataset.
+        encode_token_samples (int): Number of samples used for encoding tokens.
+        FS (int): Sampling frequency of the SEEG data.
+        num_windows (int): Number of windows derived from the dataset.
+        random_pulls_in_batch (bool): Whether to randomly pull data within a batch.
+        num_rand_hashes (int): Number of random hashes for data generation.
+        latent_dim (int): Latent dimension of the data.
+        padded_channels (int): Number of padded channels for consistent input shapes.
+        transformer_seq_length (int): Sequence length for transformer-based models.
+        num_forward_passes (int): Number of forward passes for random data generation.
+        data_logger_enabled (bool): Whether data logging is enabled.
+        data_logger_file (str): File path for saving data logs.
+        kwargs (dict): Additional keyword arguments.
+        random_gen_script_path (str): Path to the script for random data generation.
+        env_python_path (str): Path to the Python executable for running the random generator script.
+        pat_num_channels (np.ndarray): Array storing the number of channels for each patient.
+        pat_ids (list): List of patient IDs.
+        pat_dirs (list): List of directories containing patient-specific data.
+        pat_fnames (list): List of lists containing filenames for each patient's data.
+        single_pat_seq (bool): Whether the dataset is in single-patient sequential mode.
+        pat_curr (int): Index of the current patient in single-patient mode.
+        tmp_dir (str): Temporary directory for random data generation.
+        fname_csv (str): CSV file containing filenames for random data generation.
+        rand_generator_process (subprocess.Popen): Process handle for the random data generator.
+
+    Methods:
+        __init__: Initializes the dataset and sets up patient-specific data.
+        initiate_generator: Launches a background process for random data generation.
+        kill_generator: Stops the random data generation process.
+        get_script_filename: Returns the filename of the current script.
+        get_pat_count: Returns the number of patients in the dataset.
+        set_pat_curr: Sets the current patient for single-patient sequential mode.
+        get_pat_curr: Returns information about the current patient.
+        __len__: Returns the length of the dataset.
+        __getitem__: Retrieves a data sample from the dataset.
+    """
+
     def __init__(
         self,
         gpu_id,
@@ -104,19 +240,7 @@ class SEEG_Tornado_Dataset(Dataset):
 
         # ### Now determine which files in the data directory shoud be given to the dataset
         # Dataset splits is a tuple of 3 floats for train/val/test and must add up to 1
-        # NOTE: the ratio referes to seizures had, no longer is based on time in EMU
-        # dataset_style 2 int list:
-            # First int:
-            # 0: Seizures with pre and post ictal taper (no SPES)
-            # 1: All data (no SPES)
-            # 2: All data (with SPES)
-            # 3: Only SPES
-            # Second int:
-            # 0 return the train dataset
-            # 1 return the val dataset
-            # 2 return the test dataset
-            # 3 return ALL files
-        
+        # NOTE: the ratio referes to seizures had, no longer is based on time in EMU        
         for i in range(0, len(pat_list)):
             
             self.pat_num_channels[i] = utils_functions.get_num_channels(pat_list[i], pat_num_channels_LUT)

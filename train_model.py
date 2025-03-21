@@ -1,3 +1,10 @@
+'''
+@author: grahamwjohnson
+Developed between 2023-2025
+
+Main script to train the Brain State Embedder (BSE)
+'''
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -25,15 +32,6 @@ from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
 from models.GMVAE import GMVAE
 
-
-'''
-@author: grahamwjohnson
-Developed between 2023-2025
-
-Main script to train the Brain State Embedder (BSE)
-'''
-
-######
 torch.autograd.set_detect_anomaly(False)
 
 def ddp_setup(gpu_id, world_size):
@@ -84,6 +82,40 @@ def load_train_objs(
     valunseen_forward_passes,
 
     **kwargs):
+
+    """
+    Initializes training objects, including datasets, dataloaders, the GM-VAE model, and its optimizer.
+    Splits patient data into training and validation sets, configures datasets, and sets up the model and optimizer.
+
+    Args:
+        gpu_id (int): GPU ID for training.
+        pat_dir (str): Directory containing patient data.
+        train_val_pat_perc (list): Percentage split for training and validation patients.
+        intrapatient_dataset_style (list): Dataset style and split (e.g., [1, 0] for all data, train split).
+        train_hour_dataset_range (list): Time range for training data.
+        val_finetune_hour_dataset_range (list): Time range for validation finetune data.
+        val_unseen_hour_dataset_range (list): Time range for validation unseen data.
+        num_dataloader_workers (int): Number of workers for dataloaders.
+        posterior_weight_decay (float): Weight decay for posterior parameters.
+        adamW_beta1, adamW_beta2 (float): AdamW optimizer parameters for posterior.
+        prior_weight_decay (float): Weight decay for prior parameters.
+        adamW_beta1_prior, adamW_beta2_prior (float): AdamW optimizer parameters for prior.
+        classifier_weight_decay (float): Weight decay for classifier parameters.
+        classifier_adamW_beta1, classifier_adamW_beta2 (float): AdamW optimizer parameters for classifier.
+        train_num_rand_hashes (int): Random hashes for training dataset.
+        val_num_rand_hashes (int): Random hashes for validation dataset.
+        train_forward_passes (int): Forward passes for training dataset.
+        valfinetune_forward_passes (int): Forward passes for validation finetune dataset.
+        valunseen_forward_passes (int): Forward passes for validation unseen dataset.
+        **kwargs: Additional arguments for dataset and model configuration.
+
+    Returns:
+        train_dataset, train_dataloader: Training dataset and dataloader.
+        valfinetune_dataset, valfinetune_dataloader: Validation finetune dataset and dataloader.
+        valunseen_dataset, valunseen_dataloader: Validation unseen dataset and dataloader.
+        gmvae: Initialized GM-VAE model.
+        opt_gmvae: Optimizer for the GM-VAE model.
+    """
 
     # Split pats into train and test
     all_pats_dirs = glob.glob(f"{pat_dir}/*pat*")
@@ -216,11 +248,37 @@ def main(
     running_patidxs_path = [],
     epochs_to_train: int = -1,
     **kwargs):
+    
+    """
+    Main training loop for the GM-VAE model with support for distributed data parallelism (DDP) 
+    and model inference.
 
-    '''
-    Highest level loop to build training objects, run train epochs, validate, inference on whole files to save embeddings... etc. 
+    This script handles the entire process of training, validation, and inference for the GM-VAE model. 
+    It initializes key components such as datasets, models, and optimizers, and sets up the Distributed Data 
+    Parallel (DDP) framework to facilitate multi-GPU training. The training process includes optional fine-tuning 
+    of the model on validation data, as well as inference on the entire dataset to export embeddings.
 
-    '''
+    Key Features:
+    - Initializes WandB for experiment tracking.
+    - Handles multi-GPU distributed training with DDP setup.
+    - Loads and saves model checkpoints during training.
+    - Supports fine-tuning on validation datasets before inference.
+    - Exports embeddings for multiple datasets after training.
+    - Manages the training and validation loops, including dynamic learning rate adjustments.
+    - Handles data generators and ensures that the model continues training from previous states when necessary.
+
+    Arguments:
+    - gpu_id: GPU identifier for multi-GPU training.
+    - world_size: Number of GPUs used in training.
+    - config: Configuration dictionary with hyperparameters and settings.
+    - run_name, timestamp_id, and other parameters for experiment tracking and model fine-tuning.
+    - Various paths for loading pre-trained model weights, running statistics, and checkpoints.
+
+    Functions:
+    - Main loop through epochs, including training, validation, and inference stages.
+    - Dynamic loading and saving of model weights.
+    - Regular saving of checkpoints and management of data generators.
+    """
 
     # Initialize new WandB here and group GPUs together with DDP
     wandb.require("service")
@@ -533,6 +591,27 @@ class Trainer:
         self.wandb_run = wandb_run
         self.kwargs = kwargs
 
+        """
+        Initialization method for the GM-VAE training object.
+
+        This method sets up all necessary configurations for training a GM-VAE model 
+        in a distributed environment. It initializes model parameters, datasets, 
+        dataloaders, optimization settings, and various training-related variables. 
+        Additionally, it sets up the model for Distributed Data Parallel (DDP) and 
+        prepares accumulated variables to track and manage latent data throughout 
+        the training process.
+
+        Key Initializations:
+        - Distributed training setup with DDP.
+        - Model and optimization state (GM-VAE, optimizer).
+        - Training and validation datasets, dataloaders, and sampling strategies.
+        - Accumulated statistics for latent data and prior distribution.
+        - Integration with WandB for model monitoring.
+
+        Assertions and checks are performed to ensure correct configurations and 
+        prevent potential runtime errors.
+        """
+
         # Check variables that will cause delayed crashes 
         assert len(self.inference_window_sec_list) == len(self.inference_stride_sec_list)
 
@@ -576,7 +655,21 @@ class Trainer:
         self.opt_gmvae.zero_grad()
 
     def _save_checkpoint(self, epoch, delete_old_checkpoints, **kwargs):
-            
+        """
+        Saves a checkpoint of the GM-VAE model, optimizer, and accumulated statistics (means, logvars, etc.)
+        at the specified epoch. Optionally deletes old checkpoints to save disk space.
+
+        Args:
+            epoch (int): Current epoch number.
+            delete_old_checkpoints (bool): If True, deletes old checkpoints except those at the end of
+                regularization annealing periods.
+            **kwargs: Additional arguments for checkpoint deletion.
+
+        Saves:
+            - GM-VAE model weights and optimizer state.
+            - Accumulated statistics: running means, logvars, z-meaned, MoG predictions, and patient indices.
+        """
+
         print("CHECKPOINT SAVE")
 
         # Create new directory for this epoch
@@ -640,22 +733,53 @@ class Trainer:
             utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch, **kwargs)
             print("Deleted old checkpoints, except epochs at end of reguaization annealing period")
     
-    def _update_reg_window(
-        self,
-        mean,
-        logvar,
-        zmeaned,
-        mogpreds,
-        patidxs):
+    def _update_reg_window(self, mean, logvar, zmeaned, mogpreds, patidxs):
 
-        '''
-        Collect most recent encoder outputs
-        Purely for plotting purpioses right now
-        (Historically was used as running regularization window, 
-        but cost got too expensive when switched to outputing K means and K logvars)
+        """
+        This function collects and updates the most recent encoder outputs for plotting purposes. 
+        Historically, it was used for maintaining a running regularization window, but the cost 
+        became prohibitive after switching to outputting K means and K logvars. As a result, 
+        this function is now only used for visualization of the encoder outputs.
 
-        NOTE: Must be averaged across tokens before this function call
-        '''
+        The function accumulates the following data:
+        - `mean`: The means from the encoder output.
+        - `logvar`: The log variances from the encoder output.
+        - `zmeaned`: The reparameterized means for latent variable z.
+        - `mogpreds`: The predictions from the mixture of Gaussians.
+        - `patidxs`: The patient indices associated with the data.
+
+        The accumulated data is stored in predefined arrays, and once the arrays are full, 
+        the function rolls over to overwrite the oldest data. This ensures that the window 
+        always contains the most recent `total_collected_latents` updates.
+
+        ### Key Features:
+        - **Window-based Accumulation:** The function maintains a running window of the 
+        most recent encoder outputs.
+        - **Rollover Mechanism:** When the window is full, older data is overwritten, 
+        keeping the window size constant.
+        - **Detachment for Backpropagation:** The accumulated data is detached from the 
+        computation graph, allowing it to be used for plotting while preventing 
+        gradients from flowing through it in subsequent backward passes.
+
+        ### Parameters:
+        - `mean` (torch.Tensor): The means output by the encoder.
+        - `logvar` (torch.Tensor): The log variances output by the encoder.
+        - `zmeaned` (torch.Tensor): The reparameterized means of the latent variable z.
+        - `mogpreds` (torch.Tensor): The mixture of Gaussian predictions from the encoder.
+        - `patidxs` (torch.Tensor): The patient indices associated with the current batch.
+
+        ### Outputs:
+        - The function updates the accumulated encoder outputs, which are stored in 
+        `self.accumulated_mean`, `self.accumulated_logvar`, `self.accumulated_zmeaned`, 
+        `self.accumulated_mogpreds`, and `self.accumulated_patidxs`.
+
+        ### Notes:
+        - **Averaging:** This function requires that the encoder outputs be averaged across tokens before being passed in.
+        - **Plotting Purpose:** The primary purpose of this function is for visualization and monitoring of the encoder's behavior.
+        - **Memory Efficiency:** By detaching the accumulated values, the function ensures that 
+        memory is managed efficiently while still allowing the data to be used for plotting.
+
+        """
 
         num_new_updates = mean.shape[0]
         if (self.next_update_index + num_new_updates) < self.total_collected_latents:
@@ -705,17 +829,59 @@ class Trainer:
         padded_channels,
         **kwargs):
 
-        '''
-        This will run inference (ONLY encoder) and save the latent space per file to a .pkl
-        Unlike _run_train_epoch (which is random data pulls), this function will sequentially iterate through entire file (one patient at a time)
-        NOTE: This function takes in a *Dataset*, NOT a *Dataloader* like in _run_train_epoch
+        """
+        This function runs inference with the GMVAE encoder (only the encoder) and saves 
+        the resulting latent space embeddings for each file, in the form of pickle files. 
+        Unlike the `_run_train_epoch` function, which pulls random data, this function 
+        iterates sequentially through the entire dataset (one patient at a time). 
 
-        OUTPUT
-        The output files will be smoothed according to the following variables:
-        inference_window_sec_list: e.g. [60, 20] 
-        inference_stride_sec_list: e.g. [30, 5] 
-    
-        '''
+        The function processes the dataset and saves latent embeddings using the GMVAE encoder 
+        for each patient, file, and window-stride configuration. The embeddings are smoothed 
+        according to specified window and stride sizes.
+
+        ### Key Features:
+        - **Sequential Inference:** This function sequentially processes data for each patient 
+        and file, as opposed to random data pulls.
+        - **Latent Embedding Calculation:** It calculates latent embeddings for each file's 
+        data and saves them as pickle files.
+        - **Window-Stride Smoothing:** The latent embeddings are smoothed according to the 
+        window and stride sizes defined by `inference_window_sec_list` and 
+        `inference_stride_sec_list`.
+        - **Conditioning:** Hashes for each patient and channel are generated to condition 
+        the feedforward process.
+        - **GPU Support:** The function processes the data on GPU for efficient computations.
+
+        ### Parameters:
+        - `dataset_curr` (Dataset): The dataset object that holds the current patient data 
+        to be processed.
+        - `dataset_string` (str): A string identifier for the dataset (for tracking or naming).
+        - `attention_dropout` (float): Dropout rate for attention layers (though not directly 
+        used in this function).
+        - `num_dataloader_workers` (int): Number of worker threads for loading data batches.
+        - `max_batch_size` (int): The maximum batch size used for inference.
+        - `inference_batch_mult` (float): A multiplier for adjusting batch size during inference.
+        - `padded_channels` (int): The number of padded channels in the data tensor (to 
+        accommodate variable input sizes).
+        - `**kwargs` (dict): Additional arguments that may be passed (not used directly here).
+
+        ### Outputs:
+        - For each patient, the function processes their data and saves the computed latent 
+        embeddings into pickle files. 
+        - The files are organized according to the window and stride configurations, with 
+        directories and filenames reflecting these settings (e.g., `latent_60secWindow_30secStride.pkl`).
+        - Each file’s latent space embeddings are saved after the GMVAE encoder processes the 
+        raw data windows with the specified stride and window sizes.
+
+        ### Notes:
+        - **Data Processing:** The function processes files one by one per patient. Data for 
+        each file is passed through the GMVAE encoder to extract the latent space.
+        - **Windowing and Striding:** After processing each file, the latent space is divided 
+        into overlapping windows based on the stride and window settings, smoothing the 
+        embeddings as necessary.
+        - **File Structure:** Latent embeddings are saved in directories named after the 
+        window and stride sizes, and each file's latent embeddings are saved separately.
+
+        """
 
         print(f"[GPU{self.gpu_id}] encode_token_samples: {self.encode_token_samples}")
 
@@ -831,12 +997,54 @@ class Trainer:
         singlebatch_printing_interval,
         **kwargs):
 
-        '''
-        This function is for training the model. 
-        It will pull: random pats/random files/random portions of file
+        """
+        This function is responsible for training the model for one complete epoch. It iterates through the batches 
+        in the given dataloader, performs forward and backward passes, computes loss, and updates model parameters 
+        through gradient descent.
 
+        The function performs the following steps:
+        1. Fetches random subsets of data (random files, portions of files, etc.) from the DataLoader.
+        2. Transfers data to the GPU for efficient computation.
+        3. Updates learning rates and weights for various components of the model based on the current epoch and iteration.
+        4. Passes the data through the GM-VAE encoder and decoder to compute the reconstructed output.
+        5. Computes various loss components such as reconstruction loss, KL divergence, mean matching, logvar matching,
+           posterior entropy loss, and adversarial loss.
+        6. Backpropagates the gradients and updates the model parameters using the optimizer.
+        7. Logs the training metrics and loss values to WandB for visualization and tracking.
+        8. Optionally prints visualizations for latent representations, reconstructions, and attention weights for 
+           debugging or inspection purposes.
+        9. Optionally updates buffers that accumulate various statistics about the model’s predictions.
+        10. Handles validation modes (fine-tuning or unseen data) where the classifier component is frozen, and no 
+            backpropagation is performed for evaluation.
+
+        Key Parameters:
         IMPORTANT: Takes in a *DataLoader*, not a *Dataset*
-        '''
+
+        - dataloader_curr: The DataLoader that provides the data for the current epoch. It is expected to return batches
+          of data containing input tensors, file names, class labels, channel orders, and patient embeddings.
+        - dataset_string: A string identifying the dataset being used (for logging and file saving purposes).
+        - attention_dropout: A dropout rate applied during attention mechanisms to regularize the model.
+        - val_finetune: A boolean indicating whether the model is being fine-tuned on validation data.
+        - val_unseen: A boolean indicating whether the model is being evaluated on unseen data.
+        - singlebatch_latent_printing: A boolean flag that determines whether latent representations for a single batch 
+          should be printed.
+        - singlebatch_printing_interval: The frequency (in terms of iterations) at which latent printing occurs.
+        - kwargs: Additional keyword arguments that might include configuration parameters such as learning rate schedules, 
+          regularization weights, or Gumbel-Softmax temperature.
+
+        Returns:
+        - None. The function performs in-place updates to the model and logs training metrics during the epoch.
+
+        Notes:
+        - This function assumes that the model's architecture includes components like GM-VAE, an adversarial classifier, 
+          and priors for the latent variables, as well as the optimizer `opt_gmvae`.
+        - The `wandb` package is used for logging metrics in real-time during training.
+        - The model parameters are updated after computing the loss and performing backpropagation, using gradient clipping
+          to avoid excessive updates.
+        - Visualization functions such as latent printing, reconstruction printing, and attention printing can be enabled 
+          for debugging or monitoring purposes.
+
+        """
 
         print(f"[GPU{self.gpu_id}] encode_token_samples: {self.encode_token_samples}")
 
@@ -1126,6 +1334,24 @@ class Trainer:
         # torch.cuda.empty_cache()
             
 if __name__ == "__main__":
+
+    """
+    Main script to initialize and run a distributed training session.
+
+    This script performs the following steps:
+    1. Sets the Python hash seed for reproducibility.
+    2. Loads configuration settings from a YAML file (`train_config.yml`).
+    3. Executes arithmetic build in the configuration and sets up the environment.
+    4. Spawns multiple subprocesses (using the `spawn` method) to execute the main training function in parallel across multiple processes.
+    5. Each subprocess runs the training with distributed settings, ensuring synchronization and coordination across workers.
+    6. Waits for all subprocesses to complete before printing "End of script."
+
+    Key functions:
+    - Loading and executing configuration settings (`exec_kwargs`, `run_setup`).
+    - Parallelizing the training process across multiple workers using multiprocessing.
+
+    Note: The script avoids using `mp.spawn` due to potential memory errors and directly manages subprocesses.
+    """
 
     # Set the hash seed 
     os.environ['PYTHONHASHSEED'] = '1234'  

@@ -10,13 +10,82 @@ from .Transformer import ModelArgs, Transformer, RMSNorm
 
 '''
 @author: grahamwjohnson
-2023-2025 
+Developed between 2023-2025
 
 '''
 
-from geomloss import SamplesLoss  # Import GeomLoss for Sinkhorn computation
-
 class MoGPrior(nn.Module):
+    """
+    Mixture of Gaussians (MoG) Prior with Gumbel-Softmax Sampling.
+
+    This class implements a prior distribution for a Gaussian Mixture Variational Autoencoder (GM-VAE).
+    The prior consists of `K` Gaussian components in a `latent_dim`-dimensional space, with learnable 
+    means and variances. To enable differentiable sampling, it uses the Gumbel-Softmax trick for soft 
+    component selection.
+
+    Parameters:
+    -----------
+    K : int
+        Number of Gaussian mixture components in the prior.
+
+    latent_dim : int
+        Dimensionality of the latent space.
+
+    prior_initial_mean_spread : float
+        Spread for initializing the prior means. The means are sampled uniformly from 
+        `[-prior_initial_mean_spread, prior_initial_mean_spread]` to encourage diversity.
+
+    prior_initial_logvar : float
+        Initial log-variance for all Gaussian components. This defines the starting 
+        uncertainty for each mixture component.
+
+    mean_lims : tuple (float, float)
+        Clamping range `(min, max)` for sampled latent variables to ensure numerical stability.
+
+    gumbel_softmax_temperature : float
+        Temperature parameter for the Gumbel-Softmax trick, controlling the smoothness 
+        of component selection. Lower values make selections more discrete.
+
+    Attributes:
+    -----------
+    means : nn.Parameter (tensor of shape `[K, latent_dim]`)
+        Learnable means of the Gaussian mixture components.
+
+    logvars : nn.Parameter (tensor of shape `[K, latent_dim]`)
+        Learnable log-variances of the Gaussian mixture components.
+
+    weightlogits : nn.Parameter (tensor of shape `[K]`)
+        Unnormalized logits for mixture component weights. These are softmaxed to obtain 
+        valid mixture probabilities.
+
+    Methods:
+    --------
+    sample_prior(batch_size)
+        Samples `batch_size` points from the prior using Gumbel-Softmax for differentiable 
+        mixture component selection, followed by Gaussian reparameterization.
+
+        Parameters:
+        batch_size : int
+            Number of latent samples to generate.
+
+        Returns:
+        z_prior : torch.Tensor of shape `[batch_size, latent_dim]`
+            Differentiable samples drawn from the MoG prior.
+
+        component_probs : torch.Tensor of shape `[batch_size, K]`
+            Soft assignment probabilities indicating the likelihood of each sample 
+            belonging to each MoG component.
+
+    Notes:
+    ------
+    - The prior mixture weights are parameterized as logits (`weightlogits`) to avoid numerical 
+      issues with direct probability constraints.
+    - The `sample_prior` method ensures differentiability using the Gumbel-Softmax trick, allowing 
+      for gradient flow through discrete component assignments.
+    - Latent samples are clamped within `mean_lims` to prevent extreme values from destabilizing training.
+    - This MoG prior is designed to integrate with the GM-VAE framework.
+    """
+
     def __init__(self, K, latent_dim, prior_initial_mean_spread, prior_initial_logvar, mean_lims, gumbel_softmax_temperature, **kwargs):
         """
         Mixture of Gaussians (MoG) prior with Wasserstein stabilization using Sinkhorn loss.
@@ -25,8 +94,6 @@ class MoGPrior(nn.Module):
             latent_dim: Dimensionality of the latent space.
             prior_initial_mean_spread: Spread for uniform initialization of prior means.
             prior_initial_logvar: Initial log variance for all components.
-            sinkhorn_eps: Entropic regularization coefficient for Sinkhorn loss.
-            sinkhorn_niter: Number of iterations for Sinkhorn solver.
         """
         super(MoGPrior, self).__init__()
         self.K = K
@@ -86,6 +153,80 @@ class RMSNorm_Conv(torch.nn.Module):
         return output * self.weight.unsqueeze(1).repeat(1, x.shape[2])
 
 class TimeSeriesCrossAttentionLayer(nn.Module):
+    """
+    Cross-Attention Layer for Time Series Data.
+
+    This module applies cross-attention to capture dependencies across different time steps 
+    and channels in a time series. It follows a transformer-like structure with residual 
+    connections, layer normalization, and a feed-forward network (FFN).
+
+    This layer is used in `Encoder_TimeSeriesWithCrossAttention` to process time series data 
+    before passing it into the transformer-based encoder.
+
+    Parameters:
+    -----------
+    embed_dim : int
+        Dimensionality of the input embeddings (equivalent to `padded_channels` in the encoder).
+
+    num_heads : int
+        Number of attention heads for multi-head self-attention.
+
+    dropout : float, optional (default=0.1)
+        Dropout probability applied to attention outputs and the feed-forward network.
+
+    Attributes:
+    -----------
+    attn : nn.MultiheadAttention
+        Multi-head attention mechanism for computing attention over the input sequence.
+
+    norm1 : RMSNorm
+        Layer normalization applied after the cross-attention mechanism.
+
+    dropout1 : nn.Dropout
+        Dropout applied to the attention output before the residual connection.
+
+    ffn : nn.Sequential
+        A position-wise feed-forward network consisting of:
+        - Linear layer expanding `embed_dim` to `embed_dim * 4`
+        - SiLU activation function
+        - Linear layer reducing back to `embed_dim`
+
+    norm2 : RMSNorm
+        Layer normalization applied after the feed-forward network.
+
+    dropout2 : nn.Dropout
+        Dropout applied to the FFN output before the residual connection.
+
+    Methods:
+    --------
+    forward(query, key, value)
+        Applies cross-attention, residual connections, and a feed-forward network.
+
+        Parameters:
+        query : torch.Tensor
+            Query tensor of shape `[seq_len, batch_size, embed_dim]`.
+
+        key : torch.Tensor
+            Key tensor of shape `[seq_len, batch_size, embed_dim]`.
+
+        value : torch.Tensor
+            Value tensor of shape `[seq_len, batch_size, embed_dim]`.
+
+        Returns:
+        torch.Tensor
+            Processed feature tensor of shape `[seq_len, batch_size, embed_dim]`.
+
+    Notes:
+    ------
+    - The input sequence is first passed through a multi-head attention mechanism.
+    - A residual connection is applied, followed by layer normalization.
+    - The processed tensor is then passed through a feed-forward network.
+    - Another residual connection and normalization are applied before returning the output.
+    - This layer is designed to work within the cross-attention-based encoder 
+      (`Encoder_TimeSeriesWithCrossAttention`), where queries, keys, and values are 
+      derived from time series features.
+    """
+
     def __init__(self, embed_dim, num_heads, dropout=0.1):
         super(TimeSeriesCrossAttentionLayer, self).__init__()
         self.attn = nn.MultiheadAttention(embed_dim, num_heads, dropout=dropout)
@@ -100,9 +241,6 @@ class TimeSeriesCrossAttentionLayer(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
 
     def forward(self, query, key, value):
-        # Cross-attention: query comes from the target, key and value come from the source
-        # query: (seq_len, batch_size, embed_dim)
-        # key, value: (seq_len, batch_size, embed_dim)
 
         # Cross-attention layer
         attn_output, _ = self.attn(query, key, value)  # q=query, k=key, v=value
@@ -115,6 +253,79 @@ class TimeSeriesCrossAttentionLayer(nn.Module):
         return query
 
 class Encoder_TimeSeriesWithCrossAttention(nn.Module):
+    """
+    Time Series Encoder with Cross-Attention Mechanism.
+
+    This module encodes time series data using multiple layers of cross-attention, allowing
+    it to capture complex dependencies across channels. It processes input sequences using 
+    self-attention mechanisms and incorporates positional encodings to retain sequential 
+    information.
+
+    Parameters:
+    -----------
+    padded_channels : int
+        Number of input channels after padding or transformation.
+
+    crattn_num_heads : int
+        Number of attention heads in each cross-attention layer.
+
+    crattn_num_layers : int
+        Number of stacked cross-attention layers in the encoder.
+
+    crattn_max_seq_len : int
+        Maximum sequence length supported by the positional encoding.
+
+    crattn_dropout : float
+        Dropout probability applied within the attention layers.
+
+    Attributes:
+    -----------
+    attention_layers : nn.ModuleList
+        A list of `TimeSeriesCrossAttentionLayer` modules, each applying cross-attention 
+        to capture dependencies across channels.
+
+    positional_encoding : torch.Tensor
+        Precomputed positional encoding tensor with shape [1, max_seq_len, padded_channels],
+        used to preserve sequence order information.
+
+    Methods:
+    --------
+    _get_positional_encoding(max_seq_len, dim)
+        Computes the sinusoidal positional encoding for the input sequence.
+
+        Parameters:
+        max_seq_len : int
+            Maximum sequence length to support.
+
+        dim : int
+            Feature dimensionality per time step.
+
+        Returns:
+        torch.Tensor
+            A tensor of shape [1, max_seq_len, dim] containing the positional encodings.
+
+    forward(x)
+        Forward pass through the cross-attention encoder.
+
+        Parameters:
+        x : torch.Tensor
+            Input tensor of shape [batch_size, num_channels, seq_len], where `num_channels` 
+            corresponds to `padded_channels`.
+
+        Returns:
+        torch.Tensor
+            Encoded feature representation with shape [batch_size, seq_len * padded_channels].
+
+    Notes:
+    ------
+    - The input is reshaped to `[batch_size, seq_len, padded_channels]` before applying 
+      positional encodings.
+    - Cross-attention layers process the data as `(seq_len, batch_size, padded_channels)`, 
+      where queries, keys, and values are the same (`q = k = v`).
+    - The final output is reshaped to `[batch_size, seq_len * padded_channels]` to ensure 
+      compatibility with downstream tasks.
+    """
+
     def __init__(self, 
         # in_channels, 
         padded_channels,
@@ -176,6 +387,64 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
         return x.flatten(start_dim=1) # (batch, seq_len * low_dim)
 
 class Decoder_MLP(nn.Module):
+    """
+    Multi-Layer Perceptron (MLP) Decoder for GMVAE.
+
+    This decoder is a non-autoregressive MLP-based architecture designed to reconstruct 
+    sequences from the latent representation. It transforms latent variables into waveform 
+    reconstructions using fully connected layers with SiLU activations and normalization.
+
+    Parameters:
+    -----------
+    gpu_id : int or None
+        ID of the GPU device for computation. If None, uses CPU.
+
+    latent_dim : int
+        Dimensionality of the latent space input to the decoder.
+
+    decoder_base_dims : int
+        Base hidden dimensionality for fully connected layers in the decoder.
+
+    output_channels : int
+        Number of output channels in the reconstructed signal.
+
+    decode_samples : int
+        Number of time samples to generate per transformer sequence token.
+
+    Attributes:
+    -----------
+    non_autoregressive_fc : nn.Sequential
+        Fully connected layers mapping the latent space to a high-dimensional feature 
+        space, followed by SiLU activations and RMS normalization.
+
+    non_autoregressive_output : nn.Sequential
+        Final fully connected layer mapping features to the output waveform with a 
+        tanh activation to ensure bounded output values.
+
+    Methods:
+    --------
+    forward(z)
+        Forward pass through the decoder.
+        
+        Parameters:
+        z : torch.Tensor
+            Latent representation from the encoder. Shape: [batch_size, latent_dim].
+
+        Returns:
+        torch.Tensor
+            Reconstructed waveform. Shape: [batch_size, transformer_seq_length, decode_samples, output_channels].
+
+    Notes:
+    ------
+    - The decoder is **non-autoregressive**, meaning it predicts the entire sequence 
+      in parallel rather than step-by-step.
+    - RMSNorm is used after intermediate layers for stabilization.
+    - The final tanh activation ensures output values remain within a bounded range, 
+      which may help match expected signal characteristics.
+    - Unlike autoregressive models, this decoder does not use past outputs to generate 
+      future values, making it computationally efficient.
+    """
+
     def __init__(self, gpu_id, latent_dim, decoder_base_dims, output_channels, decode_samples):
         super(Decoder_MLP, self).__init__()
         self.gpu_id = gpu_id
@@ -236,6 +505,73 @@ class LinearWithDropout(nn.Module):
         return x
 
 class AdversarialClassifier(nn.Module):
+    """
+    Adversarial Classifier for GMVAE.
+
+    This classifier is designed to predict patient labels from the latent space 
+    while using a Gradient Reversal Layer (GRL) to enable adversarial training. 
+    The goal is to remove patient-specific biases from the latent representation 
+    by making the encoder produce embeddings that are uninformative for classification.
+
+    The classifier is a multi-layer perceptron (MLP) with SiLU activation functions, 
+    optional dropout for regularization, and a final softmax activation to output 
+    class probabilities.
+
+    Parameters:
+    -----------
+    latent_dim : int
+        Dimensionality of the latent space input to the classifier.
+
+    classifier_hidden_dims : list of int
+        List of hidden layer sizes for the MLP classifier.
+
+    classifier_num_pats : int
+        Number of unique patient classes (i.e., the number of output units).
+
+    classifier_dropout : float
+        Dropout probability applied to hidden layers for regularization.
+
+    **kwargs : dict
+        Additional keyword arguments for flexibility.
+
+    Attributes:
+    -----------
+    gradient_reversal : GradientReversal
+        A module that reverses gradients during backpropagation for adversarial training.
+
+    classifier_dropout : float
+        Dropout probability for regularization.
+
+    mlp_layers : nn.ModuleList
+        List of layers including linear transformations and SiLU activations.
+
+    softmax : nn.Softmax
+        Softmax activation applied to the final output to produce class probabilities.
+
+    Methods:
+    --------
+    forward(mu, alpha)
+        Forward pass through the adversarial classifier.
+        
+        Parameters:
+        mu : torch.Tensor
+            The latent representation from the encoder. Shape: [batch_size, latent_dim].
+
+        alpha : float
+            Scaling factor for the gradient reversal layer. Determines the strength 
+            of the adversarial effect.
+
+        Returns:
+        torch.Tensor
+            Class probabilities after the softmax activation. Shape: [batch_size, classifier_num_pats].
+
+    Notes:
+    ------
+    - The `GradientReversal` layer ensures adversarial learning by inverting gradients.
+    - The softmax function is applied at the output layer to produce probabilities.
+    - The classifier is optimized separately from the main VAE loss to ensure effective 
+      adversarial training.
+    """
     def __init__(self, latent_dim, classifier_hidden_dims, classifier_num_pats, classifier_dropout, **kwargs):
         super(AdversarialClassifier, self).__init__()
         self.gradient_reversal = GradientReversal()
@@ -267,6 +603,55 @@ class AdversarialClassifier(nn.Module):
         return self.softmax(mu)
 
 class MoGPredictor(nn.Module):
+    """
+    Mixture of Gaussians (MoG) Component Predictor.
+
+    The `MoGPredictor` is a fully connected neural network that predicts the logits for 
+    selecting a Gaussian mixture component in the latent space. It takes an encoded 
+    representation from the GMVAE and outputs unnormalized logits for each MoG component. 
+    The logits are later processed using the Gumbel-Softmax trick to enable differentiable 
+    sampling.
+
+    This module consists of an MLP with multiple hidden layers, SiLU activation functions, 
+    RMS normalization, and optional dropout for regularization.
+
+    Parameters:
+    -----------
+    top_dim : int
+        The dimensionality of the input features coming from the encoder.
+
+    posterior_mogpredictor_hidden_dim_list : list of int
+        List defining the number of hidden units in each hidden layer.
+
+    num_prior_mog_components : int
+        Number of Gaussian components in the prior mixture model.
+
+    posterior_mogpredictor_dropout : float
+        Dropout probability applied in the hidden layers for regularization.
+
+    **kwargs : dict
+        Additional keyword arguments for flexibility.
+
+    Attributes:
+    -----------
+    dropout : float
+        Dropout probability for hidden layers.
+
+    mlp_layers : nn.ModuleList
+        List of layers including linear transformations, SiLU activations, and RMS normalization.
+
+    Methods:
+    --------
+    forward(x)
+        Performs a forward pass through the MLP network and returns logits for MoG component selection.
+        The output should not be passed through a softmax function, as the Gumbel-Softmax trick requires raw logits.
+
+    Notes:
+    ------
+    - The final layer does NOT apply softmax to the logits; this must be done externally.
+    - The network is designed to maintain differentiability for component selection.
+    """
+
     def __init__(self, top_dim, posterior_mogpredictor_hidden_dim_list, num_prior_mog_components, posterior_mogpredictor_dropout, **kwargs):
         super(MoGPredictor, self).__init__()
 
@@ -293,9 +678,113 @@ class MoGPredictor(nn.Module):
         return x # Do NOT softmax here, Gumbel-Softmax trick needs logits 
 
 class GMVAE(nn.Module):
-    '''
-    GMVAE Reverseable Encoder/Decoder 
-    '''
+    """
+    Gaussian Mixture Variational Autoencoder (GMVAE) with Reversible Encoder/Decoder.
+
+    This GMVAE model incorporates a mixture of Gaussians (MoG) prior with a transformer-based 
+    encoder for time-series data. The encoder leverages cross-attention mechanisms to process 
+    raw input data before passing it through a transformer for further feature extraction.
+    The latent space is modeled as a mixture of Gaussians, where posterior sampling is done 
+    using the Gumbel-Softmax trick for differentiable selection of mixture components.
+
+    The decoder reconstructs the original input data from the latent space, and an adversarial 
+    classifier is optionally included for additional regularization.
+
+    Parameters:
+    -----------
+    encode_token_samples : int
+        Number of tokens per input sample in the encoding stage.
+
+    padded_channels : int
+        Number of padded channels in the input waveform.
+
+    transformer_seq_length : int
+        Number of sequential time steps input into the transformer.
+
+    transformer_start_pos : int
+        Starting position for the transformer’s positional encoding.
+
+    transformer_dim : int
+        Dimensionality of the transformer model's hidden representation.
+
+    encoder_transformer_activation : str
+        Activation function used in the transformer encoder.
+
+    top_dims : int
+        Dimension of the output of the cross-attention encoder head.
+
+    hidden_dims : int
+        Number of hidden dimensions before the latent space transformation.
+
+    latent_dim : int
+        Dimensionality of the latent space.
+
+    decoder_base_dims : int
+        Dimensionality of the decoder’s input space.
+
+    prior_mog_components : int
+        Number of Gaussian components in the MoG prior.
+
+    mean_lims : tuple (float, float)
+        Limits for mean values in the latent space.
+
+    logvar_lims : tuple (float, float)
+        Limits for log-variance values in the latent space.
+
+    gumbel_softmax_temperature : float
+        Temperature parameter for Gumbel-Softmax sampling in the posterior.
+
+    gpu_id : int, optional
+        GPU identifier for model computation.
+
+    **kwargs : dict
+        Additional keyword arguments for submodules.
+
+    Attributes:
+    -----------
+    prior : MoGPrior
+        Mixture of Gaussians prior used for regularization in the latent space.
+
+    encoder_head : Encoder_TimeSeriesWithCrossAttention
+        Cross-attention encoder to extract features from time-series data.
+
+    transformer_encoder : Transformer
+        Transformer module applied after the cross-attention head.
+
+    top_to_hidden : nn.Linear
+        Linear layer to map from the encoder’s output to the hidden space.
+
+    norm_hidden : RMSNorm
+        Normalization layer for the hidden representation.
+
+    mean_encode_layer : nn.Linear
+        Linear layer mapping hidden representation to mean values of the posterior.
+
+    logvar_encode_layer : nn.Linear
+        Linear layer mapping hidden representation to log-variance values of the posterior.
+
+    mogpreds_layer : MoGPredictor
+        Predictor layer for MoG mixture component selection.
+
+    decoder : Decoder_MLP
+        Decoder network to reconstruct input data from latent representations.
+
+    adversarial_classifier : AdversarialClassifier
+        Optional classifier for adversarial training in the latent space.
+
+    silu : nn.SiLU
+        Activation function applied in the encoder.
+
+    Methods:
+    --------
+    forward(x, reverse=False, hash_pat_embedding=-1)
+        Forward pass through the GMVAE. If `reverse=False`, encodes input `x` into a latent 
+        representation. If `reverse=True`, decodes a given latent `x` back into waveform data.
+
+    sample_posterior(encoder_means, encoder_logvars, encoder_mogpreds, gumbel_softmax_temperature)
+        Samples `z` from the posterior distribution using the Gumbel-Softmax trick.
+
+    """
     def __init__(
         self, 
         encode_token_samples,
@@ -502,33 +991,3 @@ def print_models_flow(x, **kwargs):
     print(f"decoder_out:{posterior_out.shape}\n")
 
     del gmvae
-
-if __name__ == "__main__":
-
-    kwargs = {
-        'dummy': -1
-    }
-    
-    in_channels = 1024
-    kernel_sizes = [3,9,15]
-    
-    batchsize = 4
-    data_length = 4
-    time_change=True # will shrink/dilate time by 2 for every depth layer
-
-    x = torch.rand(batchsize, in_channels, data_length, len(kernel_sizes))
-
-    gmvae = GMVAE(
-        encode_token_samples=data_length,
-        in_channels=in_channels,
-        kernel_sizes=kernel_sizes, 
-        time_change=time_change,
-        cnn_depth=2,
-        cnn_resblock_layers=4,
-        hidden_dims=2048,
-        latent_dim=1024, 
-        **kwargs
-    )
-
-    print(f"Are the weights of encoder and decoder tied? {torch.allclose(gmvae.top_to_hidden.weight.T, gmvae.hidden_to_top.weight)}")
-

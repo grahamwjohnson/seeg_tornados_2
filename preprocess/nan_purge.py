@@ -1,7 +1,42 @@
-'''
-Delete any file with NaNs
-Leave a log of deleted files
-'''
+"""
+This script scans directories containing `.pkl` files within a given parent directory,
+searches for files containing NaN (Not a Number) values, and provides the option to delete 
+those files by moving them to a designated delete directory.
+
+The script operates on a directory structure where each subdirectory contains `.pkl` files. 
+It loads each file, checks for the presence of NaN values in the contents, and if any NaNs 
+are found, the user is prompted for confirmation to delete those files. The files marked for 
+deletion are moved to a separate directory (`delete_directory`), and a log of deleted files 
+is saved in the original directory.
+
+### Attributes:
+-------------
+- `parent_dir` : str
+    The path to the parent directory where patient data directories are located. 
+    Each subdirectory within this parent directory is scanned for `.pkl` files.
+  
+- `dir_keyphrase` : str
+    A keyphrase used to identify subdirectories related to patient data (typically "pat" in the example).
+
+- `delete_directory` : str
+    The path where `.pkl` files containing NaN values will be moved after deletion confirmation.
+    A new directory is created if it does not exist.
+
+### Process:
+---------
+1. The script identifies directories containing patient data files by searching for 
+   directories that match the `dir_keyphrase` within the `parent_dir`.
+   
+2. For each identified directory, the script loads every `.pkl` file and checks for NaN values 
+   using `np.isnan()`. If a NaN is found, the file path is added to the deletion list.
+
+3. The user is prompted to confirm whether they would like to delete the files containing NaNs. 
+   If confirmed ('y'), the files are moved to the `delete_directory`.
+
+4. A log of deleted files is saved in the respective directory in a text file called 
+   `files_deleted_with_nans.txt`.
+
+"""
 
 import glob
 import pickle

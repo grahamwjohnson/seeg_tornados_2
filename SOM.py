@@ -2,6 +2,76 @@ import torch
 import torch.nn as nn
 
 class SOM(nn.Module):
+    """
+    Self-Organizing Map (SOM) implementation in PyTorch.
+
+    This class defines a Self-Organizing Map (SOM) for unsupervised learning. SOM is a 
+    type of artificial neural network that performs dimensionality reduction through 
+    clustering of data points in a lower-dimensional grid. This implementation supports 
+    the training of a 2D grid of neurons, where each neuron represents a weight vector, 
+    and the network learns to represent the input data in an organized fashion. The neurons 
+    are updated using a competitive learning process where the "Best Matching Unit" (BMU) is 
+    found for each input sample, and the weights of the BMU and its neighbors are updated 
+    according to a Gaussian neighborhood function.
+
+    ### Key Features:
+    - **Batch Training:** Supports efficient batch training of the SOM with the ability 
+    to update weights using vectorized operations for parallel processing.
+    - **Learning Rate Decay:** The learning rate (`lr`) decays over epochs according to 
+    a specified decay factor (`lr_epoch_decay`).
+    - **Neighborhood Function:** The weight update is influenced by a Gaussian neighborhood 
+    function, where the neighborhood size decays over time with a specified `sigma`.
+    - **Device Compatibility:** The model is designed to work on both CPU and GPU, with 
+    seamless device management.
+    - **Flexible Initialization:** Weights are initialized randomly and can be updated 
+    based on input data.
+
+    ### Parameters:
+    - `grid_size` (tuple): The size of the SOM grid, specified as (rows, cols).
+    - `input_dim` (int): The dimensionality of the input data (e.g., number of features 
+    in each input vector).
+    - `batch_size` (int): The number of input samples processed in a single batch during 
+    training.
+    - `lr` (float): The initial learning rate for weight updates.
+    - `lr_epoch_decay` (float): The decay factor for the learning rate after each epoch.
+    - `sigma` (float): The initial radius of the neighborhood function used to update weights.
+    - `sigma_epoch_decay` (float): The decay factor for `sigma` over epochs.
+    - `sigma_min` (float): The minimum value of `sigma` to prevent it from decaying too much.
+    - `device` (str or torch.device): The device to run the model on (e.g., "cpu" or "cuda").
+
+    ### Methods:
+    1. **`__init__(self, grid_size, input_dim, batch_size, lr, lr_epoch_decay, sigma, sigma_epoch_decay, sigma_min, device)`**: 
+    Initializes the SOM model with the specified parameters.
+    2. **`reset_device(self, device)`**: Resets the model's device (e.g., to switch between 
+    CPU and GPU) and moves the weights and coordinates to the new device.
+    3. **`forward(self, x)`**: Computes the squared Euclidean distance between the input 
+    `x` and all the neurons in the SOM grid.
+    4. **`find_bmu(self, x)`**: Finds the Best Matching Unit (BMU) for a given input `x` 
+    by computing the distances to all neurons and selecting the one with the smallest 
+    distance.
+    5. **`update_weights(self, x, bmu_rows, bmu_cols)`**: Updates the weights of the SOM 
+    neurons using the BMU and a Gaussian neighborhood function. This method uses 
+    efficient vectorized operations for weight updates.
+    6. **`train(self, data_in, num_epochs)`**: Trains the SOM on the input data for a 
+    specified number of epochs. The method shuffles the data, finds the BMU for each 
+    batch, and updates the weights accordingly.
+    7. **`get_weights(self)`**: Returns the current weights of the SOM as a NumPy array 
+    for visualization purposes.
+
+    ### Usage Example:
+    ```python
+    # Initialize the SOM model
+    som = SOM(grid_size=(10, 10), input_dim=3, batch_size=32, lr=0.1, lr_epoch_decay=0.9, 
+            sigma=3.0, sigma_epoch_decay=0.9, sigma_min=0.1, device="cuda")
+
+    # Train the model on input data
+    som.train(data_in=my_data, num_epochs=100)
+
+    # Retrieve the trained weights for visualization
+    weights = som.get_weights()
+    
+    """
+
     def __init__(self, grid_size, input_dim, batch_size, lr, lr_epoch_decay, sigma, sigma_epoch_decay, sigma_min, device):
         super(SOM, self).__init__()
         self.grid_size = grid_size
@@ -81,80 +151,3 @@ class SOM(nn.Module):
     def get_weights(self):
         """ Return weights as a NumPy array (for visualization) """
         return self.weights.cpu().numpy()
-
-
-
-# import torch
-# import torch.nn as nn
-# import numpy as np
-# import sys
-
-# class SOM(nn.Module):
-#     def __init__(self, grid_size, input_dim, batch_size, lr, lr_epoch_decay, sigma, sigma_epoch_decay, device):
-#         super(SOM, self).__init__()
-#         self.grid_size = grid_size
-#         self.input_dim = input_dim
-#         self.lr = lr
-#         self.lr_epoch_decay = lr_epoch_decay
-#         self.sigma = sigma
-#         self.sigma_epoch_decay = sigma_epoch_decay
-#         self.batch_size = batch_size
-#         self.device = device
-
-#         # Initialize the weights (neurons) randomly and move to GPU
-#         self.weights = torch.randn(grid_size[0], grid_size[1], input_dim, device=self.device)
-
-#     def forward(self, x):
-#         # Ensure x has the correct shape
-#         if x.dim() == 1:
-#             x = x.unsqueeze(0)  # Reshape to (1, input_dim)
-
-#         # Vectorized distance computation
-#         x_expanded = x[:, None, None, :]  # Shape: (batch_size, 1, 1, input_dim)
-#         distances = torch.sum((self.weights - x_expanded) ** 2, dim=3)  # Shape: (batch_size, grid_size[0], grid_size[1])
-#         return distances
-
-#     def find_bmu(self, x):
-#         # Find the Best Matching Unit (BMU) for a batch of inputs
-#         distances = self.forward(x)  # Shape: (batch_size, grid_size[0], grid_size[1])
-#         bmu_indices = torch.argmin(distances.view(x.size(0), -1), dim=1)  # Flatten grid and find BMU
-#         bmu_rows = bmu_indices // self.grid_size[1]
-#         bmu_cols = bmu_indices % self.grid_size[1]
-#         return bmu_rows, bmu_cols
-
-#     def update_weights(self, x, bmu_rows, bmu_cols):
-#         # Update the weights using competitive learning for a batch of inputs
-#         for i in range(x.size(0)):  # Iterate over the batch
-#             for row in range(self.grid_size[0]):
-#                 for col in range(self.grid_size[1]):
-#                     # Compute the neighborhood function
-#                     distance_to_bmu = (row - bmu_rows[i]) ** 2 + (col - bmu_cols[i]) ** 2
-#                     neighborhood = torch.exp(-distance_to_bmu / (2 * self.sigma ** 2))
-
-#                     # Update the weights
-#                     self.weights[row, col] += self.lr * neighborhood * (x[i] - self.weights[row, col])
-
-#     def train(self, data_in, num_epochs):
-#         for epoch in range(num_epochs):
-#             # Shuffle the data
-#             indices = np.random.permutation(data_in.shape[0])
-#             data = data_in[indices]
-
-#             # Train in batches
-#             for i in range(0, data.shape[0], self.batch_size):
-#                 batch = torch.tensor(data[i:i + self.batch_size], dtype=torch.float32, device=self.device)  # Get a batch of inputs and put on GPU
-#                 bmu_rows, bmu_cols = self.find_bmu(batch)  # Find BMUs for the batch
-#                 self.update_weights(batch, bmu_rows, bmu_cols)  # Update weights
-
-#                 if i%1 == 0:
-#                     sys.stdout.write(f"\rSOM Epoch:{epoch}/{num_epochs-1}, iter_curr:{i}/{data.shape[0]-1}      ") 
-#                     sys.stdout.flush() 
-
-#             # Decay learning rate and sigma over time
-#             self.lr *= self.lr_epoch_decay
-#             self.sigma *= self.sigma_epoch_decay
-
-#     def get_weights(self):
-#         return self.weights.cpu().numpy()  # Move weights back to CPU for visualization
-
-

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Feb  6 22:05:34 2023
-
 @author: grahamwjohnson
+Developed between 2023-2025
+
 """
 import string
 import subprocess
@@ -47,6 +47,35 @@ from scipy.stats import gaussian_kde
 from models.GMVAE import print_models_flow
 
 def fill_hist_by_channel(data_in: np.ndarray, histo_bin_edges: np.ndarray, zero_island_delete_idxs: list):
+
+    """
+    Computes per-channel histograms for a multi-channel dataset, with optional removal of specified data segments.
+
+    This function calculates histograms for each channel in the input `data_in` using the provided `histo_bin_edges`.
+    It also allows for the exclusion of specific index ranges (`zero_island_delete_idxs`) before histogram computation.
+
+    Parameters:
+    -----------
+    data_in : np.ndarray (shape `[num_channels, num_samples]`)
+        The input multi-channel data array where each row corresponds to a channel.
+
+    histo_bin_edges : np.ndarray (shape `[num_bins + 1]`)
+        The edges defining the histogram bins.
+
+    zero_island_delete_idxs : list of tuples
+        List of index ranges `(start_idx, end_idx)` specifying segments to remove from all channels before computing histograms.
+
+    Returns:
+    --------
+    histo_bin_counts : np.ndarray (shape `[num_channels, num_bins]`)
+        A 2D array containing histogram counts for each channel.
+
+    Notes:
+    ------
+    - If `zero_island_delete_idxs` is not empty, specified index ranges are removed before histogram computation.
+    - Uses `np.histogram` to compute bin counts for each channel.
+    - Outputs progress to `sys.stdout` to indicate per-channel processing status.
+    """
 
     if zero_island_delete_idxs != []:
         zero_island_delete_idxs.sort()
@@ -107,6 +136,59 @@ def create_metadata_subtitle(plot_dict):
 
 def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_size, epoch_stall, LR_epochs_TO_max, LR_epochs_AT_max, iters_per_epoch, LR_rise_first=True):
 
+    """
+    Computes the learning rate (LR) based on the current iteration and epoch, with a cyclical learning rate schedule.
+
+    This function applies a piecewise learning rate schedule that includes an initial rise, followed by a plateau at the maximum value. 
+    The learning rate adjusts based on manual parameters such as gamma, step size, and the number of epochs to reach maximum learning rate.
+
+    Parameters:
+    -----------
+    iter_curr : int
+        The current iteration within the current epoch.
+
+    LR_min : float
+        The minimum learning rate value.
+
+    LR_max : float
+        The maximum learning rate value.
+
+    epoch : int
+        The current epoch number.
+
+    manual_gamma : float
+        The gamma value used to scale the learning rate over epochs.
+
+    manual_step_size : int
+        The step size for adjusting the learning rate.
+
+    epoch_stall : int
+        The epoch at which the learning rate schedule starts.
+
+    LR_epochs_TO_max : int
+        The number of epochs to increase the learning rate to its maximum value.
+
+    LR_epochs_AT_max : int
+        The number of epochs the learning rate remains at its maximum value.
+
+    iters_per_epoch : int
+        The number of iterations per epoch.
+
+    LR_rise_first : bool, optional (default=True)
+        Determines whether the learning rate rises first before reaching the maximum value. If False, the implementation is incomplete.
+
+    Returns:
+    --------
+    LR_val : float
+        The computed learning rate for the current iteration and epoch.
+
+    Notes:
+    ------
+    - The function assumes that the learning rate rises first (i.e., from `LR_min` to `LR_max`) unless `LR_rise_first` is set to False.
+    - The learning rate is adjusted by gamma after a number of epochs specified by `manual_step_size`.
+    - The function raises an exception if `LR_rise_first` is set to False, as that part is not yet implemented.
+    """
+
     # Shift the epoch by the stall:
     if epoch < epoch_stall:
         if LR_rise_first: 
@@ -163,6 +245,174 @@ def LR_and_weight_schedules(
         LR_max_prior, LR_min_prior, LR_epochs_stall_prior, LR_epochs_TO_max_prior, LR_epochs_AT_max_prior,  manual_gamma_prior, manual_step_size_prior,
         KL_divergence_rise_first=True, LR_rise_first=True, **kwargs):
 
+    """
+    Computes learning rate (LR) schedules, KL divergence schedule, and classifier weights at each epoch for training.
+
+    This function calculates the values of various learning rates, weights, and schedules, including:
+    - KL divergence weight with tapering and rise.
+    - Posterior MoG prediction entropy and diversity with tapering.
+    - Classifier weight and alpha based on epoch.
+    - Learning rates for posterior and prior with dynamic updates.
+
+    The schedules are piecewise with rise and plateau phases, and learning rate schedules are computed using the provided parameters.
+
+    Parameters:
+    -----------
+    epoch : int
+        The current epoch number.
+
+    iter_curr : int
+        The current iteration within the epoch.
+
+    iters_per_epoch : int
+        The number of iterations per epoch.
+
+    KL_divergence_max_weight : float
+        The maximum weight for KL divergence.
+
+    KL_divergence_min_weight : float
+        The minimum weight for KL divergence.
+
+    KL_divergence_epochs_TO_max : int
+        Number of epochs to increase KL divergence to its maximum weight.
+
+    KL_divergence_epochs_AT_max : int
+        Number of epochs to hold KL divergence at its maximum weight.
+
+    KL_divergence_stall_epochs : int
+        The number of epochs before KL divergence schedule starts.
+
+    posterior_mogpreds_entropy_weight_max : float
+        The maximum entropy weight for posterior MoG prediction.
+
+    posterior_mogpreds_entropy_weight_min : float
+        The minimum entropy weight for posterior MoG prediction.
+
+    posterior_mogpreds_entropy_weight_taper_epochs : int
+        The number of epochs for tapering the entropy weight.
+
+    classifier_weight : float
+        The weight for the classifier.
+
+    classifier_alpha_max : float
+        The maximum alpha value for the classifier.
+
+    classifier_alpha_min : float
+        The minimum alpha value for the classifier.
+
+    classifier_epochs_AT_max : int
+        The number of epochs to keep classifier alpha at its maximum.
+
+    classifier_epochs_TO_max : int
+        The number of epochs to increase classifier alpha to its maximum.
+
+    classifier_rise_first : bool
+        Whether to rise the classifier alpha value first.
+
+    LR_min_classifier : float
+        The minimum learning rate for the classifier.
+
+    mean_match_static_weight : float
+        The weight for the mean matching loss.
+
+    logvar_match_static_weight : float
+        The weight for the log variance matching loss.
+
+    posterior_mogpreds_intersequence_diversity_weight_min : float
+        The minimum diversity weight for posterior MoG prediction.
+
+    posterior_mogpreds_intersequence_diversity_weight_max : float
+        The maximum diversity weight for posterior MoG prediction.
+
+    posterior_mogpreds_intersequence_diversity_weight_taper_epochs : int
+        The number of epochs for tapering the diversity weight.
+
+    LR_max_posterior : float
+        The maximum learning rate for the posterior.
+
+    LR_min_posterior : float
+        The minimum learning rate for the posterior.
+
+    LR_epochs_stall_posterior : int
+        The number of epochs before the posterior LR schedule starts.
+
+    LR_epochs_TO_max_posterior : int
+        The number of epochs to increase the posterior LR to its maximum.
+
+    LR_epochs_AT_max_posterior : int
+        The number of epochs to hold the posterior LR at its maximum.
+
+    manual_gamma_posterior : float
+        The manual gamma value for the posterior LR schedule.
+
+    manual_step_size_posterior : int
+        The manual step size for the posterior LR schedule.
+
+    LR_max_prior : float
+        The maximum learning rate for the prior.
+
+    LR_min_prior : float
+        The minimum learning rate for the prior.
+
+    LR_epochs_stall_prior : int
+        The number of epochs before the prior LR schedule starts.
+
+    LR_epochs_TO_max_prior : int
+        The number of epochs to increase the prior LR to its maximum.
+
+    LR_epochs_AT_max_prior : int
+        The number of epochs to hold the prior LR at its maximum.
+
+    manual_gamma_prior : float
+        The manual gamma value for the prior LR schedule.
+
+    manual_step_size_prior : int
+        The manual step size for the prior LR schedule.
+
+    KL_divergence_rise_first : bool, optional (default=True)
+        Whether to rise the KL divergence value first before reaching the maximum.
+
+    LR_rise_first : bool, optional (default=True)
+        Whether to rise the learning rate first before reaching the maximum.
+
+    Returns:
+    --------
+    mean_match_static_weight : float
+        The static weight for mean matching.
+
+    logvar_match_static_weight : float
+        The static weight for log variance matching.
+
+    KL_divergence_val : float
+        The calculated KL divergence weight for the current epoch.
+
+    LR_val_posterior : float
+        The learning rate for the posterior for the current epoch.
+
+    LR_val_prior : float
+        The learning rate for the prior for the current epoch.
+
+    LR_val_cls : float
+        The learning rate for the classifier for the current epoch.
+
+    mogpred_entropy_val : float
+        The posterior MoG prediction entropy weight for the current epoch.
+
+    mogpred_diversity_val : float
+        The posterior MoG prediction diversity weight for the current epoch.
+
+    classifier_weight : float
+        The classifier weight for the current epoch.
+
+    classifier_val : float
+        The alpha value for the classifier for the current epoch.
+
+    Notes:
+    ------
+    - The function dynamically computes learning rates and weights based on the epoch and iteration, adjusting for various phases of training.
+    - The function raises an exception if `KL_divergence_rise_first` or `LR_rise_first` are set to False and not handled.
+    """
+
     # Posterior MoG Prediction Entropy TAPER
     if epoch >= posterior_mogpreds_entropy_weight_taper_epochs:
         mogpred_entropy_val = posterior_mogpreds_entropy_weight_min
@@ -190,7 +440,6 @@ def LR_and_weight_schedules(
     # *** Classifier Alpha ###
     classifier_range = classifier_alpha_max - classifier_alpha_min
     classifier_epoch_period = classifier_epochs_TO_max + classifier_epochs_AT_max
-
     if classifier_rise_first: # START with rise
         classifier_epoch_residual = epoch % classifier_epoch_period 
     else:
@@ -206,7 +455,6 @@ def LR_and_weight_schedules(
         classifier_val = classifier_alpha_max
 
     # *** KL_divergence SCHEDULE ***
-
     # If within the stall, send out KL_divergence_min_weight
     if epoch < KL_divergence_stall_epochs:
         KL_divergence_val = KL_divergence_min_weight
@@ -225,9 +473,7 @@ def LR_and_weight_schedules(
                 KL_divergence_val = KL_divergence_max_weight
         else: raise Exception("ERROR: not coded up")
                 
-    # *** LR SCHEDULES ***
-
-    # CORE
+    # *** POSTERIOR LR ***
     LR_val_posterior = LR_subfunction(
         iter_curr=iter_curr,
         LR_min=LR_min_posterior,
@@ -242,7 +488,7 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first 
     )
 
-    # PRIOR
+    # *** PRIOR LR ***
     LR_val_prior = LR_subfunction(
         iter_curr=iter_curr,
         LR_min=LR_min_prior,
@@ -260,6 +506,59 @@ def LR_and_weight_schedules(
     return  mean_match_static_weight, logvar_match_static_weight, KL_divergence_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, mogpred_diversity_val, classifier_weight, classifier_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
+    """
+    Generates random indices for batching across multiple files with temporal augmentation.
+
+    This function produces a 3D array of random indices that represent the starting points 
+    for batches during backpropagation. For each backprop iteration, a new set of indices 
+    is randomly sampled from each file, ensuring that the sequence of samples fits within 
+    the boundaries of each file. The function also incorporates a frame shift for augmenting 
+    the temporal structure of the data, and ensures that the sampling does not result in 
+    out-of-bounds errors by considering the past sequence length and decoding samples.
+
+    Parameters:
+    -----------
+    num_backprops : int
+        The number of backpropagation steps (or iterations) for which to generate indices.
+        
+    num_files : int
+        The number of files from which indices will be sampled.
+
+    num_samples_in_file : int
+        The total number of samples available in each file. Used to check for index 
+        overflow when adding sequence lengths.
+
+    past_seq_length : int
+        The length of the sequence used for the past context in each backpropagation step. 
+        Ensures that sampled indices, when combined with the context and decoding length, 
+        do not exceed the available samples in the file.
+
+    manual_batch_size : int
+        The number of samples to extract for each backpropagation iteration from each file.
+
+    stride : int
+        The step size between consecutive samples. This allows for random sampling and 
+        augmentation within each file, ensuring variety in the sampled frames.
+
+    decode_samples : int
+        The number of samples used for decoding in the sequence. This is added to the index 
+        validation to ensure that the samples can be decoded without exceeding the file's 
+        total length.
+
+    Returns:
+    --------
+    numpy.ndarray
+        A 3D NumPy array with shape (num_backprops, num_files, manual_batch_size). 
+        Each entry in this array is a randomly selected index for a sample in the 
+        corresponding file and backprop iteration.
+
+    Raises:
+    -------
+    Exception
+        If the generated index plus the `past_seq_length` and `decode_samples` exceeds 
+        the number of samples available in the file (`num_samples_in_file`), an error 
+        will be raised.
+    """
     # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
     out = np.zeros([num_backprops, num_files, manual_batch_size])
 
@@ -275,132 +574,6 @@ def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_se
 
     return out.astype('int')
                 
-def in_seizure(file_name, start_idx, end_idx, samp_freq, atd_file):
-
-    pat_id = file_name.split("_")[0]
-    start_datetimes, stop_datetimes = filename_to_datetimes([file_name])
-    start_datetime, stop_datetime = start_datetimes[0], stop_datetimes[0]
-    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id, atd_file=atd_file)
-    sample_microsec = (1/samp_freq) * 1e6
-
-    curr_datetime_start = start_datetime + start_idx * datetime.timedelta(microseconds=sample_microsec)
-    curr_datetime_stop = start_datetime + end_idx * datetime.timedelta(microseconds=sample_microsec)
-
-    for j in range(0, len(seiz_start_dt)):
-        seiz_start_dt_curr = seiz_start_dt[j]
-        seiz_stop_dt_curr = seiz_stop_dt[j]
-
-        # Start of data epoch is within seizure
-        if (curr_datetime_start > seiz_start_dt_curr) & (curr_datetime_start < seiz_stop_dt_curr):
-            return True
-        
-        # End of data epoch is within seizure
-        if (curr_datetime_stop > seiz_start_dt_curr) & (curr_datetime_stop < seiz_stop_dt_curr):
-            return True
-
-        # All of seizure is within data epoch 
-        # NOT checking because data being fed in is on order of milliseconds
-
-    # If made it through, then return False
-    return False
-
-def is_ictal_subprocess(i, dict_in):
-
-    start_datetime = dict_in["start_datetime"]
-    stop_datetime = dict_in["stop_datetime"]
-
-    inferred_sample_microsec = dict_in["inferred_sample_microsec"]
-    data_samples = dict_in["data_samples"]
-    seiz_start_dt = dict_in["seiz_start_dt"]
-    seiz_stop_dt = dict_in["seiz_stop_dt"]
-    curr_datetime = start_datetime + i * datetime.timedelta(microseconds=inferred_sample_microsec)
-
-    in_seizure = 0
-    
-    for j in range(0, len(seiz_start_dt)):
-        seiz_start_dt_curr = seiz_start_dt[j]
-        seiz_stop_dt_curr = seiz_stop_dt[j]
-        
-        # Tmiepoint is within a seizure, both class
-        if (curr_datetime >= seiz_start_dt_curr) & (curr_datetime <= seiz_stop_dt_curr): 
-            in_seizure = 1
-            return in_seizure
-
-    return in_seizure
-
-def get_all_is_ictal(file_name, data_samples, atd_file):
-    pat_id = file_name.split("_")[0]
-    start_datetimes, stop_datetimes = filename_to_datetimes([file_name])
-    start_datetime, stop_datetime = start_datetimes[0], stop_datetimes[0]
-    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id, atd_file=atd_file)
-
-    inferred_FS = data_samples/(stop_datetime - start_datetime).total_seconds()
-    inferred_sample_microsec = (1/inferred_FS) * 1e6
-
-    file_contains_ictal = False
-    # First check to see if file contains a seizure at all
-    for i in range(0, len(seiz_start_dt)):
-        if (start_datetime > seiz_start_dt[i]) & (start_datetime < seiz_stop_dt[i]):
-            file_contains_ictal = True
-            break
-
-        if (stop_datetime > seiz_start_dt[i]) & (stop_datetime < seiz_stop_dt[i]):
-            file_contains_ictal = True
-            break
-
-        if (seiz_start_dt[i] > start_datetime) & (seiz_stop_dt[i] < stop_datetime):
-            file_contains_ictal = True
-            break
-
-    if not file_contains_ictal:
-        return [0]*data_samples
-    
-    else:
-        # Iterate through data timepoints and get exact data samples that are ictal
-        dict_in = {
-            "start_datetime": start_datetime,
-            "stop_datetime": stop_datetime,
-            "seiz_start_dt": seiz_start_dt, 
-            "seiz_stop_dt": seiz_stop_dt, 
-            "inferred_sample_microsec": inferred_sample_microsec, 
-            "data_samples": data_samples}
-            
-        return [is_ictal_subprocess(i, dict_in) for i in range(0, data_samples)]
-        
-def get_summary_miniepoch_label(onehot_miniepoch):
-    max_onehot = [torch.max(onehot_miniepoch[i, :, :], axis = 1) for i in range(onehot_miniepoch.shape[0])]
-
-    out = torch.zeros(len(max_onehot))
-    
-    for i in range(len(max_onehot)):
-        curr_max = max_onehot[i][0]
-        if curr_max[1] == 1:
-            out[i] = 2 # ictal
-            continue
-        elif curr_max[0] == 1:
-            out[i] = 1 # preictal
-            continue
-        elif curr_max[2] == 1:
-            out[i] = 3 # postictal
-            continue
-        else:
-            out[i] = 0 # interictal
-
-    return out
-
-def get_average_label(tensor_1d):
-    # Ictal > pre > post > inter
-    #   2   >  1  >   3  >   0
-    
-    a = np.array(tensor_1d)
-    if 2 in a:        return 2
-    if 1 in a:
-        return 1
-    if 3 in a:
-        return 3
-    else:
-        return 0
-
 def atd_str2datetime(s):
     # Must account for varying completeness of microseconds (e.g. 2017-10-15 06:40:20 vs. 2017-11-11 08:33:51.000 vs. 2021-01-19 07:00:31.027734)
     if '.' not in s:
@@ -414,49 +587,11 @@ def atd_str2datetime(s):
 
     return datetime.datetime.strptime(s, '%Y-%m-%d %H:%M:%S.%f')
 
-def find_specified_number_motif_2D(array, motif, verbose=False):
-    """Finds specified number motifs in a 2D array.
-
-    Args:
-    array: A 2D NumPy array.
-    motif: A list of numbers that represents the motif to be found.
-
-    Returns:
-    Count of motifs found
-    """
-    num_labels = array.shape[0]
-    counts_by_label = [count_motif_1D(i, num_labels, array[i, :], motif, verbose) for i in range(num_labels)]
-    count = np.sum(counts_by_label)
-
-    return count
-
-def count_motif_1D(i, num_labels, a, motif, verbose):
-    if verbose:
-        sys.stdout.write(f"\rFinding Exit-Cluster Transition Motifs (i.e. [... 1, 0 ...]) in Master_Onehot: State {i}/{num_labels - 1}              ")
-        sys.stdout.flush() 
-
-    count = 0
-    for j in range(a.shape[0] - len(motif) + 1):
-        if (a[j:j + len(motif)] == motif).all():
-            count = count + 1
-
-    return count
-
 
 # DATA MANIPULATIONS
 
 def flatten(list_of_lists):
   return [item for sublist in list_of_lists for item in sublist]
-
-def pseudobatch_raw_data(x, token_samples):
-    '''
-    x [batch, channels, datapoints]
-    returns: x_batched [batch * token_lengths, channels, datapoints]
-    '''
-    x_batched = torch.stack(torch.split(x.transpose(1,2), token_samples, dim=1), dim=1).transpose(2,3)
-    x_batched = x_batched.reshape(x_batched.shape[0]*x_batched.shape[1], x_batched.shape[2], x_batched.shape[3])
-    
-    return x_batched
 
 def hash_to_vector(input_string, num_channels, padded_channels, latent_dim, modifier, hash_output_range):
     """
@@ -719,8 +854,7 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
     plt.savefig(savename_jpg, dpi=600)
     plt.close(fig)
 
-# Global dictionary to store patient ID to color mappings
-PATIENT_COLOR_MAP = {}
+PATIENT_COLOR_MAP = {} # Global dictionary to store patient ID to color mappings
 def print_patposteriorweights_cumulative(mogpreds, patidxs, patname_list, savedir, epoch, iter_curr, **kwargs):
     """
     Plot stacked bar plots for MoG weights, colored by patient proportions.
@@ -1398,7 +1532,6 @@ def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
     return new_cmap
 
 
-
 # FILE I/O
 
 def exec_kwargs(kwargs):
@@ -1409,13 +1542,6 @@ def exec_kwargs(kwargs):
                     exec(kwargs[k])
 
     return kwargs
-
-def load_data_tensor(filename):
-    file = open(filename,'rb')
-    data = pickle.load(file) 
-    file.close()
-    # data_channel_subset = data[0:self.num_channels,:]   
-    return torch.FloatTensor(data)
 
 def filename_to_dateobj(f: str, start_or_end: int):
     # if start_or_end is '0' the beginning of file timestamp is used, if '1' the end

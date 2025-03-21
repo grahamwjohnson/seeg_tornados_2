@@ -173,45 +173,6 @@ def posterior_mogpreds_intersequence_diversity_loss(mogpreds, weight, threshold=
     # Return the diversity loss (weighted)
     return weight * diversity_loss
 
-# def posterior_mogpreds_intersequence_diversity_loss(mogpreds, weight):
-#     """
-#     Compute the diversity loss for MoG predictions, promoting sequences to be far apart in the latent space.
-#     mogpreds: MoG component probabilities, shape (batch_size, T, K)
-#     weight: Weight for the diversity loss
-#     """
-#     # Ensure mogpreds is a valid probability distribution
-#     assert torch.all(mogpreds >= 0), "mogpreds contains negative values"
-#     assert torch.allclose(mogpreds.sum(dim=-1), torch.ones_like(mogpreds.sum(dim=-1))), "mogpreds does not sum to 1"
-
-#     # Clamp mogpreds to avoid log(0)
-#     mogpreds = torch.clamp(mogpreds, min=1e-10, max=1.0)
-
-#     # Compute the mean prediction for each sequence (across time steps)
-#     # Shape: (batch_size, T, K) -> (batch_size, K)
-#     mean_mogpreds = mogpreds.mean(dim=1)
-
-#     # Compute pairwise cosine similarity between sequences
-#     # Shape: (batch_size, K) -> (batch_size, batch_size)
-#     cosine_sim = torch.nn.functional.cosine_similarity(
-#         mean_mogpreds.unsqueeze(1),  # Shape: (batch_size, 1, K)
-#         mean_mogpreds.unsqueeze(0),  # Shape: (1, batch_size, K)
-#         dim=-1
-#     )
-
-#     # Exclude self-similarity (diagonal elements)
-#     batch_size = mean_mogpreds.shape[0]
-#     mask = 1 - torch.eye(batch_size, device=mean_mogpreds.device)  # Mask for off-diagonal elements
-#     cosine_sim = cosine_sim * mask
-
-#     # Compute the average pairwise similarity (excluding self-similarity)
-#     avg_pairwise_sim = cosine_sim.sum() / (batch_size * (batch_size - 1))
-
-#     # Diversity loss: minimize average pairwise similarity
-#     diversity_loss = avg_pairwise_sim
-
-#     # Return the diversity loss (weighted)
-#     return weight * diversity_loss
-
 def posterior_mogpreds_entropy_loss(mogpreds, posterior_mogpreds_entropy_weight, **kwargs):
     """
     Compute the entropy loss for MoG predictions, promoting entropy across the entire dataset.
@@ -289,10 +250,6 @@ def recon_loss_function(x, x_hat, recon_weight):
     recon_loss = loss_fn(x, x_hat) 
     return recon_weight * recon_loss
 
-def sparse_l1_reg(z, sparse_weight, **kwargs):
-    l1_penalty = torch.sum(torch.abs(z))  # L1 norm
-    return sparse_weight * l1_penalty
-    
 def adversarial_loss_function(probs, labels, classifier_weight):
     adversarial_loss = nn.functional.cross_entropy(probs, labels) / torch.log(torch.tensor(probs.shape[1]))
     return classifier_weight * adversarial_loss
