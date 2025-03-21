@@ -219,7 +219,7 @@ def LR_and_weight_schedules(
         classifier_weight, 
         classifier_alpha_max, classifier_alpha_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier, 
-        meanlogvar_match_loss_max, meanlogvar_match_loss_min, meanlogvar_match_taper_epochs, meanlogvar_match_stall_epochs,
+        meanlogvar_match_loss_max, meanlogvar_match_loss_min, 
         Sparse_max, Sparse_min, Sparse_epochs_TO_max, Sparse_epochs_AT_max, 
         LR_max_core, LR_min_core, LR_epochs_stall_core, LR_epochs_TO_max_core, LR_epochs_AT_max_core,  manual_gamma_core, manual_step_size_core,
         LR_max_prior, LR_min_prior, LR_epochs_stall_prior, LR_epochs_TO_max_prior, LR_epochs_AT_max_prior,  manual_gamma_prior, manual_step_size_prior,

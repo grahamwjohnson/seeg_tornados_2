@@ -914,12 +914,12 @@ class Trainer:
             mean_match_loss = loss_functions.mean_matching_loss(
                 mean_posterior = mean_pseudobatch,
                 mean_prior = self.gmvae.module.prior.means,
-                weight=self.meanlogvar_match_weight)
+                weight= 1e-3) #  ############################################################## HARDCODED ###############################################
 
             logvar_match_loss = loss_functions.logvar_matching_loss(
                 logvar_posterior = logvar_pseudobatch,
                 logvar_prior = self.gmvae.module.prior.logvars,
-                weight=self.meanlogvar_match_weight) # same weight as mean
+                weight= 1e-2 ) #  ############################################################## HARDCODED ###############################################
 
             reg_loss = loss_functions.gmvae_kl_loss(
                 z = z_pseudobatch,
@@ -957,7 +957,11 @@ class Trainer:
                 labels=file_class_label,
                 classifier_weight=self.classifier_weight)
 
-            loss = mean_match_loss + logvar_match_loss + wassertstein_loss + wasserstein_logvar_entropy_loss + recon_loss + reg_loss + prior_entropy + prior_repulsion + adversarial_loss + mogpreds_entropy_loss  # mogpreds_intrasequence_consistency_loss
+            mogpreds_intersequence_diversity_loss = loss_functions.mogpreds_intersequence_diversity_loss(
+                mogpreds=mogpreds,
+                mogpreds_diversity_weight = 0.1)  ############################################################## HARDCODED ###############################################
+
+            loss = mean_match_loss + logvar_match_loss + wassertstein_loss + wasserstein_logvar_entropy_loss + recon_loss + reg_loss + prior_entropy + prior_repulsion + adversarial_loss + mogpreds_entropy_loss + mogpreds_intersequence_diversity_loss  # mogpreds_intrasequence_consistency_loss
 
             # NOT BEING USED
             mogpreds_intrasequence_consistency_loss = loss_functions.mogpreds_intrasequence_consistency_loss(
@@ -968,11 +972,6 @@ class Trainer:
             sparse_loss = loss_functions.sparse_l1_reg(
                 z=z_tokenmeaned, 
                 sparse_weight=self.sparse_weight, 
-                **kwargs)
-
-            # NOT BEING USED
-            mogpreds_intersequence_diversity_loss = loss_functions.mogpreds_intersequence_diversity_loss(
-                mogpreds=mogpreds,
                 **kwargs)
 
             # For plotting visualization purposes

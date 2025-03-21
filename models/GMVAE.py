@@ -76,17 +76,18 @@ class MoGPrior(nn.Module):
         eps = torch.randn_like(chosen_means)
         z_prior = chosen_means + eps * torch.exp(0.5 * chosen_logvars)  # [batch_size, latent_dim]
 
+        # Same clamp as posterior
         z_prior = torch.clamp(z_prior, min=self.mean_lims[0], max=self.mean_lims[1])
 
         return z_prior, component_probs
 
     def sinkhorn_loss_fraction(self, z, weight):
         """
-        Compute the Sinkhorn loss between sampled latent vectors and the MoG prior.
+        Compute the Sinkhorn loss between sampled latent vectors of posterior and the MoG prior.
         Inputs:
-            z: Resampled latent embeddings [batch_size, latent_dim]
+            z: Resampled latent embeddings from encoder [batch_size, latent_dim]
         Returns:
-            sinkhorn_loss: Wasserstein distance between samples and prior.
+            sinkhorn_loss: Wasserstein distance between encoder samples and prior.
         """
         batch_size = z.shape[0]
 
@@ -489,7 +490,7 @@ class GMVAE(nn.Module):
             mogpreds_pseudobatch_softmax = torch.softmax(mogpreds_pseudobatch, dim=-1) 
 
             # Z is not currently constrained 
-            z_pseudobatch, _ = self.sample_z(mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, gumbel_softmax_temperature=self.temperature)
+            z_pseudobatch, _ = self.sample_posterior(mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, gumbel_softmax_temperature=self.temperature)
             
             return z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch_softmax, attW
 
@@ -503,38 +504,7 @@ class GMVAE(nn.Module):
 
             return y
 
-    # def sample_z(self, encoder_means, encoder_logvars, encoder_mogpreds, gumbel_softmax_temperature):
-    #     """
-    #     Sample z from the posterior using the Gumbel-Softmax trick and reparameterization.
-        
-    #     encoder_means: [batch, components, latent_dim] - Posterior means for each MoG component.
-    #     encoder_logvars: [batch, components, latent_dim] - Posterior logvars for each MoG component.
-    #     encoder_mogpreds: [batch, components] - Component logits for the MoG posterior.
-    #     gumbel_softmax_temperature: Temperature for Gumbel-Softmax.
-        
-    #     Returns:
-    #         z: [batch, latent_dim] - Sampled latent variable.
-    #     """
-    #     # Step 1: Gumbel-Softmax for differentiable component selection
-    #     gumbel_noise = -torch.log(-torch.log(torch.rand_like(encoder_mogpreds)))
-    #     logits = (encoder_mogpreds + gumbel_noise) / gumbel_softmax_temperature  # Scale by temperature
-    #     log_component_weights = F.log_softmax(logits, dim=-1)  # [batch, components]
-    #     component_weights = torch.exp(log_component_weights)  # [batch, components]
-
-    #     # Step 2: Select the means and logvars for the selected component
-    #     selected_means = torch.sum(encoder_means * component_weights.unsqueeze(-1), dim=1)  # [batch, latent_dim]
-    #     selected_logvars = torch.sum(encoder_logvars * component_weights.unsqueeze(-1), dim=1)  # [batch, latent_dim]
-
-    #     # Step 3: Reparameterization trick to sample z from the selected Gaussian component
-    #     eps = torch.randn_like(selected_means)
-    #     z = selected_means + eps * torch.exp(0.5 * selected_logvars)  # [batch, latent_dim]
-
-    #     # Step 4: Clamp to ensure stability
-    #     z = torch.clamp(z, min=self.mean_lims[0], max=self.mean_lims[1])
-
-    #     return z
-
-    def sample_z(self, encoder_means, encoder_logvars, encoder_mogpreds, gumbel_softmax_temperature):
+    def sample_posterior(self, encoder_means, encoder_logvars, encoder_mogpreds, gumbel_softmax_temperature):
         """
         Sample z from the posterior using the Gumbel-Softmax trick and reparameterization.
 
@@ -558,11 +528,8 @@ class GMVAE(nn.Module):
         eps = torch.randn_like(selected_means)
         z = selected_means + eps * torch.exp(0.5 * selected_logvars)  # [batch, latent_dim]
 
-        # # Step 4: Tanh for stability 
-        # mean_scale = (self.mean_lims[1] - self.mean_lims[0]) / 2
-        # mean_shift = (self.mean_lims[0] + self.mean_lims[1]) / 2
-        # z = F.tanh(z) * mean_scale + mean_shift
-        z = torch.clamp(z, min=-1, max=1)
+        # # Step 4: Clamp to the the same limits as mean for consistency (not TanH to not distort latent space during sampling of posterior)
+        z = torch.clamp(z, min=self.mean_lims[0], max=self.mean_lims[1])
         
         return z, component_weights
 
