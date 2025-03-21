@@ -1087,6 +1087,7 @@ class Trainer:
                                 utils_functions.print_patposteriorweights_cumulative( 
                                     mogpreds = self.accumulated_mogpreds.cpu().detach().numpy(),
                                     patidxs = self.accumulated_patidxs.cpu().detach().numpy(),
+                                    patname_list = dataloader_curr.dataset.pat_ids,
                                     savedir = self.model_dir + f"/plots/{dataset_string}/patposteriorweights",
                                     epoch = self.epoch,
                                     iter_curr = iter_curr,

@@ -570,12 +570,12 @@ def plot_prior(prior_means, prior_logvars, prior_weights, savedir, epoch, **kwar
     pl.savefig(savename_jpg)
     plt.close()
 
-def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, mean_lims, logvar_lims, num_accumulated_plotting_dims=5, n_bins=200, **kwargs):
+def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, mean_lims, logvar_lims, num_accumulated_plotting_dims=5, n_bins=200, threshold=0.1, **kwargs):
     """
     Plot distributions of encoder statistics across MoG components using histograms.
     Compares encoder statistics with MoG prior state and includes encoder_zmeaned visualization.
     Each dimension is plotted in a separate column for clarity.
-    
+
     Args:
         gpu_id: GPU ID (for logging purposes)
         prior_means: MoG prior means, shape (K, D)
@@ -587,8 +587,11 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
         encoder_zmeaned: Aggregated latent representation, shape (Batch, D)
         savedir: Directory to save the plots
         epoch: Current epoch
+        mean_lims: Tuple (min, max) for mean value range
+        logvar_lims: Tuple (min, max) for logvar value range
         num_accumulated_plotting_dims: Number of dimensions to visualize (default: 5)
         n_bins: Number of bins for histograms (default: 100)
+        threshold: Threshold for filtering encoder_mogpreds (default: 0.01)
         **kwargs: Additional arguments
     """
     Batch, K, D = encoder_means.shape  # Batch size, number of MoG components, and latent dimension
@@ -622,10 +625,10 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
         # Plot encoder means as histograms
         hist_vals = []
         for k in range(K):
-            hist, bin_edges = np.histogram(encoder_means_flat[:, k, d], bins=n_bins, range=(-5, 5), density=True)
+            hist, bin_edges = np.histogram(encoder_means_flat[:, k, d], bins=n_bins, range=mean_lims, density=True)
             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
             hist_vals.append(hist)
-            ax.hist(encoder_means_flat[:, k, d], bins=n_bins, range=(-5, 5), density=True, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
+            ax.hist(encoder_means_flat[:, k, d], bins=n_bins, range=mean_lims, density=True, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
 
         # Find the tallest histogram for scaling
         max_hist = np.max([np.max(h) for h in hist_vals])
@@ -655,7 +658,7 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
         ax.set_title(f'Encoder Means (Dim {d}), Color MoGComp')
         ax.set_xlabel('Mean Value')
         ax.set_ylabel('Frequency')
-        ax.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range from -5 to 5
+        ax.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range
         if d == 0:
             ax.legend()
 
@@ -663,30 +666,42 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
     for d in range(num_accumulated_plotting_dims):
         ax = fig.add_subplot(4, num_accumulated_plotting_dims, num_accumulated_plotting_dims + d + 1)
         for k in range(K):
-            ax.hist(encoder_logvars_flat[:, k, d], bins=n_bins, range=(-5, 5), alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
+            ax.hist(encoder_logvars_flat[:, k, d], bins=n_bins, range=logvar_lims, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
         ax.set_title(f'Encoder Logvars (Dim {d}), Color MoGComp')
         ax.set_xlabel('Logvar Value')
         ax.set_ylabel('Frequency')
-        ax.set_xlim(logvar_lims[0], logvar_lims[1])  # Set x-axis range from -5 to 5
+        ax.set_xlim(logvar_lims[0], logvar_lims[1])  # Set x-axis range
+        if d == 0:
+            ax.legend()
 
-    # Plot 3: Distribution of Encoder MoG Predictions vs MoG Prior Weights (for each MoG component)
-    # Span all columns for the MoG predictions plot
-    ax = fig.add_subplot(4, 1, 3)  # Span all columns in row 3
+    # Plot 3: Split into two subplots
+    # Left Subplot: Percentage of encoder_mogpreds below threshold for each component
+    ax_left = plt.subplot2grid((4, num_accumulated_plotting_dims), (2, 0), colspan=1)
+    below_threshold_percent = np.mean(encoder_mogpreds_flat < threshold, axis=0) * 100  # Percentage below threshold
+    ax_left.bar(range(K), below_threshold_percent, color=component_colors, alpha=0.5)
+    ax_left.set_title(f'% of encoder_mogpreds < {threshold}')
+    ax_left.set_xlabel('MoG Component')
+    ax_left.set_ylabel('Percentage')
+    ax_left.set_ylim(0, 100)  # Set y-axis range to 0-100%
+
+    # Right Subplot: Histogram of encoder_mogpreds excluding values below threshold
+    ax_right = plt.subplot2grid((4, num_accumulated_plotting_dims), (2, 1), colspan=num_accumulated_plotting_dims - 1)
     for k in range(K):
-        ax.hist(encoder_mogpreds_flat[:, k], bins=n_bins, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
-    ax.set_title(f'Encoder MoG Predictions - Color is MoG Component')
-    ax.set_xlabel('Weight Value')
-    ax.set_ylabel('Frequency')
-    ax.legend()
+        filtered_mogpreds = encoder_mogpreds_flat[:, k][encoder_mogpreds_flat[:, k] >= threshold]
+        ax_right.hist(filtered_mogpreds, bins=n_bins, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
+    ax_right.set_title(f'Encoder MoG Predictions (≥ {threshold}) - Color is MoG Component')
+    ax_right.set_xlabel('Weight Value')
+    ax_right.set_ylabel('Frequency')
+    ax_right.legend()
 
     # Plot 4: Distribution of encoder_zmeaned (aggregated latent representation, first `num_accumulated_plotting_dims` dims)
     for d in range(num_accumulated_plotting_dims):
         ax = fig.add_subplot(4, num_accumulated_plotting_dims, 3 * num_accumulated_plotting_dims + d + 1)
-        ax.hist(encoder_zmeaned_flat[:, d], bins=n_bins, range=(-5, 5), alpha=0.5, color='gray', label=f'Dim {d}')
+        ax.hist(encoder_zmeaned_flat[:, d], bins=n_bins, range=mean_lims, alpha=0.5, color='gray', label=f'Dim {d}')
         ax.set_title(f'encoder_zmeaned (Dim {d})')
         ax.set_xlabel('Latent Value')
         ax.set_ylabel('Frequency')
-        ax.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range from -5 to 5
+        ax.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range
         ax.legend()
 
     if gpu_id == 0: time.sleep(0.5) # avoid collisions
@@ -695,21 +710,152 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
     plt.savefig(savename_jpg)
     plt.close(fig)
 
+# def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, mean_lims, logvar_lims, num_accumulated_plotting_dims=5, n_bins=200, **kwargs):
+#     """
+#     Plot distributions of encoder statistics across MoG components using histograms.
+#     Compares encoder statistics with MoG prior state and includes encoder_zmeaned visualization.
+#     Each dimension is plotted in a separate column for clarity.
+    
+#     Args:
+#         gpu_id: GPU ID (for logging purposes)
+#         prior_means: MoG prior means, shape (K, D)
+#         prior_logvars: MoG prior log-variances, shape (K, D)
+#         prior_weights: MoG prior weights, shape (K,)
+#         encoder_means: Encoder means, shape (Batch, K, D)
+#         encoder_logvars: Encoder log-variances, shape (Batch, K, D)
+#         encoder_mogpreds: Encoder MoG predictions, shape (Batch, K)
+#         encoder_zmeaned: Aggregated latent representation, shape (Batch, D)
+#         savedir: Directory to save the plots
+#         epoch: Current epoch
+#         num_accumulated_plotting_dims: Number of dimensions to visualize (default: 5)
+#         n_bins: Number of bins for histograms (default: 100)
+#         **kwargs: Additional arguments
+#     """
+#     Batch, K, D = encoder_means.shape  # Batch size, number of MoG components, and latent dimension
+
+#     # Validate input shapes
+#     assert prior_means.shape == (K, D), f"prior_means must have shape (K, D), but got {prior_means.shape}"
+#     assert prior_logvars.shape == (K, D), f"prior_logvars must have shape (K, D), but got {prior_logvars.shape}"
+#     assert prior_weights.shape == (K,), f"prior_weights must have shape (K,), but got {prior_weights.shape}"
+#     assert encoder_means.shape == (Batch, K, D), f"encoder_means must have shape (Batch, K, D), but got {encoder_means.shape}"
+#     assert encoder_logvars.shape == (Batch, K, D), f"encoder_logvars must have shape (Batch, K, D), but got {encoder_logvars.shape}"
+#     assert encoder_mogpreds.shape == (Batch, K), f"encoder_mogpreds must have shape (Batch, K), but got {encoder_mogpreds.shape}"
+#     assert encoder_zmeaned.shape == (Batch, D), f"encoder_zmeaned must have shape (Batch, D), but got {encoder_zmeaned.shape}"
+#     assert num_accumulated_plotting_dims <= D, f"num_accumulated_plotting_dims ({num_accumulated_plotting_dims}) cannot exceed latent dimension D ({D})"
+
+#     # Flatten the batch dimension to treat all batches as a single dataset
+#     encoder_means_flat = encoder_means.reshape(-1, K, D)  # Shape: (Batch, K, D) -> (Batch * 1, K, D)
+#     encoder_logvars_flat = encoder_logvars.reshape(-1, K, D)  # Shape: (Batch, K, D) -> (Batch * 1, K, D)
+#     encoder_mogpreds_flat = encoder_mogpreds.reshape(-1, K)  # Shape: (Batch, K) -> (Batch * 1, K)
+#     encoder_zmeaned_flat = encoder_zmeaned.reshape(-1, D)  # Shape: (Batch, D) -> (Batch * 1, D)
+
+#     # Create a figure with subplots
+#     fig = plt.figure(figsize=(5 * num_accumulated_plotting_dims, 20))
+
+#     # Define a consistent color palette for MoG components
+#     component_colors = plt.cm.tab10.colors[:K]  # Use tab10 colormap for up to 10 components
+
+#     # Plot 1: Distribution of Encoder Means vs MoG Prior Means (for each MoG component, first `num_accumulated_plotting_dims` dims)
+#     for d in range(num_accumulated_plotting_dims):
+#         ax = fig.add_subplot(4, num_accumulated_plotting_dims, d + 1)
+        
+#         # Plot encoder means as histograms
+#         hist_vals = []
+#         for k in range(K):
+#             hist, bin_edges = np.histogram(encoder_means_flat[:, k, d], bins=n_bins, range=(-5, 5), density=True)
+#             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+#             hist_vals.append(hist)
+#             ax.hist(encoder_means_flat[:, k, d], bins=n_bins, range=(-5, 5), density=True, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
+
+#         # Find the tallest histogram for scaling
+#         max_hist = np.max([np.max(h) for h in hist_vals])
+
+#         # Compute KDEs for the prior means
+#         x_vals = np.linspace(mean_lims[0], mean_lims[1], 1000)  # Range for KDE plots
+#         kde_vals_all = []  # Store all KDE values for scaling
+#         for k in range(K):
+#             # Compute KDE for the current MoG component
+#             samples = np.random.normal(
+#                 loc=prior_means[k, d],
+#                 scale=np.sqrt(np.exp(prior_logvars[k, d])),  # Scale by variance
+#                 size=int(1e3)  # Fixed number of samples for KDE
+#             )
+#             kde = gaussian_kde(samples)
+#             kde_vals = kde(x_vals) * prior_weights[k]  # Scale KDE by prior weight
+#             kde_vals_all.append(kde_vals)
+        
+#         # Find the maximum KDE value across all components
+#         max_kde = np.max([np.max(kde_vals) for kde_vals in kde_vals_all])
+
+#         # Scale all KDEs to match the tallest histogram while preserving relative scaling
+#         for k in range(K):
+#             kde_vals = kde_vals_all[k] * (max_hist / max_kde)
+#             ax.plot(x_vals, kde_vals, linestyle='--', color=component_colors[k], alpha=0.8, label=f'Prior Comp {k}' if d == 0 else None)
+        
+#         ax.set_title(f'Encoder Means (Dim {d}), Color MoGComp')
+#         ax.set_xlabel('Mean Value')
+#         ax.set_ylabel('Frequency')
+#         ax.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range from -5 to 5
+#         if d == 0:
+#             ax.legend()
+
+#     # Plot 2: Distribution of Encoder Logvars vs MoG Prior Logvars (for each MoG component, first `num_accumulated_plotting_dims` dims)
+#     for d in range(num_accumulated_plotting_dims):
+#         ax = fig.add_subplot(4, num_accumulated_plotting_dims, num_accumulated_plotting_dims + d + 1)
+#         for k in range(K):
+#             ax.hist(encoder_logvars_flat[:, k, d], bins=n_bins, range=(-5, 5), alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
+#         ax.set_title(f'Encoder Logvars (Dim {d}), Color MoGComp')
+#         ax.set_xlabel('Logvar Value')
+#         ax.set_ylabel('Frequency')
+#         ax.set_xlim(logvar_lims[0], logvar_lims[1])  # Set x-axis range from -5 to 5
+
+#     # Plot 3: Distribution of Encoder MoG Predictions vs MoG Prior Weights (for each MoG component)
+#     # Span all columns for the MoG predictions plot
+#     ax = fig.add_subplot(4, 1, 3)  # Span all columns in row 3
+#     for k in range(K):
+#         ax.hist(encoder_mogpreds_flat[:, k], bins=n_bins, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
+#     ax.set_title(f'Encoder MoG Predictions - Color is MoG Component')
+#     ax.set_xlabel('Weight Value')
+#     ax.set_ylabel('Frequency')
+#     ax.legend()
+
+#     # Plot 4: Distribution of encoder_zmeaned (aggregated latent representation, first `num_accumulated_plotting_dims` dims)
+#     for d in range(num_accumulated_plotting_dims):
+#         ax = fig.add_subplot(4, num_accumulated_plotting_dims, 3 * num_accumulated_plotting_dims + d + 1)
+#         ax.hist(encoder_zmeaned_flat[:, d], bins=n_bins, range=(-5, 5), alpha=0.5, color='gray', label=f'Dim {d}')
+#         ax.set_title(f'encoder_zmeaned (Dim {d})')
+#         ax.set_xlabel('Latent Value')
+#         ax.set_ylabel('Frequency')
+#         ax.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range from -5 to 5
+#         ax.legend()
+
+#     if gpu_id == 0: time.sleep(0.5) # avoid collisions
+#     if not os.path.exists(savedir): os.makedirs(savedir)
+#     savename_jpg = f"{savedir}/posterior_epoch{epoch}_numForwards{Batch}_gpu{gpu_id}.jpg"
+#     plt.savefig(savename_jpg)
+#     plt.close(fig)
+
 # Global dictionary to store patient ID to color mappings
 PATIENT_COLOR_MAP = {}
-def print_patposteriorweights_cumulative(mogpreds, patidxs, savedir, epoch, iter_curr, **kwargs):
+def print_patposteriorweights_cumulative(mogpreds, patidxs, patname_list, savedir, epoch, iter_curr, **kwargs):
     """
     Plot stacked bar plots for MoG weights, colored by patient proportions.
 
     Args:
         mogpreds (np.ndarray): Softmaxed MoG weights, shape (num_samples, num_components).
         patidxs (np.ndarray): Patient indices (class labels), shape (num_samples,).
+        patname_list (list): List of patient names corresponding to patidxs.
         savedir (str): Directory to save the plot.
         epoch (int): Current epoch.
         iter_curr (int): Current iteration.
         **kwargs: Additional arguments (e.g., component names, colors).
     """
     global PATIENT_COLOR_MAP
+
+    # Filter out samples where patidxs == -1
+    valid_mask = (patidxs != -1)
+    mogpreds = mogpreds[valid_mask]
+    patidxs = patidxs[valid_mask]
 
     # Get unique patient indices and MoG components
     unique_patidxs = np.unique(patidxs)
@@ -737,12 +883,14 @@ def print_patposteriorweights_cumulative(mogpreds, patidxs, savedir, epoch, iter
     # Plot each component
     bottom = np.zeros(num_components)
     for i, patidx in enumerate(unique_patidxs):
+        # Get the patient name from patname_list using the index
+        patname = patname_list[int(patidx)]
         ax.bar(
             range(num_components),
             component_sums[:, i],
             bottom=bottom,
             color=PATIENT_COLOR_MAP[patidx],
-            label=f"Patient {patidx}"
+            label=patname  # Use patient name instead of numerical ID
         )
         bottom += component_sums[:, i]
 
@@ -752,7 +900,10 @@ def print_patposteriorweights_cumulative(mogpreds, patidxs, savedir, epoch, iter
     ax.set_title(f"MoG Component Weights by Patient (Epoch {epoch}, Iter {iter_curr}) - {mogpreds.shape[0]} Embeddings")
     ax.set_xticks(range(num_components))
     ax.set_xticklabels([f"Comp {i}" for i in range(num_components)])
-    ax.legend(title="Patient ID", bbox_to_anchor=(1.05, 1), loc='upper left')
+
+    # Add legend with smaller text
+    legend = ax.legend(title="Patient Name", bbox_to_anchor=(1.05, 1), loc='upper left', prop={'size': 8})  # Shrink legend text
+    plt.setp(legend.get_title(), fontsize='8')  # Shrink legend title text
 
     # Save the plot
     if not os.path.exists(savedir): os.makedirs(savedir)

@@ -53,7 +53,6 @@ class SEEG_Tornado_Dataset(Dataset):
         gpu_id,
         pat_list,
         pat_dirs,
-        model_dir,
         FS,
         atd_file, 
         pat_num_channels_LUT, 
