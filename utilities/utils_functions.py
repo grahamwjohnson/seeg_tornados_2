@@ -576,7 +576,7 @@ def plot_prior(prior_means, prior_logvars, prior_weights, savedir, epoch, **kwar
     
     if not os.path.exists(savedir): os.makedirs(savedir)
     savename_jpg = f"{savedir}/Prior_epoch{epoch}.jpg"
-    pl.savefig(savename_jpg)
+    pl.savefig(savename_jpg, dpi=600)
     plt.close()
 
 def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, mean_lims, logvar_lims, num_accumulated_plotting_dims=5, n_bins=200, threshold=0.1, **kwargs):
@@ -716,7 +716,7 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
     if gpu_id == 0: time.sleep(0.5) # avoid collisions
     if not os.path.exists(savedir): os.makedirs(savedir)
     savename_jpg = f"{savedir}/posterior_epoch{epoch}_numForwards{Batch}_gpu{gpu_id}.jpg"
-    plt.savefig(savename_jpg)
+    plt.savefig(savename_jpg, dpi=600)
     plt.close(fig)
 
 # Global dictionary to store patient ID to color mappings
@@ -792,7 +792,7 @@ def print_patposteriorweights_cumulative(mogpreds, patidxs, patname_list, savedi
     # Save the plot
     if not os.path.exists(savedir): os.makedirs(savedir)
     savename_jpg = f"{savedir}/patposteriorweights_epoch{epoch}_iter{iter_curr}.jpg"
-    plt.savefig(savename_jpg, bbox_inches='tight')
+    plt.savefig(savename_jpg, bbox_inches='tight', dpi=600)
     plt.close(fig)
 
 def print_latent_singlebatch(mean, logvar, mogpreds, prior_means, prior_logvars, prior_weights, savedir, epoch, iter_curr,  mean_lims, logvar_lims, n_bins=35, **kwargs):
@@ -933,7 +933,7 @@ def print_latent_singlebatch(mean, logvar, mogpreds, prior_means, prior_logvars,
     if not os.path.exists(savedir):
         os.makedirs(savedir)
     savename_jpg = f"{savedir}/RealtimeLatents_epoch{epoch}_iter{iter_curr}.jpg"
-    plt.savefig(savename_jpg)
+    plt.savefig(savename_jpg, dpi=600)
     plt.close(fig)
 
 def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_singlebatch_channels_recon, num_recon_samples, **kwargs):
@@ -1012,7 +1012,7 @@ def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
     if not os.path.exists(savedir): os.makedirs(savedir)
     savename_jpg = f"{savedir}/RealtimeRecon_epoch{epoch}_iter{iter_curr}_allbatch.jpg"
-    pl.savefig(savename_jpg)
+    pl.savefig(savename_jpg, dpi=600)
     pl.close(fig)   
 
     pl.close('all') 
@@ -1063,7 +1063,7 @@ def print_classprobs_singlebatch(class_probs, class_labels, savedir, epoch, iter
 
         if not os.path.exists(savedir): os.makedirs(savedir)
         savename_jpg = f"{savedir}/RealtimeClassProb_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch{b}.jpg"
-        pl.savefig(savename_jpg)
+        pl.savefig(savename_jpg, dpi=600)
         pl.close(fig)    
 
         pl.close('all') 
@@ -1089,7 +1089,7 @@ def print_confusion_singlebatch(class_probs, class_labels, savedir, epoch, iter_
     
     if not os.path.exists(savedir): os.makedirs(savedir)
     savename_jpg = f"{savedir}/RealtimeConfusion_epoch{epoch}_iter{iter_curr}.jpg"
-    pl.savefig(savename_jpg)
+    pl.savefig(savename_jpg, dpi=600)
     pl.close(fig)    
 
     pl.close('all') 
@@ -1130,7 +1130,7 @@ def print_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_meanH
         fig.suptitle(f"Attention Weights - Batch:{b}")
         if not os.path.exists(savedir): os.makedirs(savedir)
         savename_jpg = f"{savedir}/ByLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_patidx{pat_idxs[b].cpu().numpy()}.jpg"
-        pl.savefig(savename_jpg)
+        pl.savefig(savename_jpg, dpi=600)
         pl.close(fig)   
 
     pl.close('all') 
@@ -1175,7 +1175,7 @@ def plot_recon(x, x_hat, plot_dict, batch_file_names, epoch, savedir, gpu_id, pa
 
         if not os.path.exists(savedir): os.makedirs(savedir)
         savename_jpg = savedir + f"/Recon_epoch{str(epoch)}_iter_{str(iter)}_{pat_id}_batchIdx{str(batch_idx)}_chIdx{str(ch_idx)}_duration{str(recon_sec)}sec_startIdx{str(start_idx)}_gpu{str(gpu_id)}.jpg"
-        pl.savefig(savename_jpg)
+        pl.savefig(savename_jpg, dpi=600)
         pl.close(fig) 
 
 def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, atd_file, pre_ictal_taper_sec=120, post_ictal_taper_sec=120, **kwargs):
@@ -1370,7 +1370,7 @@ def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir
 
     if not os.path.exists(dataset_pic_dir): os.makedirs(dataset_pic_dir)
     savename = dataset_pic_dir + f"/{pat_id}_Dataset_Breakdown.jpg"
-    pl.savefig(savename)
+    pl.savefig(savename, dpi=600)
     pl.close('all')
 
 def rgbtoint32(rgb):
