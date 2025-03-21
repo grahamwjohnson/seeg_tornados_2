@@ -558,10 +558,11 @@ class GMVAE(nn.Module):
         eps = torch.randn_like(selected_means)
         z = selected_means + eps * torch.exp(0.5 * selected_logvars)  # [batch, latent_dim]
 
-        # # Step 4: Tanh for stability (optional, depends on your constraints)
+        # # Step 4: Tanh for stability 
         # mean_scale = (self.mean_lims[1] - self.mean_lims[0]) / 2
         # mean_shift = (self.mean_lims[0] + self.mean_lims[1]) / 2
         # z = F.tanh(z) * mean_scale + mean_shift
+        z = torch.clamp(z, min=-1, max=1)
         
         return z, component_weights
 

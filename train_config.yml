@@ -79,7 +79,7 @@ mog_predictor_dropout: 0.1
 mean_lims: [-5, 5] # Make sure the prior's mean/logvars make sense with this limit
 logvar_lims: [-3, 1] # Important to cap logvar on high end or KL divergence calculaton itself becomes unstable and will give very negative numbers
 prior_initial_mean_spread: 3  # Uniform (e.g. value of 2 will be uniform [-2, 2])
-prior_initial_logvar: -1 
+prior_initial_logvar: 0 
 gumbel_softmax_temperature: kwargs['gumbel_softmax_temperature'] = 1 # Higher means softer assignment to MoG, A relatively low vaue (0.5) seams essential during W2 burn to help the posterior know which 'knobs' below to which component)
 mogpreds_entropy_weight_max: kwargs['mogpreds_entropy_weight_max'] = 0 # Encourages overall mogpreds to to be uniform
 mogpreds_entropy_weight_min: kwargs['mogpreds_entropy_weight_min'] = 0 # Encourages overall mogpreds to to be uniform
@@ -90,11 +90,11 @@ entropy_weight: kwargs['entropy_weight'] = 1e-6 # Helps prevent mode collapse in
 repulsion_weight: kwargs['repulsion_weight'] = 1 # Helps keep centers of PRIOR guassians far apart, need to scale with number of MoG components 
 random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
 random_observed_numplots: 4 # On the end of epoch plot
-Reg_max: kwargs['Reg_max'] = 1e-4 # 1e-4 maybe
+Reg_max: kwargs['Reg_max'] = 1 # 1e-4 maybe
 Reg_min: kwargs['Reg_min'] = 0
 Reg_stall_epochs: 0 # Min Reg weight rise until stall is complete
 Reg_epochs_AT_max: 5 # Maybe coincide with the wasserstein order switch epoch?
-Reg_epochs_TO_max: 1
+Reg_epochs_TO_max: 5
 LR_max_prior: kwargs['LR_max_prior'] = kwargs['LR_max_core'] 
 LR_min_prior: kwargs['LR_min_prior'] = kwargs['LR_min_core'] 
 LR_epochs_stall_prior: kwargs['LR_epochs_stall_prior'] = kwargs['Wasserstein_override_epochs'] + kwargs['WassersteinBeta_taper_epochs'] # Wait until Wasserstein influence is gone before allowing prior to train
@@ -111,20 +111,23 @@ adamW_beta2_prior: 0.95
 # This is done with a Sinkhorn approximation of the Wasserstein distance which has a linear loss topology even when distributions are far apart/non-overlapping
 # Also allows encoder/decoder to rapidly get to recon-all-zeros state without posterior collapse
 # KL divergence alone could never do this so rapidly and stably with random posterior weights. 
-Wasserstein_override_epochs: 1 # Completely changes all LR and loss weights to stabilize posterior at beginning of training
+Wasserstein_override_epochs: 2 # Completely changes all LR and loss weights to stabilize posterior at beginning of training
 WassersteinBeta_taper_epochs: 1 # Taper begins after override is complete
-Wasserstein_override_LR: kwargs['Wasserstein_override_LR'] = 1e-5
-WassersteinBeta_max: kwargs['WassersteinBeta_max'] = 10
+Wasserstein_override_LR: kwargs['Wasserstein_override_LR'] = 1e-6
+WassersteinBeta_max: kwargs['WassersteinBeta_max'] = 1e1
 WassersteinBeta_min: kwargs['WassersteinBeta_min'] = 0
-mean_match_loss_max: kwargs['mean_match_loss_max'] = 10 # Helps assign componets to correct 'knob' in z_posterior
-Wassertstein_logvar_lims: [0.5, 1] # Of posterior, keeps the z_posterior fuzzy so KL doesn't collapse immediately after Wasserstein initialization due to very low logvar_lims, minimum should be about to what prior logvar is initialized 
+meanlogvar_match_loss_max: kwargs['meanlogvar_match_loss_max'] = 1e1 # Helps assign componets to correct 'knob' in z_posterior, fast negative exponential decay
+meanlogvar_match_loss_min: kwargs['meanlogvar_match_loss_min'] = 0 
+meanlogvar_match_stall_epochs: 1
+meanlogvar_match_taper_epochs: 1 # Will taper within wasserstein override
+Wassertstein_logvar_lims: [-3, 1] # Of posterior, keeps the z_posterior fuzzy so KL doesn't collapse immediately after Wasserstein initialization due to very low logvar_lims, minimum should be about to what prior logvar is initialized 
 Wasserstein_logvar_entropy_weight: kwargs['Wasserstein_logvar_entropy_weight'] = 0 # Encourages logvars of posterior during initiazation to not just concentrate at lower limit of logvar_lims 
-Wasserstein_Sinkhorn_eps: 0.05 # The blur, should be within magnitude of std of MoG components in prior
+Wasserstein_Sinkhorn_eps: 0.01 # The blur, should be within magnitude of std of MoG components in prior
 Wasserstein_order: 2 # 1 is EMD (more local structure), 2 is W2-distance (more global structure)
 
 # CLASSIFIER - Adversarial
 # Not currently being integrated in backprop (beyond the classifer weights themselves, i.e. reverse gradient alpha is 0)
-classifier_hidden_dims: [2048, 1024, 512, 256]
+classifier_hidden_dims: [2048, 1024, 512]
 classifier_num_pats: 45 #    ########   Hardcoded  ########
 classifier_dropout: 0.1
 classifier_weight: 1 # OVERALL ADVERSARIAL training: i.e. reverse gradient (VAE) AND classifier power. # Should probably get into same ballpark as recon and Reg

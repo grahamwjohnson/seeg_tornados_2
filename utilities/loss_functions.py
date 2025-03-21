@@ -6,6 +6,28 @@ import torch.nn.functional as F
 @author: grahamwjohnson
 '''
 
+def logvar_matching_loss(logvar_posterior, logvar_prior, weight):
+    """
+    Compute the variance-matching loss between posterior and prior log-variances.
+    
+    Args:
+        logvar_posterior: Posterior log-variances, shape [batch_size, K, latent_dim].
+        logvar_prior: Prior log-variances, shape [K, latent_dim].
+        weight: Weight for the variance-matching loss.
+    
+    Returns:
+        Variance-matching loss (scalar).
+    """
+    # Expand prior logvars to match the batch size of posterior logvars
+    batch_size = logvar_posterior.size(0)
+    logvar_prior_expanded = logvar_prior.unsqueeze(0).expand(batch_size, -1, -1)  # Shape: [batch_size, K, latent_dim]
+
+    # Compute mean squared error (MSE) between posterior and prior logvars
+    loss = F.mse_loss(logvar_posterior, logvar_prior_expanded)
+
+    # Apply weight
+    return weight * loss
+
 def mean_matching_loss(mean_posterior, mean_prior, weight):
     """
     Compute the mean-matching loss between posterior and prior means.
