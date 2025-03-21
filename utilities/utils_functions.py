@@ -579,7 +579,7 @@ def hash_to_vector(input_string, num_channels, padded_channels, latent_dim, modi
         padded_vector.insert(insert_index, -1)
 
     return hashed_vector_tensor, padded_vector
-
+ 
 
 # PLOTTING
 
