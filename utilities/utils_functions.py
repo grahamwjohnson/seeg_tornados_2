@@ -831,8 +831,8 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
             kde_vals = kde_vals_all[k] * (max_hist / max_kde)
             ax.plot(x_vals, kde_vals, linestyle='--', color=component_colors[k], alpha=0.8, label=f'Prior Comp {k}' if d == 0 else None)
         
-        ax.set_title(f'Encoder Means (Dim {d}), Color MoGComp')
-        ax.set_xlabel('Mean Value')
+        ax.set_title(f'Encoder Means (Dim {d})')
+        ax.set_xlabel('Mean')
         ax.set_ylabel('Frequency')
         ax.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range
         if d == 0:
@@ -843,8 +843,7 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
         ax = fig.add_subplot(4, num_accumulated_plotting_dims, num_accumulated_plotting_dims + d + 1)
         for k in range(K):
             ax.hist(encoder_logvars_flat[:, k, d], bins=n_bins, range=logvar_lims, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
-        ax.set_title(f'Encoder Logvars (Dim {d}), Color MoGComp')
-        ax.set_xlabel('Logvar Value')
+        ax.set_xlabel('Logvar')
         ax.set_ylabel('Frequency')
         ax.set_xlim(logvar_lims[0], logvar_lims[1])  # Set x-axis range
         if d == 0:
@@ -865,8 +864,8 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
     for k in range(K):
         filtered_mogpreds = encoder_mogpreds_flat[:, k][encoder_mogpreds_flat[:, k] >= threshold]
         ax_right.hist(filtered_mogpreds, bins=n_bins, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
-    ax_right.set_title(f'Encoder MoG Predictions (≥ {threshold}) - Color is MoG Component')
-    ax_right.set_xlabel('Weight Value')
+    ax_right.set_title(f'Encoder MoG Predictions (≥ {threshold})')
+    ax_right.set_xlabel('Weight')
     ax_right.set_ylabel('Frequency')
     ax_right.legend()
 
@@ -874,8 +873,7 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
     for d in range(num_accumulated_plotting_dims):
         ax = fig.add_subplot(4, num_accumulated_plotting_dims, 3 * num_accumulated_plotting_dims + d + 1)
         ax.hist(encoder_zmeaned_flat[:, d], bins=n_bins, range=mean_lims, alpha=0.5, color='gray', label=f'Dim {d}')
-        ax.set_title(f'encoder_zmeaned (Dim {d})')
-        ax.set_xlabel('Latent Value')
+        ax.set_xlabel('Z-Posterior')
         ax.set_ylabel('Frequency')
         ax.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range
         ax.legend()

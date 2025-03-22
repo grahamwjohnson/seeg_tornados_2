@@ -152,7 +152,7 @@ class GaussianProcessPrior(nn.Module):
             seq_len (int): Length of the time series.
             latent_dim (int): Dimensionality of the latent space.
             gp_sigma (float): Signal variance (amplitude) of the kernel.
-            gp_length_scale (float): Length scale of the kernel.
+            gp_length_scale (float): Length scale of the kernel in Token distance
         """
         super(GaussianProcessPrior, self).__init__()
         self.device = device
@@ -164,6 +164,15 @@ class GaussianProcessPrior(nn.Module):
         # Precompute the covariance matrix
         self.cov_matrix = self._compute_cov_matrix().to(self.device)
 
+    # def _compute_cov_matrix(self):
+    #     """
+    #     Computes the covariance matrix using the squared exponential kernel.
+    #     """
+    #     time_points = torch.arange(self.seq_len, dtype=torch.float32)
+    #     diff = time_points.unsqueeze(1) - time_points.unsqueeze(0)  # Pairwise differences
+    #     cov_matrix = self.sigma ** 2 * torch.exp(-0.5 * (diff / self.length_scale) ** 2)
+    #     return cov_matrix
+
     def _compute_cov_matrix(self):
         """
         Computes the covariance matrix using the squared exponential kernel.
@@ -171,6 +180,11 @@ class GaussianProcessPrior(nn.Module):
         time_points = torch.arange(self.seq_len, dtype=torch.float32)
         diff = time_points.unsqueeze(1) - time_points.unsqueeze(0)  # Pairwise differences
         cov_matrix = self.sigma ** 2 * torch.exp(-0.5 * (diff / self.length_scale) ** 2)
+
+        # Add a small diagonal noise (jitter) for numerical stability
+        jitter = 1e-6 * torch.eye(self.seq_len, dtype=torch.float32)
+        cov_matrix += jitter
+
         return cov_matrix
 
     def forward(self, z, weight):
@@ -201,7 +215,6 @@ class GaussianProcessPrior(nn.Module):
         log_prob = log_prob.reshape(batch_size, latent_dim).mean(dim=1)  # Mean over latent dimensions
         
         return log_prob.mean() * weight  # Mean over the batch
-
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
