@@ -2396,4 +2396,22 @@ def run_setup(**kwargs):
     kwargs['timestamp_id'] = ''.join(map(str, s))
     kwargs['run_name'] = '_'.join(map(str,s.split('_')[0:2]))
 
+    # Save the post-processed kwargs to a file in model directory
+    savedir = f"{kwargs['model_dir']}/config"
+    if not os.path.exists(savedir): os.makedirs(savedir)
+    save_name = f"{savedir}/kwargs_execd_epoch{kwargs['start_epoch']}.pkl"
+    with open(save_name, "wb") as f: pickle.dump(kwargs, f)
+
+    # Export the conda environment
+    env_name = os.environ.get("CONDA_DEFAULT_ENV")
+    if env_name:
+        output_file = f"{savedir}/{env_name}_environment.yml"
+        try:
+            subprocess.run(["conda", "env", "export", "--file", output_file], check=True)
+            print(f"Conda environment '{env_name}' exported to {output_file}")
+        except subprocess.CalledProcessError as e:
+            print(f"Error exporting Conda environment: {e}")
+    else:
+        print("No active Conda environment detected.")
+
     return world_size, kwargs

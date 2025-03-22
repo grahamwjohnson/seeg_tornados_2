@@ -5,7 +5,7 @@ num_gpus: 2
  
 # DATASET
 continue_existing_training: True  
-cont_train_model_dir: '/media/glommy1/tornadoes/trained_models/dataset_train100.0_val0.0/horsemouse_Fri_Mar_21_13_22_23_2025' 
+cont_train_model_dir: '/media/glommy1/tornadoes/trained_models/dataset_train100.0_val0.0/watussi_Sat_Mar_22_01_31_33_2025' 
 root_save_dir: '/media/glommy1/tornadoes' # Where the outputs of run will be stored
 print_dataset_bargraphs: False # Rough visualization of all data timestamps/types for each patient. Slows down initialization. Typically set to False if not the first run of new model
 pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats' # parent directory where all pats data is stored
@@ -101,15 +101,15 @@ prior_weight_decay: 0.1
 adamW_beta1_prior: 0.9
 adamW_beta2_prior: 0.95
 
-# GUASSIAN PROCESS Prior (seperate from KL divergence on GM-VAE prior)
+# GUASSIAN-PROCESS Prior (seperate from KL divergence on GM-VAE prior)
 # Encourages token-to-token smoothness in latent space for sequential tokens
 gp_sigma: 0.2 # encourage global structure (large sigma) while allowing rapid changes to local structure (small length)
-gp_length_scale: 2 
-gp_weight_max: kwargs['gp_weight_max'] = 1e-5 # 1e-5 seems to put loss ~0.004
+gp_length_scale: 4 # Token-level kernel smoothing
+gp_weight_max: kwargs['gp_weight_max'] = 1e-11 # 1e-5 seems to put loss ~0.004
 gp_weight_min: kwargs['gp_weight_min'] = 0
-gp_weight_stall_epochs: 0 # 50
-gp_weight_epochs_TO_max: 0 # 25
-gp_weight_epochs_AT_max: 99999 # 25 
+gp_weight_stall_epochs: 50
+gp_weight_epochs_TO_max: 25
+gp_weight_epochs_AT_max: 25 
 
 # CLASSIFIER - Adversarial
 classifier_hidden_dims: [2048, 1024, 512]
