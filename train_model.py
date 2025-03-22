@@ -23,7 +23,6 @@ import pickle
 import glob
 import yaml
 import wandb
-from geomloss import SamplesLoss  
 
 # Local Imports
 from utilities import latent_plotting
@@ -31,6 +30,7 @@ from utilities import utils_functions
 from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
 from models.GMVAE import GMVAE
+from models.GMVAE  import GaussianProcessPrior
 
 torch.autograd.set_detect_anomaly(False)
 
@@ -370,10 +370,10 @@ def main(
     for epoch in range(start_epoch, epochs_to_train):
         trainer.epoch = epoch
 
-        # Full INFERENCE on all data
+        # INFERENCE on all data
         if (epoch > 0) & ((trainer.epoch + 1) % trainer.inference_every == 0):
 
-            trainer.valunseen_dataset.kill_generator()
+            if trainer.valunseen_dataset != None: trainer.valunseen_dataset.kill_generator()
             trainer.train_dataset.kill_generator()
             print(f"[GPU{trainer.gpu_id}] Killed Train/ValUnseen random generators for inference mode")
 
@@ -412,7 +412,7 @@ def main(
                 dataset_strs = ["train", "valunseen"]
             
             # INFERENCE on all selected datasets, kill finetune now that we also do not need it
-            trainer.valfinetune_dataset.kill_generator()
+            if trainer.valfinetune_dataset != None: trainer.valfinetune_dataset.kill_generator()
             print(f"[GPU{trainer.gpu_id}] Killed val_finetune for inference mode")
 
             trainer._set_to_eval()
@@ -604,6 +604,7 @@ class Trainer:
         Key Initializations:
         - Distributed training setup with DDP.
         - Model and optimization state (GM-VAE, optimizer).
+        - Guassian Process prior for temporal regularization across sequential tokens
         - Training and validation datasets, dataloaders, and sampling strategies.
         - Accumulated statistics for latent data and prior distribution.
         - Integration with WandB for model monitoring.
@@ -615,13 +616,14 @@ class Trainer:
         # Check variables that will cause delayed crashes 
         assert len(self.inference_window_sec_list) == len(self.inference_stride_sec_list)
 
-        self.reg_weight = -1 # dummy variable, only needed when debugging and training is skipped
+        self.kl_weight = -1 # dummy variable, only needed when debugging and training is skipped
 
         # Number of iterations per file
         self.num_windows = int((self.num_samples - self.transformer_seq_length * self.encode_token_samples - self.encode_token_samples)/self.encode_token_samples) - 2
 
         # Set up gmvae & transformer with DDP
         self.gmvae = DDP(gmvae, device_ids=[gpu_id])   # find_unused_parameters=True
+        self.gp_prior = GaussianProcessPrior(self.gpu_id, self.transformer_seq_length, self.latent_dim, **kwargs)
                     
         # Running Regulizer window for latent data
         if self.accumulated_mean == []:
@@ -822,10 +824,8 @@ class Trainer:
         self, 
         dataset_curr, 
         dataset_string,
-        attention_dropout,
         num_dataloader_workers,
         max_batch_size,
-        inference_batch_mult,
         padded_channels,
         **kwargs):
 
@@ -910,7 +910,10 @@ class Trainer:
                 num_samples_in_forward = int(num_samples_in_forward)
 
                 # Prep the output tensor and put on GPU
-                files_latents = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
+                files_means = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
+                files_logvars = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
+                files_mogpreds = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.prior_mog_components]).to(self.gpu_id)
+                files_global_uncertainty = torch.zeros([data_tensor.shape[0], num_windows_in_file]).to(self.gpu_id)
 
                 # Put whole file on GPU
                 data_tensor = data_tensor.to(self.gpu_id)
@@ -922,38 +925,71 @@ class Trainer:
                     if (self.gpu_id == 0) & (w % print_interval == 0):
                         sys.stdout.write(f"\r{dataset_string}: Pat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP), Intrafile Iter {w}/{num_windows_in_file}          ") 
                         sys.stdout.flush() 
-
-                    # Generate hashes for feedforward conditioning (single pat, so outside data.py)
-                    rand_modifer = 0 # 0 for inference
-                    hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
-                        input_string=dataset_curr.pat_ids[pat_idx], 
-                        num_channels=num_channels_curr, 
-                        padded_channels=padded_channels,
-                        latent_dim=self.latent_dim, 
-                        modifier=rand_modifer,
-                        hash_output_range=self.hash_output_range)
                     
-                    # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
-                    raise Exception("Hash channel order now has -1 in it, need to code up")
-
                     # TODO: get rid of for loop like random data generator 
                     x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, padded_channels, self.encode_token_samples).to(self.gpu_id)
                     start_idx = w * num_samples_in_forward
                     for embedding_idx in range(0, self.transformer_seq_length):
-                        # Pull out data for this window - NOTE: no hashing
+                        # Pull out data for this window - NOTE: no hashing random order, channels just put in order with zero pad at end
                         end_idx = start_idx + self.encode_token_samples * embedding_idx + self.encode_token_samples 
-                        x[:, embedding_idx, :num_channels_curr, :] = data_tensor[:, hash_channel_order, end_idx-self.encode_token_samples : end_idx]
+                        x[:, embedding_idx, :num_channels_curr, :] = data_tensor[:, :, end_idx-self.encode_token_samples : end_idx]
 
                     ### GMVAE ENCODER
                     # Forward pass in stacked batch through GMVAE encoder
                     # latent, _, _ = self.gmvae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
-                    mean, _, _, _, _ = self.gmvae(x, reverse=False, alpha=self.classifier_alpha) # No shift if not causal masking
-                    files_latents[:, w, :] = torch.mean(mean, dim=1)
+                    _, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, _ = self.gmvae(x, reverse=False) # No shift if not causal masking
+                    
+                    # Levels of detail to save (Token or Token-Meaned level):
+                    # 1) Save mogpreds [CURRENTLY SAVED at Token-Mean level]
+                    # 2) Save the weighted means from each component [CURRENTLY SAVED at Token-Mean level]
+                    # 3) Save weighted means and uncertainty with weighted logvars [CURRENTLY SAVED at Token-Mean level]
+                    # 4) Or just save one component of interest 
+
+                    # Reshape back to token level 
+                    mogpreds = mogpreds_pseudobatch.split(self.transformer_seq_length, dim=0)
+                    mogpreds = torch.stack(mogpreds, dim=0)
+                    mean = mean_pseudobatch.split(self.transformer_seq_length, dim=0)
+                    mean = torch.stack(mean, dim=0)
+                    logvar = logvar_pseudobatch.split(self.transformer_seq_length, dim=0)
+                    logvar = torch.stack(logvar, dim=0)
+
+                    # Weight the means using mogpreds
+                    # mogpreds shape: [batch_size, seq_length, num_components]
+                    # mean shape: [batch_size, seq_length, num_components, latent_dim]
+                    # Expand mogpreds to match the latent_dim for broadcasting
+                    mogpreds_expanded = mogpreds.unsqueeze(-1)  # Shape: [batch_size, seq_length, num_components, 1]
+
+                    # Weight the means & logvars
+                    weighted_means = mean * mogpreds_expanded  # Shape: [batch_size, seq_length, num_components, latent_dim]
+                    weighted_logvars = logvar * mogpreds_expanded 
+
+                    # Sum over the components to get the final weighted mean for each token
+                    weighted_means_summed = torch.sum(weighted_means, dim=2)  # Shape: [batch_size, seq_length, latent_dim]
+                    weighted_logvars_summed = torch.sum(weighted_logvars, dim=2)  # Shape: [batch_size, seq_length, latent_dim]
+
+                    # Take the mean across the token dimension (optional, if you want to reduce further)
+                    mean_tokenmeaned = torch.mean(weighted_means_summed, dim=1)  # Shape: [batch_size, latent_dim]
+                    logvar_tokenmeaned = torch.mean(weighted_logvars_summed, dim=1)  # Shape: [batch_size, latent_dim]
+
+                    # Convert logvars to variances
+                    variances_tokenmeaned = torch.exp(logvar_tokenmeaned)  # Shape: [batch_size, latent_dim]
+
+                    # Compute a global measure of uncertainty (e.g., mean variance across dimensions)
+                    global_uncertainty = torch.mean(variances_tokenmeaned, dim=1)  # Shape: [batch_size]
+
+                    # Save the results
+                    files_means[:, w, :] = mean_tokenmeaned
+                    files_logvars[:, w, :] = logvar_tokenmeaned
+                    files_mogpreds[:, w, :] = torch.mean(mogpreds, dim=1)  # Save the mean mogpreds across tokens
+                    files_global_uncertainty[:, w] = global_uncertainty  # Save the global uncertainty
 
                 # After file complete, pacmap_window/stride the file and save each file from batch seperately
                 # Seperate directory for each win/stride combination
                 # First pull off GPU and convert to numpy
-                files_latents = files_latents.cpu().numpy()
+                files_means = files_means.cpu().numpy()
+                files_logvars = files_logvars.cpu().numpy()
+                files_mogpreds = files_mogpreds.cpu().numpy()
+                files_global_uncertainty = files_global_uncertainty.cpu().numpy()
                 for i in range(len(self.inference_window_sec_list)):
 
                     win_sec_curr = self.inference_window_sec_list[i]
@@ -972,10 +1008,16 @@ class Trainer:
                     num_latents_in_stride = int(num_latents_in_stride)
 
                     # May not go in evenly, that is ok
-                    num_strides_in_file = int((files_latents.shape[1] - num_latents_in_win) / num_latents_in_stride) 
-                    windowed_file_latent = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
+                    num_strides_in_file = int((files_means.shape[1] - num_latents_in_win) / num_latents_in_stride) 
+                    windowed_file_means = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
+                    windowed_file_logvars = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
+                    windowed_file_mogpreds = np.zeros([data_tensor.shape[0], num_strides_in_file, self.prior_mog_components])
+                    windowed_file_global_uncertainty = np.zeros([data_tensor.shape[0], num_strides_in_file])
                     for s in range(num_strides_in_file):
-                        windowed_file_latent[:, s, :] = np.mean(files_latents[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win], axis=1)
+                        windowed_file_means[:, s, :] = np.mean(files_means[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win, :], axis=1)
+                        windowed_file_logvars[:, s, :] = np.mean(files_logvars[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win, :], axis=1)
+                        windowed_file_mogpreds[:, s, :] = np.mean(files_mogpreds[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win, :], axis=1)
+                        windowed_file_global_uncertainty[:, s] = np.mean(files_global_uncertainty[:, s * num_latents_in_stride: s * num_latents_in_stride + num_latents_in_win], axis=1)  
 
                     # Save each windowed latent in a pickle for each file
                     for b in range(data_tensor.shape[0]):
@@ -983,7 +1025,13 @@ class Trainer:
                         save_dir = f"{self.model_dir}/latent_files/Epoch{self.epoch}/{win_sec_curr}SecondWindow_{stride_sec_curr}SecondStride/{dataset_string}"
                         if not os.path.exists(save_dir): os.makedirs(save_dir)
                         output_obj = open(f"{save_dir}/{filename_curr}_latent_{win_sec_curr}secWindow_{stride_sec_curr}secStride.pkl", 'wb')
-                        pickle.dump(windowed_file_latent[b, :, :], output_obj)
+                        save_dict = {
+                            'windowed_weighted_means': windowed_file_means[b, :, :],
+                            'windowed_weighted_logvars': windowed_file_logvars[b, :, :],
+                            'windowed_mogpreds': windowed_file_mogpreds[b, :, :],
+                            'windowed_global_uncertainty': windowed_file_global_uncertainty[b, :]
+                        }
+                        pickle.dump(save_dict, output_obj)
                         output_obj.close()
 
     def _run_train_epoch( ### RANDOM SUBSET OF FILES ###    
@@ -1058,7 +1106,7 @@ class Trainer:
             hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
         
             # LR & WEIGHT SCHEDULES
-            self.mean_match_weight, self.logvar_match_weight, self.reg_weight, self.curr_LR_posterior, self.curr_LR_prior, self.curr_LR_cls, self.posterior_mogpreds_entropy_weight, self.posterior_mogpreds_intersequence_diversity_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
+            self.mean_match_weight, self.logvar_match_weight, self.kl_weight, self.gp_weight, self.curr_LR_posterior, self.curr_LR_prior, self.curr_LR_cls, self.posterior_mogpreds_entropy_weight, self.posterior_mogpreds_intersequence_diversity_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
             if (not val_finetune) & (not val_unseen): 
                 self.opt_gmvae.param_groups[0]['lr'] = self.curr_LR_posterior
@@ -1105,8 +1153,10 @@ class Trainer:
                 prior_means=self.gmvae.module.prior.means, 
                 prior_logvars=self.gmvae.module.prior.logvars, 
                 prior_weights=torch.softmax(self.gmvae.module.prior.weightlogits, dim=0), 
-                weight=self.reg_weight,
+                weight=self.kl_weight,
                 **kwargs)
+            
+            neg_gp_log_prob = (-1) * self.gp_prior(z_token, self.gp_weight) # On sequential token-level of z posterior
 
             mean_match_loss = loss_functions.mean_matching_loss(
                 mean_posterior = mean_pseudobatch,
@@ -1143,7 +1193,7 @@ class Trainer:
                 classifier_weight=self.classifier_weight)
 
             # Accumulate all losses
-            loss = recon_loss + KL_divergence + mean_match_loss + logvar_match_loss + posterior_mogpreds_entropy_loss + posterior_mogpreds_intersequence_diversity_loss + prior_entropy + prior_repulsion + adversarial_loss 
+            loss = recon_loss + KL_divergence + neg_gp_log_prob + mean_match_loss + logvar_match_loss + posterior_mogpreds_entropy_loss + posterior_mogpreds_intersequence_diversity_loss + prior_entropy + prior_repulsion + adversarial_loss 
 
             # For plotting visualization purposes
             mean_tokenmeaned = torch.mean(mean, dim=1)
@@ -1181,6 +1231,8 @@ class Trainer:
                         train_loss=loss,
                         train_recon_loss=recon_loss, 
                         train_KL_divergence=KL_divergence, 
+                        train_neg_gp_log_prob = neg_gp_log_prob,
+                        train_neg_gp_weight = self.gp_weight,
                         train_mean_match_loss = mean_match_loss,
                         train_logvar_match_loss = logvar_match_loss,
                         train_mean_match_weight = self.mean_match_weight,
@@ -1196,7 +1248,7 @@ class Trainer:
                         train_LR_gmvae=self.opt_gmvae.param_groups[0]['lr'], 
                         train_LR_prior=self.opt_gmvae.param_groups[1]['lr'], 
                         train_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
-                        train_reg_Beta=self.reg_weight, 
+                        train_KL_weight=self.kl_weight, 
                         train_ReconWeight=self.recon_weight,
                         train_AdversarialAlpha=self.classifier_alpha,
                         train_epoch=self.epoch)
@@ -1207,6 +1259,8 @@ class Trainer:
                         val_finetune_loss=loss, 
                         val_finetune_recon_loss=recon_loss, 
                         val_finetune_KL_divergence=KL_divergence, 
+                        val_finetune_neg_gp_weight = self.gp_weight,
+                        val_finetune_neg_gp_log_prob = neg_gp_log_prob,
                         val_finetune_mean_match_loss = mean_match_loss,
                         val_finetune_logvar_match_loss = logvar_match_loss,
                         val_finetune_mean_match_weight = self.mean_match_weight,
@@ -1214,7 +1268,7 @@ class Trainer:
                         val_finetune_LR_gmvae=self.opt_gmvae.param_groups[0]['lr'], 
                         val_finetune_LR_prior=self.opt_gmvae.param_groups[1]['lr'], 
                         val_finetune_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
-                        val_finetune_reg_Beta=self.reg_weight, 
+                        val_finetune_KL_weight=self.kl_weight, 
                         val_finetune_ReconWeight=self.recon_weight,
                         val_finetune_AdversarialAlpha=self.classifier_alpha,
                         val_finetune_epoch=self.epoch)
@@ -1225,6 +1279,8 @@ class Trainer:
                         val_unseen_loss=loss, 
                         val_unseen_recon_loss=recon_loss, 
                         val_unseen_KL_divergence=KL_divergence, 
+                        val_unseen_neg_gp_weight = self.gp_weight,
+                        val_unseen_neg_gp_log_prob = neg_gp_log_prob,
                         val_unseen_mean_match_loss = mean_match_loss,
                         val_unseen_logvar_match_loss = logvar_match_loss,
                         val_unseen_mean_match_weight = self.mean_match_weight,
@@ -1232,7 +1288,7 @@ class Trainer:
                         val_unseen_LR_gmvae=self.opt_gmvae.param_groups[0]['lr'], 
                         val_unseen_LR_prior=self.opt_gmvae.param_groups[1]['lr'],
                         val_unseen_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
-                        val_unseen_reg_Beta=self.reg_weight, 
+                        val_unseen_KL_weight=self.kl_weight, 
                         val_unseen_ReconWeight=self.recon_weight,
                         val_unseen_AdversarialAlpha=self.classifier_alpha,
                         val_unseen_epoch=self.epoch)

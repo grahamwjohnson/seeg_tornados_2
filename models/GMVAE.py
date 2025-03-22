@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import math
 import numpy as np
 from torchinfo import summary
+import torch.distributions as dist
 
 # Local imports
 from .Transformer import ModelArgs, Transformer, RMSNorm
@@ -138,6 +139,69 @@ class MoGPrior(nn.Module):
         z_prior = torch.clamp(z_prior, min=self.mean_lims[0], max=self.mean_lims[1])
 
         return z_prior, component_probs
+
+class GaussianProcessPrior(nn.Module):
+    def __init__(self, device, seq_len, latent_dim, gp_sigma, gp_length_scale, **kwargs):
+        """
+        Gaussian Process (GP) prior for the latent space.
+        This is a regularization in addition to the standard KL divergence.
+        The GP prior encourages temporal structure in sequential tokens mapped into the latent space.
+
+        Args:
+            device (torch.device): Device to use (e.g., 'cuda' or 'cpu').
+            seq_len (int): Length of the time series.
+            latent_dim (int): Dimensionality of the latent space.
+            gp_sigma (float): Signal variance (amplitude) of the kernel.
+            gp_length_scale (float): Length scale of the kernel.
+        """
+        super(GaussianProcessPrior, self).__init__()
+        self.device = device
+        self.seq_len = seq_len
+        self.latent_dim = latent_dim
+        self.sigma = gp_sigma
+        self.length_scale = gp_length_scale
+
+        # Precompute the covariance matrix
+        self.cov_matrix = self._compute_cov_matrix().to(self.device)
+
+    def _compute_cov_matrix(self):
+        """
+        Computes the covariance matrix using the squared exponential kernel.
+        """
+        time_points = torch.arange(self.seq_len, dtype=torch.float32)
+        diff = time_points.unsqueeze(1) - time_points.unsqueeze(0)  # Pairwise differences
+        cov_matrix = self.sigma ** 2 * torch.exp(-0.5 * (diff / self.length_scale) ** 2)
+        return cov_matrix
+
+    def forward(self, z, weight):
+        """
+        Computes the log probability of the latent space under the GP prior.
+
+        Args:
+            z (torch.Tensor): Latent space of shape (batch_size, seq_len, latent_dim).
+
+        Returns:
+            log_prob (torch.Tensor): Log probability of the GP prior.
+        """
+        batch_size, seq_len, latent_dim = z.shape
+
+        # Reshape z to (batch_size * latent_dim, seq_len)
+        z_reshaped = z.permute(0, 2, 1).reshape(-1, seq_len)  # Shape: (batch_size * latent_dim, seq_len)
+
+        # Create a batched MultivariateNormal distribution
+        gp_dist = dist.MultivariateNormal(
+            loc=torch.zeros(self.seq_len, device=self.device),  # Zero mean
+            covariance_matrix=self.cov_matrix,  # Precomputed covariance matrix
+        )
+
+        # Compute log probability for all latent dimensions in one call
+        log_prob = gp_dist.log_prob(z_reshaped)  # Shape: (batch_size * latent_dim,)
+
+        # Reshape log_prob back to (batch_size, latent_dim) 
+        log_prob = log_prob.reshape(batch_size, latent_dim).mean(dim=1)  # Mean over latent dimensions
+        
+        return log_prob.mean() * weight  # Mean over the batch
+
 
 class RMSNorm_Conv(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):

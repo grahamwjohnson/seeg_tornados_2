@@ -234,6 +234,7 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         KL_divergence_max_weight, KL_divergence_min_weight, KL_divergence_epochs_TO_max, KL_divergence_epochs_AT_max, KL_divergence_stall_epochs,
+        gp_weight_max, gp_weight_min, gp_weight_stall_epochs, gp_weight_epochs_TO_max, gp_weight_epochs_AT_max, 
         posterior_mogpreds_entropy_weight_max, posterior_mogpreds_entropy_weight_min, posterior_mogpreds_entropy_weight_taper_epochs,
         classifier_weight, 
         classifier_alpha_max, classifier_alpha_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
@@ -243,18 +244,19 @@ def LR_and_weight_schedules(
         posterior_mogpreds_intersequence_diversity_weight_min, posterior_mogpreds_intersequence_diversity_weight_max, posterior_mogpreds_intersequence_diversity_weight_taper_epochs,
         LR_max_posterior, LR_min_posterior, LR_epochs_stall_posterior, LR_epochs_TO_max_posterior, LR_epochs_AT_max_posterior,  manual_gamma_posterior, manual_step_size_posterior,
         LR_max_prior, LR_min_prior, LR_epochs_stall_prior, LR_epochs_TO_max_prior, LR_epochs_AT_max_prior,  manual_gamma_prior, manual_step_size_prior,
-        KL_divergence_rise_first=True, LR_rise_first=True, **kwargs):
+        KL_divergence_rise_first=True, gp_weight_rise_first=True, LR_rise_first=True, **kwargs):
 
     """
-    Computes learning rate (LR) schedules, KL divergence schedule, and classifier weights at each epoch for training.
+    Computes learning rate (LR) schedules, KL divergence schedule, classifier weights, and Gaussian Process (GP) prior weights at each epoch for training.
 
-    This function calculates the values of various learning rates, weights, and schedules, including:
-    - KL divergence weight with tapering and rise.
-    - Posterior MoG prediction entropy and diversity with tapering.
-    - Classifier weight and alpha based on epoch.
-    - Learning rates for posterior and prior with dynamic updates.
+    This function dynamically adjusts various learning rates, weights, and schedules over the course of training. It includes:
+    - KL divergence weight scheduling with rise, stall, and plateau phases.
+    - Gaussian Process (GP) prior weight scheduling with similar dynamic adjustments.
+    - Posterior MoG prediction entropy and inter-sequence diversity weighting.
+    - Classifier weight and alpha value adjustments over training epochs.
+    - Learning rate scheduling for posterior and prior components with manual or automated control.
 
-    The schedules are piecewise with rise and plateau phases, and learning rate schedules are computed using the provided parameters.
+    The schedules are piecewise with rise and plateau phases, designed to smoothly transition the model through different learning stages.
 
     Parameters:
     -----------
@@ -268,10 +270,10 @@ def LR_and_weight_schedules(
         The number of iterations per epoch.
 
     KL_divergence_max_weight : float
-        The maximum weight for KL divergence.
+        Maximum weight for KL divergence.
 
     KL_divergence_min_weight : float
-        The minimum weight for KL divergence.
+        Minimum weight for KL divergence.
 
     KL_divergence_epochs_TO_max : int
         Number of epochs to increase KL divergence to its maximum weight.
@@ -280,137 +282,159 @@ def LR_and_weight_schedules(
         Number of epochs to hold KL divergence at its maximum weight.
 
     KL_divergence_stall_epochs : int
-        The number of epochs before KL divergence schedule starts.
+        Number of stall epochs before KL divergence scheduling begins.
+
+    gp_weight_max : float
+        Maximum weight for the Gaussian Process prior.
+
+    gp_weight_min : float
+        Minimum weight for the Gaussian Process prior.
+
+    gp_weight_stall_epochs : int
+        Number of stall epochs before GP weight scheduling begins.
+
+    gp_weight_epochs_TO_max : int
+        Number of epochs to increase GP weight to its maximum value.
+
+    gp_weight_epochs_AT_max : int
+        Number of epochs to hold GP weight at its maximum value.
 
     posterior_mogpreds_entropy_weight_max : float
-        The maximum entropy weight for posterior MoG prediction.
+        Maximum weight for posterior MoG prediction entropy.
 
     posterior_mogpreds_entropy_weight_min : float
-        The minimum entropy weight for posterior MoG prediction.
+        Minimum weight for posterior MoG prediction entropy.
 
     posterior_mogpreds_entropy_weight_taper_epochs : int
-        The number of epochs for tapering the entropy weight.
+        Number of epochs for tapering the entropy weight.
 
     classifier_weight : float
-        The weight for the classifier.
+        Static weight for the classifier.
 
     classifier_alpha_max : float
-        The maximum alpha value for the classifier.
+        Maximum alpha value for the classifier.
 
     classifier_alpha_min : float
-        The minimum alpha value for the classifier.
+        Minimum alpha value for the classifier.
 
     classifier_epochs_AT_max : int
-        The number of epochs to keep classifier alpha at its maximum.
+        Number of epochs to maintain classifier alpha at its maximum.
 
     classifier_epochs_TO_max : int
-        The number of epochs to increase classifier alpha to its maximum.
+        Number of epochs to increase classifier alpha to its maximum.
 
     classifier_rise_first : bool
-        Whether to rise the classifier alpha value first.
+        Whether to increase classifier alpha first before plateauing.
 
     LR_min_classifier : float
-        The minimum learning rate for the classifier.
+        Minimum learning rate for the classifier.
 
     mean_match_static_weight : float
-        The weight for the mean matching loss.
+        Static weight for mean matching loss.
 
     logvar_match_static_weight : float
-        The weight for the log variance matching loss.
+        Static weight for log variance matching loss.
 
     posterior_mogpreds_intersequence_diversity_weight_min : float
-        The minimum diversity weight for posterior MoG prediction.
+        Minimum diversity weight for posterior MoG prediction.
 
     posterior_mogpreds_intersequence_diversity_weight_max : float
-        The maximum diversity weight for posterior MoG prediction.
+        Maximum diversity weight for posterior MoG prediction.
 
     posterior_mogpreds_intersequence_diversity_weight_taper_epochs : int
-        The number of epochs for tapering the diversity weight.
+        Number of epochs for tapering diversity weight.
 
     LR_max_posterior : float
-        The maximum learning rate for the posterior.
+        Maximum learning rate for the posterior.
 
     LR_min_posterior : float
-        The minimum learning rate for the posterior.
+        Minimum learning rate for the posterior.
 
     LR_epochs_stall_posterior : int
-        The number of epochs before the posterior LR schedule starts.
+        Number of stall epochs before posterior LR scheduling begins.
 
     LR_epochs_TO_max_posterior : int
-        The number of epochs to increase the posterior LR to its maximum.
+        Number of epochs to increase posterior LR to its maximum.
 
     LR_epochs_AT_max_posterior : int
-        The number of epochs to hold the posterior LR at its maximum.
+        Number of epochs to hold posterior LR at its maximum.
 
     manual_gamma_posterior : float
-        The manual gamma value for the posterior LR schedule.
+        Manual gamma value for the posterior LR schedule.
 
     manual_step_size_posterior : int
-        The manual step size for the posterior LR schedule.
+        Manual step size for the posterior LR schedule.
 
     LR_max_prior : float
-        The maximum learning rate for the prior.
+        Maximum learning rate for the prior.
 
     LR_min_prior : float
-        The minimum learning rate for the prior.
+        Minimum learning rate for the prior.
 
     LR_epochs_stall_prior : int
-        The number of epochs before the prior LR schedule starts.
+        Number of stall epochs before prior LR scheduling begins.
 
     LR_epochs_TO_max_prior : int
-        The number of epochs to increase the prior LR to its maximum.
+        Number of epochs to increase prior LR to its maximum.
 
     LR_epochs_AT_max_prior : int
-        The number of epochs to hold the prior LR at its maximum.
+        Number of epochs to hold prior LR at its maximum.
 
     manual_gamma_prior : float
-        The manual gamma value for the prior LR schedule.
+        Manual gamma value for the prior LR schedule.
 
     manual_step_size_prior : int
-        The manual step size for the prior LR schedule.
+        Manual step size for the prior LR schedule.
 
     KL_divergence_rise_first : bool, optional (default=True)
-        Whether to rise the KL divergence value first before reaching the maximum.
+        Whether to increase KL divergence weight first before plateauing.
+
+    gp_weight_rise_first : bool, optional (default=True)
+        Whether to increase GP weight first before plateauing.
 
     LR_rise_first : bool, optional (default=True)
-        Whether to rise the learning rate first before reaching the maximum.
+        Whether to increase learning rates first before plateauing.
 
     Returns:
     --------
     mean_match_static_weight : float
-        The static weight for mean matching.
+        Static weight for mean matching loss.
 
     logvar_match_static_weight : float
-        The static weight for log variance matching.
+        Static weight for log variance matching loss.
 
     KL_divergence_val : float
-        The calculated KL divergence weight for the current epoch.
+        Computed KL divergence weight for the current epoch.
+
+    gp_weight_val : float
+        Computed Gaussian Process prior weight for the current epoch.
 
     LR_val_posterior : float
-        The learning rate for the posterior for the current epoch.
+        Computed learning rate for the posterior.
 
     LR_val_prior : float
-        The learning rate for the prior for the current epoch.
+        Computed learning rate for the prior.
 
     LR_val_cls : float
-        The learning rate for the classifier for the current epoch.
+        Computed learning rate for the classifier.
 
     mogpred_entropy_val : float
-        The posterior MoG prediction entropy weight for the current epoch.
+        Computed entropy weight for posterior MoG predictions.
 
     mogpred_diversity_val : float
-        The posterior MoG prediction diversity weight for the current epoch.
+        Computed diversity weight for posterior MoG predictions.
 
     classifier_weight : float
-        The classifier weight for the current epoch.
+        Classifier weight for the current epoch.
 
     classifier_val : float
-        The alpha value for the classifier for the current epoch.
+        Computed classifier alpha value for the current epoch.
 
     Notes:
     ------
-    - The function dynamically computes learning rates and weights based on the epoch and iteration, adjusting for various phases of training.
-    - The function raises an exception if `KL_divergence_rise_first` or `LR_rise_first` are set to False and not handled.
+    - The function ensures smooth transitions between different training phases.
+    - Gaussian Process prior weight is now dynamically scheduled alongside KL divergence and learning rates.
+    - Schedules are cyclical, resetting after each full period unless otherwise specified.
     """
 
     # Posterior MoG Prediction Entropy TAPER
@@ -440,10 +464,8 @@ def LR_and_weight_schedules(
     # *** Classifier Alpha ###
     classifier_range = classifier_alpha_max - classifier_alpha_min
     classifier_epoch_period = classifier_epochs_TO_max + classifier_epochs_AT_max
-    if classifier_rise_first: # START with rise
-        classifier_epoch_residual = epoch % classifier_epoch_period 
-    else:
-        classifier_epoch_residual = (epoch + classifier_epochs_TO_max) % classifier_epoch_period 
+    if classifier_rise_first: classifier_epoch_residual = epoch % classifier_epoch_period 
+    else: classifier_epoch_residual = (epoch + classifier_epochs_TO_max) % classifier_epoch_period 
     
     # Calculate alpha value for where in period we are
     if classifier_epoch_residual < classifier_epochs_TO_max:
@@ -451,14 +473,11 @@ def LR_and_weight_schedules(
         classifier_floor = classifier_alpha_min + classifier_range * (classifier_epoch_residual/classifier_state_length)
         classifier_ceil = classifier_floor + classifier_range * (1) /classifier_state_length
         classifier_val = classifier_floor + (iter_curr/iters_per_epoch) * (classifier_ceil - classifier_floor)
-    else:
-        classifier_val = classifier_alpha_max
+    else: classifier_val = classifier_alpha_max
 
     # *** KL_divergence SCHEDULE ***
     # If within the stall, send out KL_divergence_min_weight
-    if epoch < KL_divergence_stall_epochs:
-        KL_divergence_val = KL_divergence_min_weight
-    
+    if epoch < KL_divergence_stall_epochs: KL_divergence_val = KL_divergence_min_weight
     else: # After stall
         KL_divergence_epoch_period = KL_divergence_epochs_TO_max + KL_divergence_epochs_AT_max
         KL_divergence_epoch_residual = (epoch - KL_divergence_stall_epochs) % KL_divergence_epoch_period # Shift for the stall epochs
@@ -469,8 +488,23 @@ def LR_and_weight_schedules(
                 KL_divergence_floor = KL_divergence_min_weight + KL_divergence_range * (KL_divergence_epoch_residual/KL_divergence_state_length)
                 KL_divergence_ceil = KL_divergence_floor + KL_divergence_range * (1) /KL_divergence_state_length
                 KL_divergence_val = KL_divergence_floor + (iter_curr/iters_per_epoch) * (KL_divergence_ceil - KL_divergence_floor)
-            else:
-                KL_divergence_val = KL_divergence_max_weight
+            else: KL_divergence_val = KL_divergence_max_weight
+        else: raise Exception("ERROR: not coded up")
+
+    # *** Guassian Process Prior SCHEDULE ***
+    # If within the stall, send out min
+    if epoch < gp_weight_stall_epochs: gp_weight_val = gp_weight_min
+    else: # After stall
+        gp_weight_epoch_period = gp_weight_epochs_TO_max + gp_weight_epochs_AT_max
+        gp_weight_epoch_residual = (epoch - gp_weight_stall_epochs) % gp_weight_epoch_period # Shift for the stall epochs
+        gp_weight_range = gp_weight_max - gp_weight_min
+        if gp_weight_rise_first: # START with rise
+            if gp_weight_epoch_residual < gp_weight_epochs_TO_max:
+                gp_weight_state_length = gp_weight_epochs_TO_max 
+                gp_weight_floor = gp_weight_min + gp_weight_range * (gp_weight_epoch_residual/gp_weight_state_length)
+                gp_weight_ceil = gp_weight_floor + gp_weight_range * (1) /gp_weight_state_length
+                gp_weight_val = gp_weight_floor + (iter_curr/iters_per_epoch) * (gp_weight_ceil - gp_weight_floor)
+            else: gp_weight_val = gp_weight_max
         else: raise Exception("ERROR: not coded up")
                 
     # *** POSTERIOR LR ***
@@ -485,8 +519,7 @@ def LR_and_weight_schedules(
         LR_epochs_TO_max=LR_epochs_TO_max_posterior,  
         LR_epochs_AT_max=LR_epochs_AT_max_posterior, 
         iters_per_epoch=iters_per_epoch,
-        LR_rise_first=LR_rise_first 
-    )
+        LR_rise_first=LR_rise_first)
 
     # *** PRIOR LR ***
     LR_val_prior = LR_subfunction(
@@ -500,10 +533,9 @@ def LR_and_weight_schedules(
         LR_epochs_TO_max=LR_epochs_TO_max_prior,  
         LR_epochs_AT_max=LR_epochs_AT_max_prior, 
         iters_per_epoch=iters_per_epoch,
-        LR_rise_first=LR_rise_first 
-    )
+        LR_rise_first=LR_rise_first)
 
-    return  mean_match_static_weight, logvar_match_static_weight, KL_divergence_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, mogpred_diversity_val, classifier_weight, classifier_val
+    return  mean_match_static_weight, logvar_match_static_weight, KL_divergence_val, gp_weight_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, mogpred_diversity_val, classifier_weight, classifier_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     """
@@ -711,7 +743,7 @@ def plot_prior(prior_means, prior_logvars, prior_weights, savedir, epoch, **kwar
     
     if not os.path.exists(savedir): os.makedirs(savedir)
     savename_jpg = f"{savedir}/Prior_epoch{epoch}.jpg"
-    pl.savefig(savename_jpg, dpi=600)
+    pl.savefig(savename_jpg, dpi=200)
     plt.close()
 
 def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, mean_lims, logvar_lims, num_accumulated_plotting_dims=5, n_bins=200, threshold=0.1, **kwargs):
@@ -851,7 +883,7 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
     if gpu_id == 0: time.sleep(0.5) # avoid collisions
     if not os.path.exists(savedir): os.makedirs(savedir)
     savename_jpg = f"{savedir}/posterior_epoch{epoch}_numForwards{Batch}_gpu{gpu_id}.jpg"
-    plt.savefig(savename_jpg, dpi=600)
+    plt.savefig(savename_jpg, dpi=200)
     plt.close(fig)
 
 PATIENT_COLOR_MAP = {} # Global dictionary to store patient ID to color mappings
@@ -926,7 +958,7 @@ def print_patposteriorweights_cumulative(mogpreds, patidxs, patname_list, savedi
     # Save the plot
     if not os.path.exists(savedir): os.makedirs(savedir)
     savename_jpg = f"{savedir}/patposteriorweights_epoch{epoch}_iter{iter_curr}.jpg"
-    plt.savefig(savename_jpg, bbox_inches='tight', dpi=600)
+    plt.savefig(savename_jpg, bbox_inches='tight', dpi=200)
     plt.close(fig)
 
 def print_latent_singlebatch(mean, logvar, mogpreds, prior_means, prior_logvars, prior_weights, savedir, epoch, iter_curr,  mean_lims, logvar_lims, n_bins=35, **kwargs):
@@ -1067,7 +1099,7 @@ def print_latent_singlebatch(mean, logvar, mogpreds, prior_means, prior_logvars,
     if not os.path.exists(savedir):
         os.makedirs(savedir)
     savename_jpg = f"{savedir}/RealtimeLatents_epoch{epoch}_iter{iter_curr}.jpg"
-    plt.savefig(savename_jpg, dpi=600)
+    plt.savefig(savename_jpg, dpi=200)
     plt.close(fig)
 
 def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_singlebatch_channels_recon, num_recon_samples, **kwargs):
@@ -1146,7 +1178,7 @@ def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
     if not os.path.exists(savedir): os.makedirs(savedir)
     savename_jpg = f"{savedir}/RealtimeRecon_epoch{epoch}_iter{iter_curr}_allbatch.jpg"
-    pl.savefig(savename_jpg, dpi=600)
+    pl.savefig(savename_jpg, dpi=200)
     pl.close(fig)   
 
     pl.close('all') 
@@ -1197,7 +1229,7 @@ def print_classprobs_singlebatch(class_probs, class_labels, savedir, epoch, iter
 
         if not os.path.exists(savedir): os.makedirs(savedir)
         savename_jpg = f"{savedir}/RealtimeClassProb_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch{b}.jpg"
-        pl.savefig(savename_jpg, dpi=600)
+        pl.savefig(savename_jpg, dpi=200)
         pl.close(fig)    
 
         pl.close('all') 
@@ -1223,7 +1255,7 @@ def print_confusion_singlebatch(class_probs, class_labels, savedir, epoch, iter_
     
     if not os.path.exists(savedir): os.makedirs(savedir)
     savename_jpg = f"{savedir}/RealtimeConfusion_epoch{epoch}_iter{iter_curr}.jpg"
-    pl.savefig(savename_jpg, dpi=600)
+    pl.savefig(savename_jpg, dpi=200)
     pl.close(fig)    
 
     pl.close('all') 
@@ -1264,7 +1296,7 @@ def print_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_meanH
         fig.suptitle(f"Attention Weights - Batch:{b}")
         if not os.path.exists(savedir): os.makedirs(savedir)
         savename_jpg = f"{savedir}/ByLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_patidx{pat_idxs[b].cpu().numpy()}.jpg"
-        pl.savefig(savename_jpg, dpi=600)
+        pl.savefig(savename_jpg, dpi=200)
         pl.close(fig)   
 
     pl.close('all') 
@@ -1309,7 +1341,7 @@ def plot_recon(x, x_hat, plot_dict, batch_file_names, epoch, savedir, gpu_id, pa
 
         if not os.path.exists(savedir): os.makedirs(savedir)
         savename_jpg = savedir + f"/Recon_epoch{str(epoch)}_iter_{str(iter)}_{pat_id}_batchIdx{str(batch_idx)}_chIdx{str(ch_idx)}_duration{str(recon_sec)}sec_startIdx{str(start_idx)}_gpu{str(gpu_id)}.jpg"
-        pl.savefig(savename_jpg, dpi=600)
+        pl.savefig(savename_jpg, dpi=200)
         pl.close(fig) 
 
 def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, atd_file, pre_ictal_taper_sec=120, post_ictal_taper_sec=120, **kwargs):
@@ -1504,7 +1536,7 @@ def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir
 
     if not os.path.exists(dataset_pic_dir): os.makedirs(dataset_pic_dir)
     savename = dataset_pic_dir + f"/{pat_id}_Dataset_Breakdown.jpg"
-    pl.savefig(savename, dpi=600)
+    pl.savefig(savename, dpi=200)
     pl.close('all')
 
 def rgbtoint32(rgb):
