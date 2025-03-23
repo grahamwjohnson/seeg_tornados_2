@@ -148,7 +148,7 @@ class GaussianProcessPrior(nn.Module):
         The GP prior encourages temporal structure in sequential tokens mapped into the latent space.
 
         Args:
-            device (torch.device): Device to use (e.g., 'cuda' or 'cpu').
+            device (torch.device): Device to use (e.g., 'cuda' or 'cpu', int for DDP).
             seq_len (int): Length of the time series.
             latent_dim (int): Dimensionality of the latent space.
             gp_sigma (float): Signal variance (amplitude) of the kernel.
@@ -463,6 +463,81 @@ class Encoder_TimeSeriesWithCrossAttention(nn.Module):
 
         return x.flatten(start_dim=1) # (batch, seq_len * low_dim)
 
+class MoGPredictor(nn.Module):
+    """
+    Mixture of Gaussians (MoG) Component Predictor.
+
+    The `MoGPredictor` is a fully connected neural network that predicts the logits for 
+    selecting a Gaussian mixture component in the latent space. It takes an encoded 
+    representation from the GMVAE and outputs unnormalized logits for each MoG component. 
+    The logits are later processed using the Gumbel-Softmax trick to enable differentiable 
+    sampling.
+
+    This module consists of an MLP with multiple hidden layers, SiLU activation functions, 
+    RMS normalization, and optional dropout for regularization.
+
+    Parameters:
+    -----------
+    top_dim : int
+        The dimensionality of the input features coming from the encoder.
+
+    posterior_mogpredictor_hidden_dim_list : list of int
+        List defining the number of hidden units in each hidden layer.
+
+    num_prior_mog_components : int
+        Number of Gaussian components in the prior mixture model.
+
+    posterior_mogpredictor_dropout : float
+        Dropout probability applied in the hidden layers for regularization.
+
+    **kwargs : dict
+        Additional keyword arguments for flexibility.
+
+    Attributes:
+    -----------
+    dropout : float
+        Dropout probability for hidden layers.
+
+    mlp_layers : nn.ModuleList
+        List of layers including linear transformations, SiLU activations, and RMS normalization.
+
+    Methods:
+    --------
+    forward(x)
+        Performs a forward pass through the MLP network and returns logits for MoG component selection.
+        The output should not be passed through a softmax function, as the Gumbel-Softmax trick requires raw logits.
+
+    Notes:
+    ------
+    - The final layer does NOT apply softmax to the logits; this must be done externally.
+    - The network is designed to maintain differentiability for component selection.
+    """
+
+    def __init__(self, top_dim, posterior_mogpredictor_hidden_dim_list, num_prior_mog_components, posterior_mogpredictor_dropout, **kwargs):
+        super(MoGPredictor, self).__init__()
+
+        self.dropout = posterior_mogpredictor_dropout
+        self.mlp_layers = nn.ModuleList()
+
+        # Input layer
+        self.mlp_layers.append(nn.Linear(top_dim, posterior_mogpredictor_hidden_dim_list[0]))
+        self.mlp_layers.append(nn.SiLU())
+        self.mlp_layers.append(RMSNorm(posterior_mogpredictor_hidden_dim_list[0]))
+
+        # Hidden layers
+        for i in range(len(posterior_mogpredictor_hidden_dim_list) - 1):
+            self.mlp_layers.append(LinearWithDropout(posterior_mogpredictor_hidden_dim_list[i], posterior_mogpredictor_hidden_dim_list[i + 1], self.dropout))
+            self.mlp_layers.append(nn.SiLU())
+            self.mlp_layers.append(RMSNorm(posterior_mogpredictor_hidden_dim_list[i + 1]))
+
+        # Output layer
+        self.mlp_layers.append(nn.Linear(posterior_mogpredictor_hidden_dim_list[-1], num_prior_mog_components)) # No activation and no norm
+
+    def forward(self, x):
+        for layer in self.mlp_layers:
+            x = layer(x)
+        return x # Do NOT softmax here, Gumbel-Softmax trick needs logits 
+
 class Decoder_MLP(nn.Module):
     """
     Multi-Layer Perceptron (MLP) Decoder for GMVAE.
@@ -678,81 +753,6 @@ class AdversarialClassifier(nn.Module):
         for layer in self.mlp_layers:
             mu = layer(mu)
         return self.softmax(mu)
-
-class MoGPredictor(nn.Module):
-    """
-    Mixture of Gaussians (MoG) Component Predictor.
-
-    The `MoGPredictor` is a fully connected neural network that predicts the logits for 
-    selecting a Gaussian mixture component in the latent space. It takes an encoded 
-    representation from the GMVAE and outputs unnormalized logits for each MoG component. 
-    The logits are later processed using the Gumbel-Softmax trick to enable differentiable 
-    sampling.
-
-    This module consists of an MLP with multiple hidden layers, SiLU activation functions, 
-    RMS normalization, and optional dropout for regularization.
-
-    Parameters:
-    -----------
-    top_dim : int
-        The dimensionality of the input features coming from the encoder.
-
-    posterior_mogpredictor_hidden_dim_list : list of int
-        List defining the number of hidden units in each hidden layer.
-
-    num_prior_mog_components : int
-        Number of Gaussian components in the prior mixture model.
-
-    posterior_mogpredictor_dropout : float
-        Dropout probability applied in the hidden layers for regularization.
-
-    **kwargs : dict
-        Additional keyword arguments for flexibility.
-
-    Attributes:
-    -----------
-    dropout : float
-        Dropout probability for hidden layers.
-
-    mlp_layers : nn.ModuleList
-        List of layers including linear transformations, SiLU activations, and RMS normalization.
-
-    Methods:
-    --------
-    forward(x)
-        Performs a forward pass through the MLP network and returns logits for MoG component selection.
-        The output should not be passed through a softmax function, as the Gumbel-Softmax trick requires raw logits.
-
-    Notes:
-    ------
-    - The final layer does NOT apply softmax to the logits; this must be done externally.
-    - The network is designed to maintain differentiability for component selection.
-    """
-
-    def __init__(self, top_dim, posterior_mogpredictor_hidden_dim_list, num_prior_mog_components, posterior_mogpredictor_dropout, **kwargs):
-        super(MoGPredictor, self).__init__()
-
-        self.dropout = posterior_mogpredictor_dropout
-        self.mlp_layers = nn.ModuleList()
-
-        # Input layer
-        self.mlp_layers.append(nn.Linear(top_dim, posterior_mogpredictor_hidden_dim_list[0]))
-        self.mlp_layers.append(nn.SiLU())
-        self.mlp_layers.append(RMSNorm(posterior_mogpredictor_hidden_dim_list[0]))
-
-        # Hidden layers
-        for i in range(len(posterior_mogpredictor_hidden_dim_list) - 1):
-            self.mlp_layers.append(LinearWithDropout(posterior_mogpredictor_hidden_dim_list[i], posterior_mogpredictor_hidden_dim_list[i + 1], self.dropout))
-            self.mlp_layers.append(nn.SiLU())
-            self.mlp_layers.append(RMSNorm(posterior_mogpredictor_hidden_dim_list[i + 1]))
-
-        # Output layer
-        self.mlp_layers.append(nn.Linear(posterior_mogpredictor_hidden_dim_list[-1], num_prior_mog_components)) # No activation and no norm
-
-    def forward(self, x):
-        for layer in self.mlp_layers:
-            x = layer(x)
-        return x # Do NOT softmax here, Gumbel-Softmax trick needs logits 
 
 class GMVAE(nn.Module):
     """

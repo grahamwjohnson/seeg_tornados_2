@@ -896,7 +896,7 @@ class Trainer:
 
             # Go through every file in dataset
             file_count = 0
-            for data_tensor, file_name, file_class_label in dataloader_curr: # Hash done outside data.py for single pat inference
+            for data_tensor, file_name, _ in dataloader_curr: # Hash done outside data.py for single pat inference
 
                 file_count = file_count + len(file_name)
 
@@ -913,7 +913,6 @@ class Trainer:
                 files_means = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
                 files_logvars = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
                 files_mogpreds = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.prior_mog_components]).to(self.gpu_id)
-                files_global_uncertainty = torch.zeros([data_tensor.shape[0], num_windows_in_file]).to(self.gpu_id)
 
                 # Put whole file on GPU
                 data_tensor = data_tensor.to(self.gpu_id)
@@ -939,7 +938,7 @@ class Trainer:
                     # latent, _, _ = self.gmvae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
                     _, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, _ = self.gmvae(x, reverse=False) # No shift if not causal masking
                     
-                    # Levels of detail to save (Token or Token-Meaned level):
+                    # Theoretical Levels of detail to save (Token or Token-Meaned level):
                     # 1) Save mogpreds [CURRENTLY SAVED at Token-Mean level]
                     # 2) Save the weighted means from each component [CURRENTLY SAVED at Token-Mean level]
                     # 3) Save weighted means and uncertainty with weighted logvars [CURRENTLY SAVED at Token-Mean level]
@@ -971,17 +970,10 @@ class Trainer:
                     mean_tokenmeaned = torch.mean(weighted_means_summed, dim=1)  # Shape: [batch_size, latent_dim]
                     logvar_tokenmeaned = torch.mean(weighted_logvars_summed, dim=1)  # Shape: [batch_size, latent_dim]
 
-                    # Convert logvars to variances
-                    variances_tokenmeaned = torch.exp(logvar_tokenmeaned)  # Shape: [batch_size, latent_dim]
-
-                    # Compute a global measure of uncertainty (e.g., mean variance across dimensions)
-                    global_uncertainty = torch.mean(variances_tokenmeaned, dim=1)  # Shape: [batch_size]
-
                     # Save the results
                     files_means[:, w, :] = mean_tokenmeaned
                     files_logvars[:, w, :] = logvar_tokenmeaned
                     files_mogpreds[:, w, :] = torch.mean(mogpreds, dim=1)  # Save the mean mogpreds across tokens
-                    files_global_uncertainty[:, w] = global_uncertainty  # Save the global uncertainty
 
                 # After file complete, pacmap_window/stride the file and save each file from batch seperately
                 # Seperate directory for each win/stride combination
@@ -989,7 +981,6 @@ class Trainer:
                 files_means = files_means.cpu().numpy()
                 files_logvars = files_logvars.cpu().numpy()
                 files_mogpreds = files_mogpreds.cpu().numpy()
-                files_global_uncertainty = files_global_uncertainty.cpu().numpy()
                 for i in range(len(self.inference_window_sec_list)):
 
                     win_sec_curr = self.inference_window_sec_list[i]
@@ -1012,12 +1003,10 @@ class Trainer:
                     windowed_file_means = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
                     windowed_file_logvars = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
                     windowed_file_mogpreds = np.zeros([data_tensor.shape[0], num_strides_in_file, self.prior_mog_components])
-                    windowed_file_global_uncertainty = np.zeros([data_tensor.shape[0], num_strides_in_file])
                     for s in range(num_strides_in_file):
                         windowed_file_means[:, s, :] = np.mean(files_means[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win, :], axis=1)
                         windowed_file_logvars[:, s, :] = np.mean(files_logvars[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win, :], axis=1)
                         windowed_file_mogpreds[:, s, :] = np.mean(files_mogpreds[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win, :], axis=1)
-                        windowed_file_global_uncertainty[:, s] = np.mean(files_global_uncertainty[:, s * num_latents_in_stride: s * num_latents_in_stride + num_latents_in_win], axis=1)  
 
                     # Save each windowed latent in a pickle for each file
                     for b in range(data_tensor.shape[0]):
@@ -1028,9 +1017,7 @@ class Trainer:
                         save_dict = {
                             'windowed_weighted_means': windowed_file_means[b, :, :],
                             'windowed_weighted_logvars': windowed_file_logvars[b, :, :],
-                            'windowed_mogpreds': windowed_file_mogpreds[b, :, :],
-                            'windowed_global_uncertainty': windowed_file_global_uncertainty[b, :]
-                        }
+                            'windowed_mogpreds': windowed_file_mogpreds[b, :, :]}
                         pickle.dump(save_dict, output_obj)
                         output_obj.close()
 
