@@ -233,6 +233,7 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
+        fd_weight_min, fd_weight_max, fd_weight_stall_epochs, fd_weight_epochs_TO_max, fd_weight_epochs_AT_max,
         KL_divergence_max_weight, KL_divergence_min_weight, KL_divergence_epochs_TO_max, KL_divergence_epochs_AT_max, KL_divergence_stall_epochs,
         gp_weight_max, gp_weight_min, gp_weight_stall_epochs, gp_weight_epochs_TO_max, gp_weight_epochs_AT_max, 
         posterior_mogpreds_entropy_weight_max, posterior_mogpreds_entropy_weight_min, posterior_mogpreds_entropy_weight_taper_epochs,
@@ -244,7 +245,7 @@ def LR_and_weight_schedules(
         posterior_mogpreds_intersequence_diversity_weight_min, posterior_mogpreds_intersequence_diversity_weight_max, posterior_mogpreds_intersequence_diversity_weight_taper_epochs,
         LR_max_posterior, LR_min_posterior, LR_epochs_stall_posterior, LR_epochs_TO_max_posterior, LR_epochs_AT_max_posterior,  manual_gamma_posterior, manual_step_size_posterior,
         LR_max_prior, LR_min_prior, LR_epochs_stall_prior, LR_epochs_TO_max_prior, LR_epochs_AT_max_prior,  manual_gamma_prior, manual_step_size_prior,
-        KL_divergence_rise_first=True, gp_weight_rise_first=True, LR_rise_first=True, **kwargs):
+        fd_weight_rise_first=True, KL_divergence_rise_first=True, gp_weight_rise_first=True, LR_rise_first=True, **kwargs):
 
     """
     Computes learning rate (LR) schedules, KL divergence schedule, classifier weights, and Gaussian Process (GP) prior weights at each epoch for training.
@@ -437,6 +438,22 @@ def LR_and_weight_schedules(
     - Schedules are cyclical, resetting after each full period unless otherwise specified.
     """
 
+    # Finite DIfferences Scheduling - stall at beginning of training to let MSE establish baseline structure
+    if epoch < fd_weight_stall_epochs: fd_val = fd_weight_min
+    else: # After stall
+        fd_weight_epoch_period = fd_weight_epochs_TO_max + fd_weight_epochs_AT_max
+        fd_weight_epoch_residual = (epoch - fd_weight_stall_epochs) % fd_weight_epoch_period # Shift for the stall epochs
+        fd_weight_range = fd_weight_max - fd_weight_min
+        if fd_weight_rise_first: # START with rise
+            if fd_weight_epoch_residual < fd_weight_epochs_TO_max:
+                fd_weight_state_length = fd_weight_epochs_TO_max 
+                fd_weight_floor = fd_weight_min + fd_weight_range * (fd_weight_epoch_residual/fd_weight_state_length)
+                fd_weight_ceil = fd_weight_floor + fd_weight_range * (1) /fd_weight_state_length
+                fd_val = fd_weight_floor + (iter_curr/iters_per_epoch) * (fd_weight_ceil - fd_weight_floor)
+            else: fd_val = fd_weight_max
+        else: raise Exception("ERROR: not coded up")
+
+
     # Posterior MoG Prediction Entropy TAPER
     if epoch >= posterior_mogpreds_entropy_weight_taper_epochs:
         mogpred_entropy_val = posterior_mogpreds_entropy_weight_min
@@ -535,7 +552,7 @@ def LR_and_weight_schedules(
         iters_per_epoch=iters_per_epoch,
         LR_rise_first=LR_rise_first)
 
-    return  mean_match_static_weight, logvar_match_static_weight, KL_divergence_val, gp_weight_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, mogpred_diversity_val, classifier_weight, classifier_val
+    return  mean_match_static_weight, logvar_match_static_weight, fd_val, KL_divergence_val, gp_weight_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, mogpred_diversity_val, classifier_weight, classifier_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     """

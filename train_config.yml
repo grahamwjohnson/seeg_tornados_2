@@ -43,7 +43,7 @@ max_batch_size: kwargs['max_batch_size'] = kwargs['random_pulls_in_batch'] * kwa
 n_layers: 4
 n_heads: 128  # transformer_dim / n_heads = head dimension (e.g. 4096/128 = 32)
 multiple_of: 256 
-ffn_dim_multiplier: 0.4 # Default is 1 to make FF layers account for ~2/3 of total parameter count
+ffn_dim_multiplier: 0.4 # Default is 1.0 to make FF layers account for ~2/3 of total parameter count
 attention_dropout: 0.1               
 encoder_transformer_activation: "silu"
 transformer_start_pos: 0 # Not currently coded up to work if > 0
@@ -52,7 +52,12 @@ hidden_dims: 4096 # 4096
 latent_dim: 4096 # 2048
 decoder_base_dims: 512 # top dim of decoder is [encode_token_samples * decoder_base_dims]
 hash_output_range: kwargs['hash_output_range'] = (-2, 2)  # tuple, modify based on approximate range of prior
-recon_weight: 3 # 3 means that meaningful recon usually starts when recon loss is below 0.5
+mse_weight: 3 # Weight of 3 means that meaningful recon usually starts when recon loss is below 0.5
+fd_weight_min: kwargs['fd_weight_min'] = 0
+fd_weight_max: kwargs['fd_weight_max'] = 1
+fd_weight_stall_epochs: 120
+fd_weight_epochs_TO_max: 10
+fd_weight_epochs_AT_max: 99999
 LR_max_posterior: kwargs['LR_max_posterior'] = 1e-5 # 5e-7
 LR_min_posterior: kwargs['LR_min_posterior'] = 1e-6 # 1e-8 
 LR_epochs_stall_posterior: 0
@@ -72,7 +77,7 @@ mean_lims: [-5, 5] # Make sure the prior's mean/logvars make sense with this lim
 logvar_lims: [-3, 1] # Important to cap logvar on high end or KL divergence calculaton itself becomes unstable and will give very negative numbers
 prior_initial_mean_spread: 3  # Uniform (e.g. value of 2 will be uniform [-2, 2])
 prior_initial_logvar: 0 
-gumbel_softmax_temperature: kwargs['gumbel_softmax_temperature'] = 2 # Higher means softer assignment to MoG, A relatively low vaue (0.5) seams essential during W2 burn to help the posterior know which 'knobs' below to which component)
+gumbel_softmax_temperature: kwargs['gumbel_softmax_temperature'] = 2 # Higher means softer assignment to MoG,
 posterior_mogpreds_entropy_weight_max: 0.1 # Encourages overall mogpreds to to be uniform
 posterior_mogpreds_entropy_weight_min: 0.05 # Becomes unstable if released completely
 posterior_mogpreds_entropy_weight_taper_epochs: 50 
@@ -83,16 +88,16 @@ prior_entropy_weight: kwargs['prior_entropy_weight'] = 1e-6 # Helps prevent mode
 prior_repulsion_weight: kwargs['prior_repulsion_weight'] = 1e-1 # Helps keep centers of PRIOR guassians far apart, need to scale with number of MoG components 
 random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
 random_observed_numplots: 4 # On the end of epoch plot
-mean_match_static_weight: kwargs['mean_match_static_weight'] = 1e-3
-logvar_match_static_weight: kwargs['logvar_match_static_weight'] = 1e-2
-KL_divergence_max_weight: kwargs['KL_divergence_max_weight'] = 5e-4 # With current architecture, 4096 dimensions, and 4 MoG components, very unstable if higher than 5e-4
+mean_match_static_weight: kwargs['mean_match_static_weight'] = 1e-3 # Essential for stability of posterior 
+logvar_match_static_weight: kwargs['logvar_match_static_weight'] = 1e-2 # Essential for stability of posterior 
+KL_divergence_max_weight: kwargs['KL_divergence_max_weight'] = 2e-4 # With current architecture, 4096 dimensions, and 4 MoG components, very unstable if higher than 5e-4
 KL_divergence_min_weight: kwargs['KL_divergence_min_weight'] = 0
 KL_divergence_stall_epochs: 5 # Min KL_divergence weight rise until stall is complete
 KL_divergence_epochs_AT_max: 50 
 KL_divergence_epochs_TO_max: 50
 LR_max_prior: kwargs['LR_max_prior'] = 1e-6
 LR_min_prior: kwargs['LR_min_prior'] = 0
-LR_epochs_stall_prior: 1 # Don't let it get whipped around while model posterior is getting establish
+LR_epochs_stall_prior: 1 # Don't let it get whipped around while model posterior is getting established
 LR_epochs_TO_max_prior: 1
 LR_epochs_AT_max_prior: 99999
 manual_gamma_prior: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
@@ -150,7 +155,7 @@ finetune_inference_epochs: -1 # NOTE: will  increase the epoch count overall to 
 inference_every: 99999
 inference_batch_mult: 1 # Will enable higher inference throughput, but at cost of more VRAM at all times because max-batch_size needs to be increased for initialization of Transformer
 inference_window_sec_list: [64, 64, 16, 16, 2] 
-inference_stride_sec_list: [64, 2,  16, 2,  2] # Both window and stride must be multiple of input seconds to encoder,  (i.e. encode_token_samples * transformer_seq_length / FS)
+inference_stride_sec_list: [64, 16, 16, 4,  2] # Both window and stride must be multiple of input seconds to encoder,  (i.e. encode_token_samples * transformer_seq_length / FS)
 
 # PLOTTING
 total_collected_latents: 1024  # Currently just for plotting at the end of an epoch

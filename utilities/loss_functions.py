@@ -243,12 +243,35 @@ def prior_repulsion_regularization(weights, means, prior_repulsion_weight, **kwa
 
     return prior_repulsion_weight * repulsion_term  
 
-def recon_loss_function(x, x_hat, recon_weight):
+def recon_MSE_loss(x, x_hat, mse_weight):
     # recon_loss = LogCosh_weight * LogCosh_loss_fn(x, x_hat) 
     loss_fn = nn.MSELoss(reduction='mean')
     # loss_fn = nn.L1Loss(reduction='mean')
     recon_loss = loss_fn(x, x_hat) 
-    return recon_weight * recon_loss
+    return mse_weight * recon_loss
+
+def recon_FD_loss(x, x_hat, fd_weight):
+    """
+    Computes the finite differences loss between x and x_hat tensors.
+
+    Args:
+        x (torch.Tensor): Tensor of shape [batch, token, seq_len].
+        x_hat (torch.Tensor): Tensor of shape [batch, token, seq_len].
+
+    Returns:
+        torch.Tensor: Scalar loss value.
+    """
+    # Ensure x and x_hat have the same shape
+    assert x.shape == x_hat.shape, "x and x_hat must have the same shape"
+
+    # Compute finite differences along the sequence dimension (dim=2)
+    x_fd = x[:, :, 1:] - x[:, :, :-1]  # Shape: [batch, token, seq_len-1]
+    x_hat_fd = x_hat[:, :, 1:] - x_hat[:, :, :-1]  # Shape: [batch, token, seq_len-1]
+
+    # Compute Mean Squared Error (MSE) between finite differences
+    loss = F.mse_loss(x_fd, x_hat_fd, reduction="mean")
+
+    return loss * fd_weight
 
 def adversarial_loss_function(probs, labels, classifier_weight):
     adversarial_loss = nn.functional.cross_entropy(probs, labels) / torch.log(torch.tensor(probs.shape[1]))
