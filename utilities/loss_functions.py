@@ -6,6 +6,94 @@ import torch.nn.functional as F
 @author: grahamwjohnson
 '''
 
+# RECONSTRUCTION
+
+def recon_loss(x: list[torch.Tensor], x_hat: list[torch.Tensor], mse_weight: float, fd1_weight: float, fd2_weight: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Computes MSE, FD1, and FD2 losses on filtered (non-padded) tensors.
+    
+    Args:
+        x: List of tensors (per batch) with shape [tokens, valid_channels, seq_len].
+        x_hat: Reconstructed tensors (same shapes as x).
+        mse_weight: Weight for MSE loss.
+        fd1_weight: Weight for FD1 loss.
+        fd2_weight: Weight for FD2 loss.
+    
+    Returns:
+        (mse_loss, fd1_loss, fd2_loss): Unweighted losses (scalars).
+    """
+    mse_losses = []
+    fd1_losses = []
+    fd2_losses = []
+
+    for x_sample, x_hat_sample in zip(x, x_hat):
+        # MSE Loss (mean over all dimensions)
+        mse = (x_hat_sample - x_sample).pow(2).mean()
+        mse_losses.append(mse)
+
+        # FD1 Loss (first-order differences)
+        fd1_x = x_sample[:, :, 1:] - x_sample[:, :, :-1]
+        fd1_x_hat = x_hat_sample[:, :, 1:] - x_hat_sample[:, :, :-1]
+        fd1 = (fd1_x_hat - fd1_x).pow(2).mean()
+        fd1_losses.append(fd1)
+
+        # FD2 Loss (second-order differences)
+        fd2_x = x_sample[:, :, 2:] - 2 * x_sample[:, :, 1:-1] + x_sample[:, :, :-2]
+        fd2_x_hat = x_hat_sample[:, :, 2:] - 2 * x_hat_sample[:, :, 1:-1] + x_hat_sample[:, :, :-2]
+        fd2 = (fd2_x_hat - fd2_x).pow(2).mean()
+        fd2_losses.append(fd2)
+
+    # Average losses across the batch
+    mse_loss = torch.stack(mse_losses).mean()
+    fd1_loss = torch.stack(fd1_losses).mean()
+    fd2_loss = torch.stack(fd2_losses).mean()
+
+    return mse_loss * mse_weight, fd1_loss * fd1_weight, fd2_loss * fd2_weight
+
+# POSTERIOR vs. PRIOR
+
+def gmvae_kl_loss(z, encoder_means, encoder_logvars, encoder_mogpreds, prior_means, prior_logvars, prior_weights, weight, **kwargs):
+    """
+    GM-VAE KL-Divergence Loss Function with Prior Parameters
+
+    Parameters:
+        z (Tensor): Latent variable sampled from the encoder (batch, latent_dimension).
+        encoder_means (Tensor): Means of the Gaussian mixture components (batch, mog_component, latent_dimension).
+        encoder_logvars (Tensor): Log variances of the Gaussian mixture components (batch, mog_component, latent_dimension).
+        encoder_mogpreds (Tensor): Mixture probabilities (already softmaxed) (batch, mog_component).
+        prior_means (Tensor): Means of the prior Gaussian components (mog_component, latent_dimension).
+        prior_logvars (Tensor): Log variances of the prior Gaussian components (mog_component).
+        prior_weights (Tensor): Mixture weights of the prior distribution (mog_component). ALREADY softmaxed before being passed in. 
+
+    Returns:
+        kl_loss (Tensor): KL divergence loss term.
+    """
+    batch_size, mog_component, latent_dim = encoder_means.shape
+
+    # Expand z to align with encoder_means and encoder_logvars
+    z = z.unsqueeze(1)  # Reshape z to (batch, 1, latent_dimension)
+
+    # Compute log probability of z under encoder components
+    log_prob_encoder = -0.5 * (encoder_logvars + (z - encoder_means) ** 2 / encoder_logvars.exp())
+    log_prob_encoder = log_prob_encoder.mean(dim=2)  # Sum over the latent dimensions (batch, mog_component)
+
+    # Compute log probability of z under prior components
+    prior_means = prior_means.unsqueeze(0)  # (1, mog_component, latent_dimension)
+    prior_logvars = prior_logvars.unsqueeze(0)  # (1, mog_component, latent_dimension)
+    
+    log_prob_prior = -0.5 * (prior_logvars + (z - prior_means) ** 2 / prior_logvars.exp())
+    log_prob_prior = log_prob_prior.mean(dim=2)  # (batch, mog_component)
+
+    # Incorporate prior mixture weights
+    log_prior_weights = torch.log(prior_weights + 1e-6)  # Add small value for numerical stability
+    log_prob_prior += log_prior_weights  # (batch, mog_component)
+
+    # Compute KL divergence
+    kl_divergence = torch.sum(encoder_mogpreds * (log_prob_encoder - log_prob_prior), dim=1)  # (batch)
+
+    return kl_divergence.mean() * weight  # Return the mean KL loss across the batch
+
 def logvar_matching_loss(logvar_posterior, logvar_prior, weight):
     """
     Compute the variance-matching loss between posterior and prior log-variances.
@@ -51,77 +139,31 @@ def mean_matching_loss(mean_posterior, mean_prior, weight):
     # Apply weight
     return weight * loss
 
-def logvar_entropy_loss(logvars, weight, **kwargs):
-    '''
-    Encourages diversity in logvars across all dimensions and MoG components by maximizing entropy.
 
-    Only using in the conext of Wasserstein initialization to prevent all the logvars from clumping at minimum of clamp range
+# POSTERIOR only
 
-    Args:
-        logvars: Tensor of shape [batch, mog_component, latent_dimension]
-        weight: Weight for the entropy loss term.
-
-    Returns:
-        loss: Scalar tensor representing the entropy loss.
-    '''
-    # Flatten logvars to treat all values as a single distribution
-    flat_logvars = logvars.view(-1)  # Shape: [batch * mog_component * latent_dimension]
-
-    # Compute probabilities using softmax
-    probs = F.softmax(flat_logvars, dim=0)  # Shape: [batch * mog_component * latent_dimension]
-
-    # Compute entropy
-    entropy = -torch.sum(probs * torch.log(probs + 1e-10))  # Add small epsilon for numerical stability
-
-    # # Compute variance
-    # variance = torch.var(flat_logvars, unbiased=True)
-    # variance_loss = -variance # Maximize variance by minimizing negative variance
-
-    # Maximize entropy by minimizing negative entropy
-    loss = -entropy * weight
-
-    return loss 
-
-def gmvae_kl_loss(z, encoder_means, encoder_logvars, encoder_mogpreds, prior_means, prior_logvars, prior_weights, weight, **kwargs):
+def posterior_mogpreds_entropy_loss(mogpreds, posterior_mogpreds_entropy_weight, **kwargs):
     """
-    GM-VAE KL-Divergence Loss Function with Prior Parameters
-
-    Parameters:
-        z (Tensor): Latent variable sampled from the encoder (batch, latent_dimension).
-        encoder_means (Tensor): Means of the Gaussian mixture components (batch, mog_component, latent_dimension).
-        encoder_logvars (Tensor): Log variances of the Gaussian mixture components (batch, mog_component, latent_dimension).
-        encoder_mogpreds (Tensor): Mixture probabilities (already softmaxed) (batch, mog_component).
-        prior_means (Tensor): Means of the prior Gaussian components (mog_component, latent_dimension).
-        prior_logvars (Tensor): Log variances of the prior Gaussian components (mog_component).
-        prior_weights (Tensor): Mixture weights of the prior distribution (mog_component). ALREADY softmaxed before being passed in. 
-
-    Returns:
-        kl_loss (Tensor): KL divergence loss term.
+    Compute the entropy loss for MoG predictions, promoting entropy across the entire dataset.
+    mogpreds: MoG component probabilities, shape (batch_size, T, K)
+    posterior_mogpreds_entropy_weight: Weight for the entropy loss
     """
-    batch_size, mog_component, latent_dim = encoder_means.shape
+    # Ensure mogpreds is a valid probability distribution
+    assert torch.all(mogpreds >= 0), "mogpreds contains negative values"
+    assert torch.allclose(mogpreds.sum(dim=-1, keepdim=True), torch.ones_like(mogpreds.sum(dim=-1, keepdim=True))), "mogpreds does not sum to 1"
 
-    # Expand z to align with encoder_means and encoder_logvars
-    z = z.unsqueeze(1)  # Reshape z to (batch, 1, latent_dimension)
+    # Clamp mogpreds to avoid log(0) issues
+    mogpreds = torch.clamp(mogpreds, min=1e-10, max=1.0)
 
-    # Compute log probability of z under encoder components
-    log_prob_encoder = -0.5 * (encoder_logvars + (z - encoder_means) ** 2 / encoder_logvars.exp())
-    log_prob_encoder = log_prob_encoder.mean(dim=2)  # Sum over the latent dimensions (batch, mog_component)
+    # Compute the average probability of each component across all samples
+    # Shape: (batch_size * T, K) -> (K,)
+    aggregated_probs = mogpreds.mean(dim=(0, 1))  # Average over batch & time
 
-    # Compute log probability of z under prior components
-    prior_means = prior_means.unsqueeze(0)  # (1, mog_component, latent_dimension)
-    prior_logvars = prior_logvars.unsqueeze(0)  # (1, mog_component, latent_dimension)
-    
-    log_prob_prior = -0.5 * (prior_logvars + (z - prior_means) ** 2 / prior_logvars.exp())
-    log_prob_prior = log_prob_prior.mean(dim=2)  # (batch, mog_component)
+    # Compute entropy across all MoG components
+    entropy = -torch.sum(aggregated_probs * torch.log(aggregated_probs))
 
-    # Incorporate prior mixture weights
-    log_prior_weights = torch.log(prior_weights + 1e-6)  # Add small value for numerical stability
-    log_prob_prior += log_prior_weights  # (batch, mog_component)
-
-    # Compute KL divergence
-    kl_divergence = torch.sum(encoder_mogpreds * (log_prob_encoder - log_prob_prior), dim=1)  # (batch)
-
-    return kl_divergence.mean() * weight  # Return the mean KL loss across the batch
+    # Return the negative entropy (maximize entropy to promote diverse component usage)
+    return -posterior_mogpreds_entropy_weight * entropy
 
 def posterior_mogpreds_intersequence_diversity_loss(mogpreds, weight, threshold=0.5, smoothness=10.0):
     """
@@ -173,28 +215,8 @@ def posterior_mogpreds_intersequence_diversity_loss(mogpreds, weight, threshold=
     # Return the diversity loss (weighted)
     return weight * diversity_loss
 
-def posterior_mogpreds_entropy_loss(mogpreds, posterior_mogpreds_entropy_weight, **kwargs):
-    """
-    Compute the entropy loss for MoG predictions, promoting entropy across the entire dataset.
-    mogpreds: MoG component probabilities, shape (batch_size, T, K)
-    posterior_mogpreds_entropy_weight: Weight for the entropy loss
-    """
-    # Ensure mogpreds is a valid probability distribution
-    assert torch.all(mogpreds >= 0), "mogpreds contains negative values"
-    assert torch.allclose(mogpreds.sum(dim=-1, keepdim=True), torch.ones_like(mogpreds.sum(dim=-1, keepdim=True))), "mogpreds does not sum to 1"
 
-    # Clamp mogpreds to avoid log(0) issues
-    mogpreds = torch.clamp(mogpreds, min=1e-10, max=1.0)
-
-    # Compute the average probability of each component across all samples
-    # Shape: (batch_size * T, K) -> (K,)
-    aggregated_probs = mogpreds.mean(dim=(0, 1))  # Average over batch & time
-
-    # Compute entropy across all MoG components
-    entropy = -torch.sum(aggregated_probs * torch.log(aggregated_probs))
-
-    # Return the negative entropy (maximize entropy to promote diverse component usage)
-    return -posterior_mogpreds_entropy_weight * entropy
+# PRIOR only
 
 def prior_entropy_regularization(weights, logvars, prior_entropy_weight, **kwargs):
     """
@@ -243,35 +265,8 @@ def prior_repulsion_regularization(weights, means, prior_repulsion_weight, **kwa
 
     return prior_repulsion_weight * repulsion_term  
 
-def recon_MSE_loss(x, x_hat, mse_weight):
-    # recon_loss = LogCosh_weight * LogCosh_loss_fn(x, x_hat) 
-    loss_fn = nn.MSELoss(reduction='mean')
-    # loss_fn = nn.L1Loss(reduction='mean')
-    recon_loss = loss_fn(x, x_hat) 
-    return mse_weight * recon_loss
 
-def recon_FD_loss(x, x_hat, fd_weight):
-    """
-    Computes the finite differences loss between x and x_hat tensors.
-
-    Args:
-        x (torch.Tensor): Tensor of shape [batch, token, seq_len].
-        x_hat (torch.Tensor): Tensor of shape [batch, token, seq_len].
-
-    Returns:
-        torch.Tensor: Scalar loss value.
-    """
-    # Ensure x and x_hat have the same shape
-    assert x.shape == x_hat.shape, "x and x_hat must have the same shape"
-
-    # Compute finite differences along the sequence dimension (dim=2)
-    x_fd = x[:, :, 1:] - x[:, :, :-1]  # Shape: [batch, token, seq_len-1]
-    x_hat_fd = x_hat[:, :, 1:] - x_hat[:, :, :-1]  # Shape: [batch, token, seq_len-1]
-
-    # Compute Mean Squared Error (MSE) between finite differences
-    loss = F.mse_loss(x_fd, x_hat_fd, reduction="mean")
-
-    return loss * fd_weight
+# ADVERSARIAL
 
 def adversarial_loss_function(probs, labels, classifier_weight):
     adversarial_loss = nn.functional.cross_entropy(probs, labels) / torch.log(torch.tensor(probs.shape[1]))

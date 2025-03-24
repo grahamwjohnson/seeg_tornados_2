@@ -820,6 +820,28 @@ class Trainer:
         self.accumulated_mogpreds = self.accumulated_mogpreds.detach() 
         self.accumulated_patidxs = self.accumulated_patidxs.detach() 
 
+    def remove_padded_channels(self, x: torch.Tensor, hash_channel_order):
+        """
+        Removes padded channels (-1) from x for each sample in the batch.
+        
+        Args:
+            x: Input tensor of shape [batch, tokens, max_channels, seq_len].
+            hash_channel_order: List of lists where -1 indicates padded channels.
+        
+        Returns:
+            List of tensors with padded channels removed (one per batch sample).
+        """
+        # Convert hash_channel_order to a tensor
+        channel_order_tensor = torch.tensor(hash_channel_order, dtype=torch.long).to(self.gpu_id)  # [batch, max_channels]
+        valid_mask = (channel_order_tensor != -1)  # [batch, max_channels]
+
+        # Filter out padded channels per sample
+        x_nopad = []
+        for i in range(x.shape[0]):  # Loop over batch
+            x_nopad.append(x[i, :, valid_mask[i], :])  # [tokens, valid_channels, seq_len]
+
+        return x_nopad
+
     def _run_export_embeddings(
         self, 
         dataset_curr, 
@@ -892,6 +914,7 @@ class Trainer:
         # Go through every subject in this dataset
         for pat_idx in range(0,len(dataset_curr.pat_ids)):
             dataset_curr.set_pat_curr(pat_idx)
+            _, pat_id_curr, _, _ = dataset_curr.get_pat_curr()
             dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=max_batch_size, num_workers=num_dataloader_workers)
 
             # Go through every file in dataset
@@ -925,8 +948,21 @@ class Trainer:
                         sys.stdout.write(f"\r{dataset_string}: Pat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP), Intrafile Iter {w}/{num_windows_in_file}          ") 
                         sys.stdout.flush() 
                     
-                    # TODO: get rid of for loop like random data generator 
                     x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, padded_channels, self.encode_token_samples).to(self.gpu_id)
+
+                    # PAD THE CHANNELS ACCORDING TO HASH
+                    # NOTE: Just running for modifier '0' for inference
+                    inference_modifier = 0
+                    _, hash_channel_order = utils_functions.hash_to_vector(
+                        input_string = pat_id_curr,
+                        num_channels = num_channels_curr,
+                        padded_channels = padded_channels,
+                        latent_dim = self.latent_dim,
+                        modifier = inference_modifier, 
+                        hash_output_range = self.hash_output_range)
+
+                    raise Exception("Need to pad and order channels according to hash")
+
                     start_idx = w * num_samples_in_forward
                     for embedding_idx in range(0, self.transformer_seq_length):
                         # Pull out data for this window - NOTE: no hashing random order, channels just put in order with zero pad at end
@@ -1084,7 +1120,7 @@ class Trainer:
             hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
         
             # LR & WEIGHT SCHEDULES
-            self.mean_match_weight, self.logvar_match_weight, self.fd_weight, self.kl_weight, self.gp_weight, self.curr_LR_posterior, self.curr_LR_prior, self.curr_LR_cls, self.posterior_mogpreds_entropy_weight, self.posterior_mogpreds_intersequence_diversity_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
+            self.mean_match_weight, self.logvar_match_weight, self.fd1_weight, self.fd2_weight, self.kl_weight, self.gp_weight, self.curr_LR_posterior, self.curr_LR_prior, self.curr_LR_cls, self.posterior_mogpreds_entropy_weight, self.posterior_mogpreds_intersequence_diversity_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
             if (not val_finetune) & (not val_unseen): 
                 self.opt_gmvae.param_groups[0]['lr'] = self.curr_LR_posterior
@@ -1117,16 +1153,17 @@ class Trainer:
             z_tokenmeaned = torch.mean(z_token, dim=1)
             class_probs_mean_of_latent = self.gmvae.module.adversarial_classifier(z_tokenmeaned, alpha=self.classifier_alpha)
    
-            # LOSSES
-            mse_loss = loss_functions.recon_MSE_loss(
-                x=x, # No shift if not causal masking
-                x_hat=x_hat,
-                mse_weight=self.mse_weight)
+            # REMOVE PADDING - otherwise would reward recon loss for patients with fewer channels
+            x_nopad_list = self.remove_padded_channels(x, hash_channel_order) 
+            x_hat_nopad_list = self.remove_padded_channels(x_hat, hash_channel_order) 
 
-            fd_loss = loss_functions.recon_FD_loss(
-                x=x, # No shift if not causal masking
-                x_hat=x_hat,
-                fd_weight=self.fd_weight)
+            # LOSSES
+            mse_loss, fd1_loss, fd2_loss = loss_functions.recon_loss(
+                x=x_nopad_list, 
+                x_hat=x_hat_nopad_list,
+                mse_weight=self.mse_weight,
+                fd1_weight=self.fd1_weight,
+                fd2_weight=self.fd2_weight)
 
             KL_divergence = loss_functions.gmvae_kl_loss(
                 z = z_pseudobatch,
@@ -1176,7 +1213,7 @@ class Trainer:
                 classifier_weight=self.classifier_weight)
 
             # Accumulate all losses
-            loss = mse_loss + fd_loss + KL_divergence + neg_gp_log_prob + mean_match_loss + logvar_match_loss + posterior_mogpreds_entropy_loss + posterior_mogpreds_intersequence_diversity_loss + prior_entropy + prior_repulsion + adversarial_loss 
+            loss = mse_loss + fd1_loss + fd2_loss + KL_divergence + neg_gp_log_prob + mean_match_loss + logvar_match_loss + posterior_mogpreds_entropy_loss + posterior_mogpreds_intersequence_diversity_loss + prior_entropy + prior_repulsion + adversarial_loss 
 
             # For plotting visualization purposes
             mean_tokenmeaned = torch.mean(mean, dim=1)
@@ -1212,8 +1249,9 @@ class Trainer:
                     metrics = dict(
                         train_attention_dropout=attention_dropout,
                         train_loss=loss,
-                        train_recon_loss=mse_loss, 
-                        train_fd_loss=fd_loss, 
+                        train_recon_MSE_loss=mse_loss, 
+                        train_recon_FD1_loss=fd1_loss, 
+                        train_recon_FD2_loss=fd2_loss, 
                         train_KL_divergence=KL_divergence, 
                         train_neg_gp_log_prob = neg_gp_log_prob,
                         train_neg_gp_weight = self.gp_weight,
@@ -1233,8 +1271,9 @@ class Trainer:
                         train_LR_prior=self.opt_gmvae.param_groups[1]['lr'], 
                         train_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
                         train_KL_weight=self.kl_weight, 
-                        train_ReconWeight=self.mse_weight,
-                        train_FDWeight=self.fd_weight,
+                        train_ReconMSEWeight=self.mse_weight,
+                        train_ReconFD1_Weight=self.fd1_weight,
+                        train_ReconFD2_Weight=self.fd2_weight,
                         train_AdversarialAlpha=self.classifier_alpha,
                         train_epoch=self.epoch)
 
@@ -1242,8 +1281,9 @@ class Trainer:
                     metrics = dict(
                         val_finetune_attention_dropout=attention_dropout,
                         val_finetune_loss=loss, 
-                        val_finetune_recon_loss=mse_loss, 
-                        val_finetune_fd_loss=fd_loss, 
+                        val_finetune_recon_MSE_loss=mse_loss, 
+                        val_finetune_recon_FD1_loss=fd1_loss, 
+                        val_finetune_recon_FD2_loss=fd2_loss, 
                         val_finetune_KL_divergence=KL_divergence, 
                         val_finetune_neg_gp_weight = self.gp_weight,
                         val_finetune_neg_gp_log_prob = neg_gp_log_prob,
@@ -1256,7 +1296,8 @@ class Trainer:
                         val_finetune_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
                         val_finetune_KL_weight=self.kl_weight, 
                         val_finetune_ReconWeight=self.mse_weight,
-                        val_finetune_FDWeight=self.fd_weight,
+                        val_finetune_ReconFD1_Weight=self.fd1_weight,
+                        val_finetune_ReconFD2_Weight=self.fd2_weight,
                         val_finetune_AdversarialAlpha=self.classifier_alpha,
                         val_finetune_epoch=self.epoch)
 
@@ -1264,8 +1305,9 @@ class Trainer:
                     metrics = dict(
                         val_unseen_attention_dropout=attention_dropout,
                         val_unseen_loss=loss, 
-                        val_unseen_recon_loss=mse_loss, 
-                        val_unseen_fd_loss=fd_loss, 
+                        val_unseen_recon_MSE_loss=mse_loss, 
+                        val_unseen_recon_FD1_loss=fd1_loss, 
+                        val_unseen_recon_FD2_loss=fd2_loss, 
                         val_unseen_KL_divergence=KL_divergence, 
                         val_unseen_neg_gp_weight = self.gp_weight,
                         val_unseen_neg_gp_log_prob = neg_gp_log_prob,
@@ -1278,7 +1320,8 @@ class Trainer:
                         val_unseen_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
                         val_unseen_KL_weight=self.kl_weight, 
                         val_unseen_ReconWeight=self.mse_weight,
-                        val_unseen_FDWeight=self.fd_weight,
+                        val_unseen_ReconFD1_Weight=self.fd1_weight,
+                        val_unseen_ReconFD2_Weight=self.fd2_weight,
                         val_unseen_AdversarialAlpha=self.classifier_alpha,
                         val_unseen_epoch=self.epoch)
 
@@ -1302,8 +1345,7 @@ class Trainer:
                                 savedir = self.model_dir + f"/plots/{dataset_string}/latents", 
                                 **kwargs)
                             utils_functions.print_recon_singlebatch(
-                                # x=x[:, 1 + self.num_encode_concat_transformer_tokens:, :, :], 
-                                x=x,
+                                x=x, 
                                 x_hat=x_hat, 
                                 savedir = self.model_dir + f"/plots/{dataset_string}/recon",
                                 epoch = self.epoch,
