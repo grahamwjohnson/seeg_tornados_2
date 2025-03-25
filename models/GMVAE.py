@@ -878,6 +878,7 @@ class GMVAE(nn.Module):
         mean_lims,
         logvar_lims,
         gumbel_softmax_temperature,
+        diag_mask_buffer_tokens,
         gpu_id=None,  
         **kwargs):
 
@@ -898,6 +899,7 @@ class GMVAE(nn.Module):
         self.mean_lims = mean_lims
         self.logvar_lims = logvar_lims
         self.temperature = gumbel_softmax_temperature
+        self.diag_mask_buffer_tokens = diag_mask_buffer_tokens
 
         # Prior
         self.prior = MoGPrior(
@@ -912,20 +914,28 @@ class GMVAE(nn.Module):
             padded_channels=self.padded_channels,
             **kwargs)
 
+        # Convert to Encoder Transformer dimension
+        self.crattn_to_transformer = nn.Sequential(
+            nn.Linear(self.padded_channels * self.encode_token_samples, self.transformer_dim),
+            nn.SiLU(),
+            RMSNorm(self.transformer_dim))
+
         # Transformer - dimension is same as output of cross attention
         self.transformer_encoder = Transformer(ModelArgs(
             device=self.gpu_id, 
             dim=self.transformer_dim, 
             activation=self.encoder_transformer_activation, 
             **kwargs))
-
+        
         # Encoder/Posterior
-        self.top_to_hidden = nn.Linear(self.top_dims, self.hidden_dims, bias=True)
-        self.norm_hidden = RMSNorm(dim=self.hidden_dims)
-
+        self.top_to_hidden = nn.Sequential(
+            nn.Linear(self.top_dims, self.hidden_dims),
+            nn.SiLU(),
+            RMSNorm(dim=self.hidden_dims))
+        
         # Right before latent space
-        self.mean_encode_layer = nn.Linear(self.hidden_dims, self.prior_mog_components * self.latent_dim, bias=True)  
-        self.logvar_encode_layer = nn.Linear(self.hidden_dims, self.prior_mog_components * self.latent_dim, bias=True) 
+        self.mean_encode_layer = nn.Linear(self.hidden_dims, self.prior_mog_components * self.latent_dim)  
+        self.logvar_encode_layer = nn.Linear(self.hidden_dims, self.prior_mog_components * self.latent_dim) 
         self.mogpreds_layer = MoGPredictor(
             top_dim=self.hidden_dims,
             num_prior_mog_components=self.prior_mog_components,
@@ -955,13 +965,14 @@ class GMVAE(nn.Module):
             y = torch.split(y, x.shape[1], dim=0) # [batch x token, latent_dim] --> [batch, token, latent_dim]
             y = torch.stack(y, dim=0)
 
+            # PROJECT to transformer dimension
+            y = self.crattn_to_transformer(y)
+
             # TRANSFORMER
-            y, attW = self.transformer_encoder(y, start_pos=self.transformer_start_pos, return_attW = True)
+            y, attW = self.transformer_encoder(y, start_pos=self.transformer_start_pos, return_attW = True, diag_mask_buffer_tokens=self.diag_mask_buffer_tokens)
 
             # GMVAE CORE
             y = self.top_to_hidden(y)
-            y = self.silu(y)
-            y = self.norm_hidden(y)
             mean, logvar, mogpreds = self.mean_encode_layer(y), self.logvar_encode_layer(y), self.mogpreds_layer(y)
             mean = mean.view(-1, self.transformer_seq_length, self.prior_mog_components, self.latent_dim)
             logvar = logvar.view(-1,self.transformer_seq_length, self.prior_mog_components, self.latent_dim)

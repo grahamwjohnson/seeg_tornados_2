@@ -537,7 +537,6 @@ class Trainer:
         FS: int,
         hash_output_range: tuple,
         intrapatient_dataset_style: list,
-        mse_weight: float,
         atd_file: str,
         inference_window_sec_list: list,
         inference_stride_sec_list: list,
@@ -576,7 +575,6 @@ class Trainer:
         self.hash_output_range = hash_output_range
         self.intrapatient_dataset_style = intrapatient_dataset_style
         self.curr_LR_posterior = -1
-        self.mse_weight = mse_weight
         self.atd_file = atd_file
         self.inference_window_sec_list = inference_window_sec_list
         self.inference_stride_sec_list = inference_stride_sec_list
@@ -1120,7 +1118,7 @@ class Trainer:
             hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
         
             # LR & WEIGHT SCHEDULES
-            self.mean_match_weight, self.logvar_match_weight, self.fd1_weight, self.fd2_weight, self.kl_weight, self.gp_weight, self.curr_LR_posterior, self.curr_LR_prior, self.curr_LR_cls, self.posterior_mogpreds_entropy_weight, self.posterior_mogpreds_intersequence_diversity_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
+            self.mean_match_weight, self.logvar_match_weight, self.mse_weight, self.kl_weight, self.gp_weight, self.curr_LR_posterior, self.curr_LR_prior, self.curr_LR_cls, self.posterior_mogpreds_entropy_weight, self.posterior_mogpreds_intersequence_diversity_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
             if (not val_finetune) & (not val_unseen): 
                 self.opt_gmvae.param_groups[0]['lr'] = self.curr_LR_posterior
@@ -1158,12 +1156,10 @@ class Trainer:
             x_hat_nopad_list = self.remove_padded_channels(x_hat, hash_channel_order) 
 
             # LOSSES
-            mse_loss, fd1_loss, fd2_loss = loss_functions.recon_loss(
+            mse_loss = loss_functions.recon_loss(
                 x=x_nopad_list, 
                 x_hat=x_hat_nopad_list,
-                mse_weight=self.mse_weight,
-                fd1_weight=self.fd1_weight,
-                fd2_weight=self.fd2_weight)
+                mse_weight=self.mse_weight)
 
             KL_divergence = loss_functions.gmvae_kl_loss(
                 z = z_pseudobatch,
@@ -1213,7 +1209,7 @@ class Trainer:
                 classifier_weight=self.classifier_weight)
 
             # Accumulate all losses
-            loss = mse_loss + fd1_loss + fd2_loss + KL_divergence + neg_gp_log_prob + mean_match_loss + logvar_match_loss + posterior_mogpreds_entropy_loss + posterior_mogpreds_intersequence_diversity_loss + prior_entropy + prior_repulsion + adversarial_loss 
+            loss = mse_loss + KL_divergence + neg_gp_log_prob + mean_match_loss + logvar_match_loss + posterior_mogpreds_entropy_loss + posterior_mogpreds_intersequence_diversity_loss + prior_entropy + prior_repulsion + adversarial_loss 
 
             # For plotting visualization purposes
             mean_tokenmeaned = torch.mean(mean, dim=1)
@@ -1250,8 +1246,6 @@ class Trainer:
                         train_attention_dropout=attention_dropout,
                         train_loss=loss,
                         train_recon_MSE_loss=mse_loss, 
-                        train_recon_FD1_loss=fd1_loss, 
-                        train_recon_FD2_loss=fd2_loss, 
                         train_KL_divergence=KL_divergence, 
                         train_neg_gp_log_prob = neg_gp_log_prob,
                         train_neg_gp_weight = self.gp_weight,
@@ -1271,9 +1265,7 @@ class Trainer:
                         train_LR_prior=self.opt_gmvae.param_groups[1]['lr'], 
                         train_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
                         train_KL_weight=self.kl_weight, 
-                        train_ReconMSEWeight=self.mse_weight,
-                        train_ReconFD1_Weight=self.fd1_weight,
-                        train_ReconFD2_Weight=self.fd2_weight,
+                        train_ReconMSE_Weight=self.mse_weight,
                         train_AdversarialAlpha=self.classifier_alpha,
                         train_epoch=self.epoch)
 
@@ -1282,8 +1274,6 @@ class Trainer:
                         val_finetune_attention_dropout=attention_dropout,
                         val_finetune_loss=loss, 
                         val_finetune_recon_MSE_loss=mse_loss, 
-                        val_finetune_recon_FD1_loss=fd1_loss, 
-                        val_finetune_recon_FD2_loss=fd2_loss, 
                         val_finetune_KL_divergence=KL_divergence, 
                         val_finetune_neg_gp_weight = self.gp_weight,
                         val_finetune_neg_gp_log_prob = neg_gp_log_prob,
@@ -1295,9 +1285,7 @@ class Trainer:
                         val_finetune_LR_prior=self.opt_gmvae.param_groups[1]['lr'], 
                         val_finetune_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
                         val_finetune_KL_weight=self.kl_weight, 
-                        val_finetune_ReconWeight=self.mse_weight,
-                        val_finetune_ReconFD1_Weight=self.fd1_weight,
-                        val_finetune_ReconFD2_Weight=self.fd2_weight,
+                        val_finetune_ReconMSE_Weight=self.mse_weight,
                         val_finetune_AdversarialAlpha=self.classifier_alpha,
                         val_finetune_epoch=self.epoch)
 
@@ -1306,8 +1294,6 @@ class Trainer:
                         val_unseen_attention_dropout=attention_dropout,
                         val_unseen_loss=loss, 
                         val_unseen_recon_MSE_loss=mse_loss, 
-                        val_unseen_recon_FD1_loss=fd1_loss, 
-                        val_unseen_recon_FD2_loss=fd2_loss, 
                         val_unseen_KL_divergence=KL_divergence, 
                         val_unseen_neg_gp_weight = self.gp_weight,
                         val_unseen_neg_gp_log_prob = neg_gp_log_prob,
@@ -1319,9 +1305,7 @@ class Trainer:
                         val_unseen_LR_prior=self.opt_gmvae.param_groups[1]['lr'],
                         val_unseen_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
                         val_unseen_KL_weight=self.kl_weight, 
-                        val_unseen_ReconWeight=self.mse_weight,
-                        val_unseen_ReconFD1_Weight=self.fd1_weight,
-                        val_unseen_ReconFD2_Weight=self.fd2_weight,
+                        val_unseen_ReconMSE_Weight=self.mse_weight,
                         val_unseen_AdversarialAlpha=self.classifier_alpha,
                         val_unseen_epoch=self.epoch)
 

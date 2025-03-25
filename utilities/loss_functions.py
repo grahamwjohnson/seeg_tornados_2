@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 # RECONSTRUCTION
 
-def recon_loss(x: list[torch.Tensor], x_hat: list[torch.Tensor], mse_weight: float, fd1_weight: float, fd2_weight: float,
+def recon_loss(x: list[torch.Tensor], x_hat: list[torch.Tensor], mse_weight: float
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Computes MSE, FD1, and FD2 losses on filtered (non-padded) tensors.
@@ -17,39 +17,21 @@ def recon_loss(x: list[torch.Tensor], x_hat: list[torch.Tensor], mse_weight: flo
         x: List of tensors (per batch) with shape [tokens, valid_channels, seq_len].
         x_hat: Reconstructed tensors (same shapes as x).
         mse_weight: Weight for MSE loss.
-        fd1_weight: Weight for FD1 loss.
-        fd2_weight: Weight for FD2 loss.
-    
+
     Returns:
-        (mse_loss, fd1_loss, fd2_loss): Unweighted losses (scalars).
+        mse_loss
     """
     mse_losses = []
-    fd1_losses = []
-    fd2_losses = []
 
     for x_sample, x_hat_sample in zip(x, x_hat):
         # MSE Loss (mean over all dimensions)
         mse = (x_hat_sample - x_sample).pow(2).mean()
         mse_losses.append(mse)
 
-        # FD1 Loss (first-order differences)
-        fd1_x = x_sample[:, :, 1:] - x_sample[:, :, :-1]
-        fd1_x_hat = x_hat_sample[:, :, 1:] - x_hat_sample[:, :, :-1]
-        fd1 = (fd1_x_hat - fd1_x).pow(2).mean()
-        fd1_losses.append(fd1)
-
-        # FD2 Loss (second-order differences)
-        fd2_x = x_sample[:, :, 2:] - 2 * x_sample[:, :, 1:-1] + x_sample[:, :, :-2]
-        fd2_x_hat = x_hat_sample[:, :, 2:] - 2 * x_hat_sample[:, :, 1:-1] + x_hat_sample[:, :, :-2]
-        fd2 = (fd2_x_hat - fd2_x).pow(2).mean()
-        fd2_losses.append(fd2)
-
     # Average losses across the batch
     mse_loss = torch.stack(mse_losses).mean()
-    fd1_loss = torch.stack(fd1_losses).mean()
-    fd2_loss = torch.stack(fd2_losses).mean()
 
-    return mse_loss * mse_weight, fd1_loss * fd1_weight, fd2_loss * fd2_weight
+    return mse_loss * mse_weight
 
 # POSTERIOR vs. PRIOR
 
@@ -160,7 +142,7 @@ def posterior_mogpreds_entropy_loss(mogpreds, posterior_mogpreds_entropy_weight,
     aggregated_probs = mogpreds.mean(dim=(0, 1))  # Average over batch & time
 
     # Compute entropy across all MoG components
-    entropy = -torch.sum(aggregated_probs * torch.log(aggregated_probs))
+    entropy = -torch.mean(aggregated_probs * torch.log(aggregated_probs))
 
     # Return the negative entropy (maximize entropy to promote diverse component usage)
     return -posterior_mogpreds_entropy_weight * entropy

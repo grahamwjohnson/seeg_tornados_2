@@ -233,8 +233,7 @@ def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_s
 
 def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
-        fd1_weight_min, fd1_weight_max, fd1_weight_stall_epochs, fd1_weight_epochs_TO_max, fd1_weight_epochs_AT_max,
-        fd2_weight_min, fd2_weight_max, fd2_weight_stall_epochs, fd2_weight_epochs_TO_max, fd2_weight_epochs_AT_max,
+        mse_weight_min, mse_weight_max, mse_weight_stall_epochs, mse_weight_epochs_TO_max, mse_weight_epochs_AT_max,
         KL_divergence_max_weight, KL_divergence_min_weight, KL_divergence_epochs_TO_max, KL_divergence_epochs_AT_max, KL_divergence_stall_epochs,
         gp_weight_max, gp_weight_min, gp_weight_stall_epochs, gp_weight_epochs_TO_max, gp_weight_epochs_AT_max, 
         posterior_mogpreds_entropy_weight_max, posterior_mogpreds_entropy_weight_min, posterior_mogpreds_entropy_weight_taper_epochs,
@@ -246,7 +245,7 @@ def LR_and_weight_schedules(
         posterior_mogpreds_intersequence_diversity_weight_min, posterior_mogpreds_intersequence_diversity_weight_max, posterior_mogpreds_intersequence_diversity_weight_taper_epochs,
         LR_max_posterior, LR_min_posterior, LR_epochs_stall_posterior, LR_epochs_TO_max_posterior, LR_epochs_AT_max_posterior,  manual_gamma_posterior, manual_step_size_posterior,
         LR_max_prior, LR_min_prior, LR_epochs_stall_prior, LR_epochs_TO_max_prior, LR_epochs_AT_max_prior,  manual_gamma_prior, manual_step_size_prior,
-        fd1_weight_rise_first=True, fd2_weight_rise_first=True, KL_divergence_rise_first=True, gp_weight_rise_first=True, LR_rise_first=True, **kwargs):
+        mse_weight_rise_first=True, KL_divergence_rise_first=True, gp_weight_rise_first=True, LR_rise_first=True, **kwargs):
 
     """
     Computes learning rate (LR) schedules, KL divergence schedule, classifier weights, and Gaussian Process (GP) prior weights at each epoch for training.
@@ -439,36 +438,20 @@ def LR_and_weight_schedules(
     - Schedules are cyclical, resetting after each full period unless otherwise specified.
     """
 
-    # (First Order) Finite Differences Scheduling  - stall at beginning of training to let MSE establish baseline structure
-    if epoch < fd1_weight_stall_epochs: fd1_val = fd1_weight_min
+    # MSE
+    if epoch < mse_weight_stall_epochs: mse_val = mse_weight_min
     else: # After stall
-        fd1_weight_epoch_period = fd1_weight_epochs_TO_max + fd1_weight_epochs_AT_max
-        fd1_weight_epoch_residual = (epoch - fd1_weight_stall_epochs) % fd1_weight_epoch_period # Shift for the stall epochs
-        fd1_weight_range = fd1_weight_max - fd1_weight_min
-        if fd1_weight_rise_first: # START with rise
-            if fd1_weight_epoch_residual < fd1_weight_epochs_TO_max:
-                fd1_weight_state_length = fd1_weight_epochs_TO_max 
-                fd1_weight_floor = fd1_weight_min + fd1_weight_range * (fd1_weight_epoch_residual/fd1_weight_state_length)
-                fd1_weight_ceil = fd1_weight_floor + fd1_weight_range * (1) /fd1_weight_state_length
-                fd1_val = fd1_weight_floor + (iter_curr/iters_per_epoch) * (fd1_weight_ceil - fd1_weight_floor)
-            else: fd1_val = fd1_weight_max
+        mse_weight_epoch_period = mse_weight_epochs_TO_max + mse_weight_epochs_AT_max
+        mse_weight_epoch_residual = (epoch - mse_weight_stall_epochs) % mse_weight_epoch_period # Shift for the stall epochs
+        mse_weight_range = mse_weight_max - mse_weight_min
+        if mse_weight_rise_first: # START with rise
+            if mse_weight_epoch_residual < mse_weight_epochs_TO_max:
+                mse_weight_state_length = mse_weight_epochs_TO_max 
+                mse_weight_floor = mse_weight_min + mse_weight_range * (mse_weight_epoch_residual/mse_weight_state_length)
+                mse_weight_ceil = mse_weight_floor + mse_weight_range * (1) /mse_weight_state_length
+                mse_val = mse_weight_floor + (iter_curr/iters_per_epoch) * (mse_weight_ceil - mse_weight_floor)
+            else: mse_val = mse_weight_max
         else: raise Exception("ERROR: not coded up")
-
-    # (Second Order) Finite Differences Scheduling - stall at beginning of training to let MSE establish baseline structure
-    if epoch < fd2_weight_stall_epochs: fd2_val = fd2_weight_min
-    else: # After stall
-        fd2_weight_epoch_period = fd2_weight_epochs_TO_max + fd2_weight_epochs_AT_max
-        fd2_weight_epoch_residual = (epoch - fd2_weight_stall_epochs) % fd2_weight_epoch_period # Shift for the stall epochs
-        fd2_weight_range = fd2_weight_max - fd2_weight_min
-        if fd2_weight_rise_first: # START with rise
-            if fd2_weight_epoch_residual < fd2_weight_epochs_TO_max:
-                fd2_weight_state_length = fd2_weight_epochs_TO_max 
-                fd2_weight_floor = fd2_weight_min + fd2_weight_range * (fd2_weight_epoch_residual/fd2_weight_state_length)
-                fd2_weight_ceil = fd2_weight_floor + fd2_weight_range * (1) /fd2_weight_state_length
-                fd2_val = fd2_weight_floor + (iter_curr/iters_per_epoch) * (fd2_weight_ceil - fd2_weight_floor)
-            else: fd2_val = fd2_weight_max
-        else: raise Exception("ERROR: not coded up")
-
 
     # Posterior MoG Prediction Entropy TAPER
     if epoch >= posterior_mogpreds_entropy_weight_taper_epochs:
@@ -568,7 +551,7 @@ def LR_and_weight_schedules(
         iters_per_epoch=iters_per_epoch,
         LR_rise_first=LR_rise_first)
 
-    return  mean_match_static_weight, logvar_match_static_weight, fd1_val, fd2_val, KL_divergence_val, gp_weight_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, mogpred_diversity_val, classifier_weight, classifier_val
+    return  mean_match_static_weight, logvar_match_static_weight, mse_val, KL_divergence_val, gp_weight_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, mogpred_diversity_val, classifier_weight, classifier_val
 
 def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
     """
@@ -779,12 +762,13 @@ def plot_prior(prior_means, prior_logvars, prior_weights, savedir, epoch, **kwar
     pl.savefig(savename_jpg, dpi=200)
     plt.close()
 
-def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, encoder_mogpreds, encoder_zmeaned, savedir, epoch, mean_lims, logvar_lims, num_accumulated_plotting_dims=5, n_bins=200, threshold=0.1, **kwargs):
+def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, 
+                   encoder_mogpreds, encoder_zmeaned, savedir, epoch, mean_lims, logvar_lims, 
+                   num_accumulated_plotting_dims=5, max_components=8, n_bins=200, threshold=0.001, **kwargs):
     """
     Plot distributions of encoder statistics across MoG components using histograms.
-    Compares encoder statistics with MoG prior state and includes encoder_zmeaned visualization.
-    Each dimension is plotted in a separate column for clarity.
-
+    Only plots up to max_components MoG components (default: 8).
+    
     Args:
         gpu_id: GPU ID (for logging purposes)
         prior_means: MoG prior means, shape (K, D)
@@ -799,121 +783,125 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
         mean_lims: Tuple (min, max) for mean value range
         logvar_lims: Tuple (min, max) for logvar value range
         num_accumulated_plotting_dims: Number of dimensions to visualize (default: 5)
+        max_components: Maximum number of MoG components to plot (default: 8)
         n_bins: Number of bins for histograms (default: 100)
         threshold: Threshold for filtering encoder_mogpreds (default: 0.01)
         **kwargs: Additional arguments
     """
-    Batch, K, D = encoder_means.shape  # Batch size, number of MoG components, and latent dimension
+    Batch, K, D = encoder_means.shape
+    
+    # Limit number of components to plot
+    components_to_plot = min(max_components, K)
+    prior_means = prior_means[:components_to_plot]
+    prior_logvars = prior_logvars[:components_to_plot]
+    prior_weights = prior_weights[:components_to_plot]
+    encoder_means = encoder_means[:, :components_to_plot]
+    encoder_logvars = encoder_logvars[:, :components_to_plot]
+    encoder_mogpreds = encoder_mogpreds[:, :components_to_plot]
 
     # Validate input shapes
-    assert prior_means.shape == (K, D), f"prior_means must have shape (K, D), but got {prior_means.shape}"
-    assert prior_logvars.shape == (K, D), f"prior_logvars must have shape (K, D), but got {prior_logvars.shape}"
-    assert prior_weights.shape == (K,), f"prior_weights must have shape (K,), but got {prior_weights.shape}"
-    assert encoder_means.shape == (Batch, K, D), f"encoder_means must have shape (Batch, K, D), but got {encoder_means.shape}"
-    assert encoder_logvars.shape == (Batch, K, D), f"encoder_logvars must have shape (Batch, K, D), but got {encoder_logvars.shape}"
-    assert encoder_mogpreds.shape == (Batch, K), f"encoder_mogpreds must have shape (Batch, K), but got {encoder_mogpreds.shape}"
+    assert prior_means.shape == (components_to_plot, D), f"prior_means must have shape ({components_to_plot}, D), but got {prior_means.shape}"
+    assert prior_logvars.shape == (components_to_plot, D), f"prior_logvars must have shape ({components_to_plot}, D), but got {prior_logvars.shape}"
+    assert prior_weights.shape == (components_to_plot,), f"prior_weights must have shape ({components_to_plot},), but got {prior_weights.shape}"
+    assert encoder_means.shape == (Batch, components_to_plot, D), f"encoder_means must have shape (Batch, {components_to_plot}, D), but got {encoder_means.shape}"
+    assert encoder_logvars.shape == (Batch, components_to_plot, D), f"encoder_logvars must have shape (Batch, {components_to_plot}, D), but got {encoder_logvars.shape}"
+    assert encoder_mogpreds.shape == (Batch, components_to_plot), f"encoder_mogpreds must have shape (Batch, {components_to_plot}), but got {encoder_mogpreds.shape}"
     assert encoder_zmeaned.shape == (Batch, D), f"encoder_zmeaned must have shape (Batch, D), but got {encoder_zmeaned.shape}"
     assert num_accumulated_plotting_dims <= D, f"num_accumulated_plotting_dims ({num_accumulated_plotting_dims}) cannot exceed latent dimension D ({D})"
 
-    # Flatten the batch dimension to treat all batches as a single dataset
-    encoder_means_flat = encoder_means.reshape(-1, K, D)  # Shape: (Batch, K, D) -> (Batch * 1, K, D)
-    encoder_logvars_flat = encoder_logvars.reshape(-1, K, D)  # Shape: (Batch, K, D) -> (Batch * 1, K, D)
-    encoder_mogpreds_flat = encoder_mogpreds.reshape(-1, K)  # Shape: (Batch, K) -> (Batch * 1, K)
-    encoder_zmeaned_flat = encoder_zmeaned.reshape(-1, D)  # Shape: (Batch, D) -> (Batch * 1, D)
+    # Flatten the batch dimension
+    encoder_means_flat = encoder_means.reshape(-1, components_to_plot, D)
+    encoder_logvars_flat = encoder_logvars.reshape(-1, components_to_plot, D)
+    encoder_mogpreds_flat = encoder_mogpreds.reshape(-1, components_to_plot)
+    encoder_zmeaned_flat = encoder_zmeaned.reshape(-1, D)
 
-    # Create a figure with subplots
+    # Create figure with subplots
     fig = plt.figure(figsize=(5 * num_accumulated_plotting_dims, 20))
+    component_colors = plt.cm.tab10.colors[:components_to_plot]
 
-    # Define a consistent color palette for MoG components
-    component_colors = plt.cm.tab10.colors[:K]  # Use tab10 colormap for up to 10 components
-
-    # Plot 1: Distribution of Encoder Means vs MoG Prior Means (for each MoG component, first `num_accumulated_plotting_dims` dims)
+    # Plot 1: Distribution of Encoder Means vs MoG Prior Means
     for d in range(num_accumulated_plotting_dims):
         ax = fig.add_subplot(4, num_accumulated_plotting_dims, d + 1)
         
-        # Plot encoder means as histograms
         hist_vals = []
-        for k in range(K):
+        for k in range(components_to_plot):
             hist, bin_edges = np.histogram(encoder_means_flat[:, k, d], bins=n_bins, range=mean_lims, density=True)
             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
             hist_vals.append(hist)
-            ax.hist(encoder_means_flat[:, k, d], bins=n_bins, range=mean_lims, density=True, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
+            ax.hist(encoder_means_flat[:, k, d], bins=n_bins, range=mean_lims, density=True, alpha=0.5, 
+                   color=component_colors[k], label=f'Posterior Comp {k}')
 
-        # Find the tallest histogram for scaling
         max_hist = np.max([np.max(h) for h in hist_vals])
-
-        # Compute KDEs for the prior means
-        x_vals = np.linspace(mean_lims[0], mean_lims[1], 1000)  # Range for KDE plots
-        kde_vals_all = []  # Store all KDE values for scaling
-        for k in range(K):
-            # Compute KDE for the current MoG component
+        x_vals = np.linspace(mean_lims[0], mean_lims[1], 1000)
+        kde_vals_all = []
+        
+        for k in range(components_to_plot):
             samples = np.random.normal(
                 loc=prior_means[k, d],
-                scale=np.sqrt(np.exp(prior_logvars[k, d])),  # Scale by variance
-                size=int(1e3)  # Fixed number of samples for KDE
+                scale=np.sqrt(np.exp(prior_logvars[k, d])),
+                size=int(1e3)
             )
             kde = gaussian_kde(samples)
-            kde_vals = kde(x_vals) * prior_weights[k]  # Scale KDE by prior weight
+            kde_vals = kde(x_vals) * prior_weights[k]
             kde_vals_all.append(kde_vals)
         
-        # Find the maximum KDE value across all components
         max_kde = np.max([np.max(kde_vals) for kde_vals in kde_vals_all])
 
-        # Scale all KDEs to match the tallest histogram while preserving relative scaling
-        for k in range(K):
+        for k in range(components_to_plot):
             kde_vals = kde_vals_all[k] * (max_hist / max_kde)
-            ax.plot(x_vals, kde_vals, linestyle='--', color=component_colors[k], alpha=0.8, label=f'Prior Comp {k}' if d == 0 else None)
+            ax.plot(x_vals, kde_vals, linestyle='--', color=component_colors[k], alpha=0.8, 
+                   label=f'Prior Comp {k}' if d == 0 else None)
         
         ax.set_title(f'Encoder Means (Dim {d})')
         ax.set_xlabel('Mean')
         ax.set_ylabel('Frequency')
-        ax.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range
+        ax.set_xlim(mean_lims[0], mean_lims[1])
         if d == 0:
             ax.legend()
 
-    # Plot 2: Distribution of Encoder Logvars vs MoG Prior Logvars (for each MoG component, first `num_accumulated_plotting_dims` dims)
+    # Plot 2: Distribution of Encoder Logvars vs MoG Prior Logvars
     for d in range(num_accumulated_plotting_dims):
         ax = fig.add_subplot(4, num_accumulated_plotting_dims, num_accumulated_plotting_dims + d + 1)
-        for k in range(K):
-            ax.hist(encoder_logvars_flat[:, k, d], bins=n_bins, range=logvar_lims, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
+        for k in range(components_to_plot):
+            ax.hist(encoder_logvars_flat[:, k, d], bins=n_bins, range=logvar_lims, alpha=0.5, 
+                   color=component_colors[k], label=f'Posterior Comp {k}')
         ax.set_xlabel('Logvar')
         ax.set_ylabel('Frequency')
-        ax.set_xlim(logvar_lims[0], logvar_lims[1])  # Set x-axis range
+        ax.set_xlim(logvar_lims[0], logvar_lims[1])
         if d == 0:
             ax.legend()
 
     # Plot 3: Split into two subplots
-    # Left Subplot: Percentage of encoder_mogpreds below threshold for each component
     ax_left = plt.subplot2grid((4, num_accumulated_plotting_dims), (2, 0), colspan=1)
-    below_threshold_percent = np.mean(encoder_mogpreds_flat < threshold, axis=0) * 100  # Percentage below threshold
-    ax_left.bar(range(K), below_threshold_percent, color=component_colors, alpha=0.5)
+    below_threshold_percent = np.mean(encoder_mogpreds_flat < threshold, axis=0) * 100
+    ax_left.bar(range(components_to_plot), below_threshold_percent, color=component_colors, alpha=0.5)
     ax_left.set_title(f'% of encoder_mogpreds < {threshold}')
     ax_left.set_xlabel('MoG Component')
     ax_left.set_ylabel('Percentage')
-    ax_left.set_ylim(0, 100)  # Set y-axis range to 0-100%
+    ax_left.set_ylim(0, 100)
 
-    # Right Subplot: Histogram of encoder_mogpreds excluding values below threshold
     ax_right = plt.subplot2grid((4, num_accumulated_plotting_dims), (2, 1), colspan=num_accumulated_plotting_dims - 1)
-    for k in range(K):
+    for k in range(components_to_plot):
         filtered_mogpreds = encoder_mogpreds_flat[:, k][encoder_mogpreds_flat[:, k] >= threshold]
-        ax_right.hist(filtered_mogpreds, bins=n_bins, alpha=0.5, color=component_colors[k], label=f'Posterior Comp {k}')
+        ax_right.hist(filtered_mogpreds, bins=n_bins, alpha=0.5, color=component_colors[k], 
+                     label=f'Posterior Comp {k}')
     ax_right.set_title(f'Encoder MoG Predictions (≥ {threshold})')
     ax_right.set_xlabel('Weight')
     ax_right.set_ylabel('Frequency')
     ax_right.legend()
 
-    # Plot 4: Distribution of encoder_zmeaned (aggregated latent representation, first `num_accumulated_plotting_dims` dims)
+    # Plot 4: Distribution of encoder_zmeaned
     for d in range(num_accumulated_plotting_dims):
         ax = fig.add_subplot(4, num_accumulated_plotting_dims, 3 * num_accumulated_plotting_dims + d + 1)
         ax.hist(encoder_zmeaned_flat[:, d], bins=n_bins, range=mean_lims, alpha=0.5, color='gray', label=f'Dim {d}')
         ax.set_xlabel('Z-Posterior')
         ax.set_ylabel('Frequency')
-        ax.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range
+        ax.set_xlim(mean_lims[0], mean_lims[1])
         ax.legend()
 
-    if gpu_id == 0: time.sleep(0.5) # avoid collisions
-    if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = f"{savedir}/posterior_epoch{epoch}_numForwards{Batch}_gpu{gpu_id}.jpg"
+    if gpu_id == 0: time.sleep(0.5)
+    os.makedirs(savedir, exist_ok=True)
+    savename_jpg = f"{savedir}/posterior_epoch{epoch}_numForwards{Batch}_gpu{gpu_id}_maxcomp{components_to_plot}.jpg"
     plt.savefig(savename_jpg, dpi=200)
     plt.close(fig)
 
@@ -979,8 +967,8 @@ def print_patposteriorweights_cumulative(mogpreds, patidxs, patname_list, savedi
     ax.set_xlabel("MoG Component")
     ax.set_ylabel("Sum of MoG Weights")
     ax.set_title(f"MoG Component Weights by Patient (Epoch {epoch}, Iter {iter_curr}) - {mogpreds.shape[0]} Embeddings")
-    ax.set_xticks(range(num_components))
-    ax.set_xticklabels([f"Comp {i}" for i in range(num_components)])
+    # ax.set_xticks(range(num_components))
+    # ax.set_xticklabels([f"Comp {i}" for i in range(num_components)])
 
     # Add legend with smaller text
     legend = ax.legend(title="Patient Name", bbox_to_anchor=(1.05, 1), loc='upper left', prop={'size': 8})  # Shrink legend text
@@ -992,111 +980,91 @@ def print_patposteriorweights_cumulative(mogpreds, patidxs, patname_list, savedi
     plt.savefig(savename_jpg, bbox_inches='tight', dpi=200)
     plt.close(fig)
 
-def print_latent_singlebatch(mean, logvar, mogpreds, prior_means, prior_logvars, prior_weights, savedir, epoch, iter_curr,  mean_lims, logvar_lims, n_bins=35, **kwargs):
+def print_latent_singlebatch(mean, logvar, mogpreds, prior_means, prior_logvars, prior_weights, savedir, epoch, iter_curr, mean_lims, logvar_lims, max_components = 8, n_bins=35, **kwargs):
     """
     Plot re-sampled weighted means, logvars, and average MoG weights at the token level for the first 5 dimensions.
-    Aggregates tokens across all batches, with separate histograms for each batch index.
-    Re-samples components using numpy.random.multinomial to properly weight the means and logvars.
-
-    Args:
-        mean: Encoder means, shape (batch_size, T, K, D)
-        logvar: Encoder log-variances, shape (batch_size, T, K, D)
-        mogpreds: MoG component probabilities, shape (batch_size, T, K)
-        prior_means: MoG prior means, shape (K, D)
-        prior_logvars: MoG prior log-variances, shape (K, D)
-        prior_weights: MoG prior weights, shape (K,)
-        savedir: Directory to save the plots
-        epoch: Current epoch
-        iter_curr: Current iteration
-        n_bins: Number of bins for histograms (default: 35)
-        **kwargs: Additional arguments
+    Only shows the first 8 MoG components in the weights plot.
     """
     batch_size, T, K, D = mean.shape
+    
+    # Limit to first 8 components
+    K = min(max_components, K)
+    mean = mean[:, :, :K, :]
+    logvar = logvar[:, :, :K, :]
+    mogpreds = mogpreds[:, :, :K]
+    prior_means = prior_means[:K, :]
+    prior_logvars = prior_logvars[:K, :]
+    prior_weights = prior_weights[:K]
 
     # Re-sample components using numpy.random.multinomial
-    weighted_mean = np.zeros((batch_size, T, D))  # Shape: (batch_size, T, D)
-    weighted_logvar = np.zeros((batch_size, T, D))  # Shape: (batch_size, T, D)
-
-    assert np.min(weighted_mean) > mean_lims[0], f"got mean of {np.min(weighted_mean)}, which is lower than stated limit of {mean_lims[0]}"
-    assert np.max(weighted_mean) < mean_lims[1],  f"got mean of {np.max(weighted_mean)}, which is higher than stated limit of {mean_lims[1]}"
-    assert np.min(weighted_logvar) > logvar_lims[0], f"got logvar of {np.min(weighted_logvar)}, which is lower than stated limit of {logvar_lims[0]}"
-    assert np.max(weighted_logvar) < logvar_lims[1], f"got logvar of {np.max(weighted_logvar)}, which is higher than stated limit of {logvar_lims[1]}"
+    weighted_mean = np.zeros((batch_size, T, D))
+    weighted_logvar = np.zeros((batch_size, T, D))
 
     for b in range(batch_size):
         for t in range(T):
-            # Sample a component index based on MoG probabilities
-            component_idx = np.random.choice(K, p=mogpreds[b, t])
-            # Use the sampled component's mean and logvar
+            # Normalize probabilities in case we truncated components
+            probs = mogpreds[b, t] / np.sum(mogpreds[b, t])
+            component_idx = np.random.choice(K, p=probs)
             weighted_mean[b, t] = mean[b, t, component_idx]
             weighted_logvar[b, t] = logvar[b, t, component_idx]
 
     # Compute the average MoG weights across all tokens for each batch
     avg_mogpreds = np.mean(mogpreds, axis=1)  # Shape: (batch_size, K)
-
-    # Compute the 95% confidence intervals for the MoG weights
     ci_mogpreds = 1.96 * np.std(mogpreds, axis=1) / np.sqrt(T)  # Shape: (batch_size, K)
 
     # Plot the first 5 dimensions
     num_dims = min(5, D)
-    fig = plt.figure(figsize=(28, 5 * num_dims))  # Wider figure to accommodate 7 columns
+    fig = plt.figure(figsize=(28, 5 * num_dims))
 
-    # Define a consistent color palette for batches
-    batch_colors = plt.cm.tab10.colors[:batch_size]  # Use tab10 colormap for up to 10 batches
+    # Define color palettes
+    batch_colors = plt.cm.tab10.colors[:batch_size]
+    prior_kde_colors = plt.cm.Set2.colors[:K]
 
-    # Define a distinct color palette for prior KDEs
-    prior_kde_colors = plt.cm.Set2.colors[:K]  # Use Set2 colormap for up to 8 components
-
-    # Store legend handles and labels for the right plot
+    # Store legend handles and labels
     legend_handles = []
     legend_labels = []
 
     for d in range(num_dims):
-        # Plot re-sampled weighted means with KDEs for each MoG prior component (first column)
+        # Plot re-sampled weighted means with KDEs (first column)
         ax1 = plt.subplot2grid((num_dims, 7), (d, 0), colspan=1)
         
-        # Compute KDEs for each MoG prior component (scaled by prior weights)
-        x_vals = np.linspace(-5, 5, 1000)  # Range for KDE plots
-        kde_vals_all = []  # Store all KDE values for scaling
+        # Compute KDEs for each MoG prior component (first 8 only)
+        x_vals = np.linspace(-5, 5, 1000)
+        kde_vals_all = []
         for k in range(K):
-            # Compute KDE for the current MoG component
             samples = np.random.normal(
                 loc=prior_means[k, d],
-                scale=np.sqrt(np.exp(prior_logvars[k, d])),  # Scale by variance
-                size=int(1e3)  # Fixed number of samples for KDE
-            )
+                scale=np.sqrt(np.exp(prior_logvars[k, d])),
+                size=int(1e3))
             kde = gaussian_kde(samples)
-            kde_vals = kde(x_vals) * prior_weights[k]  # Scale KDE by prior weight
+            kde_vals = kde(x_vals) * prior_weights[k]
             kde_vals_all.append(kde_vals)
             line, = ax1.plot(x_vals, kde_vals, linestyle='--', color=prior_kde_colors[k], alpha=0.6)
-            if d == 0:  # Add KDE legend entries only once
+            if d == 0:
                 legend_handles.append(line)
                 legend_labels.append(f'Prior Comp {k}')
         
-        # Compute the maximum KDE value for scaling
         max_kde = np.max(kde_vals_all)
 
-        # Plot re-sampled weighted means as histograms (first column)
-        hist_vals_all = []  # Store all histogram values for normalization
+        # Plot histograms of weighted means
+        hist_vals_all = []
         for b in range(batch_size):
             hist, bin_edges = np.histogram(weighted_mean[b, :, d], bins=n_bins, range=(-5, 5), density=True)
             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
             hist_vals_all.append(hist)
         
-        # Normalize histograms by their maximum value and scale to match KDEs
         max_hist = np.max(hist_vals_all)
         for b in range(batch_size):
-            hist_normalized = (hist_vals_all[b] / max_hist) * max_kde  # Normalize and scale
+            hist_normalized = (hist_vals_all[b] / max_hist) * max_kde
             line, = ax1.plot(bin_centers, hist_normalized, alpha=0.4, color=batch_colors[b])
-            if d == 0:  # Add batch legend entries only once
+            if d == 0:
                 legend_handles.append(line)
                 legend_labels.append(f'Batch {b}')
         
         ax1.set_title(f'Weighted Posterior Mean (Dim {d})')
-        ax1.set_xlabel('Value')
-        ax1.set_ylabel('Density')
-        ax1.set_xlim(mean_lims[0], mean_lims[1])  # Set x-axis range from -5 to 5
+        ax1.set_xlim(mean_lims[0], mean_lims[1])
 
-        # Plot re-sampled weighted logvars as histograms (second column)
+        # Plot re-sampled weighted logvars (second column)
         ax2 = plt.subplot2grid((num_dims, 7), (d, 1), colspan=1)
         for b in range(batch_size):
             hist, bin_edges = np.histogram(weighted_logvar[b, :, d], bins=n_bins, density=True)
@@ -1104,33 +1072,23 @@ def print_latent_singlebatch(mean, logvar, mogpreds, prior_means, prior_logvars,
             ax2.plot(bin_centers, hist, alpha=0.4, color=batch_colors[b])
         
         ax2.set_title(f'Weighted Posterior Logvar (Dim {d})')
-        ax2.set_xlabel('Value')
-        ax2.set_ylabel('Density')
         ax2.set_xlim(logvar_lims[0], logvar_lims[1])
 
-        # Plot average MoG weights with 95% CI (columns 2–6, single subplot spanning 5 columns)
-        if d == 0:  # Only create this subplot once
+        # Plot average MoG weights (only first 8 components)
+        if d == 0:
             ax3 = plt.subplot2grid((num_dims, 7), (d, 2), colspan=5, rowspan=num_dims)
             for b in range(batch_size):
-                # Plot bars with error bars
                 bar = ax3.bar(np.arange(K) + 0.1 * b, avg_mogpreds[b], width=0.1, alpha=0.4, 
                               color=batch_colors[b])
                 ax3.errorbar(np.arange(K) + 0.1 * b, avg_mogpreds[b], yerr=ci_mogpreds[b], fmt='none', 
                              ecolor='darkgray', capsize=3, capthick=1, elinewidth=1)
-            ax3.set_title(f'Average MoG Weights (Across Tokens) with 95% CI\nToken-Level MoG-Weighted Means & Logvars: Single Forward Passes')
-            ax3.set_xlabel('MoG Component')
-            ax3.set_ylabel('Average Token Weight')
-            ax3.set_xticks(np.arange(K))  # Show all MoG component indices on the x-axis
-
-            # Add the combined legend to the right plot
+            ax3.set_title(f'Average MoG Weights (First {K} Components) with 95% CI')
+            ax3.set_xticks(np.arange(K))
             ax3.legend(legend_handles, legend_labels, loc='upper right')
 
-    # Adjust layout and save the plot
     plt.tight_layout()
-    if not os.path.exists(savedir):
-        os.makedirs(savedir)
-    savename_jpg = f"{savedir}/RealtimeLatents_epoch{epoch}_iter{iter_curr}.jpg"
-    plt.savefig(savename_jpg, dpi=200)
+    os.makedirs(savedir, exist_ok=True)
+    plt.savefig(f"{savedir}/RealtimeLatents_epoch{epoch}_iter{iter_curr}.jpg", dpi=200)
     plt.close(fig)
 
 def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_singlebatch_channels_recon, num_recon_samples, **kwargs):
@@ -1291,89 +1249,111 @@ def print_confusion_singlebatch(class_probs, class_labels, savedir, epoch, iter_
 
     pl.close('all') 
 
-def print_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, **kwargs):
-
+def print_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, diag_mask_buffer_tokens, **kwargs):
+    """
+    Plot attention weights with diagonal buffer masking.
+    
+    Args:
+        epoch: Current epoch
+        iter_curr: Current iteration
+        pat_idxs: Patient indices
+        scores_byLayer_meanHeads: Attention scores tensor (batch, layers, rows, cols)
+        savedir: Directory to save plots
+        diag_mask_buffer_tokens: Number of tokens around diagonal that should be masked
+        **kwargs: Additional arguments
+    """
     scores_byLayer_meanHeads = scores_byLayer_meanHeads.detach().cpu().numpy()
-
     batchsize, n_layers, rows, cols = scores_byLayer_meanHeads.shape
 
     # Make new grid/fig for every batch
-    for b in range(0, batchsize):
+    for b in range(batchsize):
         gs = gridspec.GridSpec(1, 2) 
         fig = pl.figure(figsize=(20, 14))
 
         # Only plotting First and Last layer
         for l in range(n_layers):
-
             ax_curr = fig.add_subplot(gs[0, l]) 
-            plot_data = scores_byLayer_meanHeads[b, l, :, :] # Add small amount to avoid log error when scaling
-
-            # Replace diagonal with NaN
-
-            mask = np.eye(plot_data.shape[0], dtype=bool)
-            assert np.where(~mask, 0, plot_data).sum() == 0  # Make sure diaganal sums to 0, or masking was not done correctly
-            plot_data = np.where(mask, np.nan, plot_data)   
-
-            # # Multiply each row of the data by its row index
-            # for i in range(plot_data.shape[0]):
-            #     plot_data[i, :] *= (i + 1)  # Multiply by row index (1-based)
+            plot_data = scores_byLayer_meanHeads[b, l, :, :]
+            
+            # Create mask for diagonal buffer zone
+            mask = np.zeros_like(plot_data, dtype=bool)
+            for i in range(rows):
+                start = max(0, i - diag_mask_buffer_tokens)
+                end = min(cols, i + diag_mask_buffer_tokens + 1)
+                mask[i, start:end] = True
+                
+            # Verify masked area sums to 0 (if not, warn but continue)
+            masked_sum = np.where(mask, plot_data, 0).sum()
+            if not np.isclose(masked_sum, 0, atol=1e-6):
+                raise Exception(f"Error: Masked attention weights sum to {masked_sum:.6f} (expected 0) "
+                      f"for batch {b}, layer {l}")
+            
+            # Apply mask (replace with NaN for plotting)
+            plot_data = np.where(mask, np.nan, plot_data)
 
             # Plot the heatmap
-            sns.heatmap(plot_data, cmap=sns.cubehelix_palette(as_cmap=True), ax=ax_curr, cbar_kws={'label': 'Row-Weighted Attention', 'orientation': 'horizontal'}) 
-            if l == 0: ax_curr.set_title(f"First Layer - Mean of Heads")
-            else: ax_curr.set_title(f"Last Layer - Mean of Heads")
+            sns.heatmap(
+                plot_data, 
+                cmap=sns.cubehelix_palette(as_cmap=True), 
+                ax=ax_curr, 
+                cbar_kws={
+                    'label': 'Attention Weights', 
+                    'orientation': 'horizontal'
+                }
+            )
+            
+            title = "First Layer - Mean of Heads" if l == 0 else "Last Layer - Mean of Heads"
+            ax_curr.set_title(title)
             ax_curr.set_aspect('equal', adjustable='box')
 
         fig.suptitle(f"Attention Weights - Batch:{b}")
-        if not os.path.exists(savedir): os.makedirs(savedir)
-        savename_jpg = f"{savedir}/ByLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_patidx{pat_idxs[b].cpu().numpy()}.jpg"
+        os.makedirs(savedir, exist_ok=True)
+        savename_jpg = f"{savedir}/ByLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_patidx{pat_idxs[b].cpu().numpy()}_buffer{diag_mask_buffer_tokens}.jpg"
         pl.savefig(savename_jpg, dpi=200)
         pl.close(fig)   
 
-    pl.close('all') 
+    pl.close('all')
 
-def plot_recon(x, x_hat, plot_dict, batch_file_names, epoch, savedir, gpu_id, pat_id, iter, FS, num_rand_recon_plots, recon_sec=4, **kwargs):
+# def print_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, diag_mask_buffer_tokens, **kwargs):
 
-    num_loops = num_rand_recon_plots
+#     scores_byLayer_meanHeads = scores_byLayer_meanHeads.detach().cpu().numpy()
 
-    all_starts = plot_dict['start_dt']
-    all_stops = plot_dict['stop_dt']
+#     batchsize, n_layers, rows, cols = scores_byLayer_meanHeads.shape
 
-    if gpu_id == 0: time.sleep(1) # Avoid file collision 
+#     # Make new grid/fig for every batch
+#     for b in range(0, batchsize):
+#         gs = gridspec.GridSpec(1, 2) 
+#         fig = pl.figure(figsize=(20, 14))
 
-    for i in range(num_loops):
+#         # Only plotting First and Last layer
+#         for l in range(n_layers):
 
-        np.random.seed(seed=None) # should replace with Generator for newer code
-        ch_idx = np.random.randint(0, x.shape[1])
-        
-        # Pick a random starting point within timeseries
-        sample_duration = recon_sec * FS
-        np.random.seed(seed=None) # should replace with Generator for newer code
-        start_idx = np.random.randint(0, x.shape[2] - sample_duration - 1)
+#             ax_curr = fig.add_subplot(gs[0, l]) 
+#             plot_data = scores_byLayer_meanHeads[b, l, :, :] # Add small amount to avoid log error when scaling
 
-        # Pick a random starting point within batch
-        np.random.seed(seed=None) # should replace with Generator for newer code
-        batch_idx = np.random.randint(0, x.shape[0])
+#             # Replace diagonal with NaN
 
-        gs = gridspec.GridSpec(1, 5)
-        fig = pl.figure(figsize=(30, 14))
-        
-        # Plot X
-        ax1 = pl.subplot(gs[0, :])
-        ax1.plot(x[batch_idx, ch_idx, start_idx:(start_idx + sample_duration)])
+#             mask = np.eye(plot_data.shape[0], dtype=bool)
+#             assert np.where(~mask, 0, plot_data).sum() == 0  # Make sure diaganal sums to 0, or masking was not done correctly
+#             plot_data = np.where(mask, np.nan, plot_data)   
 
-        # Plot X_HAT
-        ax1.plot(x_hat[batch_idx, ch_idx, start_idx:(start_idx + sample_duration)])
+#             # # Multiply each row of the data by its row index
+#             # for i in range(plot_data.shape[0]):
+#             #     plot_data[i, :] *= (i + 1)  # Multiply by row index (1-based)
 
-        ax1.legend(['Original', 'Reconstruction'])
-        plot_dict['start_dt'] = all_starts[batch_idx]
-        plot_dict['stop_dt'] = all_stops[batch_idx]
-        fig.suptitle(batch_file_names[batch_idx] + create_metadata_subtitle(plot_dict))
+#             # Plot the heatmap
+#             sns.heatmap(plot_data, cmap=sns.cubehelix_palette(as_cmap=True), ax=ax_curr, cbar_kws={'label': 'Row-Weighted Attention', 'orientation': 'horizontal'}) 
+#             if l == 0: ax_curr.set_title(f"First Layer - Mean of Heads")
+#             else: ax_curr.set_title(f"Last Layer - Mean of Heads")
+#             ax_curr.set_aspect('equal', adjustable='box')
 
-        if not os.path.exists(savedir): os.makedirs(savedir)
-        savename_jpg = savedir + f"/Recon_epoch{str(epoch)}_iter_{str(iter)}_{pat_id}_batchIdx{str(batch_idx)}_chIdx{str(ch_idx)}_duration{str(recon_sec)}sec_startIdx{str(start_idx)}_gpu{str(gpu_id)}.jpg"
-        pl.savefig(savename_jpg, dpi=200)
-        pl.close(fig) 
+#         fig.suptitle(f"Attention Weights - Batch:{b}")
+#         if not os.path.exists(savedir): os.makedirs(savedir)
+#         savename_jpg = f"{savedir}/ByLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_patidx{pat_idxs[b].cpu().numpy()}.jpg"
+#         pl.savefig(savename_jpg, dpi=200)
+#         pl.close(fig)   
+
+#     pl.close('all') 
 
 def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, atd_file, pre_ictal_taper_sec=120, post_ictal_taper_sec=120, **kwargs):
 

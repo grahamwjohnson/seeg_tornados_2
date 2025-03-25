@@ -98,6 +98,35 @@ def apply_rotary_emb(
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
+def create_diagonal_mask_with_buffer(seqlen, diag_mask_buffer_tokens, device):
+    """
+    Creates a mask that covers the diagonal and buffer tokens on both sides.
+    
+    Args:
+        seqlen: Sequence length (size of square mask)
+        diag_mask_buffer_tokens: Number of tokens to mask on either side of diagonal
+        device: Device to create mask on
+        
+    Returns:
+        Tensor of shape (seqlen, seqlen) with -inf in masked positions
+    """
+    # Create base mask with zeros
+    mask = torch.zeros((seqlen, seqlen), device=device)
+    
+    # Create diagonal indices
+    diag_indices = torch.arange(seqlen, device=device)
+    
+    # Mask each position along with its buffer
+    for i in range(seqlen):
+        # Calculate start and end of buffer zone
+        start = max(0, i - diag_mask_buffer_tokens)
+        end = min(seqlen, i + diag_mask_buffer_tokens + 1)  # +1 because end is exclusive
+        
+        # Mask this range
+        mask[i, start:end] = float("-inf")
+    
+    return mask
+
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     """torch.repeat_interleave(x, dim=2, repeats=n_rep)"""
     bs, slen, n_kv_heads, head_dim = x.shape
@@ -351,7 +380,8 @@ class Transformer(nn.Module):
         return_attW: bool=False,
         attention_dropout: float=0.0,
         causal_mask_bool: bool=False, 
-        self_mask: bool=True
+        self_mask: bool=True,
+        diag_mask_buffer_tokens=None
         ):
         # _bsz, seqlen = tokens.shape
         # h = self.tok_embeddings(tokens)
@@ -383,9 +413,11 @@ class Transformer(nn.Module):
 
         # Diagonal masking
         elif (seqlen > 1) & self_mask:
-            mask = torch.zeros((seqlen, seqlen), device=self.device)  # Start with all zeros
-            mask = mask.masked_fill(torch.eye(seqlen, device=self.device).bool(), float("-inf"))  # Mask the diagonal
-
+            if diag_mask_buffer_tokens is None:
+                mask = torch.zeros((seqlen, seqlen), device=self.device)  # Start with all zeros
+                mask = mask.masked_fill(torch.eye(seqlen, device=self.device).bool(), float("-inf"))  # Mask the diagonal
+            else:
+                mask = create_diagonal_mask_with_buffer(seqlen=seqlen, diag_mask_buffer_tokens=diag_mask_buffer_tokens, device=self.device)
 
             # When performing key-value caching, we compute the attention scores
             # only for the new sequence. Thus, the matrix of scores is of size
