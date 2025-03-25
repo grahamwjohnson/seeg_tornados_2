@@ -46,6 +46,240 @@ from scipy.stats import gaussian_kde
 # Local imports
 from models.GMVAE import print_models_flow
 
+
+# PREPROCESSING 
+
+def create_bip_mont(channels: list[str], pat_id: str, ch_names_to_ignore: list, save_dir: str):
+    bip_names = []
+    mont_idxs = []
+
+    # Delete unused channels, whole strings must match
+    ch_idx_to_delete = []
+    ch_names_found_to_delete = []
+    for j in range(len(channels)):
+        for i in range(len(ch_names_to_ignore)):
+            if ch_names_to_ignore[i] == channels[j]:
+                ch_idx_to_delete = ch_idx_to_delete + [j]
+                ch_names_found_to_delete = ch_names_found_to_delete + [channels[j]]
+                continue
+    
+    # TODO Should be sorting channel names now to deal with Edge cases for patients collected on NK 
+    # where 2 channels are listed out of order, but this may actually introduce MORE errors than 
+    # if we leave it where we assume channels are in order
+
+    # Find all numbers at ends of channel labels
+    nums = np.ones(len(channels), dtype=int)*-1
+    for i in range(0,len(channels)):
+
+        # Skip unused channels
+        if i in ch_idx_to_delete: 
+            continue
+
+        str_curr = channels[i]
+        still_number = True
+        ch_idx = -1
+        while still_number:
+            curr_chunk = str_curr[ch_idx:]
+            if not curr_chunk.isnumeric():
+                nums[i] = str_curr[ch_idx+1:]
+                still_number = False
+            ch_idx = ch_idx - 1
+    
+    # Base the lead change on when numbers switch because this is more
+    # robust to weird naming strategies that use numbers in base name
+    for i in range(0,len(nums) - 1):
+        if nums[i] + 1 == nums[i+1]:
+            # Valid monotonically increasing bipolar pair
+            bip_names.append(channels[i] + channels[i+1])
+            mont_idxs.append([i,i+1])
+
+    # Save a CSV to output directory with bip names and mont_idxs 
+    if not os.path.exists(save_dir): os.mkdir(save_dir)
+    df_bipmont = pd.DataFrame({'mont_idxs': mont_idxs, 
+                       'bip_names': bip_names})
+    df_bipmont.to_csv(save_dir + '/' + pat_id + '_bipolar_montage_names_and_indexes_from_rawEDF.csv')
+
+    return mont_idxs, bip_names
+
+def highpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 8):
+    sos = scipy.signal.butter(poles, cutoff, 'highpass', fs=sample_rate, output='sos')
+    filtered_data = scipy.signal.sosfiltfilt(sos, data)
+    return filtered_data
+
+def bandstop(data: np.ndarray, edges: list[float], sample_rate: float, poles: int = 8):
+    sos = scipy.signal.butter(poles, edges, 'bandstop', fs=sample_rate, output='sos')
+    filtered_data = scipy.signal.sosfiltfilt(sos, data)
+    return filtered_data
+
+def lowpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 8):
+    sos = scipy.signal.butter(poles, cutoff, 'lowpass', fs=sample_rate, output='sos')
+    filtered_data = scipy.signal.sosfiltfilt(sos, data)
+    return filtered_data
+
+def apply_wholeband_filter(y0, fs):
+
+    # Hardcoded filter values, Hz - This is done before splitting into desired freq ranges
+    FILT_HP = 1
+    FILT_BS_RANGE_1 = [59, 61]
+    FILT_BS_RANGE_2 = [119, 121]
+    FILT_LP = 179
+    
+    y1 = highpass(y0, FILT_HP, fs)
+    y2 = bandstop(y1, FILT_BS_RANGE_1, fs)
+    y3 = bandstop(y2, FILT_BS_RANGE_2, fs)
+    y4 = lowpass(y3, FILT_LP, fs)
+
+    return y4
+
+def apply_banded_filter(y0, freq_bands, fs, arbitrary_scaling_perc_range=[1, 99]):
+    tmp = np.empty((len(freq_bands), y0.shape[0]), dtype=np.float64)
+    for b in range(len(freq_bands)):
+        curr_range = freq_bands[b]
+        y1 = highpass(y0, curr_range[0], fs)
+        y2 = lowpass(y1, curr_range[1], fs)
+
+        # Resccale to maximize float16 format
+        min_perc_y2 = np.percentile(np.abs(y2), arbitrary_scaling_perc_range[0])
+        max_perc_y2 = np.percentile(np.abs(y2), arbitrary_scaling_perc_range[1])
+
+        tmp[b] = y2/(max_perc_y2 - min_perc_y2)
+
+    return tmp.astype(np.float16)
+
+def read_channel(f, i):
+    return f.readSignal(i)
+
+def montage_filter_pickle_edfs(pat_id: str, dir_edf: str, save_dir: str, desired_samp_freq: int, freq_bands: list, expected_unit: str, montage: str, ch_names_to_ignore: list, ignore_channel_units: bool):
+                    
+        files =  glob.glob(dir_edf + "/*.EDF")
+
+        # CREATE BIPOLAR MONTAGE
+        # Find a suitable file to mnake the montage first because of "c_label" problem
+        # Find a file WITHOUT clabel in the name
+        print("Finding file without 'clabel' problem to make bipolar montage")
+        file_idx = -1
+        total_files = len(files)
+        for file in files:
+            file_idx += 1
+            print("[" + str(file_idx) + '/' + str(total_files) + ']: ' + file)
+            if "clabel" not in file.split("/")[-1]:
+                print(f"Found file [{file}], calculating bipolar montage")
+                # Use PyEDFLib to read in files
+                # (MNE broke for large files) 
+                f = pyedflib.EdfReader(file)
+                channels = f.getSignalLabels()
+                mont_idxs, bip_names = create_bip_mont(channels, pat_id, ch_names_to_ignore, save_dir + '/metadata')
+                print("Montage created")
+                f._close()
+                del f
+                break
+
+
+        file_idx = -1
+        total_files = len(files)
+        print("Processing all files:")
+        for file in files:
+            file_idx += 1
+            print("[" + str(file_idx) + '/' + str(total_files) + ']: ' + file)
+            print("Reading in EDF")
+            gc.collect()
+     
+            # Use PyEDFLib to read in files
+            # (MNE broke for large files) 
+            f = pyedflib.EdfReader(file)
+            n = f.signals_in_file
+            channels = f.getSignalLabels()
+            all_samp_freqs = np.array(f.getSampleFrequencies())
+                        
+            # Ensure all channel units are the same
+            if not ignore_channel_units:
+                sig_headers = f.getSignalHeaders()
+                ch_units = np.empty(len(channels), dtype=object)
+                for i in range(0,len(channels)):
+                    ch_units[i] = sig_headers[i]['dimension']
+                if not np.all(ch_units == ch_units[0]): raise Exception("Not all channel units are the same for file: " + file)  
+                # Compare this unit to the expected file units
+                if ch_units[0] != expected_unit: raise Exception("Current file's channel units do not equal expected units: " + expected_unit + ". Current file: " + file)
+                # Store this unit to compare to next EDF file
+            
+            start_t = time.time()
+            raw_data = np.zeros((n, f.getNSamples()[0]), dtype=np.float16)
+            for i in np.arange(n):
+                raw_data[i, :] = f.readSignal(i)
+            print(f"Time read EDF in: {time.time()-start_t}")
+            f._close()
+            del f
+            print("EDF read in")
+
+            # Ensure sampling freq are all equal to eachother
+            if not np.all(all_samp_freqs == all_samp_freqs[0]): raise Exception("Not all sampling freqs units are the same for file: " + file)
+            
+            # Check sampling frequency is as desired, resample if not:
+            fs = all_samp_freqs[0] # all should be equal, can just pull first one
+            if fs != desired_samp_freq: 
+                # raise Exception(f"Sampling frequency resampling to {desired_samp_freq} not yet coded, needed for file: {file}, this file was sampled at {fs}" )
+                print(f"Resampling to {desired_samp_freq} for file: {file}, this file was sampled at {fs} Hz")
+                if fs%desired_samp_freq == 0:
+                    fs_mult = int(fs/desired_samp_freq)
+                    print(f"Sampling frequency of file [{fs}] is exact multiple of desired sampling frequency [{desired_samp_freq}], so simply indexing at interval of {fs_mult}")
+                    # Simply index at the multiple
+                    raw_data = raw_data[:, 0::fs_mult]
+                    fs = desired_samp_freq
+                else:
+                    raise Exception(f"FS [{fs}] NOT MULTIPLE OF DESIRED SAMPLING FREQUENCY - NOT CODED UP YET")
+            else:
+                print(f"Sampling frequency confirmed to be {fs} Hz")
+
+            # If doing bipolar montage
+            if montage == 'BIPOLE':
+                print("Assigning bipolar montage")
+                # Check that bip names match based on already created montage from previous files
+                new_bip_names = ["" for x in range(len(bip_names))]
+                for i in range(0,len(bip_names)):
+                    new_bip_names[i] = channels[mont_idxs[i][0]] + channels[mont_idxs[i][1]]
+                if new_bip_names != bip_names: 
+                    print("WARNING: Current file's created bip montage does not exactly equal original file montage. Current file: " + file)
+                    print("Assuming that channels are in proper order, just with wrong names (i.e. bad Natus template)")
+
+                # If we made it this far, then the montage aligns across EDF files
+                # Re-assign data to bipolar montage (i.e. subtraction: A-B)
+                new_raw_data = np.empty([len(bip_names),raw_data.shape[1]], dtype=np.float16)
+                for i in range(0,len(bip_names)):
+                    new_raw_data[i,:] = raw_data[mont_idxs[i][0],:] - raw_data[mont_idxs[i][1],:]
+                raw_data = new_raw_data
+                del new_raw_data
+                gc.collect()
+
+                # Re-assign channel names to bipolar
+                channels = bip_names
+                print("Bipolar montage assignment complete")
+
+            # Filter with IIR zero phase sosfiltfilt pass bands)
+            # Do each channel sepreately (#TODO: parallelize)
+            # filt_data = np.empty(raw_data.shape, dtype=np.float16)
+            print("Filtering the data")
+            filt_data = np.asarray([apply_wholeband_filter(raw_data[i,:], fs) for i in range(0, len(channels))], dtype=np.float16)
+
+            print("Data wholeband filtered, with line noise notch filters")
+            if freq_bands == []:
+                filt_data_banded = filt_data
+            else:
+                print(f"Filtering into subbands {freq_bands} Hz")
+                # filt_data_banded = np.empty(raw_data.shape[0] * len(freq_bands), raw_data.shape[1], dtype=np.float16) 
+                filt_data_banded = np.concatenate([apply_banded_filter(filt_data[i,:], freq_bands, fs) for i in range(0, len(channels))], axis=0).astype(np.float16)
+
+            del raw_data
+            del filt_data
+            gc.collect()
+
+            # Save the entire UNSCALED filtered data as a pickle file
+            freq_str = f"{freq_bands}".replace("], [", "Hz_").replace(", ", "to").replace("[[","").replace("]]","Hz")
+            if montage == 'BIPOLE': save_name = save_dir + '/' + file.split('/')[-1].replace('.EDF','_resampled_' + str(fs) + f'_Hz_bipole_filtered_{freq_str}.pkl')
+            if montage == 'MONOPOLE': save_name = save_dir + '/' + file.split('/')[-1].replace('.EDF','_resampled_' + str(fs) + f'_Hz_monopole_filtered_{freq_str}.pkl')
+            with open(save_name, "wb") as f:
+                pickle.dump(filt_data_banded, f)
+            print("Big pickle saved")
+
 def fill_hist_by_channel(data_in: np.ndarray, histo_bin_edges: np.ndarray, zero_island_delete_idxs: list):
 
     """
@@ -97,6 +331,17 @@ def fill_hist_by_channel(data_in: np.ndarray, histo_bin_edges: np.ndarray, zero_
     
     return histo_bin_counts
 
+
+# INITIALIZATIONS
+
+def print_model_summary(model):
+    print("Calculating model summary")
+    summary(model, num_classes=1)
+    mem_params = sum([param.nelement() * param.element_size() for param in model.parameters()])
+    mem_bufs = sum([buf.nelement() * buf.element_size() for buf in model.buffers()])
+    mem = (mem_params + mem_bufs) / 1e9  # in bytes
+    print("Expected GPU memory requirement (parameters + buffers): " + str(mem) +" GB")
+
 def random_animal(rand_name_json, **kwargs):
     # Read in animal names, pull random name
     with open(rand_name_json) as json_file:
@@ -108,31 +353,505 @@ def random_animal(rand_name_json, **kwargs):
 
     return f"{rand_name}"
 
+def random_filename_string(length=10):
+    characters = string.ascii_letters + string.digits
+    return ''.join(random.choice(characters) for i in range(length))
+
+def run_script_from_shell(env_python_path, script_path, *args):
+    """
+    Runs a Python script using the shell.
+
+    Args:
+        script_path (str): Path to the Python script.
+        *args: Arguments to pass to the script.
+
+    Returns:
+        tuple: A tuple containing the return code, standard output, and standard error.
+    """
+    try:
+        command = ['python', script_path, args[0], args[1], args[2]] # args: tmp_dir, fnames.csv, num_rand_hashes
+        # Run the command and suppress output
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        # print("DEBUGGING SLEEP!!!")
+        # time.sleep(9999999)
+
+        return process
+
+    except subprocess.CalledProcessError as e:
+        return e.returncode, e.stdout, e.stderr
+    except FileNotFoundError:
+        return -1, "", "File not found"
+
+def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_workers=0):
+
+    if num_workers > 0:
+        persistent_workers=True
+        print("WARNING: num workers >0, have experienced odd errors...")
+
+    else:
+        persistent_workers=False
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,    
+        pin_memory=True,
+        shuffle=False,
+        sampler=DistributedSampler(dataset),
+        drop_last=droplast,
+        persistent_workers=persistent_workers
+    )
+
+def initialize_directories(
+        run_notes,
+        cont_train_model_dir,
+        **kwargs):
+
+    # *** CONTINUE EXISTING RUN initialization ***
+
+    if kwargs['continue_existing_training']:
+
+        kwargs['model_dir'] = cont_train_model_dir
+        kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs'
+        kwargs['log_dir'] =  kwargs['model_dir'] + '/data_logs'
+
+        # Find the epoch to start training
+        check_dir = kwargs['model_dir'] + "/checkpoints"
+        epoch_dirs = glob.glob(check_dir + '/Epoch*')
+        epoch_nums = [int(f.split("/")[-1].replace("Epoch_","")) for f in epoch_dirs]
+
+        # Find the highest epoch already trained
+        max_epoch = max(epoch_nums)
+        print(f"Resuming training after saved epoch: {str(max_epoch)}")
+        
+        # Construct the proper file names to get CORE state dicts
+        kwargs['gmvae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_gmvae.pt'
+        kwargs['gmvae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_gmvae_opt.pt'
+
+        # Proper names for running latents 
+        kwargs['running_mean_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_means.pkl'
+        kwargs['running_logvar_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_logvars.pkl'
+        kwargs['running_zmeaned_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_zmeaned.pkl'
+        kwargs['running_mogpreds_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_mogpreds.pkl' 
+        kwargs['running_patidxs_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_patidxs.pkl' 
+
+        # Set the start epoch 1 greater than max trained
+        kwargs['start_epoch'] = (max_epoch + 1) 
+        
+
+    # *** NEW RUN initialization ***  
+
+    else:
+        # Make run directories
+        kwargs['model_dir'] = append_timestamp(kwargs['root_save_dir'] + '/trained_models/' + kwargs['run_params_dir_name'] + '/' + run_notes + '_')
+        os.makedirs(kwargs['model_dir'])
+        kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs'
+        os.makedirs(kwargs['pic_dataset_dir'])
+        kwargs['log_dir'] =  kwargs['model_dir'] + '/data_logs'
+        os.makedirs(kwargs['log_dir'])
+
+        # Fresh run 
+        kwargs['start_epoch'] = 0
+
+    return kwargs
+
+def run_setup(**kwargs):
+    # Print to console
+    print("\n\n***************** MAIN START " + datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y") + "******************\n\n")        
+    os.environ['KMP_DUPLICATE_LIB_OK']='True'    
+    mp.set_start_method('spawn', force=True)
+    mp_lock = mp.Lock()
+
+    # Clean tmp directories
+    tmp_dirs = glob.glob('/dev/shm/tornado_tmp_*')
+    for t in tmp_dirs: 
+        shutil.rmtree(t)
+        print(f"Deleted tmp directory: {t}")
+
+    # All Time Data file to get event timestamps
+    kwargs['run_params_dir_name'] = get_training_dir_name(**kwargs)
+
+    # Set world size to number of GPUs in system available to CUDA
+    world_size = torch.cuda.device_count()
+        
+    # Random animal name
+    run_notes = random_animal(**kwargs) 
+
+    # Call the initialization script to start new run or continue existing run
+    kwargs = initialize_directories(run_notes=run_notes, **kwargs)
+
+    # Print the model forward pass sizes
+    fake_data = torch.rand(kwargs['max_batch_size'], kwargs['transformer_seq_length'], kwargs['padded_channels'], kwargs['encode_token_samples']) 
+    print_models_flow(x=fake_data, **kwargs)
+
+    # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)
+    s = kwargs['model_dir'].split("/")[-1]
+    kwargs['timestamp_id'] = ''.join(map(str, s))
+    kwargs['run_name'] = '_'.join(map(str,s.split('_')[0:2]))
+
+    # Save the post-processed kwargs to a file in model directory
+    savedir = f"{kwargs['model_dir']}/config"
+    if not os.path.exists(savedir): os.makedirs(savedir)
+    save_name = f"{savedir}/kwargs_execd_epoch{kwargs['start_epoch']}.pkl"
+    with open(save_name, "wb") as f: pickle.dump(kwargs, f)
+
+    # Export the conda environment
+    env_name = os.environ.get("CONDA_DEFAULT_ENV")
+    if env_name:
+        output_file = f"{savedir}/{env_name}_environment.yml"
+        try:
+            subprocess.run(["conda", "env", "export", "--file", output_file], check=True)
+            print(f"Conda environment '{env_name}' exported to {output_file}")
+        except subprocess.CalledProcessError as e:
+            print(f"Error exporting Conda environment: {e}")
+    else:
+        print("No active Conda environment detected.")
+
+    return world_size, kwargs
+
+
+# FILE I/O
+
+def exec_kwargs(kwargs):
+    # exec all kwargs in case there is python code
+    for k in kwargs:
+            if isinstance(kwargs[k], str):
+                if kwargs[k][0:6] == 'kwargs':
+                    exec(kwargs[k])
+
+    return kwargs
+
 def get_num_channels(pat_id, pat_num_channels_LUT):
 
     df = pd.read_csv(pat_num_channels_LUT)
 
     return int(df.loc[df['pat_id'] == pat_id, 'num_channels'].iloc[0])
 
-def print_model_summary(model):
-    print("Calculating model summary")
-    summary(model, num_classes=1)
-    mem_params = sum([param.nelement() * param.element_size() for param in model.parameters()])
-    mem_bufs = sum([buf.nelement() * buf.element_size() for buf in model.buffers()])
-    mem = (mem_params + mem_bufs) / 1e9  # in bytes
-    print("Expected GPU memory requirement (parameters + buffers): " + str(mem) +" GB")
+def filename_to_datetimes(list_file_names):
+        start_datetimes = [datetime.datetime.min]*len(list_file_names)
+        stop_datetimes = [datetime.datetime.min]*len(list_file_names)
+        for i in range(0, len(list_file_names)):
+            splits = list_file_names[i].split('_')
+            aD = splits[1]
+            aT = splits[2]
+            start_datetimes[i] = datetime.datetime(int(aD[4:8]), int(aD[0:2]), int(aD[2:4]), int(aT[0:2]), int(aT[2:4]), int(aT[4:6]), int(int(aT[6:8])*1e4))
+            bD = splits[4]
+            bT = splits[5]
+            stop_datetimes[i] = datetime.datetime(int(bD[4:8]), int(bD[0:2]), int(bD[2:4]), int(bT[0:2]), int(bT[2:4]), int(bT[4:6]), int(int(bT[6:8])*1e4))
+        return start_datetimes, stop_datetimes
 
-def create_metadata_subtitle(plot_dict):
+def delete_old_checkpoints(dir: str, curr_epoch: int, KL_divergence_stall_epochs, KL_divergence_epochs_AT_max, KL_divergence_epochs_TO_max, **kwargs):
 
-    return ("\nLR: " + str(plot_dict["LR_curr"]) + 
-    "\nKL_divergence Multiplier: " + str(round(plot_dict["KL_divergence_multiplier"],4)) + 
-    "\nPre/Postictal Color: " + str(plot_dict["plot_preictal_color"]) + "/" + str(plot_dict["plot_postictal_color"]) + " sec" + 
-    ", File Attention Pre/Postictal: " + str(plot_dict["preictal_classify_sec"]) + "/" + str(plot_dict["postictal_classify_sec"]) + " sec" + 
-    "\nInput Samples: " + str(plot_dict["input_samples"]) + 
-    ", Latent Dimensions: " + str(plot_dict["total_latent_dims"]) + 
-    ", Decode Samples: " + str(plot_dict["decode_samples"]) + 
-    ", Compression: " + str(plot_dict["dec_compression_ratio"]) + 
-    ", Input Stride: " + str(plot_dict["input_stride"]))
+    # SAVE_KEYWORDS = ["hdbscan", "pacmap"]
+
+    all_dir_names = glob.glob(f"{dir}/Epoch*")
+
+    epoch_nums = [int(f.split("/")[-1].replace("Epoch_","")) for f in all_dir_names]
+
+    # Add current epoch to save files
+    save_epochs = [curr_epoch]
+
+    # KEYWORD Save
+    # for i in range(len(all_dir_names)):
+    #     subepoch_dirs = [f.split("/")[-1] for f in glob.glob(all_dir_names[i] + "/*")]
+    #     for f in subepoch_dirs:
+    #         if any(substr in f for substr in SAVE_KEYWORDS):
+    #             save_epochs.append(epoch_nums[i])
+    #             break
+
+    # KL_divergence Epoch cycle save - save the last epoch in a KL_divergence annealing cycle
+    mod_val = KL_divergence_stall_epochs + KL_divergence_epochs_AT_max + KL_divergence_epochs_TO_max - 1
+    for x in epoch_nums:
+        if (x % mod_val == 0) & (curr_epoch > 0):
+            save_epochs.append(x)
+
+    [shutil.rmtree(all_dir_names[i]) if epoch_nums[i] not in save_epochs else print(f"saved: {all_dir_names[i].split('/')[-1]}") for i in range(len(epoch_nums))]
+
+    return
+
+def digest_SPES_notes(spes_file):
+
+    # For gen1 of this code, we want a single epoch for the ENTIRE stim session of a single bipole pair (all current levels in one sungle epoch)
+    spes_style = -1 # -1 is style not found yet. 0 is 'old' style with 'Closed Relay' in line. 1 is 'new' style with more specific 'Start Stimulation' for EACH current level
+    spes_master_EDF_creation_datetime = []
+    spes_stim_pair_names = []
+    spes_start_datetimes = []
+    spes_stop_datetimes = []
+
+
+    # Read file to digest stim paairs
+    with open(spes_file, 'rb') as file:
+        encoding = chardet.detect(file.read())['encoding']
+
+    stim_pairs_count = 0
+    seeking_state = 0 # 0 need initial params, 1 seeking next stim pair, 2 found stim pair, need end time
+    with codecs.open(spes_file, encoding=encoding) as f:
+        for line in f:
+            # Parse each line manually
+            
+            # STATE 0: Catch the inital parameters needed to parse the rest of the file
+            if seeking_state == 0:
+                if ('Creation Date' in line) & (spes_master_EDF_creation_datetime == []):
+                    raw_timestr = line[15:-2]
+                    spes_master_EDF_creation_datetime = datetime.datetime.strptime(raw_timestr, '%H:%M:%S %b %d, %Y')
+                elif spes_style == -1:
+                    if 'Closed relay' in line: 
+                        spes_style = 0
+                        seeking_state = 1
+                    elif 'Start Stimulation' in line: 
+                        spes_style = 1
+                        seeking_state = 1
+            
+            # STATE 1: Looking for next stim pair
+            if seeking_state == 1: # Not an 'elif' to catch the first relay pair
+                if spes_style == 0:
+                    if 'Closed relay' in line:
+                        spes_stim_pair_names.append(line[29:-2])
+                        timestr = line[3:11] + ' ' + spes_master_EDF_creation_datetime.strftime('%d/%m/%Y')
+                        datetime_curr = datetime.datetime.strptime(timestr, '%H:%M:%S %d/%m/%Y')
+                        if datetime_curr < spes_master_EDF_creation_datetime: datetime_curr = datetime_curr + datetime.timedelta(days=1)
+                        spes_start_datetimes.append(datetime_curr)
+                        stim_pairs_count += 1
+                        seeking_state = 2
+
+                elif spes_style == 1:
+                    if 'Start Stimulation' in line: 
+                        raise Exception("Need to code up style 2, might not be same indexes as style 1")
+
+                        stim_pairs_count += 1
+                        seeking_state = 2
+            
+            # STATE 2: Looking for next stim pair
+            elif seeking_state == 2:
+                if 'Closed relay' in line: raise Exception("ERROR: 'Closed relay' found in following line before an enddate for previous stim pair was found: " + line)
+
+                elif spes_style == 0:
+                    if 'Opened relay' in line: 
+                        timestr = line[3:11] + ' ' + spes_master_EDF_creation_datetime.strftime('%d/%m/%Y')
+                        datetime_curr = datetime.datetime.strptime(timestr, '%H:%M:%S %d/%m/%Y')
+                        if datetime_curr < spes_master_EDF_creation_datetime: datetime_curr = datetime_curr + datetime.timedelta(days=1)
+                        spes_stop_datetimes.append(datetime_curr)
+                        seeking_state = 1
+
+                elif spes_style == 1:
+                    raise Exception("Need to code up style 2, complicated logic to get the end of stim pair session")
+                
+    # Read file in again to find the session start and stop times
+    if spes_style == 0:
+        stim_session_start = []
+        stim_session_stop = []
+        with open(spes_file, 'rb') as file:
+            encoding = chardet.detect(file.read())['encoding']
+
+        with codecs.open(spes_file, encoding=encoding) as f:
+            for line in f:
+                if 'Beginning of Recording' in line:
+                    if stim_session_start != []: raise Exception('ERROR: stim session start already found')
+                    timestr = line[3:11] + ' ' + spes_master_EDF_creation_datetime.strftime('%d/%m/%Y')
+                    stim_session_start = datetime.datetime.strptime(timestr, '%H:%M:%S %d/%m/%Y')
+                if 'End of Study' in line:
+                    if stim_session_stop != []: raise Exception('ERROR: stim session stop already found')
+                    timestr = line[3:11] + ' ' + spes_master_EDF_creation_datetime.strftime('%d/%m/%Y')
+                    stim_session_stop = datetime.datetime.strptime(timestr, '%H:%M:%S %d/%m/%Y')
+    
+    elif spes_style == 1:
+        raise Exception("Not coded up yet")
+
+    return spes_stim_pair_names, spes_start_datetimes, spes_stop_datetimes, stim_session_start, stim_session_stop
+
+def get_training_dir_name(train_val_pat_perc, **kwargs):
+    
+    train_str = str(train_val_pat_perc[0]*100)
+    val_str = str(train_val_pat_perc[1]*100)
+    run_params_dir_name = "dataset_train" + train_str + "_val" + val_str 
+
+    return run_params_dir_name
+
+def get_pat_seiz_datetimes(
+    pat_id, 
+    atd_file, 
+    FBTC_bool=True, 
+    FIAS_bool=True, 
+    FAS_to_FIAS_bool=True,
+    FAS_bool=True, 
+    subclinical_bool=True, 
+    focal_unknown_bool=True,
+    unknown_bool=True, 
+    non_electro_bool=False,
+    **kwargs
+    ):
+
+    # # Debugging
+    # print(pat_id)
+
+    # Original ATD file from Derek was tab seperated
+    atd_df = pd.read_csv(atd_file, sep=',', header='infer')
+    pat_seizure_bool = (atd_df['Pat ID'] == pat_id) & (atd_df['Type'] == "Seizure")
+    pat_seizurebool_AND_desiredTypes = pat_seizure_bool
+    
+    # Look for each seizure type individually & delete if not desired
+    # seiz_type_list = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Subclinical', 'Focal, unknown awareness', 'Unknown', 'Non-electrographic']
+    seiz_type_list = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Subclinical', 'Focal unknown awareness', 'Unknown', 'Non-electrographic']
+    delete_seiz_type_bool_list = [FBTC_bool, FIAS_bool, FAS_to_FIAS_bool, FAS_bool, subclinical_bool, focal_unknown_bool, unknown_bool, non_electro_bool]
+    for i in range(0,len(seiz_type_list)):
+        if delete_seiz_type_bool_list[i]==False:
+            find_str = seiz_type_list[i]
+            curr_bool = pat_seizure_bool & (atd_df.loc[:,'Seizure Type (FAS; FIAS; FBTC; Non-electrographic; Subclinical; Unknown)'] == find_str)
+            pat_seizurebool_AND_desiredTypes[curr_bool] = False
+
+    df_subset = atd_df.loc[pat_seizurebool_AND_desiredTypes, ['Type','Seizure Type (FAS; FIAS; FBTC; Non-electrographic; Subclinical; Unknown)', 'Date (MM:DD:YYYY)', 'Onset String (HH:MM:SS)', 'Offset String (HH:MM:SS)']]
+    
+    pat_seiz_startdate_str = df_subset.loc[:,'Date (MM:DD:YYYY)'].astype(str).values.tolist() 
+    pat_seiz_starttime_str = df_subset.loc[:,'Onset String (HH:MM:SS)'].astype(str).values.tolist()
+    pat_seiz_stoptime_str = df_subset.loc[:,'Offset String (HH:MM:SS)'].astype(str).values.tolist()
+    pat_seiz_types_str = df_subset.loc[:,'Seizure Type (FAS; FIAS; FBTC; Non-electrographic; Subclinical; Unknown)'].astype(str).values.tolist()
+
+    # Skip any lines that have nan/none or unknown time entries
+    delete_list_A = [i for i, val in enumerate(pat_seiz_starttime_str) if (val=='nan' or val=='Unknown')]
+    delete_list_B = [i for i, val in enumerate(pat_seiz_stoptime_str) if (val=='nan' or val=='Unknown')]
+    delete_list = list(set(delete_list_A + delete_list_B))
+    delete_list.sort()
+    if len(delete_list) > 0:
+        print(f"WARNING: deleting {len(delete_list)} seizure(s) out of {len(pat_seiz_startdate_str)} due to 'nan'/'none'/'Unknown' in master time sheet")
+        print(f"Delete list is: {delete_list}")
+        [pat_seiz_startdate_str.pop(del_idx) for del_idx in reversed(delete_list)]
+        [pat_seiz_starttime_str.pop(del_idx) for del_idx in reversed(delete_list)]
+        [pat_seiz_stoptime_str.pop(del_idx) for del_idx in reversed(delete_list)]
+        [pat_seiz_types_str.pop(del_idx) for del_idx in reversed(delete_list)]
+
+    # Initialize datetimes
+    pat_seiz_start_datetimes = [0]*len(pat_seiz_starttime_str)
+    pat_seiz_stop_datetimes = [0]*len(pat_seiz_stoptime_str)
+
+    for i in range(0,len(pat_seiz_startdate_str)):
+        sD_splits = pat_seiz_startdate_str[i].split(':')
+        sT_splits = pat_seiz_starttime_str[i].split(':')
+        start_time = datetime.time(
+                            int(sT_splits[0]),
+                            int(sT_splits[1]),
+                            int(sT_splits[2]))
+        pat_seiz_start_datetimes[i] = datetime.datetime(int(sD_splits[2]), # Year
+                                            int(sD_splits[0]), # Month
+                                            int(sD_splits[1]), # Day
+                                            int(sT_splits[0]), # Hour
+                                            int(sT_splits[1]), # Minute
+                                            int(sT_splits[2])) # Second
+        
+        sTstop_splits = pat_seiz_stoptime_str[i].split(':')
+        stop_time = datetime.time(
+                            int(sTstop_splits[0]),
+                            int(sTstop_splits[1]),
+                            int(sTstop_splits[2]))
+
+        if stop_time > start_time: # if within same day (i.e. the TIME advances, no date included), assign same date to datetime, otherwise assign next day
+            pat_seiz_stop_datetimes[i] = datetime.datetime.combine(pat_seiz_start_datetimes[i], stop_time)
+        else: 
+            pat_seiz_stop_datetimes[i] = datetime.datetime.combine(pat_seiz_start_datetimes[i] + datetime.timedelta(days=1), stop_time)
+
+    return pat_seiz_start_datetimes, pat_seiz_stop_datetimes, pat_seiz_types_str
+
+def get_desired_fnames(
+        gpu_id: int,
+        pat_id: str, 
+        atd_file: str, 
+        data_dir: str, 
+        intrapatient_dataset_style: list, 
+        hour_dataset_range: list, 
+        dataset_pic_dir: str,
+        print_dataset_bargraphs: bool,
+        **kwargs
+        ):
+    
+    # This will have all of the desired file names before splitting into train/val/test
+    curr_fnames = []  
+
+    # Get all data without SPES
+    if intrapatient_dataset_style == 1:
+        curr_fnames = glob.glob(data_dir + '/all_epochs_woSPES/*.pkl') # relies of directory naming to be consistent
+        curr_fnames = sort_filenames(curr_fnames)
+    
+    # Get all data with SPES
+    elif intrapatient_dataset_style == 2:
+        curr_fnames = glob.glob(data_dir + '/*/*.pkl')
+        curr_fnames = sort_filenames(curr_fnames)
+
+    # Get ONLY SPES data
+    elif intrapatient_dataset_style == 3:
+        curr_fnames = glob.glob(data_dir + '/SPES/*.pkl')
+        curr_fnames = sort_filenames(curr_fnames)
+
+    else:
+        raise Exception(f"[GPU{str(gpu_id)}] Invalid 'dataset_style' choice, must be 1, 2, or 3")
+
+
+    # Now split up the data according to dataset range
+    end_names = [x.split('/')[-1] for x in curr_fnames]
+    start_dts, end_dts = filename_to_datetimes(end_names)
+
+
+    if (hour_dataset_range[0] == -1) & (hour_dataset_range[1] == -1):
+        curr_fnames = curr_fnames # Do nothing
+
+    elif hour_dataset_range[1] == -1:
+        # Start time givem, but end is -1 meaning give all
+        found_hours = False
+        for i in range(len(start_dts)):
+            if start_dts[i] > (start_dts[0] + datetime.timedelta(hours=hour_dataset_range[0])):
+                curr_fnames = curr_fnames[i:-1]
+                found_hours = True
+                break
+        if not found_hours: raise Exception("Hours desired not found")
+    
+    elif hour_dataset_range[0] == -1:
+        # Run from beginning to given end hours
+        found_hours = False
+        print("ToDO")
+        for i in range(len(end_dts)):
+            if end_dts[i] > (start_dts[0] + datetime.timedelta(hours=hour_dataset_range[1])):
+                curr_fnames = curr_fnames[0:i-1]
+                found_hours = True
+                break
+        if not found_hours: raise Exception("Hours desired not found")
+
+    else:
+        # Should have 2 valid numbers in range
+        found_hours = False
+        for i in range(len(start_dts)):
+            if start_dts[i] > (start_dts[0] + datetime.timedelta(hours=hour_dataset_range[0])):
+                for j in range(i, len(end_dts)):
+                    if end_dts[j] > (start_dts[0] + datetime.timedelta(hours=hour_dataset_range[1])):
+                        curr_fnames = curr_fnames[i:j-1]
+                        found_hours = True
+                        break
+                break
+        if not found_hours: raise Exception("Hours desired not found")
+
+    if (gpu_id == 0) & print_dataset_bargraphs:
+        print_dataset_bargraphs(pat_id, curr_fnames, curr_fnames, dataset_pic_dir, atd_file=atd_file)
+
+    return curr_fnames
+
+def sort_filenames(file_list):
+    # Ensure just have the filename and not whole path
+    fnames = [x.split("/")[-1] for x in file_list]
+    all_datetimes = filename_to_datetimes(fnames)
+    all_start_seconds = [int((x - x.min).total_seconds()) for x in all_datetimes[0]]
+
+    sort_idxs = np.argsort(all_start_seconds)
+
+    sorted_file_list = [file_list[i] for i in sort_idxs]
+
+    return sorted_file_list
+
+def append_timestamp(filename):
+    ts = time.asctime(time.localtime(time.time()))
+    ts = ts.replace(" ", "_")
+    ts = ts.replace(":", "_")
+    return filename + ts
+
+
+# LEARNING RATES & LOSS WEIGHTS
 
 def LR_subfunction(iter_curr, LR_min, LR_max, epoch, manual_gamma, manual_step_size, epoch_stall, LR_epochs_TO_max, LR_epochs_AT_max, iters_per_epoch, LR_rise_first=True):
 
@@ -553,93 +1272,8 @@ def LR_and_weight_schedules(
 
     return  mean_match_static_weight, logvar_match_static_weight, mse_val, KL_divergence_val, gp_weight_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, mogpred_diversity_val, classifier_weight, classifier_val
 
-def get_random_batch_idxs(num_backprops, num_files, num_samples_in_file, past_seq_length, manual_batch_size, stride, decode_samples):
-    """
-    Generates random indices for batching across multiple files with temporal augmentation.
 
-    This function produces a 3D array of random indices that represent the starting points 
-    for batches during backpropagation. For each backprop iteration, a new set of indices 
-    is randomly sampled from each file, ensuring that the sequence of samples fits within 
-    the boundaries of each file. The function also incorporates a frame shift for augmenting 
-    the temporal structure of the data, and ensures that the sampling does not result in 
-    out-of-bounds errors by considering the past sequence length and decoding samples.
-
-    Parameters:
-    -----------
-    num_backprops : int
-        The number of backpropagation steps (or iterations) for which to generate indices.
-        
-    num_files : int
-        The number of files from which indices will be sampled.
-
-    num_samples_in_file : int
-        The total number of samples available in each file. Used to check for index 
-        overflow when adding sequence lengths.
-
-    past_seq_length : int
-        The length of the sequence used for the past context in each backpropagation step. 
-        Ensures that sampled indices, when combined with the context and decoding length, 
-        do not exceed the available samples in the file.
-
-    manual_batch_size : int
-        The number of samples to extract for each backpropagation iteration from each file.
-
-    stride : int
-        The step size between consecutive samples. This allows for random sampling and 
-        augmentation within each file, ensuring variety in the sampled frames.
-
-    decode_samples : int
-        The number of samples used for decoding in the sequence. This is added to the index 
-        validation to ensure that the samples can be decoded without exceeding the file's 
-        total length.
-
-    Returns:
-    --------
-    numpy.ndarray
-        A 3D NumPy array with shape (num_backprops, num_files, manual_batch_size). 
-        Each entry in this array is a randomly selected index for a sample in the 
-        corresponding file and backprop iteration.
-
-    Raises:
-    -------
-    Exception
-        If the generated index plus the `past_seq_length` and `decode_samples` exceeds 
-        the number of samples available in the file (`num_samples_in_file`), an error 
-        will be raised.
-    """
-    # Build the output shape: the idea is that you pull out a backprop iter, then you have sequential idxs the size of manual_batch_size for every file within that backprop
-    out = np.zeros([num_backprops, num_files, manual_batch_size])
-
-    for i in range(0, num_files):
-        rand_backprop_idxs = list(range(0,num_backprops))
-        np.random.shuffle(rand_backprop_idxs)
-        for j in range(0, num_backprops):
-            for k in range(0, manual_batch_size):
-                random_frame_shift = int(random.uniform(0, stride-1)) # Pull a new random shift every time so that repeated augment files have differenr frame shifts
-                tmp = random_frame_shift + (stride * manual_batch_size) * rand_backprop_idxs[j] + stride * k
-                if (tmp + past_seq_length + decode_samples) > num_samples_in_file: raise Exception("Error: [index + past_seq_length + decode_samples] will exceed file length")
-                out[j, i, k] = tmp
-
-    return out.astype('int')
-                
-def atd_str2datetime(s):
-    # Must account for varying completeness of microseconds (e.g. 2017-10-15 06:40:20 vs. 2017-11-11 08:33:51.000 vs. 2021-01-19 07:00:31.027734)
-    if '.' not in s:
-        s = f"{s}.000000"
-    else:
-        micro_str = s.split('.')[-1]
-        num_digs = len(micro_str)
-        if num_digs < 6:
-            buff = '0'*(6-num_digs)
-            s = f"{s}{buff}"
-
-    return datetime.datetime.strptime(s, '%Y-%m-%d %H:%M:%S.%f')
-
-
-# DATA MANIPULATIONS
-
-def flatten(list_of_lists):
-  return [item for sublist in list_of_lists for item in sublist]
+# DECODER HASHING
 
 def hash_to_vector(input_string, num_channels, padded_channels, latent_dim, modifier, hash_output_range):
     """
@@ -764,7 +1398,7 @@ def plot_prior(prior_means, prior_logvars, prior_weights, savedir, epoch, **kwar
 
 def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_means, encoder_logvars, 
                    encoder_mogpreds, encoder_zmeaned, savedir, epoch, mean_lims, logvar_lims, 
-                   num_accumulated_plotting_dims=5, max_components=8, n_bins=200, threshold=0.001, **kwargs):
+                   num_accumulated_plotting_dims=5, max_components=8, n_bins=200, threshold_modifier=10, **kwargs):
     """
     Plot distributions of encoder statistics across MoG components using histograms.
     Only plots up to max_components MoG components (default: 8).
@@ -789,6 +1423,8 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
         **kwargs: Additional arguments
     """
     Batch, K, D = encoder_means.shape
+
+    threshold = 1.0 / (K * threshold_modifier)
     
     # Limit number of components to plot
     components_to_plot = min(max_components, K)
@@ -905,10 +1541,15 @@ def plot_posterior(gpu_id, prior_means, prior_logvars, prior_weights, encoder_me
     plt.savefig(savename_jpg, dpi=200)
     plt.close(fig)
 
-PATIENT_COLOR_MAP = {} # Global dictionary to store patient ID to color mappings
+PATIENT_COLOR_MAP = {} # Initialize a global dictionary to store patient ID to color mappings
 def print_patposteriorweights_cumulative(mogpreds, patidxs, patname_list, savedir, epoch, iter_curr, **kwargs):
     """
     Plot stacked bar plots for MoG weights, colored by patient proportions.
+    Each xtick shows the component ID, and below it, the number of unique
+    patients represented in that bar (only counting patients with at least
+    one MoG weight > 1/(num_components * 10)). The threshold is displayed
+    in the x-axis label. The first legend entry corresponds to the top
+    of the bar stack, and so on.
 
     Args:
         mogpreds (np.ndarray): Softmaxed MoG weights, shape (num_samples, num_components).
@@ -929,6 +1570,7 @@ def print_patposteriorweights_cumulative(mogpreds, patidxs, patname_list, savedi
     # Get unique patient indices and MoG components
     unique_patidxs = np.unique(patidxs)
     num_components = mogpreds.shape[1]
+    weight_threshold = 1.0 / (num_components * 10)
 
     # Accumulate MoG weights for each component, grouped by patient
     component_sums = np.zeros((num_components, len(unique_patidxs)))
@@ -945,34 +1587,52 @@ def print_patposteriorweights_cumulative(mogpreds, patidxs, patname_list, savedi
         colors = plt.cm.tab20.colors  # Use a larger colormap if needed
 
     # Assign colors to patients (reuse existing mappings or create new ones)
-    for patidx in unique_patidxs:
+    patient_handles = []
+    patient_labels = []
+    bottom = np.zeros(num_components)
+    for i, patidx in enumerate(unique_patidxs):
         if patidx not in PATIENT_COLOR_MAP:
             PATIENT_COLOR_MAP[patidx] = colors[len(PATIENT_COLOR_MAP) % len(colors)]
 
-    # Plot each component
-    bottom = np.zeros(num_components)
-    for i, patidx in enumerate(unique_patidxs):
         # Get the patient name from patname_list using the index
         patname = patname_list[int(patidx)]
-        ax.bar(
+        color = PATIENT_COLOR_MAP[patidx]
+        bars = ax.bar(
             range(num_components),
             component_sums[:, i],
             bottom=bottom,
-            color=PATIENT_COLOR_MAP[patidx],
+            color=color,
             label=patname  # Use patient name instead of numerical ID
         )
         bottom += component_sums[:, i]
+        patient_handles.append(bars[0])  # Store the bar object for the legend
+        patient_labels.append(patname)
 
     # Customize the plot
-    ax.set_xlabel("MoG Component")
+    ax.set_xlabel(f"MoG Component\n[Unique Patients (Weight > {weight_threshold:.3g})] ")
     ax.set_ylabel("Sum of MoG Weights")
     ax.set_title(f"MoG Component Weights by Patient (Epoch {epoch}, Iter {iter_curr}) - {mogpreds.shape[0]} Embeddings")
-    # ax.set_xticks(range(num_components))
-    # ax.set_xticklabels([f"Comp {i}" for i in range(num_components)])
+    ax.set_xticks(range(num_components))
 
-    # Add legend with smaller text
-    legend = ax.legend(title="Patient Name", bbox_to_anchor=(1.05, 1), loc='upper left', prop={'size': 8})  # Shrink legend text
-    plt.setp(legend.get_title(), fontsize='8')  # Shrink legend title text
+    # Calculate the number of unique patients contributing to each bar (with threshold)
+    unique_patients_per_component = []
+    for c in range(num_components):
+        contributing_patients_count = 0
+        for i, patidx in enumerate(unique_patidxs):
+            mask = (patidxs == patidx)
+            patient_mog_preds = mogpreds[mask]
+            # Check if any single MoG weight for this patient exceeds the threshold
+            if np.any(patient_mog_preds[:, c] > weight_threshold):
+                contributing_patients_count += 1
+        unique_patients_per_component.append(contributing_patients_count)
+
+    # Set the x-tick labels with component ID and unique patient count
+    xtick_labels = [f"{i}\n[{count}]" for i, count in enumerate(unique_patients_per_component)]
+    ax.set_xticklabels(xtick_labels)
+
+    # Add legend (reversed order)
+    ax.legend(patient_handles[::-1], patient_labels[::-1], title="Patient Name", bbox_to_anchor=(1.05, 1), loc='upper left', prop={'size': 8})
+    plt.setp(ax.get_legend().get_title(), fontsize='8')
 
     # Save the plot
     if not os.path.exists(savedir): os.makedirs(savedir)
@@ -1282,7 +1942,7 @@ def print_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_meanH
                 end = min(cols, i + diag_mask_buffer_tokens + 1)
                 mask[i, start:end] = True
                 
-            # Verify masked area sums to 0 (if not, warn but continue)
+            # Verify masked area sums to 0 (if not, raise Exception)
             masked_sum = np.where(mask, plot_data, 0).sum()
             if not np.isclose(masked_sum, 0, atol=1e-6):
                 raise Exception(f"Error: Masked attention weights sum to {masked_sum:.6f} (expected 0) "
@@ -1313,47 +1973,6 @@ def print_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_meanH
         pl.close(fig)   
 
     pl.close('all')
-
-# def print_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, diag_mask_buffer_tokens, **kwargs):
-
-#     scores_byLayer_meanHeads = scores_byLayer_meanHeads.detach().cpu().numpy()
-
-#     batchsize, n_layers, rows, cols = scores_byLayer_meanHeads.shape
-
-#     # Make new grid/fig for every batch
-#     for b in range(0, batchsize):
-#         gs = gridspec.GridSpec(1, 2) 
-#         fig = pl.figure(figsize=(20, 14))
-
-#         # Only plotting First and Last layer
-#         for l in range(n_layers):
-
-#             ax_curr = fig.add_subplot(gs[0, l]) 
-#             plot_data = scores_byLayer_meanHeads[b, l, :, :] # Add small amount to avoid log error when scaling
-
-#             # Replace diagonal with NaN
-
-#             mask = np.eye(plot_data.shape[0], dtype=bool)
-#             assert np.where(~mask, 0, plot_data).sum() == 0  # Make sure diaganal sums to 0, or masking was not done correctly
-#             plot_data = np.where(mask, np.nan, plot_data)   
-
-#             # # Multiply each row of the data by its row index
-#             # for i in range(plot_data.shape[0]):
-#             #     plot_data[i, :] *= (i + 1)  # Multiply by row index (1-based)
-
-#             # Plot the heatmap
-#             sns.heatmap(plot_data, cmap=sns.cubehelix_palette(as_cmap=True), ax=ax_curr, cbar_kws={'label': 'Row-Weighted Attention', 'orientation': 'horizontal'}) 
-#             if l == 0: ax_curr.set_title(f"First Layer - Mean of Heads")
-#             else: ax_curr.set_title(f"Last Layer - Mean of Heads")
-#             ax_curr.set_aspect('equal', adjustable='box')
-
-#         fig.suptitle(f"Attention Weights - Batch:{b}")
-#         if not os.path.exists(savedir): os.makedirs(savedir)
-#         savename_jpg = f"{savedir}/ByLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_patidx{pat_idxs[b].cpu().numpy()}.jpg"
-#         pl.savefig(savename_jpg, dpi=200)
-#         pl.close(fig)   
-
-#     pl.close('all') 
 
 def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, atd_file, pre_ictal_taper_sec=120, post_ictal_taper_sec=120, **kwargs):
 
@@ -1550,881 +2169,4 @@ def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir
     pl.savefig(savename, dpi=200)
     pl.close('all')
 
-def rgbtoint32(rgb):
-    rgb = np.array(rgb*256, dtype=int)
-    color = 0
-    for c in rgb[::-1]:
-        color = (color<<8) + c
-        # Do not forget parenthesis.
-        # color<< 8 + c is equivalent of color << (8+c)
-    return color
 
-def int32torgb(color):
-    if color == np.nan: return np.nan
-    rgb = []
-    for i in range(3):
-        rgb.append(color&0xff)
-        color = color >> 8
-    rgb = np.array(float(rgb)/256)
-    return rgb
-
-def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
-    new_cmap = colors.LinearSegmentedColormap.from_list(
-        'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
-        cmap(np.linspace(minval, maxval, n)))
-    return new_cmap
-
-
-# FILE I/O
-
-def exec_kwargs(kwargs):
-    # exec all kwargs in case there is python code
-    for k in kwargs:
-            if isinstance(kwargs[k], str):
-                if kwargs[k][0:6] == 'kwargs':
-                    exec(kwargs[k])
-
-    return kwargs
-
-def filename_to_dateobj(f: str, start_or_end: int):
-    # if start_or_end is '0' the beginning of file timestamp is used, if '1' the end
-
-    splits = f.split("_")
-
-    if start_or_end == 0:
-        split_date_idx = 1
-        split_time_idx = 2
-
-    elif start_or_end == 1:
-        split_date_idx = 4
-        split_time_idx = 5
-
-    year = int(splits[split_date_idx][4:8])
-    month = int(splits[split_date_idx][0:2])
-    day = int(splits[split_date_idx][2:4])
-    hour = int(splits[split_time_idx][0:2])
-    minute = int(splits[split_time_idx][2:4])
-    second = int(splits[split_time_idx][4:6])
-    microsecond = int((int(splits[2][6:8])/100)*1e6)
-    # datetime(year, month, day, hour, minute, second, microsecond)
-    return datetime.datetime(year, month, day, hour, minute, second, microsecond)
-
-def filename_to_datetimes(list_file_names):
-        start_datetimes = [datetime.datetime.min]*len(list_file_names)
-        stop_datetimes = [datetime.datetime.min]*len(list_file_names)
-        for i in range(0, len(list_file_names)):
-            splits = list_file_names[i].split('_')
-            aD = splits[1]
-            aT = splits[2]
-            start_datetimes[i] = datetime.datetime(int(aD[4:8]), int(aD[0:2]), int(aD[2:4]), int(aT[0:2]), int(aT[2:4]), int(aT[4:6]), int(int(aT[6:8])*1e4))
-            bD = splits[4]
-            bT = splits[5]
-            stop_datetimes[i] = datetime.datetime(int(bD[4:8]), int(bD[0:2]), int(bD[2:4]), int(bT[0:2]), int(bT[2:4]), int(bT[4:6]), int(int(bT[6:8])*1e4))
-        return start_datetimes, stop_datetimes
-
-def delete_old_checkpoints(dir: str, curr_epoch: int, KL_divergence_stall_epochs, KL_divergence_epochs_AT_max, KL_divergence_epochs_TO_max, **kwargs):
-
-    # SAVE_KEYWORDS = ["hdbscan", "pacmap"]
-
-    all_dir_names = glob.glob(f"{dir}/Epoch*")
-
-    epoch_nums = [int(f.split("/")[-1].replace("Epoch_","")) for f in all_dir_names]
-
-    # Add current epoch to save files
-    save_epochs = [curr_epoch]
-
-    # KEYWORD Save
-    # for i in range(len(all_dir_names)):
-    #     subepoch_dirs = [f.split("/")[-1] for f in glob.glob(all_dir_names[i] + "/*")]
-    #     for f in subepoch_dirs:
-    #         if any(substr in f for substr in SAVE_KEYWORDS):
-    #             save_epochs.append(epoch_nums[i])
-    #             break
-
-    # KL_divergence Epoch cycle save - save the last epoch in a KL_divergence annealing cycle
-    mod_val = KL_divergence_stall_epochs + KL_divergence_epochs_AT_max + KL_divergence_epochs_TO_max - 1
-    for x in epoch_nums:
-        if (x % mod_val == 0) & (curr_epoch > 0):
-            save_epochs.append(x)
-
-    [shutil.rmtree(all_dir_names[i]) if epoch_nums[i] not in save_epochs else print(f"saved: {all_dir_names[i].split('/')[-1]}") for i in range(len(epoch_nums))]
-
-    return
-
-def digest_SPES_notes(spes_file):
-
-    # For gen1 of this code, we want a single epoch for the ENTIRE stim session of a single bipole pair (all current levels in one sungle epoch)
-    spes_style = -1 # -1 is style not found yet. 0 is 'old' style with 'Closed Relay' in line. 1 is 'new' style with more specific 'Start Stimulation' for EACH current level
-    spes_master_EDF_creation_datetime = []
-    spes_stim_pair_names = []
-    spes_start_datetimes = []
-    spes_stop_datetimes = []
-
-
-    # Read file to digest stim paairs
-    with open(spes_file, 'rb') as file:
-        encoding = chardet.detect(file.read())['encoding']
-
-    stim_pairs_count = 0
-    seeking_state = 0 # 0 need initial params, 1 seeking next stim pair, 2 found stim pair, need end time
-    with codecs.open(spes_file, encoding=encoding) as f:
-        for line in f:
-            # Parse each line manually
-            
-            # STATE 0: Catch the inital parameters needed to parse the rest of the file
-            if seeking_state == 0:
-                if ('Creation Date' in line) & (spes_master_EDF_creation_datetime == []):
-                    raw_timestr = line[15:-2]
-                    spes_master_EDF_creation_datetime = datetime.datetime.strptime(raw_timestr, '%H:%M:%S %b %d, %Y')
-                elif spes_style == -1:
-                    if 'Closed relay' in line: 
-                        spes_style = 0
-                        seeking_state = 1
-                    elif 'Start Stimulation' in line: 
-                        spes_style = 1
-                        seeking_state = 1
-            
-            # STATE 1: Looking for next stim pair
-            if seeking_state == 1: # Not an 'elif' to catch the first relay pair
-                if spes_style == 0:
-                    if 'Closed relay' in line:
-                        spes_stim_pair_names.append(line[29:-2])
-                        timestr = line[3:11] + ' ' + spes_master_EDF_creation_datetime.strftime('%d/%m/%Y')
-                        datetime_curr = datetime.datetime.strptime(timestr, '%H:%M:%S %d/%m/%Y')
-                        if datetime_curr < spes_master_EDF_creation_datetime: datetime_curr = datetime_curr + datetime.timedelta(days=1)
-                        spes_start_datetimes.append(datetime_curr)
-                        stim_pairs_count += 1
-                        seeking_state = 2
-
-                elif spes_style == 1:
-                    if 'Start Stimulation' in line: 
-                        raise Exception("Need to code up style 2, might not be same indexes as style 1")
-
-                        stim_pairs_count += 1
-                        seeking_state = 2
-            
-            # STATE 2: Looking for next stim pair
-            elif seeking_state == 2:
-                if 'Closed relay' in line: raise Exception("ERROR: 'Closed relay' found in following line before an enddate for previous stim pair was found: " + line)
-
-                elif spes_style == 0:
-                    if 'Opened relay' in line: 
-                        timestr = line[3:11] + ' ' + spes_master_EDF_creation_datetime.strftime('%d/%m/%Y')
-                        datetime_curr = datetime.datetime.strptime(timestr, '%H:%M:%S %d/%m/%Y')
-                        if datetime_curr < spes_master_EDF_creation_datetime: datetime_curr = datetime_curr + datetime.timedelta(days=1)
-                        spes_stop_datetimes.append(datetime_curr)
-                        seeking_state = 1
-
-                elif spes_style == 1:
-                    raise Exception("Need to code up style 2, complicated logic to get the end of stim pair session")
-                
-    # Read file in again to find the session start and stop times
-    if spes_style == 0:
-        stim_session_start = []
-        stim_session_stop = []
-        with open(spes_file, 'rb') as file:
-            encoding = chardet.detect(file.read())['encoding']
-
-        with codecs.open(spes_file, encoding=encoding) as f:
-            for line in f:
-                if 'Beginning of Recording' in line:
-                    if stim_session_start != []: raise Exception('ERROR: stim session start already found')
-                    timestr = line[3:11] + ' ' + spes_master_EDF_creation_datetime.strftime('%d/%m/%Y')
-                    stim_session_start = datetime.datetime.strptime(timestr, '%H:%M:%S %d/%m/%Y')
-                if 'End of Study' in line:
-                    if stim_session_stop != []: raise Exception('ERROR: stim session stop already found')
-                    timestr = line[3:11] + ' ' + spes_master_EDF_creation_datetime.strftime('%d/%m/%Y')
-                    stim_session_stop = datetime.datetime.strptime(timestr, '%H:%M:%S %d/%m/%Y')
-    
-    elif spes_style == 1:
-        raise Exception("Not coded up yet")
-
-    return spes_stim_pair_names, spes_start_datetimes, spes_stop_datetimes, stim_session_start, stim_session_stop
-
-def get_start_stop_from_latent_path(latent_file):
-    s = latent_file.split('_')[-5] + latent_file.split('_')[-4]
-    abs_start_datetime = datetime.datetime(int(s[4:8]),int(s[0:2]),int(s[2:4]),int(s[8:10]),int(s[10:12]),int(s[12:14]),int(int(s[14:16])*1e4))
-    s = latent_file.split('_')[-2] + latent_file.split('_')[-1].replace('.pkl','')
-    abs_stop_datetime = datetime.datetime(int(s[4:8]),int(s[0:2]),int(s[2:4]),int(s[8:10]),int(s[10:12]),int(s[12:14]),int(int(s[14:16])*1e4))
-
-    return abs_start_datetime, abs_stop_datetime
-
-def filename_to_datetimes(list_file_names):
-        start_datetimes = [datetime.datetime.min]*len(list_file_names)
-        stop_datetimes = [datetime.datetime.min]*len(list_file_names)
-        for i in range(0, len(list_file_names)):
-            splits = list_file_names[i].split('_')
-            aD = splits[1]
-            aT = splits[2]
-            start_datetimes[i] = datetime.datetime(int(aD[4:8]), int(aD[0:2]), int(aD[2:4]), int(aT[0:2]), int(aT[2:4]), int(aT[4:6]), int(int(aT[6:8])*1e4))
-            bD = splits[4]
-            bT = splits[5]
-            stop_datetimes[i] = datetime.datetime(int(bD[4:8]), int(bD[0:2]), int(bD[2:4]), int(bT[0:2]), int(bT[2:4]), int(bT[4:6]), int(int(bT[6:8])*1e4))
-        return start_datetimes, stop_datetimes
-
-def datetimes_to_filename(start_dt, stop_dt):
-    if len(start_dt) != 1: raise Exception("Expected only one datetime for start and one for stop")
-    start_microsec_trunc_str = start_dt[0].strftime('%f')[0:2]
-    start_str = f"{start_dt[0].strftime('%m%d%Y_%H%M%S')}{start_microsec_trunc_str}"
-    stop_microsec_trunc_str = stop_dt[0].strftime('%f')[0:2]
-    stop_str = f"{stop_dt[0].strftime('%m%d%Y_%H%M%S')}{stop_microsec_trunc_str}"
-
-    out = f"{start_str}_to_{stop_str}"
-    if out == None: raise Exception("ERROR: out string formatted to none")
-
-    return out
-
-def get_training_dir_name(train_val_pat_perc, **kwargs):
-    
-    train_str = str(train_val_pat_perc[0]*100)
-    val_str = str(train_val_pat_perc[1]*100)
-    run_params_dir_name = "dataset_train" + train_str + "_val" + val_str 
-
-    return run_params_dir_name
-
-def get_hours_inferred_str(intrapatient_dataset_style):
-
-    if intrapatient_dataset_style[0] == 0: f = 'seizure_based_inference'
-    elif intrapatient_dataset_style[0] == 1: f = 'inference_on_all_epochs_withoutSPES'
-    elif intrapatient_dataset_style[0] == 2: f = 'inference_on_all_epochs_withSPES'
-    return f
-
-def get_pat_seiz_datetimes(
-    pat_id, 
-    atd_file, 
-    FBTC_bool=True, 
-    FIAS_bool=True, 
-    FAS_to_FIAS_bool=True,
-    FAS_bool=True, 
-    subclinical_bool=True, 
-    focal_unknown_bool=True,
-    unknown_bool=True, 
-    non_electro_bool=False,
-    **kwargs
-    ):
-
-    # # Debugging
-    # print(pat_id)
-
-    # Original ATD file from Derek was tab seperated
-    atd_df = pd.read_csv(atd_file, sep=',', header='infer')
-    pat_seizure_bool = (atd_df['Pat ID'] == pat_id) & (atd_df['Type'] == "Seizure")
-    pat_seizurebool_AND_desiredTypes = pat_seizure_bool
-    
-    # Look for each seizure type individually & delete if not desired
-    # seiz_type_list = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Subclinical', 'Focal, unknown awareness', 'Unknown', 'Non-electrographic']
-    seiz_type_list = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Subclinical', 'Focal unknown awareness', 'Unknown', 'Non-electrographic']
-    delete_seiz_type_bool_list = [FBTC_bool, FIAS_bool, FAS_to_FIAS_bool, FAS_bool, subclinical_bool, focal_unknown_bool, unknown_bool, non_electro_bool]
-    for i in range(0,len(seiz_type_list)):
-        if delete_seiz_type_bool_list[i]==False:
-            find_str = seiz_type_list[i]
-            curr_bool = pat_seizure_bool & (atd_df.loc[:,'Seizure Type (FAS; FIAS; FBTC; Non-electrographic; Subclinical; Unknown)'] == find_str)
-            pat_seizurebool_AND_desiredTypes[curr_bool] = False
-
-    df_subset = atd_df.loc[pat_seizurebool_AND_desiredTypes, ['Type','Seizure Type (FAS; FIAS; FBTC; Non-electrographic; Subclinical; Unknown)', 'Date (MM:DD:YYYY)', 'Onset String (HH:MM:SS)', 'Offset String (HH:MM:SS)']]
-    
-    pat_seiz_startdate_str = df_subset.loc[:,'Date (MM:DD:YYYY)'].astype(str).values.tolist() 
-    pat_seiz_starttime_str = df_subset.loc[:,'Onset String (HH:MM:SS)'].astype(str).values.tolist()
-    pat_seiz_stoptime_str = df_subset.loc[:,'Offset String (HH:MM:SS)'].astype(str).values.tolist()
-    pat_seiz_types_str = df_subset.loc[:,'Seizure Type (FAS; FIAS; FBTC; Non-electrographic; Subclinical; Unknown)'].astype(str).values.tolist()
-
-    # Skip any lines that have nan/none or unknown time entries
-    delete_list_A = [i for i, val in enumerate(pat_seiz_starttime_str) if (val=='nan' or val=='Unknown')]
-    delete_list_B = [i for i, val in enumerate(pat_seiz_stoptime_str) if (val=='nan' or val=='Unknown')]
-    delete_list = list(set(delete_list_A + delete_list_B))
-    delete_list.sort()
-    if len(delete_list) > 0:
-        print(f"WARNING: deleting {len(delete_list)} seizure(s) out of {len(pat_seiz_startdate_str)} due to 'nan'/'none'/'Unknown' in master time sheet")
-        print(f"Delete list is: {delete_list}")
-        [pat_seiz_startdate_str.pop(del_idx) for del_idx in reversed(delete_list)]
-        [pat_seiz_starttime_str.pop(del_idx) for del_idx in reversed(delete_list)]
-        [pat_seiz_stoptime_str.pop(del_idx) for del_idx in reversed(delete_list)]
-        [pat_seiz_types_str.pop(del_idx) for del_idx in reversed(delete_list)]
-
-    # Initialize datetimes
-    pat_seiz_start_datetimes = [0]*len(pat_seiz_starttime_str)
-    pat_seiz_stop_datetimes = [0]*len(pat_seiz_stoptime_str)
-
-    for i in range(0,len(pat_seiz_startdate_str)):
-        sD_splits = pat_seiz_startdate_str[i].split(':')
-        sT_splits = pat_seiz_starttime_str[i].split(':')
-        start_time = datetime.time(
-                            int(sT_splits[0]),
-                            int(sT_splits[1]),
-                            int(sT_splits[2]))
-        pat_seiz_start_datetimes[i] = datetime.datetime(int(sD_splits[2]), # Year
-                                            int(sD_splits[0]), # Month
-                                            int(sD_splits[1]), # Day
-                                            int(sT_splits[0]), # Hour
-                                            int(sT_splits[1]), # Minute
-                                            int(sT_splits[2])) # Second
-        
-        sTstop_splits = pat_seiz_stoptime_str[i].split(':')
-        stop_time = datetime.time(
-                            int(sTstop_splits[0]),
-                            int(sTstop_splits[1]),
-                            int(sTstop_splits[2]))
-
-        if stop_time > start_time: # if within same day (i.e. the TIME advances, no date included), assign same date to datetime, otherwise assign next day
-            pat_seiz_stop_datetimes[i] = datetime.datetime.combine(pat_seiz_start_datetimes[i], stop_time)
-        else: 
-            pat_seiz_stop_datetimes[i] = datetime.datetime.combine(pat_seiz_start_datetimes[i] + datetime.timedelta(days=1), stop_time)
-
-    return pat_seiz_start_datetimes, pat_seiz_stop_datetimes, pat_seiz_types_str
-
-def get_desired_fnames(
-        gpu_id: int,
-        pat_id: str, 
-        atd_file: str, 
-        data_dir: str, 
-        intrapatient_dataset_style: list, 
-        hour_dataset_range: list, 
-        dataset_pic_dir: str,
-        print_dataset_bargraphs: bool,
-        **kwargs
-        ):
-    
-    # This will have all of the desired file names before splitting into train/val/test
-    curr_fnames = []  
-
-    # Get all data without SPES
-    if intrapatient_dataset_style == 1:
-        curr_fnames = glob.glob(data_dir + '/all_epochs_woSPES/*.pkl') # relies of directory naming to be consistent
-        curr_fnames = sort_filenames(curr_fnames)
-    
-    # Get all data with SPES
-    elif intrapatient_dataset_style == 2:
-        curr_fnames = glob.glob(data_dir + '/*/*.pkl')
-        curr_fnames = sort_filenames(curr_fnames)
-
-    # Get ONLY SPES data
-    elif intrapatient_dataset_style == 3:
-        curr_fnames = glob.glob(data_dir + '/SPES/*.pkl')
-        curr_fnames = sort_filenames(curr_fnames)
-
-    else:
-        raise Exception(f"[GPU{str(gpu_id)}] Invalid 'dataset_style' choice, must be 1, 2, or 3")
-
-
-    # Now split up the data according to dataset range
-    end_names = [x.split('/')[-1] for x in curr_fnames]
-    start_dts, end_dts = filename_to_datetimes(end_names)
-
-
-    if (hour_dataset_range[0] == -1) & (hour_dataset_range[1] == -1):
-        curr_fnames = curr_fnames # Do nothing
-
-    elif hour_dataset_range[1] == -1:
-        # Start time givem, but end is -1 meaning give all
-        found_hours = False
-        for i in range(len(start_dts)):
-            if start_dts[i] > (start_dts[0] + datetime.timedelta(hours=hour_dataset_range[0])):
-                curr_fnames = curr_fnames[i:-1]
-                found_hours = True
-                break
-        if not found_hours: raise Exception("Hours desired not found")
-    
-    elif hour_dataset_range[0] == -1:
-        # Run from beginning to given end hours
-        found_hours = False
-        print("ToDO")
-        for i in range(len(end_dts)):
-            if end_dts[i] > (start_dts[0] + datetime.timedelta(hours=hour_dataset_range[1])):
-                curr_fnames = curr_fnames[0:i-1]
-                found_hours = True
-                break
-        if not found_hours: raise Exception("Hours desired not found")
-
-    else:
-        # Should have 2 valid numbers in range
-        found_hours = False
-        for i in range(len(start_dts)):
-            if start_dts[i] > (start_dts[0] + datetime.timedelta(hours=hour_dataset_range[0])):
-                for j in range(i, len(end_dts)):
-                    if end_dts[j] > (start_dts[0] + datetime.timedelta(hours=hour_dataset_range[1])):
-                        curr_fnames = curr_fnames[i:j-1]
-                        found_hours = True
-                        break
-                break
-        if not found_hours: raise Exception("Hours desired not found")
-
-    if (gpu_id == 0) & print_dataset_bargraphs:
-        print_dataset_bargraphs(pat_id, curr_fnames, curr_fnames, dataset_pic_dir, atd_file=atd_file)
-
-    return curr_fnames
-
-def sort_filenames(file_list):
-    # Ensure just have the filename and not whole path
-    fnames = [x.split("/")[-1] for x in file_list]
-    all_datetimes = filename_to_datetimes(fnames)
-    all_start_seconds = [int((x - x.min).total_seconds()) for x in all_datetimes[0]]
-
-    sort_idxs = np.argsort(all_start_seconds)
-
-    sorted_file_list = [file_list[i] for i in sort_idxs]
-
-    return sorted_file_list
-
-def get_emu_timestamps(atd_file, pat_id):
-    
-    atd_df = pd.read_csv(atd_file, sep='\t')
-    file_bool = (atd_df['Pat ID'] == pat_id) & (atd_df['Type'] == "File")
-    
-    df_subset = atd_df.loc[file_bool, ['onset_datetime', 'offset_datetime', 'FileName']]
-    
-    emu_file_starts_str = df_subset.loc[:,'onset_datetime'].astype(str).values.tolist() 
-    emu_file_stops_str = df_subset.loc[:,'offset_datetime'].astype(str).values.tolist()
-    emu_filenames = df_subset.loc[:,'FileName'].astype(str).values.tolist()
-
-    # Convert to datetime
-    emu_file_starts_dt = [atd_str2datetime(s) for s in emu_file_starts_str]
-    emu_file_stops_dt = [atd_str2datetime(s) for s in emu_file_stops_str]
-
-    return emu_filenames, emu_file_starts_dt, emu_file_stops_dt
-    
-def digest_timestamps(atd_file, pat_id):
-
-    # Seizures
-    seiz_starts_dt, seiz_stops_dt, seiz_types = get_pat_seiz_datetimes(pat_id, 
-                           atd_file=atd_file,
-                           FBTC_bool=True, 
-                           FIAS_bool=True, 
-                           FAS_to_FIAS_bool=True,
-                           FAS_bool=True, 
-                           subclinical_bool=True, 
-                           focal_unknown_bool=True,
-                           unknown_bool=True, 
-                           non_electro_bool=False)
-
-    # File Timestamps
-    emu_filenames, emu_file_starts_dt, emu_file_stops_dt = get_emu_timestamps(atd_file=atd_file, pat_id=pat_id)
-
-
-    return seiz_starts_dt, seiz_stops_dt, seiz_types, emu_filenames, emu_file_starts_dt, emu_file_stops_dt
-
-def get_files_spanning_datetimes(search_dir, start_dt, stop_dt):
-    pkl_paths = glob.glob(f"{search_dir}/*.pkl")
-    pkl_files = [p.split("/")[-1] for p in pkl_paths]
-    pkl_starts_dt, pkl_stops_dt = filename_to_datetimes(pkl_files)
-
-    files_in_range = None
-
-    for i in range(len(pkl_starts_dt)):
-        if ((pkl_stops_dt[i] > start_dt) & (pkl_stops_dt[i] < stop_dt)) or ((pkl_starts_dt[i] > start_dt) & (pkl_starts_dt[i] < stop_dt)) or ((pkl_starts_dt[i] < start_dt) & (pkl_stops_dt[i] > stop_dt)):
-            if files_in_range == None:
-                files_in_range = [pkl_paths[i]]
-            else:
-                files_in_range.append(pkl_paths[i])
-
-    return files_in_range
-
-def append_timestamp(filename):
-    ts = time.asctime(time.localtime(time.time()))
-    ts = ts.replace(" ", "_")
-    ts = ts.replace(":", "_")
-    return filename + ts
-
-def get_sorted_datetimes_from_files(files):
-
-    start_dt, stop_dt = filename_to_datetimes([files[i].split("/")[-1] for i in range(len(files))])
-    sort_idxs = [i[0] for i in sorted(enumerate(start_dt), key=lambda x:x[1])]
-    files_sorted = [files[sort_idxs[i]] for i in range(len(sort_idxs))]; 
-    start_dt_sorted = [start_dt[sort_idxs[i]] for i in range(len(sort_idxs))]; 
-    stop_dt_sorted = [stop_dt[sort_idxs[i]] for i in range(len(sort_idxs))]; 
-
-    return files_sorted, start_dt_sorted, stop_dt_sorted
-
-
-# SIGNAL PROCESSING
-
-def create_bip_mont(channels: list[str], pat_id: str, ch_names_to_ignore: list, save_dir: str):
-    bip_names = []
-    mont_idxs = []
-
-    # Delete unused channels, whole strings must match
-    ch_idx_to_delete = []
-    ch_names_found_to_delete = []
-    for j in range(len(channels)):
-        for i in range(len(ch_names_to_ignore)):
-            if ch_names_to_ignore[i] == channels[j]:
-                ch_idx_to_delete = ch_idx_to_delete + [j]
-                ch_names_found_to_delete = ch_names_found_to_delete + [channels[j]]
-                continue
-    
-    # TODO Should be sorting channel names now to deal with Edge cases for patients collected on NK 
-    # where 2 channels are listed out of order, but this may actually introduce MORE errors than 
-    # if we leave it where we assume channels are in order
-
-    # Find all numbers at ends of channel labels
-    nums = np.ones(len(channels), dtype=int)*-1
-    for i in range(0,len(channels)):
-
-        # Skip unused channels
-        if i in ch_idx_to_delete: 
-            continue
-
-        str_curr = channels[i]
-        still_number = True
-        ch_idx = -1
-        while still_number:
-            curr_chunk = str_curr[ch_idx:]
-            if not curr_chunk.isnumeric():
-                nums[i] = str_curr[ch_idx+1:]
-                still_number = False
-            ch_idx = ch_idx - 1
-    
-    # Base the lead change on when numbers switch because this is more
-    # robust to weird naming strategies that use numbers in base name
-    for i in range(0,len(nums) - 1):
-        if nums[i] + 1 == nums[i+1]:
-            # Valid monotonically increasing bipolar pair
-            bip_names.append(channels[i] + channels[i+1])
-            mont_idxs.append([i,i+1])
-
-    # Save a CSV to output directory with bip names and mont_idxs 
-    if not os.path.exists(save_dir): os.mkdir(save_dir)
-    df_bipmont = pd.DataFrame({'mont_idxs': mont_idxs, 
-                       'bip_names': bip_names})
-    df_bipmont.to_csv(save_dir + '/' + pat_id + '_bipolar_montage_names_and_indexes_from_rawEDF.csv')
-
-    return mont_idxs, bip_names
-
-def highpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 8):
-    sos = scipy.signal.butter(poles, cutoff, 'highpass', fs=sample_rate, output='sos')
-    filtered_data = scipy.signal.sosfiltfilt(sos, data)
-    return filtered_data
-
-def bandstop(data: np.ndarray, edges: list[float], sample_rate: float, poles: int = 8):
-    sos = scipy.signal.butter(poles, edges, 'bandstop', fs=sample_rate, output='sos')
-    filtered_data = scipy.signal.sosfiltfilt(sos, data)
-    return filtered_data
-
-def lowpass(data: np.ndarray, cutoff: float, sample_rate: float, poles: int = 8):
-    sos = scipy.signal.butter(poles, cutoff, 'lowpass', fs=sample_rate, output='sos')
-    filtered_data = scipy.signal.sosfiltfilt(sos, data)
-    return filtered_data
-
-def apply_wholeband_filter(y0, fs):
-
-    # Hardcoded filter values, Hz - This is done before splitting into desired freq ranges
-    FILT_HP = 1
-    FILT_BS_RANGE_1 = [59, 61]
-    FILT_BS_RANGE_2 = [119, 121]
-    FILT_LP = 179
-    
-    y1 = highpass(y0, FILT_HP, fs)
-    y2 = bandstop(y1, FILT_BS_RANGE_1, fs)
-    y3 = bandstop(y2, FILT_BS_RANGE_2, fs)
-    y4 = lowpass(y3, FILT_LP, fs)
-
-    return y4
-
-def apply_banded_filter(y0, freq_bands, fs, arbitrary_scaling_perc_range=[1, 99]):
-    tmp = np.empty((len(freq_bands), y0.shape[0]), dtype=np.float64)
-    for b in range(len(freq_bands)):
-        curr_range = freq_bands[b]
-        y1 = highpass(y0, curr_range[0], fs)
-        y2 = lowpass(y1, curr_range[1], fs)
-
-        # Resccale to maximize float16 format
-        min_perc_y2 = np.percentile(np.abs(y2), arbitrary_scaling_perc_range[0])
-        max_perc_y2 = np.percentile(np.abs(y2), arbitrary_scaling_perc_range[1])
-
-        tmp[b] = y2/(max_perc_y2 - min_perc_y2)
-
-    return tmp.astype(np.float16)
-
-def read_channel(f, i):
-    return f.readSignal(i)
-
-def montage_filter_pickle_edfs(pat_id: str, dir_edf: str, save_dir: str, desired_samp_freq: int, freq_bands: list, expected_unit: str, montage: str, ch_names_to_ignore: list, ignore_channel_units: bool):
-                    
-        files =  glob.glob(dir_edf + "/*.EDF")
-
-        # CREATE BIPOLAR MONTAGE
-        # Find a suitable file to mnake the montage first because of "c_label" problem
-        # Find a file WITHOUT clabel in the name
-        print("Finding file without 'clabel' problem to make bipolar montage")
-        file_idx = -1
-        total_files = len(files)
-        for file in files:
-            file_idx += 1
-            print("[" + str(file_idx) + '/' + str(total_files) + ']: ' + file)
-            if "clabel" not in file.split("/")[-1]:
-                print(f"Found file [{file}], calculating bipolar montage")
-                # Use PyEDFLib to read in files
-                # (MNE broke for large files) 
-                f = pyedflib.EdfReader(file)
-                channels = f.getSignalLabels()
-                mont_idxs, bip_names = create_bip_mont(channels, pat_id, ch_names_to_ignore, save_dir + '/metadata')
-                print("Montage created")
-                f._close()
-                del f
-                break
-
-
-        file_idx = -1
-        total_files = len(files)
-        print("Processing all files:")
-        for file in files:
-            file_idx += 1
-            print("[" + str(file_idx) + '/' + str(total_files) + ']: ' + file)
-            print("Reading in EDF")
-            gc.collect()
-     
-            # Use PyEDFLib to read in files
-            # (MNE broke for large files) 
-            f = pyedflib.EdfReader(file)
-            n = f.signals_in_file
-            channels = f.getSignalLabels()
-            all_samp_freqs = np.array(f.getSampleFrequencies())
-                        
-            # Ensure all channel units are the same
-            if not ignore_channel_units:
-                sig_headers = f.getSignalHeaders()
-                ch_units = np.empty(len(channels), dtype=object)
-                for i in range(0,len(channels)):
-                    ch_units[i] = sig_headers[i]['dimension']
-                if not np.all(ch_units == ch_units[0]): raise Exception("Not all channel units are the same for file: " + file)  
-                # Compare this unit to the expected file units
-                if ch_units[0] != expected_unit: raise Exception("Current file's channel units do not equal expected units: " + expected_unit + ". Current file: " + file)
-                # Store this unit to compare to next EDF file
-            
-            start_t = time.time()
-            raw_data = np.zeros((n, f.getNSamples()[0]), dtype=np.float16)
-            for i in np.arange(n):
-                raw_data[i, :] = f.readSignal(i)
-            print(f"Time read EDF in: {time.time()-start_t}")
-            f._close()
-            del f
-            print("EDF read in")
-
-            # Ensure sampling freq are all equal to eachother
-            if not np.all(all_samp_freqs == all_samp_freqs[0]): raise Exception("Not all sampling freqs units are the same for file: " + file)
-            
-            # Check sampling frequency is as desired, resample if not:
-            fs = all_samp_freqs[0] # all should be equal, can just pull first one
-            if fs != desired_samp_freq: 
-                # raise Exception(f"Sampling frequency resampling to {desired_samp_freq} not yet coded, needed for file: {file}, this file was sampled at {fs}" )
-                print(f"Resampling to {desired_samp_freq} for file: {file}, this file was sampled at {fs} Hz")
-                if fs%desired_samp_freq == 0:
-                    fs_mult = int(fs/desired_samp_freq)
-                    print(f"Sampling frequency of file [{fs}] is exact multiple of desired sampling frequency [{desired_samp_freq}], so simply indexing at interval of {fs_mult}")
-                    # Simply index at the multiple
-                    raw_data = raw_data[:, 0::fs_mult]
-                    fs = desired_samp_freq
-                else:
-                    raise Exception(f"FS [{fs}] NOT MULTIPLE OF DESIRED SAMPLING FREQUENCY - NOT CODED UP YET")
-            else:
-                print(f"Sampling frequency confirmed to be {fs} Hz")
-
-            # If doing bipolar montage
-            if montage == 'BIPOLE':
-                print("Assigning bipolar montage")
-                # Check that bip names match based on already created montage from previous files
-                new_bip_names = ["" for x in range(len(bip_names))]
-                for i in range(0,len(bip_names)):
-                    new_bip_names[i] = channels[mont_idxs[i][0]] + channels[mont_idxs[i][1]]
-                if new_bip_names != bip_names: 
-                    print("WARNING: Current file's created bip montage does not exactly equal original file montage. Current file: " + file)
-                    print("Assuming that channels are in proper order, just with wrong names (i.e. bad Natus template)")
-
-                # If we made it this far, then the montage aligns across EDF files
-                # Re-assign data to bipolar montage (i.e. subtraction: A-B)
-                new_raw_data = np.empty([len(bip_names),raw_data.shape[1]], dtype=np.float16)
-                for i in range(0,len(bip_names)):
-                    new_raw_data[i,:] = raw_data[mont_idxs[i][0],:] - raw_data[mont_idxs[i][1],:]
-                raw_data = new_raw_data
-                del new_raw_data
-                gc.collect()
-
-                # Re-assign channel names to bipolar
-                channels = bip_names
-                print("Bipolar montage assignment complete")
-
-            # Filter with IIR zero phase sosfiltfilt pass bands)
-            # Do each channel sepreately (#TODO: parallelize)
-            # filt_data = np.empty(raw_data.shape, dtype=np.float16)
-            print("Filtering the data")
-            filt_data = np.asarray([apply_wholeband_filter(raw_data[i,:], fs) for i in range(0, len(channels))], dtype=np.float16)
-
-            print("Data wholeband filtered, with line noise notch filters")
-            if freq_bands == []:
-                filt_data_banded = filt_data
-            else:
-                print(f"Filtering into subbands {freq_bands} Hz")
-                # filt_data_banded = np.empty(raw_data.shape[0] * len(freq_bands), raw_data.shape[1], dtype=np.float16) 
-                filt_data_banded = np.concatenate([apply_banded_filter(filt_data[i,:], freq_bands, fs) for i in range(0, len(channels))], axis=0).astype(np.float16)
-
-            del raw_data
-            del filt_data
-            gc.collect()
-
-            # Save the entire UNSCALED filtered data as a pickle file
-            freq_str = f"{freq_bands}".replace("], [", "Hz_").replace(", ", "to").replace("[[","").replace("]]","Hz")
-            if montage == 'BIPOLE': save_name = save_dir + '/' + file.split('/')[-1].replace('.EDF','_resampled_' + str(fs) + f'_Hz_bipole_filtered_{freq_str}.pkl')
-            if montage == 'MONOPOLE': save_name = save_dir + '/' + file.split('/')[-1].replace('.EDF','_resampled_' + str(fs) + f'_Hz_monopole_filtered_{freq_str}.pkl')
-            with open(save_name, "wb") as f:
-                pickle.dump(filt_data_banded, f)
-            print("Big pickle saved")
-
-
-
-# INITIALIZATIONS
-
-def random_filename_string(length=10):
-    characters = string.ascii_letters + string.digits
-    return ''.join(random.choice(characters) for i in range(length))
-
-def run_script_from_shell(env_python_path, script_path, *args):
-    """
-    Runs a Python script using the shell.
-
-    Args:
-        script_path (str): Path to the Python script.
-        *args: Arguments to pass to the script.
-
-    Returns:
-        tuple: A tuple containing the return code, standard output, and standard error.
-    """
-    try:
-        command = ['python', script_path, args[0], args[1], args[2]] # args: tmp_dir, fnames.csv, num_rand_hashes
-        # Run the command and suppress output
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-        # print("DEBUGGING SLEEP!!!")
-        # time.sleep(9999999)
-
-        return process
-
-    except subprocess.CalledProcessError as e:
-        return e.returncode, e.stdout, e.stderr
-    except FileNotFoundError:
-        return -1, "", "File not found"
-
-def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_workers=0):
-
-    if num_workers > 0:
-        persistent_workers=True
-        print("WARNING: num workers >0, have experienced odd errors...")
-
-    else:
-        persistent_workers=False
-
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        num_workers=num_workers,    
-        pin_memory=True,
-        shuffle=False,
-        sampler=DistributedSampler(dataset),
-        drop_last=droplast,
-        persistent_workers=persistent_workers
-    )
-
-def initialize_directories(
-        run_notes,
-        cont_train_model_dir,
-        **kwargs):
-
-    # *** CONTINUE EXISTING RUN initialization ***
-
-    if kwargs['continue_existing_training']:
-
-        kwargs['model_dir'] = cont_train_model_dir
-        kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs'
-        kwargs['log_dir'] =  kwargs['model_dir'] + '/data_logs'
-
-        # Find the epoch to start training
-        check_dir = kwargs['model_dir'] + "/checkpoints"
-        epoch_dirs = glob.glob(check_dir + '/Epoch*')
-        epoch_nums = [int(f.split("/")[-1].replace("Epoch_","")) for f in epoch_dirs]
-
-        # Find the highest epoch already trained
-        max_epoch = max(epoch_nums)
-        print(f"Resuming training after saved epoch: {str(max_epoch)}")
-        
-        # Construct the proper file names to get CORE state dicts
-        kwargs['gmvae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_gmvae.pt'
-        kwargs['gmvae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_gmvae_opt.pt'
-
-        # Proper names for running latents 
-        kwargs['running_mean_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_means.pkl'
-        kwargs['running_logvar_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_logvars.pkl'
-        kwargs['running_zmeaned_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_zmeaned.pkl'
-        kwargs['running_mogpreds_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_mogpreds.pkl' 
-        kwargs['running_patidxs_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_patidxs.pkl' 
-
-        # Set the start epoch 1 greater than max trained
-        kwargs['start_epoch'] = (max_epoch + 1) 
-        
-
-    # *** NEW RUN initialization ***  
-
-    else:
-        # Make run directories
-        kwargs['model_dir'] = append_timestamp(kwargs['root_save_dir'] + '/trained_models/' + kwargs['run_params_dir_name'] + '/' + run_notes + '_')
-        os.makedirs(kwargs['model_dir'])
-        kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs'
-        os.makedirs(kwargs['pic_dataset_dir'])
-        kwargs['log_dir'] =  kwargs['model_dir'] + '/data_logs'
-        os.makedirs(kwargs['log_dir'])
-
-        # Fresh run 
-        kwargs['start_epoch'] = 0
-
-    return kwargs
-
-def run_setup(**kwargs):
-    # Print to console
-    print("\n\n***************** MAIN START " + datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y") + "******************\n\n")        
-    os.environ['KMP_DUPLICATE_LIB_OK']='True'    
-    mp.set_start_method('spawn', force=True)
-    mp_lock = mp.Lock()
-
-    # Clean tmp directories
-    tmp_dirs = glob.glob('/dev/shm/tornado_tmp_*')
-    for t in tmp_dirs: 
-        shutil.rmtree(t)
-        print(f"Deleted tmp directory: {t}")
-
-    # All Time Data file to get event timestamps
-    kwargs['run_params_dir_name'] = get_training_dir_name(**kwargs)
-
-    # Set world size to number of GPUs in system available to CUDA
-    world_size = torch.cuda.device_count()
-        
-    # Random animal name
-    run_notes = random_animal(**kwargs) 
-
-    # Call the initialization script to start new run or continue existing run
-    kwargs = initialize_directories(run_notes=run_notes, **kwargs)
-
-    # Print the model forward pass sizes
-    fake_data = torch.rand(kwargs['max_batch_size'], kwargs['transformer_seq_length'], kwargs['padded_channels'], kwargs['encode_token_samples']) 
-    print_models_flow(x=fake_data, **kwargs)
-
-    # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)
-    s = kwargs['model_dir'].split("/")[-1]
-    kwargs['timestamp_id'] = ''.join(map(str, s))
-    kwargs['run_name'] = '_'.join(map(str,s.split('_')[0:2]))
-
-    # Save the post-processed kwargs to a file in model directory
-    savedir = f"{kwargs['model_dir']}/config"
-    if not os.path.exists(savedir): os.makedirs(savedir)
-    save_name = f"{savedir}/kwargs_execd_epoch{kwargs['start_epoch']}.pkl"
-    with open(save_name, "wb") as f: pickle.dump(kwargs, f)
-
-    # Export the conda environment
-    env_name = os.environ.get("CONDA_DEFAULT_ENV")
-    if env_name:
-        output_file = f"{savedir}/{env_name}_environment.yml"
-        try:
-            subprocess.run(["conda", "env", "export", "--file", output_file], check=True)
-            print(f"Conda environment '{env_name}' exported to {output_file}")
-        except subprocess.CalledProcessError as e:
-            print(f"Error exporting Conda environment: {e}")
-    else:
-        print("No active Conda environment detected.")
-
-    return world_size, kwargs

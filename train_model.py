@@ -1221,7 +1221,6 @@ class Trainer:
                 self._zero_all_grads()
                 loss.backward()    
                 torch.nn.utils.clip_grad_norm_(self.gmvae.module.parameters(), max_norm=1.0)
-                # torch.nn.utils.clip_grad_norm_(self.gmvae.module.prior.parameters(), max_norm=1.0) # Gradient clipping for MoG prior, prevent excessive updates even with strong regularization 
                 self.opt_gmvae.step()
                 self._update_reg_window(mean_tokenmeaned, logvar_tokenmeaned, z_tokenmeaned, mogpreds_logsofmaxed_tokenmeaned, file_class_label) # Update the buffers & detach() 
 
@@ -1309,10 +1308,14 @@ class Trainer:
                         val_unseen_AdversarialAlpha=self.classifier_alpha,
                         val_unseen_epoch=self.epoch)
 
-            wandb.log({**metrics, 'Steps': train_step})
+            try:
+                wandb.log({**metrics, 'Steps': train_step})
+            except Exception as e:
+                print(f"An error occurred during WandB logging': {e}")
 
             # Realtime latent visualizations
             if singlebatch_latent_printing & ((iter_curr + 1) % singlebatch_printing_interval == 0):
+                try:
                     if self.gpu_id == 0:
                         if torch.isnan(loss).any():
                             print("WARNING: Loss is nan, no plots can be made")
@@ -1371,6 +1374,8 @@ class Trainer:
                                     epoch = self.epoch,
                                     iter_curr = iter_curr,
                                     **kwargs)
+                except Exception as e:
+                    print(f"An error occurred during realtime plotting': {e}")
                                 
             # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
             iter_curr = iter_curr + 1
@@ -1378,31 +1383,34 @@ class Trainer:
         # Plot the accumulated running posterior outputs at end of epoch 
         # Already meaned at the token level
         # Not necessarily everything from epoch, the number of accumulated samples is defined by 'total_collected_latents'
-        utils_functions.plot_posterior( # Plot all GPUs
-            gpu_id = self.gpu_id, 
-            prior_means = self.gmvae.module.prior.means.detach().cpu().numpy(), 
-            prior_logvars = self.gmvae.module.prior.logvars.detach().cpu().numpy(), 
-            prior_weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0).detach().cpu().numpy(), 
-            encoder_means = self.accumulated_mean.detach().cpu().numpy(),
-            encoder_logvars = self.accumulated_logvar.detach().cpu().numpy(),
-            encoder_zmeaned = self.accumulated_zmeaned.detach().cpu().numpy(),
-            encoder_mogpreds = self.accumulated_mogpreds.detach().cpu().numpy(),
-            savedir = self.model_dir + f"/plots/{dataset_string}/posterior",
-            epoch = self.epoch,
-            **kwargs)
-        
-        if self.gpu_id == 0: utils_functions.plot_prior(
-            prior_means = self.gmvae.module.prior.means.detach().cpu().numpy(), 
-            prior_logvars = self.gmvae.module.prior.logvars.detach().cpu().numpy(), 
-            prior_weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0).detach().cpu().numpy(), 
-            savedir = self.model_dir + f"/plots/{dataset_string}/prior",
-            epoch = self.epoch,
-            **kwargs)
-        
-        print(f"[GPU{str(self.gpu_id)}] at end of epoch")
-        # barrier()
-        # gc.collect()
-        # torch.cuda.empty_cache()
+        try:
+            utils_functions.plot_posterior( # Plot all GPUs
+                gpu_id = self.gpu_id, 
+                prior_means = self.gmvae.module.prior.means.detach().cpu().numpy(), 
+                prior_logvars = self.gmvae.module.prior.logvars.detach().cpu().numpy(), 
+                prior_weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0).detach().cpu().numpy(), 
+                encoder_means = self.accumulated_mean.detach().cpu().numpy(),
+                encoder_logvars = self.accumulated_logvar.detach().cpu().numpy(),
+                encoder_zmeaned = self.accumulated_zmeaned.detach().cpu().numpy(),
+                encoder_mogpreds = self.accumulated_mogpreds.detach().cpu().numpy(),
+                savedir = self.model_dir + f"/plots/{dataset_string}/posterior",
+                epoch = self.epoch,
+                **kwargs)
+            
+            if self.gpu_id == 0: utils_functions.plot_prior(
+                prior_means = self.gmvae.module.prior.means.detach().cpu().numpy(), 
+                prior_logvars = self.gmvae.module.prior.logvars.detach().cpu().numpy(), 
+                prior_weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0).detach().cpu().numpy(), 
+                savedir = self.model_dir + f"/plots/{dataset_string}/prior",
+                epoch = self.epoch,
+                **kwargs)
+            
+            print(f"[GPU{str(self.gpu_id)}] at end of epoch")
+            # barrier()
+            # gc.collect()
+            # torch.cuda.empty_cache()
+        except Exception as e:
+            print(f"An error occurred during end-of-epoch plotting': {e}")
             
 if __name__ == "__main__":
 

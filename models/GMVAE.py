@@ -609,12 +609,10 @@ class Decoder_MLP(nn.Module):
         self.non_autoregressive_fc = nn.Sequential(
             nn.Linear(latent_dim, decoder_base_dims * decode_samples),
             nn.SiLU(),
-            RMSNorm(decoder_base_dims * decode_samples),
             nn.Linear(decoder_base_dims * decode_samples, decoder_base_dims * decode_samples),
-            nn.SiLU(),
-            RMSNorm(decoder_base_dims * decode_samples))
+            nn.SiLU())
                 
-        # Now FC without norms, after reshaping so that each token is seperated
+        # Now FC after reshaping so that each token is seperated
         self.non_autoregressive_output = nn.Sequential(
             nn.Linear(decoder_base_dims, output_channels),
             nn.Tanh())

@@ -53,7 +53,7 @@ def load_data_sample(pat_idx, file_idx, start_idx, pat_fnames, pat_ids, latent_d
     # data_tensor_np[ :len(hash_channel_order), :] = data[hash_channel_order, start_idx : end_idx]  # [Seq, padded_channels, autoencode_sample]
     # data_tensor_np = np.swapaxes(data_tensor_np.reshape(data_tensor_np.shape[0], transformer_seq_length, encode_token_samples), 0,1)
     
-    # Initialize & fill the data tensor
+    # Initialize & fill the data tensor 
     end_idx = start_idx + encode_token_samples * transformer_seq_length
     data_tensor_np = np.zeros((padded_channels, transformer_seq_length * encode_token_samples), dtype=np.float16) # Create an empty data tensor with the correct shape
     for i, channel_idx in enumerate(hash_channel_order): # Fill the data tensor according to hash_channel_order
