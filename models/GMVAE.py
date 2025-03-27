@@ -852,7 +852,7 @@ class GMVAE(nn.Module):
 
     Methods:
     --------
-    forward(x, reverse=False, hash_pat_embedding=-1)
+    forward(x, reverse=False)
         Forward pass through the GMVAE. If `reverse=False`, encodes input `x` into a latent 
         representation. If `reverse=True`, decodes a given latent `x` back into waveform data.
 
@@ -953,7 +953,7 @@ class GMVAE(nn.Module):
         # Non-linearity as needed
         self.silu = nn.SiLU()
 
-    def forward(self, x, reverse=False, hash_pat_embedding=-1):
+    def forward(self, x, reverse=False):
 
         if reverse == False:
 
@@ -999,11 +999,8 @@ class GMVAE(nn.Module):
 
         elif reverse == True:
 
-            # Add the hash_pat_embedding to latent vector
-            y = x + hash_pat_embedding.unsqueeze(dim=1).repeat(1, x.shape[1], 1)
-
             # Transformer Decoder
-            y = self.decoder(y).transpose(2,3)  # Comes out as [batch, token, waveform, num_channels] --> [batch, token, num_channels, waveform]
+            y = self.decoder(x).transpose(2,3)  # Comes out as [batch, token, waveform, num_channels] --> [batch, token, num_channels, waveform]
 
             return y
 
@@ -1067,13 +1064,10 @@ def print_models_flow(x, **kwargs):
     class_probs_mean_of_latent = gmvae.adversarial_classifier(z_meaned, alpha=1)
 
     # Run through WAE decoder
-    hash_pat_embedding = torch.rand(x.shape[0], z_token.shape[2])
-    hash_channel_order = np.arange(0, 199).tolist()
     print(f"\n\n\nINPUT TO <WAE - Decoder Mode> \n"
-    f"z:{z_token.shape}\n"
-    f"hash_pat_embedding:{hash_pat_embedding.shape}\n")
-    summary(gmvae, input_data=[z_token, True, hash_pat_embedding], depth=999, device="cpu")
-    posterior_out = gmvae(z_token, reverse=True, hash_pat_embedding=hash_pat_embedding)  
+    f"z:{z_token.shape}\n")
+    summary(gmvae, input_data=[z_token, True], depth=999, device="cpu")
+    posterior_out = gmvae(z_token, reverse=True)  
     print(f"decoder_out:{posterior_out.shape}\n")
 
     del gmvae

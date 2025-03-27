@@ -4,44 +4,29 @@
 Developed between 2023-2025
 
 """
-import string
-import subprocess
-import time
-import hashlib
-import random
-import datetime
-import pandas as pd
-import gc
-import glob
-import pyedflib
+import chardet, codecs, datetime, gc, glob, hashlib, json
+import multiprocessing as mp, os, pandas as pd, pickle, pyedflib, random
+import shutil, string, subprocess, sys, time
+
+import matplotlib as mpl
+import matplotlib.gridspec as gridspec
+import matplotlib.pylab as pl
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 import numpy as np
 import scipy
-import pickle
-import json
-import os
-import sys
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-from .latent_plotting import plot_latent
-import matplotlib.pylab as pl
-pl.switch_backend('agg')
-from torchinfo import summary
-from torch.utils.data.distributed import DistributedSampler
-from torch.utils.data import Dataset, DataLoader
-import chardet
-import codecs
-import torch
-import shutil
-from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
-import seaborn as sns
-import multiprocessing as mp
-import math
-import matplotlib.colors as colors
-from sklearn.metrics import confusion_matrix
-import matplotlib.colors as mcolors
-import cmasher as cmr
 from scipy.stats import gaussian_kde
+
+import torch
+from torch.utils.data import Dataset, DataLoader
+from torch.utils.data.distributed import DistributedSampler
+from torchinfo import summary
+
+import cmasher as cmr
+import matplotlib.colors as mcolors
+
+mpl.use('agg')
 
 # Local imports
 from models.GMVAE import print_models_flow
@@ -955,13 +940,13 @@ def LR_and_weight_schedules(
         mse_weight_min, mse_weight_max, mse_weight_stall_epochs, mse_weight_epochs_TO_max, mse_weight_epochs_AT_max,
         KL_divergence_max_weight, KL_divergence_min_weight, KL_divergence_epochs_TO_max, KL_divergence_epochs_AT_max, KL_divergence_stall_epochs,
         gp_weight_max, gp_weight_min, gp_weight_stall_epochs, gp_weight_epochs_TO_max, gp_weight_epochs_AT_max, 
-        posterior_mogpreds_entropy_weight_max, posterior_mogpreds_entropy_weight_min, posterior_mogpreds_entropy_weight_taper_epochs,
+        posterior_mogpreds_entropy_weight_max, posterior_mogpreds_entropy_weight_min, posterior_mogpreds_entropy_weight_stall_epochs, posterior_mogpreds_entropy_weight_taper_epochs,
         classifier_weight, 
         classifier_alpha_max, classifier_alpha_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier, 
         mean_match_static_weight, 
         logvar_match_static_weight, 
-        posterior_mogpreds_intersequence_diversity_weight_min, posterior_mogpreds_intersequence_diversity_weight_max, posterior_mogpreds_intersequence_diversity_weight_taper_epochs,
+        posterior_mogpreds_intersequence_diversity_weight_min, posterior_mogpreds_intersequence_diversity_weight_max, posterior_mogpreds_intersequence_diversity_weight_stall_epochs, posterior_mogpreds_intersequence_diversity_weight_taper_epochs,
         LR_max_posterior, LR_min_posterior, LR_epochs_stall_posterior, LR_epochs_TO_max_posterior, LR_epochs_AT_max_posterior,  manual_gamma_posterior, manual_step_size_posterior,
         LR_max_prior, LR_min_prior, LR_epochs_stall_prior, LR_epochs_TO_max_prior, LR_epochs_AT_max_prior,  manual_gamma_prior, manual_step_size_prior,
         mse_weight_rise_first=True, KL_divergence_rise_first=True, gp_weight_rise_first=True, LR_rise_first=True, **kwargs):
@@ -1173,21 +1158,27 @@ def LR_and_weight_schedules(
         else: raise Exception("ERROR: not coded up")
 
     # Posterior MoG Prediction Entropy TAPER
-    if epoch >= posterior_mogpreds_entropy_weight_taper_epochs:
+    entropy_total_active_epochs = posterior_mogpreds_entropy_weight_stall_epochs + posterior_mogpreds_entropy_weight_taper_epochs
+    if epoch < posterior_mogpreds_entropy_weight_stall_epochs:
+        mogpred_entropy_val = posterior_mogpreds_entropy_weight_max
+    elif epoch >= entropy_total_active_epochs:
         mogpred_entropy_val = posterior_mogpreds_entropy_weight_min
     else:
         posterior_mogpreds_entropy_range = posterior_mogpreds_entropy_weight_max - posterior_mogpreds_entropy_weight_min
         total_posterior_mogpreds_entropy_iters = posterior_mogpreds_entropy_weight_taper_epochs * iters_per_epoch
-        iter_mogpred_curr = epoch * iters_per_epoch + iter_curr
+        iter_mogpred_curr = (epoch - posterior_mogpreds_entropy_weight_stall_epochs) * iters_per_epoch + iter_curr
         mogpred_entropy_val = posterior_mogpreds_entropy_weight_max - posterior_mogpreds_entropy_range * (iter_mogpred_curr / total_posterior_mogpreds_entropy_iters) 
 
-    # Posterior MoG Prediction Batchwise-Diversity TAPER  posterior_mogpreds_intersequence_diversity_weight_min, posterior_mogpreds_intersequence_diversity_weight_max, posterior_mogpreds_intersequence_diversity_weight_taper_epochs
-    if epoch >= posterior_mogpreds_intersequence_diversity_weight_taper_epochs:
+    # Posterior MoG Prediction Batchwise-Diversity TAPER  
+    diversity_total_active_epochs = posterior_mogpreds_intersequence_diversity_weight_taper_epochs + posterior_mogpreds_intersequence_diversity_weight_stall_epochs
+    if epoch < posterior_mogpreds_intersequence_diversity_weight_stall_epochs:
+        mogpred_diversity_val = posterior_mogpreds_intersequence_diversity_weight_max
+    elif epoch >= diversity_total_active_epochs:
         mogpred_diversity_val = posterior_mogpreds_intersequence_diversity_weight_min
     else:
         posterior_mogpreds_diversity_range = posterior_mogpreds_intersequence_diversity_weight_max - posterior_mogpreds_intersequence_diversity_weight_min
         total_posterior_mogpreds_diversity_iters = posterior_mogpreds_intersequence_diversity_weight_taper_epochs * iters_per_epoch
-        iter_mogpred_curr = epoch * iters_per_epoch + iter_curr
+        iter_mogpred_curr = (epoch - posterior_mogpreds_intersequence_diversity_weight_stall_epochs) * iters_per_epoch + iter_curr
         mogpred_diversity_val = posterior_mogpreds_intersequence_diversity_weight_max - posterior_mogpreds_diversity_range * (iter_mogpred_curr / total_posterior_mogpreds_diversity_iters) 
 
     # *** Classifier Weight ###
@@ -1882,32 +1873,6 @@ def print_classprobs_singlebatch(class_probs, class_labels, savedir, epoch, iter
         pl.close(fig)    
 
         pl.close('all') 
-
-def print_confusion_singlebatch(class_probs, class_labels, savedir, epoch, iter_curr, classifier_num_pats, **kwargs):
-    batchsize = class_probs.shape[0]
-
-    class_probs_cpu = class_probs.detach().cpu().numpy()
-    true_labels = class_labels.detach().cpu().numpy()
-    predicted_labels = np.argmax(class_probs_cpu, axis=1)
-    
-    cm = confusion_matrix(true_labels, predicted_labels)
-
-    # Create a mask for the diagonal
-    mask = np.eye(cm.shape[0], dtype=bool)
-    
-    fig = pl.figure(figsize=(12, 12))  # Square figure
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", mask=mask, cbar=False)
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Oranges", mask=~mask, cbar=False)
-    pl.xlabel("Predicted Labels")
-    pl.ylabel("True Labels")
-    pl.title("Confusion Matrix")
-    
-    if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = f"{savedir}/RealtimeConfusion_epoch{epoch}_iter{iter_curr}.jpg"
-    pl.savefig(savename_jpg, dpi=200)
-    pl.close(fig)    
-
-    pl.close('all') 
 
 def print_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, diag_mask_buffer_tokens, **kwargs):
     """

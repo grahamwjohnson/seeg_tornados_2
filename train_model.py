@@ -6,13 +6,10 @@ Main script to train the Brain State Embedder (BSE)
 '''
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group, barrier
-from torch.utils.data import Dataset, DataLoader
-from torch.distributions.gamma import Gamma
+from torch.utils.data import DataLoader
 import sys  
 import os
 import os
@@ -25,7 +22,6 @@ import yaml
 import wandb
 
 # Local Imports
-from utilities import latent_plotting
 from utilities import utils_functions
 from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
@@ -1110,12 +1106,11 @@ class Trainer:
 
         iter_curr = 0
         total_iters = len(dataloader_curr)
-        for x, file_name, file_class_label, hash_channel_order, hash_pat_embedding in dataloader_curr: 
+        for x, file_name, file_class_label, hash_channel_order, _ in dataloader_curr: 
 
             # Put the data and labels on GPU
             x = x.to(self.gpu_id)
             file_class_label = file_class_label.to(self.gpu_id)
-            hash_pat_embedding = hash_pat_embedding.to(self.gpu_id)
         
             # LR & WEIGHT SCHEDULES
             self.mean_match_weight, self.logvar_match_weight, self.mse_weight, self.kl_weight, self.gp_weight, self.curr_LR_posterior, self.curr_LR_prior, self.curr_LR_cls, self.posterior_mogpreds_entropy_weight, self.posterior_mogpreds_intersequence_diversity_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
@@ -1145,7 +1140,7 @@ class Trainer:
             logvar = torch.stack(logvar, dim=0)
 
             # GMVAE DECODER - at Token Level
-            x_hat = self.gmvae(z_token, reverse=True, hash_pat_embedding=hash_pat_embedding)  
+            x_hat = self.gmvae(z_token, reverse=True)  
 
             # CLASSIFIER - on the mean of Z
             z_tokenmeaned = torch.mean(z_token, dim=1)
@@ -1349,14 +1344,6 @@ class Trainer:
 
                             # NOTE: for finetuning, will still be guess the training patients, and TODO: idxs in dataset are wrong for class labels anyway
                             if (not val_unseen) & (not val_finetune): # Will not have accumulated for val_unseen
-                                # utils_functions.print_confusion_singlebatch(
-                                #     class_probs = self.accumulated_class_probs,
-                                #     class_labels = self.accumulated_labels,
-                                #     savedir = self.model_dir + f"/{dataset_string}/singlebatch_confusion",
-                                #     epoch = self.epoch,
-                                #     iter_curr = iter_curr,
-                                #     **kwargs)
-
                                 utils_functions.print_classprobs_singlebatch(
                                     class_probs = class_probs_mean_of_latent,
                                     class_labels = file_class_label,

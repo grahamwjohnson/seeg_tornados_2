@@ -55,9 +55,6 @@ latent_dim: 1024 # 2048
 posterior_mogpredictor_hidden_dim_list: [2048, 1024, 512] # Top should probably be same/smaller than hidden dim of encoder, bottom bigger than prior_prior_mog_components
 posterior_mogpredictor_dropout: 0.1
 
-decoder_base_dims: 4096 # top dim of decoder is [encode_token_samples * decoder_base_dims]
-hash_output_range: kwargs['hash_output_range'] = (-5, 5)  # tuple, modify based on range of prior
-
 mse_weight_min: kwargs['mse_weight_min'] = 0
 mse_weight_max: kwargs['mse_weight_max'] = 3
 mse_weight_stall_epochs: 0
@@ -78,13 +75,18 @@ adamW_beta2: 0.95
 gumbel_softmax_temperature: kwargs['gumbel_softmax_temperature'] = 2 # Higher means softer assignment to MoG,
 
 posterior_mogpreds_entropy_weight_max: 0.5 # Encourages overall mogpreds to to be uniform
-posterior_mogpreds_entropy_weight_min: 0.5 # Becomes unstable if released completely
-posterior_mogpreds_entropy_weight_taper_epochs: 99999
+posterior_mogpreds_entropy_weight_min: 0.05 # unstable/mode collapse is release completely
+posterior_mogpreds_entropy_weight_stall_epochs: 30
+posterior_mogpreds_entropy_weight_taper_epochs: 20
 
 posterior_mogpreds_intersequence_diversity_weight_max: 0.1 # Encourages batchwise diveristy among mogpreds
-posterior_mogpreds_intersequence_diversity_weight_min: 0.1 # Becomes unstable if released completely
-posterior_mogpreds_intersequence_diversity_weight_taper_epochs: 99999
+posterior_mogpreds_intersequence_diversity_weight_min: 0.01 # unstable/mode collapse is release completely
+posterior_mogpreds_intersequence_diversity_weight_stall_epochs: 30
+posterior_mogpreds_intersequence_diversity_weight_taper_epochs: 20
 
+# DECODER
+decoder_base_dims: 4096 # top dim of decoder is [encode_token_samples * decoder_base_dims]
+hash_output_range: kwargs['hash_output_range'] = (-5, 5)  # tuple, modify based on range of prior
 
 # PRIOR (a.k.a. Mixture of Guassians, MoG)
 prior_mog_components: 8 # Softmax sampling of components with gumbel-softmax trick
@@ -95,9 +97,6 @@ prior_initial_logvar: 0
 
 prior_entropy_weight: kwargs['prior_entropy_weight'] = 1e-6 # Helps prevent mode collapse in PRIOR
 prior_repulsion_weight: kwargs['prior_repulsion_weight'] = 1e-1 # Helps keep centers of PRIOR guassians far apart, need to scale with number of MoG components 
-
-random_observed_sampling: False # If False, the sample observed will be the immediate last forward passes, if True, they will be random from 'total_collected_latents'
-random_observed_numplots: 4 # On the end of epoch plot
 
 mean_match_static_weight: kwargs['mean_match_static_weight'] = 5e-3 # Essential for stability of posterior 
 logvar_match_static_weight: kwargs['logvar_match_static_weight'] = 5e-2 # Essential for stability of posterior 
@@ -148,10 +147,8 @@ classifier_adamW_beta2: 0.999
 random_pulls_in_batch: 8 # BATCHSIZE
 train_forward_passes: 1024 # Independent of batchsize, just random pulls of data
 epochs_to_train: 300 
-train_num_rand_hashes: 16  # Number of random channel orders per pat, each with discrete hash embedding
-# NOTE: Want enough random hashes per patient so that encoder sees a lot of random channel orderings, but don't want so many that decoder doesn't ever see the same hash 
-# A good amount is probably so that number of total unique hashes is on order of an epoch. e.g. 16 * 45pats = 720 unique hashes 
-# If too many hashes, then the latent space is probably forced to learn something about channel ordering. 
+train_num_rand_hashes: kwargs['train_num_rand_hashes'] = 2**20  # Number of random channel orders per pat to input into encoder 
+# position of channels is learned by cross attention positional encoding, so no need for conditional decoding with unique hashing per channel order
 
 # VALIDATION
 valfinetune_forward_passes: 2048 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes
@@ -170,7 +167,7 @@ finetune_inference: False # If False, will just run inference on model trained o
 finetune_inference_epochs: -1 # NOTE: will  increase the epoch count overall to keep track of finetuning inference
 inference_every: 99999
 inference_batch_mult: 1 # Will enable higher inference throughput, but at cost of more VRAM at all times because max-batch_size needs to be increased for initialization of Transformer
-inference_window_sec_list: [64, 64, 16, 16, 2] 
+inference_window_sec_list: [64, 64, 16, 16, 1] 
 inference_stride_sec_list: [64, 16, 16, 4,  1] # Both window and stride must be multiple of input seconds to encoder,  (i.e. encode_token_samples * transformer_seq_length / FS)
 
 # PLOTTING

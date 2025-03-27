@@ -11,7 +11,9 @@ import torch.nn.functional as F
 def recon_loss(x: list[torch.Tensor], x_hat: list[torch.Tensor], mse_weight: float
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Computes MSE, FD1, and FD2 losses on filtered (non-padded) tensors.
+    Computes MSE, FD1, and FD2 losses on filtered (non-padded) tensors. 
+    Each patient will have different number of channels, that is why this is a list.
+    Padded channels were stripped prior to this function. 
     
     Args:
         x: List of tensors (per batch) with shape [tokens, valid_channels, seq_len].
@@ -32,6 +34,7 @@ def recon_loss(x: list[torch.Tensor], x_hat: list[torch.Tensor], mse_weight: flo
     mse_loss = torch.stack(mse_losses).mean()
 
     return mse_loss * mse_weight
+
 
 # POSTERIOR vs. PRIOR
 
@@ -251,6 +254,10 @@ def prior_repulsion_regularization(weights, means, prior_repulsion_weight, **kwa
 # ADVERSARIAL
 
 def adversarial_loss_function(probs, labels, classifier_weight):
+    """
+    Try to learn which patient is being embedded in latent space, then feed the reverse of that
+    gradient up to encoder adversarially (with reverse graident layer in GMVAE)
+    """
     adversarial_loss = nn.functional.cross_entropy(probs, labels) / torch.log(torch.tensor(probs.shape[1]))
     return classifier_weight * adversarial_loss
 
