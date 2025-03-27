@@ -939,6 +939,7 @@ def LR_and_weight_schedules(
         epoch, iter_curr, iters_per_epoch, 
         mse_weight_min, mse_weight_max, mse_weight_stall_epochs, mse_weight_epochs_TO_max, mse_weight_epochs_AT_max,
         KL_divergence_max_weight, KL_divergence_min_weight, KL_divergence_epochs_TO_max, KL_divergence_epochs_AT_max, KL_divergence_stall_epochs,
+        gumbel_softmax_temperature_max, gumbel_softmax_temperature_min, gumbel_softmax_temperature_stall_epochs, gumbel_softmax_temperature_gamma, 
         gp_weight_max, gp_weight_min, gp_weight_stall_epochs, gp_weight_epochs_TO_max, gp_weight_epochs_AT_max, 
         posterior_mogpreds_entropy_weight_max, posterior_mogpreds_entropy_weight_min, posterior_mogpreds_entropy_weight_stall_epochs, posterior_mogpreds_entropy_weight_taper_epochs,
         classifier_weight, 
@@ -1157,6 +1158,14 @@ def LR_and_weight_schedules(
             else: mse_val = mse_weight_max
         else: raise Exception("ERROR: not coded up")
 
+
+    # Gumbel Softmax Temp
+    if epoch <= gumbel_softmax_temperature_stall_epochs:
+        temp = gumbel_softmax_temperature_max
+    else:
+        taper_epoch = epoch - gumbel_softmax_temperature_stall_epochs
+        temp = max(gumbel_softmax_temperature_min, gumbel_softmax_temperature_max * (gumbel_softmax_temperature_gamma ** taper_epoch))
+
     # Posterior MoG Prediction Entropy TAPER
     entropy_total_active_epochs = posterior_mogpreds_entropy_weight_stall_epochs + posterior_mogpreds_entropy_weight_taper_epochs
     if epoch < posterior_mogpreds_entropy_weight_stall_epochs:
@@ -1261,7 +1270,7 @@ def LR_and_weight_schedules(
         iters_per_epoch=iters_per_epoch,
         LR_rise_first=LR_rise_first)
 
-    return  mean_match_static_weight, logvar_match_static_weight, mse_val, KL_divergence_val, gp_weight_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, mogpred_diversity_val, classifier_weight, classifier_val
+    return  temp, mean_match_static_weight, logvar_match_static_weight, mse_val, KL_divergence_val, gp_weight_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, mogpred_diversity_val, classifier_weight, classifier_val
 
 
 # DECODER HASHING

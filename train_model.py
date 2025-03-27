@@ -1113,7 +1113,7 @@ class Trainer:
             file_class_label = file_class_label.to(self.gpu_id)
         
             # LR & WEIGHT SCHEDULES
-            self.mean_match_weight, self.logvar_match_weight, self.mse_weight, self.kl_weight, self.gp_weight, self.curr_LR_posterior, self.curr_LR_prior, self.curr_LR_cls, self.posterior_mogpreds_entropy_weight, self.posterior_mogpreds_intersequence_diversity_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
+            self.gumbel_softmax_temp, self.mean_match_weight, self.logvar_match_weight, self.mse_weight, self.kl_weight, self.gp_weight, self.curr_LR_posterior, self.curr_LR_prior, self.curr_LR_cls, self.posterior_mogpreds_entropy_weight, self.posterior_mogpreds_intersequence_diversity_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
             if (not val_finetune) & (not val_unseen): 
                 self.opt_gmvae.param_groups[0]['lr'] = self.curr_LR_posterior
@@ -1122,6 +1122,9 @@ class Trainer:
             else: 
                 self.classifier_alpha = 0 # For validation, do not consider classifier
                 self.opt_gmvae.param_groups[2]['lr'] = 0
+
+            # Set the temperature in the model itself
+            self.gmvae.module.set_temp(self.gumbel_softmax_temp)
 
             # Check for NaNs
             if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
@@ -1251,7 +1254,7 @@ class Trainer:
                         train_posterior_mogpreds_intersequence_diversity_weight = self.posterior_mogpreds_intersequence_diversity_weight,
                         train_posterior_mogpreds_entropy_weight = self.posterior_mogpreds_entropy_weight,
                         train_posterior_mogpreds_intersequence_diversity_loss = posterior_mogpreds_intersequence_diversity_loss,
-                        train_gumbel_softmax_temperature=kwargs['gumbel_softmax_temperature'], # TODO: probably should schedule an annealing pattern
+                        train_gumbel_softmax_temperature=self.gumbel_softmax_temp, # TODO: probably should schedule an annealing pattern
                         train_prior_entropy_loss=prior_entropy,
                         train_prior_repulsion_loss=prior_repulsion,
                         train_adversarial_loss=adversarial_loss,

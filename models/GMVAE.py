@@ -875,7 +875,7 @@ class GMVAE(nn.Module):
         prior_mog_components,
         mean_lims,
         logvar_lims,
-        gumbel_softmax_temperature,
+        gumbel_softmax_temperature_max,
         diag_mask_buffer_tokens,
         gpu_id=None,  
         **kwargs):
@@ -896,7 +896,7 @@ class GMVAE(nn.Module):
         self.prior_mog_components = prior_mog_components
         self.mean_lims = mean_lims
         self.logvar_lims = logvar_lims
-        self.temperature = gumbel_softmax_temperature
+        self.gumbel_softmax_temperature = gumbel_softmax_temperature_max
         self.diag_mask_buffer_tokens = diag_mask_buffer_tokens
 
         # Prior
@@ -904,7 +904,7 @@ class GMVAE(nn.Module):
             K = self.prior_mog_components,
             latent_dim = self.latent_dim,
             mean_lims = self.mean_lims,
-            gumbel_softmax_temperature=gumbel_softmax_temperature,
+            gumbel_softmax_temperature=self.gumbel_softmax_temperature,
             **kwargs)
 
         # Raw CrossAttention Head
@@ -993,7 +993,7 @@ class GMVAE(nn.Module):
             mogpreds_pseudobatch_softmax = torch.softmax(mogpreds_pseudobatch, dim=-1) 
 
             # Z is not currently constrained 
-            z_pseudobatch, _ = self.sample_posterior(mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, gumbel_softmax_temperature=self.temperature)
+            z_pseudobatch, _ = self.sample_posterior(mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch)
             
             return z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch_softmax, attW
 
@@ -1004,7 +1004,7 @@ class GMVAE(nn.Module):
 
             return y
 
-    def sample_posterior(self, encoder_means, encoder_logvars, encoder_mogpreds, gumbel_softmax_temperature):
+    def sample_posterior(self, encoder_means, encoder_logvars, encoder_mogpreds):
         """
         Sample z from the posterior using the Gumbel-Softmax trick and reparameterization.
 
@@ -1018,7 +1018,7 @@ class GMVAE(nn.Module):
             component_weights: [batch, components] - Soft assignments of each sample to the MoG components.
         """
         # Step 1: Gumbel-Softmax for differentiable component selection
-        component_weights = F.gumbel_softmax(encoder_mogpreds, tau=gumbel_softmax_temperature, hard=False)  # [batch, components]
+        component_weights = F.gumbel_softmax(encoder_mogpreds, tau=self.gumbel_softmax_temperature, hard=False)  # [batch, components]
 
         # Step 2: Compute soft-selected means and logvars
         selected_means = torch.sum(encoder_means * component_weights.unsqueeze(-1), dim=1)  # [batch, latent_dim]
@@ -1032,6 +1032,10 @@ class GMVAE(nn.Module):
         z = torch.clamp(z, min=self.mean_lims[0], max=self.mean_lims[1])
         
         return z, component_weights
+
+    def set_temp(self, gumbel_softmax_temperature):
+        self.gumbel_softmax_temperature = gumbel_softmax_temperature
+        self.prior.gumbel_softmax_temperature = gumbel_softmax_temperature
 
 def print_models_flow(x, **kwargs):
     '''
