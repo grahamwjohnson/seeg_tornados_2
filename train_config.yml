@@ -32,7 +32,7 @@ num_data_threads: 1 # How many threads to start for each data generator (by each
 nested_max_workers: 8 # For the get_batch subprocess
 
 # POSTERIOR (a.k.a. Encoder)
-encode_token_samples: 1
+encode_token_samples: 1 # Token size for encoder transformer
 diag_mask_buffer_tokens: 16 # Left/Right how many tokens to mask off diagonal, so total masking is 2x this number along diagonal
 padded_channels: 256 # input channels randomly padded up to this number to allow for different number of channels, this is the cross-attention dimension
 crattn_num_heads: 8 # padding dimension / h = head dimension e.g. 256/8 = 32
@@ -40,13 +40,13 @@ crattn_num_layers: 16
 crattn_max_seq_len: kwargs['crattn_max_seq_len'] = kwargs['encode_token_samples']
 crattn_dropout: 0.1 
 transformer_dim: 1024 
-transformer_seq_length: 512
+transformer_seq_length: 512 # each ok these is 'padded_channels' x 'encode_token_samples' worth of data
 max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
 max_batch_size: kwargs['max_batch_size'] = kwargs['random_pulls_in_batch'] * kwargs['inference_batch_mult']
 n_layers: 16
-n_heads: 32  # transformer_dim / n_heads = head dimension (e.g. 4096/128 = 32)
+n_heads: 32  # transformer_dim / n_heads = head dimension (e.g. 1024/32 = 32 head dimension)
 multiple_of: 256 
-ffn_dim_multiplier: 1.0 # Default is 1.0 to make FF layers account for ~2/3 of total parameter count
+ffn_dim_multiplier: 1.0 # Default is 1.0 to make FFN layers account for ~2/3 of total parameter count
 attention_dropout: 0.1               
 encoder_transformer_activation: "silu"
 transformer_start_pos: 0 # Not currently coded up to work if > 0
@@ -54,7 +54,7 @@ top_dims: kwargs['top_dims'] = kwargs['transformer_dim'] # kwargs['num_encode_co
 hidden_dims: 1024 # 4096
 latent_dim: 1024 # 2048
 
-posterior_mogpredictor_hidden_dim_list: [2048, 1024, 512] # Top should probably be same/smaller than hidden dim of encoder, bottom bigger than prior_prior_mog_components
+posterior_mogpredictor_hidden_dim_list: [2048, 1024, 512] # Top should be approximately hidden dim of encoder, bottom bigger than prior_prior_mog_components to prevent bottlenecks
 posterior_mogpredictor_dropout: 0.1
 
 mse_weight_min: kwargs['mse_weight_min'] = 0
@@ -75,19 +75,19 @@ adamW_beta1: 0.9
 adamW_beta2: 0.95 
 
 gumbel_softmax_temperature_max: 2.0 # Higher means softer assignment to MoG, lower temperature encourages component specialization
-gumbel_softmax_temperature_min: 0.5 
+gumbel_softmax_temperature_min: 0.3 # Slightly higher than a typical 0.1 finish, higher final temp encourages rarer states to be able to use multiple components as their 'fingerprint' instead of ignoring them 
 gumbel_softmax_temperature_stall_epochs: 100
 gumbel_softmax_temperature_gamma: 0.99
 
-posterior_mogpreds_entropy_weight_max: 0.5 # Encourages overall mogpred use to to be uniform across all inputs
-posterior_mogpreds_entropy_weight_min: 0.5 # unstable/mode collapse if lowered too much
+posterior_mogpreds_entropy_weight_max: 0.5 # Encourages overall mogpred use to to be uniform across all inputs, i.e. don't let components die, encourage general components
+posterior_mogpreds_entropy_weight_min: 0.5 # unstable/mode collapse if lowered too much, currently static
 posterior_mogpreds_entropy_weight_stall_epochs: 99999
-posterior_mogpreds_entropy_weight_taper_epochs: 20
+posterior_mogpreds_entropy_weight_taper_epochs: 99999
 
-posterior_mogpreds_intersequence_diversity_weight_max: 0.1 # Encourages batchwise diveristy among mogpreds
-posterior_mogpreds_intersequence_diversity_weight_min: 0.1 # unstable/mode collapse if lowered too much
+posterior_mogpreds_intersequence_diversity_weight_max: 0.1 # Encourages batchwise diveristy among mogpreds (otherwise entropy will just force uniform distribution)
+posterior_mogpreds_intersequence_diversity_weight_min: 0.1 # unstable/mode collapse if lowered too much, currently static
 posterior_mogpreds_intersequence_diversity_weight_stall_epochs: 99999
-posterior_mogpreds_intersequence_diversity_weight_taper_epochs: 20
+posterior_mogpreds_intersequence_diversity_weight_taper_epochs: 99999
 
 # DECODER
 decoder_base_dims: 4096 # top dim of decoder is [encode_token_samples * decoder_base_dims]
