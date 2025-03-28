@@ -74,12 +74,12 @@ posterior_weight_decay: 0.1
 adamW_beta1: 0.9
 adamW_beta2: 0.95 
 
-gumbel_softmax_temperature_max: 2.0 # Higher means softer assignment to MoG,
+gumbel_softmax_temperature_max: 2.0 # Higher means softer assignment to MoG, lower temperature encourages component specialization
 gumbel_softmax_temperature_min: 0.5 
 gumbel_softmax_temperature_stall_epochs: 100
 gumbel_softmax_temperature_gamma: 0.99
 
-posterior_mogpreds_entropy_weight_max: 0.5 # Encourages overall mogpreds to to be uniform
+posterior_mogpreds_entropy_weight_max: 0.5 # Encourages overall mogpred use to to be uniform across all inputs
 posterior_mogpreds_entropy_weight_min: 0.5 # unstable/mode collapse if lowered too much
 posterior_mogpreds_entropy_weight_stall_epochs: 99999
 posterior_mogpreds_entropy_weight_taper_epochs: 20
@@ -153,7 +153,8 @@ random_pulls_in_batch: 8 # BATCHSIZE
 train_forward_passes: 1024 # Independent of batchsize, just random pulls of data
 epochs_to_train: 300 
 train_num_rand_hashes: kwargs['train_num_rand_hashes'] = 2**20  # Number of random channel orders per pat to input into encoder 
-# position of channels is learned by cross attention positional encoding, so no need for conditional decoding with unique hashing per channel order
+# Observed Phenonemon: Position of channels is learned somehow during encoding and embedded diffusely across latent dimensions, 
+# Thus, no need for conditional decoding with unique hashing per channel order. Decoder just knows somehow, even with unseen patients. 
 
 # VALIDATION
 valfinetune_forward_passes: 2048 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes

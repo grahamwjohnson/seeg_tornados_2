@@ -1034,8 +1034,8 @@ class GMVAE(nn.Module):
         return z, component_weights
 
     def set_temp(self, gumbel_softmax_temperature):
-        self.gumbel_softmax_temperature = gumbel_softmax_temperature
-        self.prior.gumbel_softmax_temperature = gumbel_softmax_temperature
+        self.gumbel_softmax_temperature = gumbel_softmax_temperature # Controls posterior sampling
+        self.prior.gumbel_softmax_temperature = gumbel_softmax_temperature # Controls prior sampling
 
 def print_models_flow(x, **kwargs):
     '''
