@@ -57,11 +57,11 @@ latent_dim: 1024 # 2048
 posterior_mogpredictor_hidden_dim_list: [2048, 1024, 512] # Top should be approximately hidden dim of encoder, bottom bigger than prior_prior_mog_components to prevent bottlenecks
 posterior_mogpredictor_dropout: 0.1
 
-mse_weight_min: kwargs['mse_weight_min'] = 0
+mse_weight_min: kwargs['mse_weight_min'] = 3
 mse_weight_max: kwargs['mse_weight_max'] = 3
 mse_weight_stall_epochs: 0
 mse_weight_epochs_TO_max: 0
-mse_weight_epochs_AT_max: 99999
+mse_weight_epochs_AT_max: 99999 # Static weight
 
 LR_max_posterior: kwargs['LR_max_posterior'] = 1e-5 # 5e-7
 LR_min_posterior: kwargs['LR_min_posterior'] = 1e-6 # 1e-8 
@@ -74,49 +74,55 @@ posterior_weight_decay: 0.1
 adamW_beta1: 0.9
 adamW_beta2: 0.95 
 
+# POSTERIOR REGULARIZERS
+# Order of staged release of regularizations
+# 0) Never release mean/logvar matching
+# 1) ~Epoch 100: Temp lower: Allow components to specialize
+# 2) ~Epoch 250: Negative entropy weight Lower: Allow states to be rare
+# 3) ~Epoch 500: Diveristy weight lower lower: Allow batch to be similar 
+mean_match_static_weight: kwargs['mean_match_static_weight'] = 5e-3 # Essential for stability of posterior (keeps everything in same ballpark)
+logvar_match_static_weight: kwargs['logvar_match_static_weight'] = 5e-2 # Essential for stability of posterior (keeps everything in same ballpark)
+
 gumbel_softmax_temperature_max: 2.0 # Higher means softer assignment to MoG, lower temperature encourages component specialization
-gumbel_softmax_temperature_min: 0.3 # Slightly higher than a typical 0.1 finish, higher final temp encourages rarer states to be able to use multiple components as their 'fingerprint' instead of ignoring them 
+gumbel_softmax_temperature_min: 0.1 
 gumbel_softmax_temperature_stall_epochs: 100
 gumbel_softmax_temperature_gamma: 0.99
 
 posterior_mogpreds_entropy_weight_max: 0.5 # Encourages overall mogpred use to to be uniform across all inputs, i.e. don't let components die, encourage general components
-posterior_mogpreds_entropy_weight_min: 0.5 # unstable/mode collapse if lowered too much, currently static
-posterior_mogpreds_entropy_weight_stall_epochs: 99999
-posterior_mogpreds_entropy_weight_taper_epochs: 99999
+posterior_mogpreds_entropy_weight_min: 0.1 # posterior unstable/mode collapse if lowered too much
+posterior_mogpreds_entropy_weight_stall_epochs: 250
+posterior_mogpreds_entropy_weight_gamma: 0.99
 
 posterior_mogpreds_intersequence_diversity_weight_max: 0.1 # Encourages batchwise diveristy among mogpreds (otherwise entropy will just force uniform distribution)
-posterior_mogpreds_intersequence_diversity_weight_min: 0.1 # unstable/mode collapse if lowered too much, currently static
-posterior_mogpreds_intersequence_diversity_weight_stall_epochs: 99999
-posterior_mogpreds_intersequence_diversity_weight_taper_epochs: 99999
+posterior_mogpreds_intersequence_diversity_weight_min: 0.02 # posterior unstable/mode collapse if lowered too much
+posterior_mogpreds_intersequence_diversity_weight_stall_epochs: 500
+posterior_mogpreds_intersequence_diversity_gamma: 0.99
 
 # DECODER
 decoder_base_dims: 4096 # top dim of decoder is [encode_token_samples * decoder_base_dims]
-hash_output_range: kwargs['hash_output_range'] = (-5, 5)  # tuple, modify based on range of prior
+hash_output_range: kwargs['hash_output_range'] = (-5, 5)  # Currently hashing is not being used by decoder, encoder/decoder just 'know' channel order somehow
 
 # PRIOR (a.k.a. Mixture of Guassians, MoG)
-prior_mog_components: 8 # Softmax sampling of components with gumbel-softmax trick
+prior_mog_components: 8 # Softmax sampling of components with gumbel-softmax trick (noise in softmax modulated by temperature)
 mean_lims: [-5, 5] # Make sure the prior's mean/logvars make sense with this limit
 logvar_lims: [-3, 1] # Important to cap logvar on high end or KL divergence calculaton itself becomes unstable and will give very negative numbers
 prior_initial_mean_spread: 3  # Uniform (e.g. value of 2 will be uniform [-2, 2])
-prior_initial_logvar: 0 
+prior_initial_logvar: 0 # How tight/wide to initialize the prior components
 
 prior_entropy_weight: kwargs['prior_entropy_weight'] = 1e-6 # Helps prevent mode collapse in PRIOR
-prior_repulsion_weight: kwargs['prior_repulsion_weight'] = 1e-1 # Helps keep centers of PRIOR guassians far apart, need to scale with number of MoG components 
+prior_repulsion_weight: kwargs['prior_repulsion_weight'] = 1e-1 # Helps keep centers of PRIOR guassians far apart, need to scale with number of MoG components to keep loss around 0.2
 
-mean_match_static_weight: kwargs['mean_match_static_weight'] = 5e-3 # Essential for stability of posterior 
-logvar_match_static_weight: kwargs['logvar_match_static_weight'] = 5e-2 # Essential for stability of posterior 
-
-KL_divergence_max_weight: kwargs['KL_divergence_max_weight'] = 5e-4 # 2e-4 # With current architecture, 4096 dimensions, and 4 MoG components, very unstable if higher than 5e-4
+KL_divergence_max_weight: kwargs['KL_divergence_max_weight'] = 5e-4 # 2e-4 # With current architecture, 1024 dimensions, and 8 MoG components, very unstable if higher than 5e-4
 KL_divergence_min_weight: kwargs['KL_divergence_min_weight'] = 0
-KL_divergence_stall_epochs: 2 # Min KL_divergence weight rise until stall is complete
+KL_divergence_stall_epochs: 2 # Will keep at KL_divergence_min_weight until stall is complete
+KL_divergence_epochs_TO_max: 25 # How fast to anneal in KL weight
 KL_divergence_epochs_AT_max: 50 
-KL_divergence_epochs_TO_max: 25
 
 LR_max_prior: kwargs['LR_max_prior'] = 1e-6
 LR_min_prior: kwargs['LR_min_prior'] = 0
-LR_epochs_stall_prior: 2 # Don't let it get whipped around while model posterior is getting established with baseline regularization (i.e. mean/logvar matching, entropy, diversity)
+LR_epochs_stall_prior: 2 # Don't let it get whipped around at training initiation while model posterior is getting established with baseline regularization (i.e. mean/logvar matching, entropy, diversity)
 LR_epochs_TO_max_prior: 1
-LR_epochs_AT_max_prior: 99999
+LR_epochs_AT_max_prior: 99999 # static
 manual_gamma_prior: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
 manual_step_size_prior: 99999
 prior_weight_decay: 0.1
@@ -127,7 +133,7 @@ adamW_beta2_prior: 0.95
 # Encourages token-to-token smoothness in latent space for sequential tokens
 gp_sigma: 0.2 # Not quite sure what scale should be
 gp_length_scale: kwargs['gp_length_scale'] = kwargs['diag_mask_buffer_tokens'] # Token-level kernel smoothing, setting to same scale as masking zone
-gp_weight_max: kwargs['gp_weight_max'] = 1e-11 
+gp_weight_max: kwargs['gp_weight_max'] = 1e-11 # Be careful with this scaling if changing model params, with current model setup, the value of loss is ~0.002 with weight 1e-11
 gp_weight_min: kwargs['gp_weight_min'] = 0
 gp_weight_stall_epochs: 40 # WWait for global latent structure to establish before smoothing small zones
 gp_weight_epochs_AT_max: 50 
@@ -138,7 +144,7 @@ classifier_hidden_dims: [2048, 1024, 512]
 classifier_num_pats: 45 #    ########   Hardcoded  ########
 classifier_dropout: 0.1
 classifier_weight: 1 # OVERALL ADVERSARIAL training: i.e. reverse gradient (VAE) AND classifier power. # Should probably get into same ballpark as recon and KL_divergence
-classifier_alpha_max: kwargs['classifier_alpha_max'] = 1e-1 # Alpha of reverse gradient 
+classifier_alpha_max: kwargs['classifier_alpha_max'] = 1e-1 # Alpha of reverse gradient, will dictate the negative multiplier of gradients that the encoder sees
 classifier_alpha_min: kwargs['classifier_alpha_min'] = 0 
 classifier_epochs_AT_max: 99999
 classifier_epochs_TO_max: 50
@@ -154,7 +160,7 @@ train_forward_passes: 1024 # Independent of batchsize, just random pulls of data
 epochs_to_train: 300 
 train_num_rand_hashes: kwargs['train_num_rand_hashes'] = 2**20  # Number of random channel orders per pat to input into encoder 
 # Observed Phenonemon: Position of channels is learned somehow during encoding and embedded diffusely across latent dimensions, 
-# Thus, no need for conditional decoding with unique hashing per channel order. Decoder just knows somehow, even with unseen patients. 
+# Thus, no need for conditional decoding with unique hashing per channel order added to latent vector. Decoder just knows somehow, even with unseen patients. 
 
 # VALIDATION
 valfinetune_forward_passes: 2048 # Be mindful of data gen file buffer ('num_buffer_batches'), currently only based on train forward passes

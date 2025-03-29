@@ -8,14 +8,14 @@ from matplotlib.colors import LightSource
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 # --- Soft-coded Initialization Variables (from your provided code) ---
-num_components = 8
+num_components = 2
 latent_dimension = 3
 cube_boundary_min = -5
 cube_boundary_max = 5
 mean_boundary_min = -3
 mean_boundary_max = 3
-logvar_min = -1
-logvar_max = 2
+logvar_min = -2
+logvar_max = 3
 color_map_name = 'Spectral'
 blob_alpha_start = 0.6  # Increased starting alpha for more solid inner shapes
 blob_alpha_end = 0.01 # Decreased ending alpha for more transparent outer shapes
