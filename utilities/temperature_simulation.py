@@ -70,7 +70,7 @@ time_steps = 512  # For the mogpreds shape
 logits = torch.randn(batch_size, time_steps, n_components) * 2
 
 # Define a range of temperatures to visualize
-temperatures = np.linspace(2.0, 0.1, 200)
+temperatures = np.linspace(0.5, 0.1, 100)
 
 # Store the output distributions and losses for each temperature
 distributions = []
