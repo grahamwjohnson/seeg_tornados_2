@@ -5,7 +5,7 @@ num_gpus: 2
  
 # DATASET
 continue_existing_training: False
-cont_train_model_dir: '/media/glommy1/tornados/trained_models/dataset_train100.0_val0.0/oxen_Mon_Mar_31_10_19_03_2025' 
+cont_train_model_dir: '/media/glommy1/tornados/trained_models/dataset_train100.0_val0.0/bordercollie_Mon_Mar_31_11_20_32_2025' 
 root_save_dir: '/media/glommy1/tornados' # Where the outputs of run will be stored
 print_dataset_bargraphs: False # Rough visualization of all data timestamps/types for each patient. Slows down initialization. Typically set to False if not the first run of new model
 pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats' # parent directory where all pats data is stored
@@ -63,8 +63,8 @@ mse_weight_stall_epochs: 0
 mse_weight_epochs_TO_max: 0
 mse_weight_epochs_AT_max: 99999 # Static weight
 
-LR_max_posterior: kwargs['LR_max_posterior'] = 1e-5 # 5e-7
-LR_min_posterior: kwargs['LR_min_posterior'] = 1e-6 # 1e-8 
+LR_max_posterior: kwargs['LR_max_posterior'] = 1e-7 # 5e-7
+LR_min_posterior: kwargs['LR_min_posterior'] = 1e-7 # 1e-8 
 LR_epochs_stall_posterior: 0
 LR_epochs_TO_max_posterior: 2
 LR_epochs_AT_max_posterior: 2
@@ -76,11 +76,11 @@ adamW_beta2: 0.95
 
 
 # DISCRIMINATOR
-disc_hidden_dims: [4096, 2048, 2048, 1024, 1024, 512, 512, 256, 256]
-LR_disc: kwargs['LR_disc'] = 1e-5
-discriminator_training_iters: 3  # Discriminator advantage, e.g. 1-5, higher means more discrinimator iters before being used in GM-VAE adversarial loss
-KL_divergence_max_weight: kwargs['KL_divergence_max_weight'] = 0.01 # 5e-4 # 2e-4 # With current architecture, 1024 dimensions, and 8 MoG components, very unstable if higher than 5e-4
-KL_divergence_min_weight: kwargs['KL_divergence_min_weight'] = 0.01
+disc_hidden_dims: [4096, 2048, 1024, 512, 256]
+LR_disc: kwargs['LR_disc'] = 1e-7
+discriminator_training_iters: 1  # Discriminator advantage, e.g. 1-5, higher means more discrinimator iters before being used in GM-VAE adversarial loss
+KL_divergence_max_weight: kwargs['KL_divergence_max_weight'] = 0.1 # 5e-4 # 2e-4 # With current architecture, 1024 dimensions, and 8 MoG components, very unstable if higher than 5e-4
+KL_divergence_min_weight: kwargs['KL_divergence_min_weight'] = 0.1
 KL_divergence_stall_epochs: 0 # Will keep at KL_divergence_min_weight until stall is complete
 KL_divergence_epochs_TO_max: 0 # How fast to anneal in KL weight
 KL_divergence_epochs_AT_max: 99999 
@@ -92,25 +92,25 @@ KL_divergence_epochs_AT_max: 99999
 # 2) ~Epoch 10: Negative entropy weight anneal: Allow states to be rare
 # 3) ~Epoch 15: Diveristy weight anneal: Allow batch to be similar 
 
-mean_match_weight_max: kwargs['mean_match_weight_max'] = 5e-3
+mean_match_weight_max: kwargs['mean_match_weight_max'] = 0 # 5e-3
 mean_match_weight_min: kwargs['mean_match_weight_min'] = 0
-mean_match_weight_stall_epochs: 2
-mean_match_weight_gamma: 0.8
+mean_match_weight_stall_epochs: 0
+mean_match_weight_gamma: 0.1
 
-logvar_match_weight_max: kwargs['logvar_match_weight_max'] = 5e-2
+logvar_match_weight_max: kwargs['logvar_match_weight_max'] = 0 # 5e-2
 logvar_match_weight_min: kwargs['logvar_match_weight_min'] = 0
-logvar_match_weight_stall_epochs: 2
-logvar_match_weight_gamma: 0.8
+logvar_match_weight_stall_epochs: 0
+logvar_match_weight_gamma: 0.1
 
 gumbel_softmax_temperature_max: 0.5 # Higher means softer assignment to MoG, lower temperature encourages component specialization
 gumbel_softmax_temperature_min: 0.1 
 gumbel_softmax_temperature_stall_epochs: 0
-gumbel_softmax_temperature_gamma: 0.99
+gumbel_softmax_temperature_gamma: 0.95
 
-posterior_mogpreds_entropy_weight_max: 0.5 # Encourages overall mogpred use to to be uniform across all inputs, i.e. don't let components die, encourage general components
+posterior_mogpreds_entropy_weight_max: 0 # 0.5 # Encourages overall mogpred use to to be uniform across all inputs, i.e. don't let components die, encourage general components
 posterior_mogpreds_entropy_weight_min: 0 # posterior unstable/mode collapse if lowered too much, keep high enough to prevent component killing
 posterior_mogpreds_entropy_weight_stall_epochs: 0
-posterior_mogpreds_entropy_weight_gamma: 0.90
+posterior_mogpreds_entropy_weight_gamma: 0.5
 
 posterior_mogpreds_intersequence_diversity_weight_max: 0 # Encourages batchwise diveristy among mogpreds (otherwise entropy will just force uniform distribution)
 posterior_mogpreds_intersequence_diversity_weight_min: 0 # posterior unstable/mode collapse if lowered too much early on

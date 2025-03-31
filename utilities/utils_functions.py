@@ -952,7 +952,7 @@ def LR_and_weight_schedules(
         posterior_mogpreds_intersequence_diversity_weight_min, posterior_mogpreds_intersequence_diversity_weight_max, posterior_mogpreds_intersequence_diversity_weight_stall_epochs, posterior_mogpreds_intersequence_diversity_gamma,
         LR_max_posterior, LR_min_posterior, LR_epochs_stall_posterior, LR_epochs_TO_max_posterior, LR_epochs_AT_max_posterior,  manual_gamma_posterior, manual_step_size_posterior,
         LR_max_prior, LR_min_prior, LR_epochs_stall_prior, LR_epochs_TO_max_prior, LR_epochs_AT_max_prior,  manual_gamma_prior, manual_step_size_prior,
-        mse_weight_rise_first=True, KL_divergence_rise_first=True, gp_weight_rise_first=True, LR_rise_first=True, **kwargs):
+        mse_weight_rise_first=True, KL_divergence_rise_first=True, gp_weight_rise_first=True, LR_rise_first=True, low_thresh=1e-10, **kwargs):
 
     """
     Computes learning rate (LR) schedules, KL divergence schedule, classifier weights, and Gaussian Process (GP) prior weights at each epoch for training.
@@ -1181,7 +1181,7 @@ def LR_and_weight_schedules(
     else:
         taper_epoch = epoch - mean_match_weight_stall_epochs
         mean_match_val = max(mean_match_weight_min, mean_match_weight_max * (mean_match_weight_gamma ** taper_epoch))
-
+    if mean_match_val < low_thresh: mean_match_val = 0
 
     # Logvar Matching  
     if epoch <= logvar_match_weight_stall_epochs:
@@ -1189,6 +1189,7 @@ def LR_and_weight_schedules(
     else:
         taper_epoch = epoch - logvar_match_weight_stall_epochs
         logvar_match_val = max(logvar_match_weight_min, logvar_match_weight_max * (logvar_match_weight_gamma ** taper_epoch))
+    if logvar_match_val < low_thresh: logvar_match_val = 0
 
 
     # Posterior MoG Prediction Entropy
@@ -1197,7 +1198,7 @@ def LR_and_weight_schedules(
     else:
         taper_epoch = epoch - posterior_mogpreds_entropy_weight_stall_epochs
         mogpred_entropy_val = max(posterior_mogpreds_entropy_weight_min, posterior_mogpreds_entropy_weight_max * (posterior_mogpreds_entropy_weight_gamma ** taper_epoch))
-
+    if mogpred_entropy_val < low_thresh: mogpred_entropy_val = 0
 
     # Posterior MoG Prediction Batchwise-Diversity
     if epoch <= posterior_mogpreds_intersequence_diversity_weight_stall_epochs:
@@ -1205,7 +1206,7 @@ def LR_and_weight_schedules(
     else:
         taper_epoch = epoch - posterior_mogpreds_intersequence_diversity_weight_stall_epochs
         mogpred_diversity_val = max(posterior_mogpreds_intersequence_diversity_weight_min, posterior_mogpreds_intersequence_diversity_weight_max * (posterior_mogpreds_intersequence_diversity_gamma ** taper_epoch))
-
+    if mogpred_diversity_val < low_thresh: mogpred_diversity_val = 0
 
     # *** Classifier Weight ###
     classifier_weight = classifier_weight # Dummy pass
