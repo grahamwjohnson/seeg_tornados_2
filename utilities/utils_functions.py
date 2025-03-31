@@ -413,6 +413,8 @@ def initialize_directories(
         # Construct the proper file names to get CORE state dicts
         kwargs['gmvae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_gmvae.pt'
         kwargs['gmvae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_gmvae_opt.pt'
+        kwargs['disc_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_disc.pt'
+        kwargs['disc_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_disc_opt.pt'
 
         # Proper names for running latents 
         kwargs['running_mean_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_running_means.pkl'

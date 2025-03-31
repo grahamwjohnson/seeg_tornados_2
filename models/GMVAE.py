@@ -138,7 +138,7 @@ class MoGPrior(nn.Module):
         # Same clamp as posterior
         z_prior = torch.clamp(z_prior, min=self.mean_lims[0], max=self.mean_lims[1])
 
-        return z_prior, component_probs
+        return z_prior
 
 class GaussianProcessPrior(nn.Module):
     def __init__(self, device, seq_len, latent_dim, gp_sigma, gp_length_scale, **kwargs):
@@ -752,6 +752,23 @@ class AdversarialClassifier(nn.Module):
             mu = layer(mu)
         return self.softmax(mu)
 
+class Discriminator(nn.Module):
+    def __init__(self, gpu_id, latent_dim, **kwargs):
+        super(Discriminator, self).__init__()
+        self.model = nn.Sequential(
+            nn.Linear(latent_dim, 512),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(512, 256),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(256, 1),
+            nn.Sigmoid()
+        )
+
+        self.gpu_id = gpu_id
+
+    def forward(self, z):
+        return self.model(z)
+
 class GMVAE(nn.Module):
     """
     Gaussian Mixture Variational Autoencoder (GMVAE) with Reversible Encoder/Decoder.
@@ -1003,6 +1020,7 @@ class GMVAE(nn.Module):
             y = self.decoder(x).transpose(2,3)  # Comes out as [batch, token, waveform, num_channels] --> [batch, token, num_channels, waveform]
 
             return y
+        
 
     def sample_posterior(self, encoder_means, encoder_logvars, encoder_mogpreds):
         """

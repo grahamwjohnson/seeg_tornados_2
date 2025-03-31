@@ -38,46 +38,98 @@ def recon_loss(x: list[torch.Tensor], x_hat: list[torch.Tensor], mse_weight: flo
 
 # POSTERIOR vs. PRIOR
 
-def gmvae_kl_loss(z, encoder_means, encoder_logvars, encoder_mogpreds, prior_means, prior_logvars, prior_weights, weight, **kwargs):
-    """
-    GM-VAE KL-Divergence Loss Function with Prior Parameters
+def discriminator_loss(z_posterior, z_prior, discriminator):
+    # Discriminator should classify posterior samples as real (1) and prior samples as fake (0)
+    output_posterior = discriminator(z_posterior)
+    real_loss = F.binary_cross_entropy(output_posterior, torch.ones_like(output_posterior))
+    output_prior = discriminator(z_prior)
+    fake_loss = F.binary_cross_entropy(output_prior, torch.zeros_like(output_prior))
+    total_discriminator_loss = (real_loss + fake_loss) / 2
+    return total_discriminator_loss
 
-    Parameters:
-        z (Tensor): Latent variable sampled from the encoder (batch, latent_dimension).
-        encoder_means (Tensor): Means of the Gaussian mixture components (batch, mog_component, latent_dimension).
-        encoder_logvars (Tensor): Log variances of the Gaussian mixture components (batch, mog_component, latent_dimension).
-        encoder_mogpreds (Tensor): Mixture probabilities (already softmaxed) (batch, mog_component).
-        prior_means (Tensor): Means of the prior Gaussian components (mog_component, latent_dimension).
-        prior_logvars (Tensor): Log variances of the prior Gaussian components (mog_component).
-        prior_weights (Tensor): Mixture weights of the prior distribution (mog_component). ALREADY softmaxed before being passed in. 
+# Loss functions for GMVAE adversarial training
+def gmvae_adversarial_loss(z_posterior, discriminator, beta):
+    # We want the discriminator to be unable to distinguish posterior samples from prior samples
+    discriminator_output_posterior = discriminator(z_posterior)
+    adversarial_loss = -torch.mean(torch.log(discriminator_output_posterior + 1e-8)) # Try to make output close to 1
 
-    Returns:
-        kl_loss (Tensor): KL divergence loss term.
-    """
-    batch_size, mog_component, latent_dim = encoder_means.shape
+    return beta * adversarial_loss
 
-    # Expand z to align with encoder_means and encoder_logvars
-    z = z.unsqueeze(1)  # Reshape z to (batch, 1, latent_dimension)
+# def gmvae_kl_loss(z, encoder_means, encoder_logvars, encoder_mogpreds, prior_means, prior_logvars, prior_weights, weight, num_samples_kl=10, **kwargs):
+#     """
+#     GM-VAE KL-Divergence Loss using Monte Carlo Approximation.
 
-    # Compute log probability of z under encoder components
-    log_prob_encoder = -0.5 * (encoder_logvars + (z - encoder_means) ** 2 / encoder_logvars.exp())
-    log_prob_encoder = log_prob_encoder.mean(dim=2)  # Sum over the latent dimensions (batch, mog_component)
+#     Parameters:
+#         z (Tensor): Latent variable sampled from the encoder (batch, latent_dimension).
+#         encoder_means (Tensor): Means of the Gaussian mixture components (batch, mog_component, latent_dimension).
+#         encoder_logvars (Tensor): Log variances of the Gaussian mixture components (batch, mog_component, latent_dimension).
+#         encoder_mogpreds (Tensor): Mixture probabilities (already softmaxed) (batch, mog_component).
+#         prior_means (Tensor): Means of the prior Gaussian components (mog_component, latent_dimension).
+#         prior_logvars (Tensor): Log variances of the prior Gaussian components (mog_component).
+#         prior_weights (Tensor): Mixture weights of the prior distribution (mog_component). ALREADY softmaxed before being passed in. 
+#         num_samples_kl (int): Number of samples to use for Monte Carlo estimation.
 
-    # Compute log probability of z under prior components
-    prior_means = prior_means.unsqueeze(0)  # (1, mog_component, latent_dimension)
-    prior_logvars = prior_logvars.unsqueeze(0)  # (1, mog_component, latent_dimension)
+#     Returns:
+#         kl_loss (Tensor): Approximate KL divergence loss term.
+#     """
+#     batch_size, num_components, latent_dim = encoder_means.shape
+#     kl_loss = torch.zeros(batch_size, device=z.device)
+
+#     for i in range(batch_size):
+#         posterior_mixture = Categorical(probs=encoder_mogpreds[i])
+#         posterior_components = Normal(encoder_means[i], torch.exp(0.5 * encoder_logvars[i]))
+#         posterior = MixtureSameFamily(posterior_mixture, Independent(posterior_components, 1))
+
+#         prior_mixture = Categorical(probs=prior_weights)
+#         prior_components = Normal(prior_means, torch.exp(0.5 * prior_logvars))
+#         prior = MixtureSameFamily(prior_mixture, Independent(prior_components, 1))
+
+#         samples = posterior.sample((num_samples_kl,))
+#         log_prob_posterior = posterior.log_prob(samples)
+#         log_prob_prior = prior.log_prob(samples)
+#         kl_loss[i] = torch.mean(log_prob_posterior - log_prob_prior)
+
+#     return kl_loss.mean() * weight
+
+#     # """
+#     # GM-VAE KL-Divergence Loss Function with Prior Parameters
+
+#     # Parameters:
+#     #     z (Tensor): Latent variable sampled from the encoder (batch, latent_dimension).
+#     #     encoder_means (Tensor): Means of the Gaussian mixture components (batch, mog_component, latent_dimension).
+#     #     encoder_logvars (Tensor): Log variances of the Gaussian mixture components (batch, mog_component, latent_dimension).
+#     #     encoder_mogpreds (Tensor): Mixture probabilities (already softmaxed) (batch, mog_component).
+#     #     prior_means (Tensor): Means of the prior Gaussian components (mog_component, latent_dimension).
+#     #     prior_logvars (Tensor): Log variances of the prior Gaussian components (mog_component).
+#     #     prior_weights (Tensor): Mixture weights of the prior distribution (mog_component). ALREADY softmaxed before being passed in. 
+
+#     # Returns:
+#     #     kl_loss (Tensor): KL divergence loss term.
+#     # """
+#     # batch_size, mog_component, latent_dim = encoder_means.shape
+
+#     # # Expand z to align with encoder_means and encoder_logvars
+#     # z = z.unsqueeze(1)  # Reshape z to (batch, 1, latent_dimension)
+
+#     # # Compute log probability of z under encoder components
+#     # log_prob_encoder = -0.5 * (encoder_logvars + (z - encoder_means) ** 2 / encoder_logvars.exp())
+#     # log_prob_encoder = log_prob_encoder.mean(dim=2)  # Sum over the latent dimensions (batch, mog_component)
+
+#     # # Compute log probability of z under prior components
+#     # prior_means = prior_means.unsqueeze(0)  # (1, mog_component, latent_dimension)
+#     # prior_logvars = prior_logvars.unsqueeze(0)  # (1, mog_component, latent_dimension)
     
-    log_prob_prior = -0.5 * (prior_logvars + (z - prior_means) ** 2 / prior_logvars.exp())
-    log_prob_prior = log_prob_prior.mean(dim=2)  # (batch, mog_component)
+#     # log_prob_prior = -0.5 * (prior_logvars + (z - prior_means) ** 2 / prior_logvars.exp())
+#     # log_prob_prior = log_prob_prior.mean(dim=2)  # (batch, mog_component)
 
-    # Incorporate prior mixture weights
-    log_prior_weights = torch.log(prior_weights + 1e-6)  # Add small value for numerical stability
-    log_prob_prior += log_prior_weights  # (batch, mog_component)
+#     # # Incorporate prior mixture weights
+#     # log_prior_weights = torch.log(prior_weights + 1e-6)  # Add small value for numerical stability
+#     # log_prob_prior += log_prior_weights  # (batch, mog_component)
 
-    # Compute KL divergence
-    kl_divergence = torch.sum(encoder_mogpreds * (log_prob_encoder - log_prob_prior), dim=1)  # (batch)
+#     # # Compute KL divergence
+#     # kl_divergence = torch.sum(encoder_mogpreds * (log_prob_encoder - log_prob_prior), dim=1)  # (batch)
 
-    return kl_divergence.mean() * weight  # Return the mean KL loss across the batch
+#     # return kl_divergence.mean() * weight  # Return the mean KL loss across the batch
 
 def logvar_matching_loss(logvar_posterior, logvar_prior, weight):
     """
@@ -253,7 +305,7 @@ def prior_repulsion_regularization(weights, means, prior_repulsion_weight, **kwa
 
 # ADVERSARIAL
 
-def adversarial_loss_function(probs, labels, classifier_weight):
+def patient_adversarial_loss_function(probs, labels, classifier_weight):
     """
     Try to learn which patient is being embedded in latent space, then feed the reverse of that
     gradient up to encoder adversarially (with reverse graident layer in GMVAE)

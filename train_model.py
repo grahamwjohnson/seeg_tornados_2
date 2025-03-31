@@ -25,8 +25,7 @@ import wandb
 from utilities import utils_functions
 from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
-from models.GMVAE import GMVAE
-from models.GMVAE  import GaussianProcessPrior
+from models.GMVAE import GMVAE, GaussianProcessPrior, Discriminator
 
 torch.autograd.set_detect_anomaly(False)
 
@@ -192,6 +191,10 @@ def load_train_objs(
     gmvae = GMVAE(gpu_id=gpu_id, **kwargs) 
     gmvae = gmvae.to(gpu_id) 
 
+    ### DISCRIMINATOR ###
+    disc = Discriminator(gpu_id=gpu_id, **kwargs)
+    disc = disc.to(gpu_id)
+
     # Separate the parameters into two groups
     gmvae_params = []
     prior_params = []
@@ -214,8 +217,9 @@ def load_train_objs(
         {"params": classifier_params, "lr": kwargs['LR_min_classifier'], "weight_decay": classifier_weight_decay, "betas":(classifier_adamW_beta1, classifier_adamW_beta2)}  
     ]
     opt_gmvae = torch.optim.AdamW(param_groups)
+    opt_disc = torch.optim.AdamW(disc.parameters())
 
-    return train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, gmvae, opt_gmvae
+    return train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, gmvae, disc, opt_gmvae, opt_disc
 
 def main(  
     # Ordered variables
@@ -230,6 +234,7 @@ def main(
     LR_val_gmvae: float,
     LR_val_prior: float,
     LR_val_cls: float,
+    LR_val_disc: float,
     val_finetine_bool: bool,
     finetune_inference: bool, 
     finetune_inference_epochs: int,
@@ -237,6 +242,8 @@ def main(
     singlebatch_printing_interval_train,
     gmvae_state_dict_prev_path = [],
     gmvae_opt_state_dict_prev_path = [],
+    disc_state_dict_prev_path = [],
+    disc_opt_state_dict_prev_path = [],
     running_mean_path = [],
     running_logvar_path = [],
     running_zmeaned_path = [],
@@ -294,7 +301,7 @@ def main(
     ddp_setup(gpu_id, world_size)
 
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
-    train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, gmvae, opt_gmvae = load_train_objs(gpu_id=gpu_id, **kwargs) 
+    train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, gmvae, disc, opt_gmvae, opt_disc = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
     # Load the model/opt states if not first epoch & if in training mode
     if (start_epoch > 0):
@@ -305,7 +312,14 @@ def main(
         gmvae.load_state_dict(gmvae_state_dict_prev)
         gmvae_opt_state_dict_prev = torch.load(gmvae_opt_state_dict_prev_path, map_location=map_location)
         opt_gmvae.load_state_dict(gmvae_opt_state_dict_prev)
-        print(f"[GPU{gpu_id}] Model and Opt weights loaded from checkpoints")
+        print(f"[GPU{gpu_id}] GM-VAE Model and Opt weights loaded from checkpoints")
+
+        # Load in Discriminator weights and opts
+        disc_state_dict_prev = torch.load(disc_state_dict_prev_path, map_location=map_location)
+        disc.load_state_dict(disc_state_dict_prev)
+        disc_opt_state_dict_prev = torch.load(disc_opt_state_dict_prev_path, map_location=map_location)
+        opt_disc.load_state_dict(disc_opt_state_dict_prev)
+        print(f"[GPU{gpu_id}] Discriminator and Opt weights loaded from checkpoints")
 
         # Load running mean 
         with open(running_mean_path, "rb") as f: accumulated_mean = pickle.load(f)
@@ -339,7 +353,9 @@ def main(
         world_size=world_size,
         gpu_id=gpu_id, 
         gmvae=gmvae, 
+        disc=disc,
         opt_gmvae=opt_gmvae,
+        opt_disc=opt_disc,
         start_epoch=start_epoch,
         train_dataset=train_dataset, 
         train_dataloader=train_dataloader,
@@ -376,7 +392,9 @@ def main(
             # Save pre-finetune model/opt weights
             if finetune_inference:
                 gmvae_dict = trainer.gmvae.module.state_dict()
+                disc_dict = trainer.disc.module.state_dict()
                 gmvae_opt_dict = trainer.opt_gmvae.state_dict()
+                disc_opt_dict = trainer.opt_disc.state_dict()
                 accumulated_mean = trainer.accumulated_mean
                 accumulated_logvar = trainer.accumulated_logvar
                 accumulated_zmeaned = trainer.accumulated_zmeaned
@@ -389,6 +407,7 @@ def main(
                 trainer.opt_gmvae.param_groups[0]['lr'] = LR_val_gmvae
                 trainer.opt_gmvae.param_groups[1]['lr'] = LR_val_prior
                 trainer.opt_gmvae.param_groups[2]['lr'] = LR_val_cls
+                trainer.opt_disc['lr'] = LR_val_disc
                 for finetune_epoch in range(finetune_inference_epochs):
                     trainer.epoch = epoch + finetune_epoch
                     trainer._run_train_epoch(
@@ -422,7 +441,9 @@ def main(
             # Restore model/opt weights to pre-finetune, and restart data generators
             if finetune_inference:
                 trainer.gmvae.module.load_state_dict(gmvae_dict)
+                trainer.disc.module.load_state_dict(disc_dict)
                 trainer.opt_gmvae.load_state_dict(gmvae_opt_dict)
+                trainer.opt_disc.load_state_dict(disc_opt_dict)
                 trainer.accumulated_mean = accumulated_mean
                 trainer.accumulated_logvar = accumulated_logvar
                 trainer.accumulated_zmeaned = accumulated_zmeaned
@@ -458,7 +479,9 @@ def main(
             if val_finetine_bool:
                 # Save pre-finetune model/opt weights
                 gmvae_dict = trainer.gmvae.module.state_dict()
+                disc_dict = trainer.disc.module.state_dict()
                 gmvae_opt_dict = trainer.opt_gmvae.state_dict()
+                disc_opt_dict = trainer.opt_disc.state_dict()
                 accumulated_mean = trainer.accumulated_mean
                 accumulated_logvar = trainer.accumulated_logvar
                 accumulated_zmeaned = trainer.accumulated_zmeaned
@@ -471,6 +494,7 @@ def main(
                 trainer.opt_gmvae.param_groups[0]['lr'] = LR_val_gmvae
                 trainer.opt_gmvae.param_groups[1]['lr'] = LR_val_prior
                 trainer.opt_gmvae.param_groups[2]['lr'] = LR_val_cls
+                trainer.opt_disc['lr'] = LR_val_disc
                 trainer._run_train_epoch(
                     dataloader_curr = trainer.valfinetune_dataloader, 
                     dataset_string = "valfinetune",
@@ -493,7 +517,9 @@ def main(
             # Restore model/opt weights to pre-finetune
             if val_finetine_bool:
                 trainer.gmvae.module.load_state_dict(gmvae_dict)
+                trainer.disc.module.load_state_dict(disc_dict)
                 trainer.opt_gmvae.load_state_dict(gmvae_opt_dict)
+                trainer.opt_disc.load_state_dict(disc_opt_dict)
                 trainer.accumulated_mean = accumulated_mean
                 trainer.accumulated_logvar = accumulated_logvar
                 trainer.accumulated_zmeaned = accumulated_zmeaned
@@ -511,6 +537,7 @@ class Trainer:
         world_size: int,
         gpu_id: int,
         gmvae: torch.nn.Module,
+        disc: torch.nn.Module,
         start_epoch: int,
         train_dataset: SEEG_Tornado_Dataset,
         valfinetune_dataset: SEEG_Tornado_Dataset,
@@ -519,6 +546,7 @@ class Trainer:
         valfinetune_dataloader: DataLoader,
         valunseen_dataloader: DataLoader,
         opt_gmvae: torch.optim.Optimizer,
+        opt_disc: torch.optim.Optimizer,
         wandb_run,
         model_dir: str,
         val_every: int,
@@ -549,6 +577,7 @@ class Trainer:
         self.world_size = world_size
         self.gpu_id = gpu_id
         self.gmvae = gmvae
+        self.disc = disc
         self.start_epoch = start_epoch
         self.train_dataset = train_dataset
         self.valfinetune_dataset = valfinetune_dataset
@@ -557,6 +586,7 @@ class Trainer:
         self.valfinetune_dataloader = valfinetune_dataloader
         self.valunseen_dataloader = valunseen_dataloader
         self.opt_gmvae = opt_gmvae
+        self.opt_disc = opt_disc
         self.model_dir = model_dir
         self.val_every = val_every
         self.inference_every = inference_every
@@ -617,6 +647,7 @@ class Trainer:
 
         # Set up gmvae & transformer with DDP
         self.gmvae = DDP(gmvae, device_ids=[gpu_id])   # find_unused_parameters=True
+        self.disc = DDP(disc, device_ids=[gpu_id])
         self.gp_prior = GaussianProcessPrior(self.gpu_id, self.transformer_seq_length, self.latent_dim, **kwargs)
                     
         # Running Regulizer window for latent data
@@ -640,6 +671,7 @@ class Trainer:
 
         # Watch with WandB
         wandb.watch(self.gmvae)
+        wandb.watch(self.disc)
         
     def _set_to_train(self):
         self.gmvae.train()
@@ -678,14 +710,29 @@ class Trainer:
         check_posterior_dir = check_epoch_dir + "/posterior_checkpoints"
         if not os.path.exists(check_posterior_dir): os.makedirs(check_posterior_dir)
 
-        # Save model
+        # Save GMVAE model
         ckp = self.gmvae.module.state_dict()
         check_path = check_posterior_dir + "/checkpoint_epoch" + str(epoch) + "_gmvae.pt"
         torch.save(ckp, check_path)
 
-        # Save optimizer
+        # Save DISC model
+        ckp = self.disc.module.state_dict()
+        check_path = check_posterior_dir + "/checkpoint_epoch" + str(epoch) + "_disc.pt"
+        torch.save(ckp, check_path)
+
+        # Save GMVAE optimizer
         opt_ckp = self.opt_gmvae.state_dict()
         opt_path = check_posterior_dir + "/checkpoint_epoch" + str(epoch) + "_gmvae_opt.pt"
+        torch.save(opt_ckp, opt_path)
+
+        # Save DISC optimizer
+        opt_ckp = self.opt_disc.state_dict()
+        opt_path = check_posterior_dir + "/checkpoint_epoch" + str(epoch) + "_disc_opt.pt"
+        torch.save(opt_ckp, opt_path)
+
+        # Save DISC optimizer
+        opt_ckp = self.opt_disc.state_dict()
+        opt_path = check_posterior_dir + "/checkpoint_epoch" + str(epoch) + "_disc_opt.pt"
         torch.save(opt_ckp, opt_path)
 
         # Save Running Mean 
@@ -1102,6 +1149,8 @@ class Trainer:
 
         """
 
+        self.curr_LR_discriminator = kwargs['LR_disc']
+
         print(f"[GPU{self.gpu_id}] encode_token_samples: {self.encode_token_samples}")
 
         iter_curr = 0
@@ -1115,10 +1164,13 @@ class Trainer:
             # LR & WEIGHT SCHEDULES
             self.gumbel_softmax_temp, self.mean_match_weight, self.logvar_match_weight, self.mse_weight, self.kl_weight, self.gp_weight, self.curr_LR_posterior, self.curr_LR_prior, self.curr_LR_cls, self.posterior_mogpreds_entropy_weight, self.posterior_mogpreds_intersequence_diversity_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
+            
             if (not val_finetune) & (not val_unseen): 
                 self.opt_gmvae.param_groups[0]['lr'] = self.curr_LR_posterior
                 self.opt_gmvae.param_groups[1]['lr'] = self.curr_LR_prior
                 self.opt_gmvae.param_groups[2]['lr'] = self.curr_LR_cls
+
+                self.opt_disc.param_groups[0]['lr'] = self.curr_LR_discriminator
             else: 
                 self.classifier_alpha = 0 # For validation, do not consider classifier
                 self.opt_gmvae.param_groups[2]['lr'] = 0
@@ -1128,6 +1180,19 @@ class Trainer:
 
             # Check for NaNs
             if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
+
+            # DISCRIMINATOR TRAINING
+            total_disc_loss = 0
+            for _ in range(kwargs['discriminator_training_iters']):
+                self.opt_disc.zero_grad()
+                with torch.no_grad():
+                    z_posterior, _, _, _, _ = self.gmvae(x, reverse=False)
+                    z_prior = self.gmvae.module.prior.sample_prior(z_posterior.shape[0])
+                disc_loss = loss_functions.discriminator_loss(z_posterior, z_prior, self.disc)
+                disc_loss.backward()
+                self.opt_disc.step()
+                total_disc_loss += disc_loss.item() 
+            disc_loss = total_disc_loss / kwargs['discriminator_training_iters']
 
             # GM-VAE ENCODER: 
             z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, attW = self.gmvae(x, reverse=False) # No 1-shift if not causal masking
@@ -1158,17 +1223,11 @@ class Trainer:
                 x=x_nopad_list, 
                 x_hat=x_hat_nopad_list,
                 mse_weight=self.mse_weight)
-
-            KL_divergence = loss_functions.gmvae_kl_loss(
-                z = z_pseudobatch,
-                encoder_means=mean_pseudobatch, 
-                encoder_logvars=logvar_pseudobatch, 
-                encoder_mogpreds=mogpreds_pseudobatch, # NOT softmaxed yet
-                prior_means=self.gmvae.module.prior.means, 
-                prior_logvars=self.gmvae.module.prior.logvars, 
-                prior_weights=torch.softmax(self.gmvae.module.prior.weightlogits, dim=0), 
-                weight=self.kl_weight,
-                **kwargs)
+            
+            gmvae_adversarial_loss = loss_functions.gmvae_adversarial_loss(
+                z_posterior=z_pseudobatch,
+                discriminator=self.disc,
+                beta=self.kl_weight)
             
             neg_gp_log_prob = (-1) * self.gp_prior(z_token, self.gp_weight) # On sequential token-level of z posterior
 
@@ -1201,13 +1260,13 @@ class Trainer:
                 means = self.gmvae.module.prior.means, 
                 **kwargs)
 
-            adversarial_loss = loss_functions.adversarial_loss_function(
+            patient_adversarial_loss = loss_functions.patient_adversarial_loss_function(
                 probs=class_probs_mean_of_latent, 
                 labels=file_class_label,
                 classifier_weight=self.classifier_weight)
 
             # Accumulate all losses
-            loss = mse_loss + KL_divergence + neg_gp_log_prob + mean_match_loss + logvar_match_loss + posterior_mogpreds_entropy_loss + posterior_mogpreds_intersequence_diversity_loss + prior_entropy + prior_repulsion + adversarial_loss 
+            loss = mse_loss + gmvae_adversarial_loss, neg_gp_log_prob + mean_match_loss + logvar_match_loss + posterior_mogpreds_entropy_loss + posterior_mogpreds_intersequence_diversity_loss + prior_entropy + prior_repulsion + patient_adversarial_loss 
 
             # For plotting visualization purposes
             mean_tokenmeaned = torch.mean(mean, dim=1)
@@ -1243,7 +1302,8 @@ class Trainer:
                         train_attention_dropout=attention_dropout,
                         train_loss=loss,
                         train_recon_MSE_loss=mse_loss, 
-                        train_KL_divergence=KL_divergence, 
+                        train_discriminator_loss=disc_loss,
+                        train_gmvae_adversarial_loss=gmvae_adversarial_loss,
                         train_neg_gp_log_prob = neg_gp_log_prob,
                         train_neg_gp_weight = self.gp_weight,
                         train_mean_match_loss = mean_match_loss,
@@ -1257,8 +1317,9 @@ class Trainer:
                         train_gumbel_softmax_temperature=self.gumbel_softmax_temp, # TODO: probably should schedule an annealing pattern
                         train_prior_entropy_loss=prior_entropy,
                         train_prior_repulsion_loss=prior_repulsion,
-                        train_adversarial_loss=adversarial_loss,
+                        train_patient_adversarial_loss=patient_adversarial_loss,
                         train_LR_gmvae=self.opt_gmvae.param_groups[0]['lr'], 
+                        train_LR_disc=self.opt_disc.param_groups[0]['lr'], 
                         train_LR_prior=self.opt_gmvae.param_groups[1]['lr'], 
                         train_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
                         train_KL_weight=self.kl_weight, 
@@ -1271,7 +1332,7 @@ class Trainer:
                         val_finetune_attention_dropout=attention_dropout,
                         val_finetune_loss=loss, 
                         val_finetune_recon_MSE_loss=mse_loss, 
-                        val_finetune_KL_divergence=KL_divergence, 
+                        # val_finetune_KL_divergence=KL_divergence, 
                         val_finetune_neg_gp_weight = self.gp_weight,
                         val_finetune_neg_gp_log_prob = neg_gp_log_prob,
                         val_finetune_mean_match_loss = mean_match_loss,
@@ -1279,6 +1340,7 @@ class Trainer:
                         val_finetune_mean_match_weight = self.mean_match_weight,
                         val_finetune_logvar_match_weight = self.logvar_match_weight,
                         val_finetune_LR_gmvae=self.opt_gmvae.param_groups[0]['lr'], 
+                        val_finetune_LR_disc=self.opt_disc.param_groups[0]['lr'], 
                         val_finetune_LR_prior=self.opt_gmvae.param_groups[1]['lr'], 
                         val_finetune_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
                         val_finetune_KL_weight=self.kl_weight, 
@@ -1291,7 +1353,7 @@ class Trainer:
                         val_unseen_attention_dropout=attention_dropout,
                         val_unseen_loss=loss, 
                         val_unseen_recon_MSE_loss=mse_loss, 
-                        val_unseen_KL_divergence=KL_divergence, 
+                        # val_unseen_KL_divergence=KL_divergence, 
                         val_unseen_neg_gp_weight = self.gp_weight,
                         val_unseen_neg_gp_log_prob = neg_gp_log_prob,
                         val_unseen_mean_match_loss = mean_match_loss,
@@ -1299,6 +1361,7 @@ class Trainer:
                         val_unseen_mean_match_weight = self.mean_match_weight,
                         val_unseen_logvar_match_weight = self.logvar_match_weight,
                         val_unseen_LR_gmvae=self.opt_gmvae.param_groups[0]['lr'], 
+                        val_unseen_LR_disc=self.opt_disc.param_groups[0]['lr'], 
                         val_unseen_LR_prior=self.opt_gmvae.param_groups[1]['lr'],
                         val_unseen_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
                         val_unseen_KL_weight=self.kl_weight, 
