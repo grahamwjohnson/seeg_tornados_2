@@ -675,12 +675,11 @@ class Trainer:
         
     def _set_to_train(self):
         self.gmvae.train()
+        self.disc.train()
 
     def _set_to_eval(self):
         self.gmvae.eval()
-
-    def _zero_all_grads(self):
-        self.opt_gmvae.zero_grad()
+        self.disc.eval()
 
     def _save_checkpoint(self, epoch, delete_old_checkpoints, **kwargs):
         """
@@ -1183,16 +1182,23 @@ class Trainer:
 
             # DISCRIMINATOR TRAINING
             total_disc_loss = 0
+            total_disc_real_loss = 0 
+            total_disc_fake_loss = 0
             for _ in range(kwargs['discriminator_training_iters']):
                 self.opt_disc.zero_grad()
                 with torch.no_grad():
                     z_posterior, _, _, _, _ = self.gmvae(x, reverse=False)
                     z_prior = self.gmvae.module.prior.sample_prior(z_posterior.shape[0])
-                disc_loss = loss_functions.discriminator_loss(z_posterior, z_prior, self.disc)
+                disc_loss, disc_real_loss, disc_fake_loss = loss_functions.discriminator_loss(z_posterior.detach(), z_prior.detach(), self.disc) # Detach to ensure no gradient flow through encoder or prior vars
                 disc_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.disc.module.parameters(), max_norm=1.0)
                 self.opt_disc.step()
                 total_disc_loss += disc_loss.item() 
+                total_disc_real_loss += disc_real_loss.item()
+                total_disc_fake_loss += disc_fake_loss.item()
             disc_loss = total_disc_loss / kwargs['discriminator_training_iters']
+            disc_real_loss = total_disc_real_loss / kwargs['discriminator_training_iters']
+            disc_fake_loss = total_disc_fake_loss / kwargs['discriminator_training_iters']
 
             # GM-VAE ENCODER: 
             z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, attW = self.gmvae(x, reverse=False) # No 1-shift if not causal masking
@@ -1226,7 +1232,7 @@ class Trainer:
             
             gmvae_adversarial_loss = loss_functions.gmvae_adversarial_loss(
                 z_posterior=z_pseudobatch,
-                discriminator=self.disc,
+                discriminator=self.disc, # Try to fool it
                 beta=self.kl_weight)
             
             neg_gp_log_prob = (-1) * self.gp_prior(z_token, self.gp_weight) # On sequential token-level of z posterior
@@ -1265,8 +1271,8 @@ class Trainer:
                 labels=file_class_label,
                 classifier_weight=self.classifier_weight)
 
-            # Accumulate all losses
-            loss = mse_loss + gmvae_adversarial_loss + neg_gp_log_prob + mean_match_loss + logvar_match_loss + posterior_mogpreds_entropy_loss + posterior_mogpreds_intersequence_diversity_loss + prior_entropy + prior_repulsion + patient_adversarial_loss 
+            # Accumulate all losses      # 
+            loss = mse_loss + gmvae_adversarial_loss + mean_match_loss + logvar_match_loss + neg_gp_log_prob + posterior_mogpreds_entropy_loss + posterior_mogpreds_intersequence_diversity_loss + prior_entropy + prior_repulsion + patient_adversarial_loss 
 
             # For plotting visualization purposes
             mean_tokenmeaned = torch.mean(mean, dim=1)
@@ -1275,7 +1281,7 @@ class Trainer:
 
             # Do not backprop for pure validation (i.e. val unseen), but do for training & finetuning
             if not val_unseen: 
-                self._zero_all_grads()
+                self.opt_gmvae.zero_grad()
                 loss.backward()    
                 torch.nn.utils.clip_grad_norm_(self.gmvae.module.parameters(), max_norm=1.0)
                 self.opt_gmvae.step()
@@ -1302,7 +1308,9 @@ class Trainer:
                         train_attention_dropout=attention_dropout,
                         train_loss=loss,
                         train_recon_MSE_loss=mse_loss, 
-                        train_discriminator_loss=disc_loss,
+                        train_discriminator_combined_loss=disc_loss,
+                        train_discriminator_fake_loss=disc_fake_loss,
+                        train_discriminator_real_loss=disc_real_loss,
                         train_gmvae_adversarial_loss=gmvae_adversarial_loss,
                         train_neg_gp_log_prob = neg_gp_log_prob,
                         train_neg_gp_weight = self.gp_weight,
@@ -1318,13 +1326,13 @@ class Trainer:
                         train_prior_entropy_loss=prior_entropy,
                         train_prior_repulsion_loss=prior_repulsion,
                         train_patient_adversarial_loss=patient_adversarial_loss,
+                        train_patient_adversarial_alpha=self.classifier_alpha,
                         train_LR_gmvae=self.opt_gmvae.param_groups[0]['lr'], 
                         train_LR_disc=self.opt_disc.param_groups[0]['lr'], 
                         train_LR_prior=self.opt_gmvae.param_groups[1]['lr'], 
                         train_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
                         train_KL_weight=self.kl_weight, 
                         train_ReconMSE_Weight=self.mse_weight,
-                        train_AdversarialAlpha=self.classifier_alpha,
                         train_epoch=self.epoch)
 
                 elif val_finetune:
@@ -1335,17 +1343,16 @@ class Trainer:
                         # val_finetune_KL_divergence=KL_divergence, 
                         val_finetune_neg_gp_weight = self.gp_weight,
                         val_finetune_neg_gp_log_prob = neg_gp_log_prob,
-                        val_finetune_mean_match_loss = mean_match_loss,
-                        val_finetune_logvar_match_loss = logvar_match_loss,
-                        val_finetune_mean_match_weight = self.mean_match_weight,
-                        val_finetune_logvar_match_weight = self.logvar_match_weight,
+                        # val_finetune_mean_match_loss = mean_match_loss,
+                        # val_finetune_logvar_match_loss = logvar_match_loss,
+                        # val_finetune_mean_match_weight = self.mean_match_weight,
+                        # val_finetune_logvar_match_weight = self.logvar_match_weight,
                         val_finetune_LR_gmvae=self.opt_gmvae.param_groups[0]['lr'], 
                         val_finetune_LR_disc=self.opt_disc.param_groups[0]['lr'], 
                         val_finetune_LR_prior=self.opt_gmvae.param_groups[1]['lr'], 
                         val_finetune_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
                         val_finetune_KL_weight=self.kl_weight, 
                         val_finetune_ReconMSE_Weight=self.mse_weight,
-                        val_finetune_AdversarialAlpha=self.classifier_alpha,
                         val_finetune_epoch=self.epoch)
 
                 elif val_unseen:
@@ -1356,17 +1363,16 @@ class Trainer:
                         # val_unseen_KL_divergence=KL_divergence, 
                         val_unseen_neg_gp_weight = self.gp_weight,
                         val_unseen_neg_gp_log_prob = neg_gp_log_prob,
-                        val_unseen_mean_match_loss = mean_match_loss,
-                        val_unseen_logvar_match_loss = logvar_match_loss,
-                        val_unseen_mean_match_weight = self.mean_match_weight,
-                        val_unseen_logvar_match_weight = self.logvar_match_weight,
+                        # val_unseen_mean_match_loss = mean_match_loss,
+                        # val_unseen_logvar_match_loss = logvar_match_loss,
+                        # val_unseen_mean_match_weight = self.mean_match_weight,
+                        # val_unseen_logvar_match_weight = self.logvar_match_weight,
                         val_unseen_LR_gmvae=self.opt_gmvae.param_groups[0]['lr'], 
                         val_unseen_LR_disc=self.opt_disc.param_groups[0]['lr'], 
                         val_unseen_LR_prior=self.opt_gmvae.param_groups[1]['lr'],
                         val_unseen_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
                         val_unseen_KL_weight=self.kl_weight, 
                         val_unseen_ReconMSE_Weight=self.mse_weight,
-                        val_unseen_AdversarialAlpha=self.classifier_alpha,
                         val_unseen_epoch=self.epoch)
 
             try:

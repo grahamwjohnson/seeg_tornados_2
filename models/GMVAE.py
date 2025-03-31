@@ -753,21 +753,33 @@ class AdversarialClassifier(nn.Module):
         return self.softmax(mu)
 
 class Discriminator(nn.Module):
-    def __init__(self, gpu_id, latent_dim, **kwargs):
+    def __init__(self, gpu_id, latent_dim, disc_hidden_dims, posterior_disc_dropout = 0.1, **kwargs):
         super(Discriminator, self).__init__()
-        self.model = nn.Sequential(
-            nn.Linear(latent_dim, 512),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(256, 1),
-            nn.Sigmoid()
-        )
 
         self.gpu_id = gpu_id
 
-    def forward(self, z):
-        return self.model(z)
+        self.dropout = posterior_disc_dropout
+        self.mlp_layers = nn.ModuleList()
+
+        # Input layer
+        self.mlp_layers.append(nn.Linear(latent_dim, disc_hidden_dims[0]))
+        self.mlp_layers.append(nn.LeakyReLU(0.2, inplace=True))
+        self.mlp_layers.append(RMSNorm(disc_hidden_dims[0]))
+
+        # Hidden layers
+        for i in range(len(disc_hidden_dims) - 1):
+            self.mlp_layers.append(LinearWithDropout(disc_hidden_dims[i], disc_hidden_dims[i + 1], self.dropout))
+            self.mlp_layers.append(nn.LeakyReLU(0.2, inplace=True))
+            self.mlp_layers.append(RMSNorm(disc_hidden_dims[i + 1]))
+
+        # Output layer
+        self.mlp_layers.append(nn.Linear(disc_hidden_dims[-1], 1)) # No activation and no norm, output is 1 scalar
+
+    def forward(self, x):
+        for layer in self.mlp_layers:
+            x = layer(x)
+        x = F.sigmoid(x) # Final activation is sigmoid for discriminator
+        return x
 
 class GMVAE(nn.Module):
     """

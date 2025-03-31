@@ -39,13 +39,13 @@ def recon_loss(x: list[torch.Tensor], x_hat: list[torch.Tensor], mse_weight: flo
 # POSTERIOR vs. PRIOR
 
 def discriminator_loss(z_posterior, z_prior, discriminator):
-    # Discriminator should classify posterior samples as real (1) and prior samples as fake (0)
+    # Discriminator should classify posterior samples as fake (0) and prior samples as real (1)
     output_posterior = discriminator(z_posterior)
-    real_loss = F.binary_cross_entropy(output_posterior, torch.ones_like(output_posterior))
+    fake_loss = F.binary_cross_entropy(output_posterior, torch.zeros_like(output_posterior))
     output_prior = discriminator(z_prior)
-    fake_loss = F.binary_cross_entropy(output_prior, torch.zeros_like(output_prior))
+    real_loss = F.binary_cross_entropy(output_prior, torch.ones_like(output_prior))
     total_discriminator_loss = (real_loss + fake_loss) / 2
-    return total_discriminator_loss
+    return total_discriminator_loss, real_loss, fake_loss
 
 # Loss functions for GMVAE adversarial training
 def gmvae_adversarial_loss(z_posterior, discriminator, beta):

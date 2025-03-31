@@ -947,8 +947,8 @@ def LR_and_weight_schedules(
         classifier_weight, 
         classifier_alpha_max, classifier_alpha_min, classifier_epochs_AT_max, classifier_epochs_TO_max, classifier_rise_first,
         LR_min_classifier, 
-        mean_match_static_weight, 
-        logvar_match_static_weight, 
+        mean_match_weight_max, mean_match_weight_min, mean_match_weight_stall_epochs, mean_match_weight_gamma,
+        logvar_match_weight_max, logvar_match_weight_min, logvar_match_weight_stall_epochs, logvar_match_weight_gamma,
         posterior_mogpreds_intersequence_diversity_weight_min, posterior_mogpreds_intersequence_diversity_weight_max, posterior_mogpreds_intersequence_diversity_weight_stall_epochs, posterior_mogpreds_intersequence_diversity_gamma,
         LR_max_posterior, LR_min_posterior, LR_epochs_stall_posterior, LR_epochs_TO_max_posterior, LR_epochs_AT_max_posterior,  manual_gamma_posterior, manual_step_size_posterior,
         LR_max_prior, LR_min_prior, LR_epochs_stall_prior, LR_epochs_TO_max_prior, LR_epochs_AT_max_prior,  manual_gamma_prior, manual_step_size_prior,
@@ -1160,13 +1160,36 @@ def LR_and_weight_schedules(
             else: mse_val = mse_weight_max
         else: raise Exception("ERROR: not coded up")
 
-
     # Gumbel Softmax Temp
     if epoch <= gumbel_softmax_temperature_stall_epochs:
         temp = gumbel_softmax_temperature_max
     else:
         taper_epoch = epoch - gumbel_softmax_temperature_stall_epochs
         temp = max(gumbel_softmax_temperature_min, gumbel_softmax_temperature_max * (gumbel_softmax_temperature_gamma ** taper_epoch))
+
+    # Posterior MoG Prediction Entropy
+    if epoch <= posterior_mogpreds_entropy_weight_stall_epochs:
+        mogpred_entropy_val = posterior_mogpreds_entropy_weight_max
+    else:
+        taper_epoch = epoch - posterior_mogpreds_entropy_weight_stall_epochs
+        mogpred_entropy_val = max(posterior_mogpreds_entropy_weight_min, posterior_mogpreds_entropy_weight_max * (posterior_mogpreds_entropy_weight_gamma ** taper_epoch))
+
+
+    # Mean Matching  
+    if epoch <= mean_match_weight_stall_epochs:
+        mean_match_val = mean_match_weight_max
+    else:
+        taper_epoch = epoch - mean_match_weight_stall_epochs
+        mean_match_val = max(mean_match_weight_min, mean_match_weight_max * (mean_match_weight_gamma ** taper_epoch))
+
+
+    # Logvar Matching  
+    if epoch <= logvar_match_weight_stall_epochs:
+        logvar_match_val = logvar_match_weight_max
+    else:
+        taper_epoch = epoch - logvar_match_weight_stall_epochs
+        logvar_match_val = max(logvar_match_weight_min, logvar_match_weight_max * (logvar_match_weight_gamma ** taper_epoch))
+
 
     # Posterior MoG Prediction Entropy
     if epoch <= posterior_mogpreds_entropy_weight_stall_epochs:
@@ -1264,7 +1287,7 @@ def LR_and_weight_schedules(
         iters_per_epoch=iters_per_epoch,
         LR_rise_first=LR_rise_first)
 
-    return  temp, mean_match_static_weight, logvar_match_static_weight, mse_val, KL_divergence_val, gp_weight_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, mogpred_diversity_val, classifier_weight, classifier_val
+    return  temp, mean_match_val, logvar_match_val, mse_val, KL_divergence_val, gp_weight_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, mogpred_diversity_val, classifier_weight, classifier_val
 
 
 # DECODER HASHING
