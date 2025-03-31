@@ -118,11 +118,11 @@ prior_initial_logvar: 0 # How tight/wide to initialize the prior components
 prior_entropy_weight: kwargs['prior_entropy_weight'] = 1e-6 # Helps prevent mode collapse in PRIOR
 prior_repulsion_weight: kwargs['prior_repulsion_weight'] = 1e-1 # Helps keep centers of PRIOR guassians far apart, need to scale with number of MoG components to keep loss around 0.2
 
-KL_divergence_max_weight: kwargs['KL_divergence_max_weight'] = 5e-2 # 5e-4 # 2e-4 # With current architecture, 1024 dimensions, and 8 MoG components, very unstable if higher than 5e-4
-KL_divergence_min_weight: kwargs['KL_divergence_min_weight'] = 0
-KL_divergence_stall_epochs: 2 # Will keep at KL_divergence_min_weight until stall is complete
-KL_divergence_epochs_TO_max: 25 # How fast to anneal in KL weight
-KL_divergence_epochs_AT_max: 50 
+KL_divergence_max_weight: kwargs['KL_divergence_max_weight'] = 0.001 # 5e-4 # 2e-4 # With current architecture, 1024 dimensions, and 8 MoG components, very unstable if higher than 5e-4
+KL_divergence_min_weight: kwargs['KL_divergence_min_weight'] = 0.001
+KL_divergence_stall_epochs: 0 # Will keep at KL_divergence_min_weight until stall is complete
+KL_divergence_epochs_TO_max: 0 # How fast to anneal in KL weight
+KL_divergence_epochs_AT_max: 99999 
 
 LR_max_prior: kwargs['LR_max_prior'] = 1e-6
 LR_min_prior: kwargs['LR_min_prior'] = 0

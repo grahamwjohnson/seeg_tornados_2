@@ -1266,7 +1266,7 @@ class Trainer:
                 classifier_weight=self.classifier_weight)
 
             # Accumulate all losses
-            loss = mse_loss + gmvae_adversarial_loss, neg_gp_log_prob + mean_match_loss + logvar_match_loss + posterior_mogpreds_entropy_loss + posterior_mogpreds_intersequence_diversity_loss + prior_entropy + prior_repulsion + patient_adversarial_loss 
+            loss = mse_loss + gmvae_adversarial_loss + neg_gp_log_prob + mean_match_loss + logvar_match_loss + posterior_mogpreds_entropy_loss + posterior_mogpreds_intersequence_diversity_loss + prior_entropy + prior_repulsion + patient_adversarial_loss 
 
             # For plotting visualization purposes
             mean_tokenmeaned = torch.mean(mean, dim=1)
