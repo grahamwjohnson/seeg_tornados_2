@@ -1187,8 +1187,8 @@ class Trainer:
             for _ in range(kwargs['discriminator_training_iters']):
                 self.opt_disc.zero_grad()
                 with torch.no_grad():
-                    z_posterior, _, _, _, _ = self.gmvae(x, reverse=False)
-                    z_prior = self.gmvae.module.prior.sample_prior(z_posterior.shape[0])
+                    z_posterior, _, _, mog_weights, _ = self.gmvae(x, reverse=False)
+                    z_prior = self.gmvae.module.prior.sample_prior(z_posterior.shape[0], mog_weights=mog_weights)
                 disc_loss, disc_real_loss, disc_fake_loss = loss_functions.discriminator_loss(z_posterior.detach(), z_prior.detach(), self.disc) # Detach to ensure no gradient flow through encoder or prior vars
                 disc_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.disc.module.parameters(), max_norm=1.0)

@@ -110,7 +110,7 @@ class MoGPrior(nn.Module):
         self.logvars = nn.Parameter(torch.ones(K, latent_dim) * prior_initial_logvar)  # [K, latent_dim]
         self.weightlogits = nn.Parameter(torch.ones(K) / K)  # [K] # STore as logits, will softmax before use
 
-    def sample_prior(self, batch_size):
+    def sample_prior(self, batch_size, mog_weights=None):
         """
         Sample from the MoG prior using Gumbel-Softmax for differentiable component selection.
         
@@ -122,23 +122,47 @@ class MoGPrior(nn.Module):
             z_prior: Differentiable samples from the MoG prior [batch_size, latent_dim]
             component_probs: Soft assignments of each sample to the MoG components [batch_size, K]
         """
-        # Sample Gumbel noise and apply softmax to get soft component selection
-        gumbel_noise = -torch.log(-torch.log(torch.rand(batch_size, self.K, device=self.weightlogits.device) + 1e-20) + 1e-20)
-        logits = torch.log_softmax(self.weightlogits, dim=0) + gumbel_noise
-        component_probs = F.gumbel_softmax(logits, tau=self.gumbel_softmax_temperature, hard=False)  # [batch_size, K], fully differentiable
 
-        # Compute mixture samples using soft probabilities
-        chosen_means = torch.matmul(component_probs, self.means)  # [batch_size, latent_dim]
-        chosen_logvars = torch.matmul(component_probs, self.logvars)  # [batch_size, latent_dim]
+        if mog_weights is None: # Use Prior's weights
 
-        # Sample from Gaussian with chosen means and logvars
-        eps = torch.randn_like(chosen_means)
-        z_prior = chosen_means + eps * torch.exp(0.5 * chosen_logvars)  # [batch_size, latent_dim]
+            # Sample Gumbel noise and apply softmax to get soft component selection
+            gumbel_noise = -torch.log(-torch.log(torch.rand(batch_size, self.K, device=self.weightlogits.device) + 1e-20) + 1e-20)
+            logits = torch.log_softmax(self.weightlogits, dim=0) + gumbel_noise
+            component_probs = F.gumbel_softmax(logits, tau=self.gumbel_softmax_temperature, hard=False)  # [batch_size, K], fully differentiable
 
-        # Same clamp as posterior
-        z_prior = torch.clamp(z_prior, min=self.mean_lims[0], max=self.mean_lims[1])
+            # Compute mixture samples using soft probabilities
+            chosen_means = torch.matmul(component_probs, self.means)  # [batch_size, latent_dim]
+            chosen_logvars = torch.matmul(component_probs, self.logvars)  # [batch_size, latent_dim]
 
-        return z_prior
+            # Sample from Gaussian with chosen means and logvars
+            eps = torch.randn_like(chosen_means)
+            z_prior = chosen_means + eps * torch.exp(0.5 * chosen_logvars)  # [batch_size, latent_dim]
+
+            # Same clamp as posterior
+            z_prior = torch.clamp(z_prior, min=self.mean_lims[0], max=self.mean_lims[1])
+
+            return z_prior
+        
+        else: # Use custom weights (e.g. from posterior's sampling)
+            # Ensure mog_weights has the correct shape
+            assert mog_weights.shape == (batch_size, self.K), f"Expected mog_weights shape to be ({batch_size}, {self.K}), but got {mog_weights.shape}"
+
+            # Apply Gumbel-Softmax to the external logits
+            gumbel_noise = -torch.log(-torch.log(torch.rand_like(mog_weights) + 1e-20) + 1e-20)
+            component_probs = F.gumbel_softmax(mog_weights + gumbel_noise, tau=self.gumbel_softmax_temperature, hard=False)
+
+            # Compute mixture samples using the provided weights
+            chosen_means = torch.matmul(component_probs, self.means)  # [batch_size, latent_dim]
+            chosen_logvars = torch.matmul(component_probs, self.logvars)  # [batch_size, latent_dim]
+
+            # Sample from Gaussian with chosen means and logvars
+            eps = torch.randn_like(chosen_means)
+            z_prior = chosen_means + eps * torch.exp(0.5 * chosen_logvars)  # [batch_size, latent_dim]
+
+            # Same clamp as posterior
+            z_prior = torch.clamp(z_prior, min=self.mean_lims[0], max=self.mean_lims[1])
+
+            return z_prior
 
 class GaussianProcessPrior(nn.Module):
     def __init__(self, device, seq_len, latent_dim, gp_sigma, gp_length_scale, **kwargs):
