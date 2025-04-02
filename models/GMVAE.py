@@ -107,7 +107,7 @@ class MoGPrior(nn.Module):
 
         # Initialize means, logvars, and weights
         self.means = nn.Parameter(prior_means)  # [K, latent_dim]
-        self.logvars = nn.Parameter(torch.ones(K, latent_dim) * prior_initial_logvar)  # [K, latent_dim]
+        self.logvars = nn.Parameter(torch.rand(K, latent_dim) * (prior_initial_logvar))  # [K, latent_dim]
         self.weightlogits = nn.Parameter(torch.ones(K) / K)  # [K] # STore as logits, will softmax before use
 
     def sample_prior(self, batch_size, mog_weights=None):
@@ -781,29 +781,24 @@ class Discriminator(nn.Module):
         super(Discriminator, self).__init__()
 
         self.gpu_id = gpu_id
-
         self.dropout = posterior_disc_dropout
-        self.mlp_layers = nn.ModuleList()
 
-        # Input layer
-        self.mlp_layers.append(nn.Linear(latent_dim, disc_hidden_dims[0]))
-        self.mlp_layers.append(nn.LeakyReLU(0.2, inplace=True))
-        self.mlp_layers.append(RMSNorm(disc_hidden_dims[0]))
-
-        # Hidden layers
+        # Z MLP
+        self.z_mlp_layers = nn.ModuleList()
+        self.z_mlp_layers.append(nn.Linear(latent_dim, disc_hidden_dims[0]))
+        self.z_mlp_layers.append(nn.LeakyReLU(0.2, inplace=True))
+        self.z_mlp_layers.append(RMSNorm(disc_hidden_dims[0]))
         for i in range(len(disc_hidden_dims) - 1):
-            self.mlp_layers.append(LinearWithDropout(disc_hidden_dims[i], disc_hidden_dims[i + 1], self.dropout))
-            self.mlp_layers.append(nn.LeakyReLU(0.2, inplace=True))
-            self.mlp_layers.append(RMSNorm(disc_hidden_dims[i + 1]))
-
-        # Output layer
-        self.mlp_layers.append(nn.Linear(disc_hidden_dims[-1], 1)) # No activation and no norm, output is 1 scalar
-
-    def forward(self, x):
-        for layer in self.mlp_layers:
-            x = layer(x)
-        x = F.sigmoid(x) # Final activation is sigmoid for discriminator
-        return x
+            self.z_mlp_layers.append(LinearWithDropout(disc_hidden_dims[i], disc_hidden_dims[i + 1], self.dropout))
+            self.z_mlp_layers.append(nn.LeakyReLU(0.2, inplace=True))
+            self.z_mlp_layers.append(RMSNorm(disc_hidden_dims[i + 1]))
+        self.z_mlp_layers.append(nn.Linear(disc_hidden_dims[-1], 1)) # No activation and no norm, output is 1 scalar
+        
+    def forward(self, z):
+        for layer in self.z_mlp_layers:
+            z = layer(z)
+        z = F.sigmoid(z) # Final activation is sigmoid for discriminator
+        return z
 
 class GMVAE(nn.Module):
     """
