@@ -1252,9 +1252,13 @@ class Trainer:
                 posterior_mogpreds_entropy_weight=self.posterior_mogpreds_entropy_weight,
                 **kwargs)
 
-            posterior_mogpreds_intersequence_diversity_loss = loss_functions.posterior_mogpreds_intersequence_diversity_loss(
+            posterior_mogpreds_intersequence_diversity_loss = loss_functions.entropy_based_intersequence_diversity_loss(
                 mogpreds=mogpreds,
                 weight=self.posterior_mogpreds_intersequence_diversity_weight)  
+
+            # posterior_mogpreds_intersequence_diversity_loss = loss_functions.posterior_mogpreds_intersequence_diversity_loss(
+            #     mogpreds=mogpreds,
+            #     weight=self.posterior_mogpreds_intersequence_diversity_weight)  
 
             prior_entropy = loss_functions.prior_entropy_regularization(
                 weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0), 

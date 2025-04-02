@@ -202,55 +202,136 @@ def posterior_mogpreds_entropy_loss(mogpreds, posterior_mogpreds_entropy_weight,
     # Return the negative entropy (maximize entropy to promote diverse component usage)
     return -posterior_mogpreds_entropy_weight * entropy
 
-def posterior_mogpreds_intersequence_diversity_loss(mogpreds, weight, threshold=0.5, smoothness=10.0):
+
+# def entropy_based_intersequence_diversity_loss(mogpreds, weight, epsilon=1e-8):
+#     """
+#     Compute an entropy-based diversity loss by encouraging pairwise dissimilarity
+#     in the mean MoG predictions using a Jensen-Shannon Divergence proxy.
+
+#     Args:
+#         mogpreds: MoG component probabilities, shape (batch_size, T, K)
+#         weight: Weight for the diversity loss
+#         epsilon: Small value for numerical stability (default: 1e-8)
+#     """
+#     # Ensure mogpreds is a valid probability distribution
+#     assert torch.all(mogpreds >= 0), "mogpreds contains negative values"
+#     assert torch.allclose(mogpreds.sum(dim=-1), torch.ones_like(mogpreds.sum(dim=-1))), "mogpreds does not sum to 1"
+
+#     # Clamp mogpreds for numerical stability
+#     mogpreds = torch.clamp(mogpreds, min=epsilon, max=1.0)
+
+#     # Compute the mean prediction for each sequence (across time steps)
+#     # Shape: (batch_size, T, K) -> (batch_size, K)
+#     mean_mogpreds = mogpreds.mean(dim=1)
+
+#     batch_size = mean_mogpreds.shape[0]
+#     diversity_loss = 0.0
+#     num_pairs = 0
+
+#     for i in range(batch_size):
+#         for j in range(i + 1, batch_size):
+#             p = mean_mogpreds[i]
+#             q = mean_mogpreds[j]
+
+#             # Proxy for Jensen-Shannon Divergence (related to the average entropy)
+#             m = 0.5 * (p + q)
+#             loss = 0.5 * torch.sum(p * torch.log(p / m + epsilon)) + 0.5 * torch.sum(q * torch.log(q / m + epsilon))
+#             diversity_loss += loss
+#             num_pairs += 1
+
+#     if num_pairs > 0:
+#         diversity_loss /= num_pairs
+
+#     return weight * diversity_loss
+
+
+def entropy_based_intersequence_diversity_loss(mogpreds, weight, epsilon=1e-8):
     """
-    Compute the diversity loss for MoG predictions, promoting sequences to be far apart in the latent space.
-    The loss is rescaled so that it is 0 below a certain threshold and approaches the original loss gradually above the threshold.
+    Compute an entropy-based diversity loss for MoG predictions, promoting sequences
+    to have distinct distributions over components.
 
     Args:
         mogpreds: MoG component probabilities, shape (batch_size, T, K)
         weight: Weight for the diversity loss
-        threshold: Threshold below which the loss is 0 (default: 0.5)
-        smoothness: Controls how smoothly the loss transitions from 0 to the original value (default: 10.0)
+        epsilon: Small value for numerical stability (default: 1e-8)
     """
     # Ensure mogpreds is a valid probability distribution
     assert torch.all(mogpreds >= 0), "mogpreds contains negative values"
     assert torch.allclose(mogpreds.sum(dim=-1), torch.ones_like(mogpreds.sum(dim=-1))), "mogpreds does not sum to 1"
 
-    # Clamp mogpreds to avoid log(0)
-    mogpreds = torch.clamp(mogpreds, min=1e-10, max=1.0)
+    # Clamp mogpreds for numerical stability
+    mogpreds = torch.clamp(mogpreds, min=epsilon, max=1.0)
 
     # Compute the mean prediction for each sequence (across time steps)
     # Shape: (batch_size, T, K) -> (batch_size, K)
     mean_mogpreds = mogpreds.mean(dim=1)
 
-    # Compute pairwise cosine similarity between sequences
-    # Shape: (batch_size, K) -> (batch_size, batch_size)
-    cosine_sim = torch.nn.functional.cosine_similarity(
-        mean_mogpreds.unsqueeze(1),  # Shape: (batch_size, 1, K)
-        mean_mogpreds.unsqueeze(0),  # Shape: (1, batch_size, K)
-        dim=-1
-    )
+    # Calculate the entropy of the mean prediction for each sequence
+    # Shape: (batch_size, K) -> (batch_size,)
+    entropy_per_sequence = -torch.sum(mean_mogpreds * torch.log(mean_mogpreds), dim=-1)
 
-    # Exclude self-similarity (diagonal elements)
-    batch_size = mean_mogpreds.shape[0]
-    mask = 1 - torch.eye(batch_size, device=mean_mogpreds.device)  # Mask for off-diagonal elements
-    cosine_sim = cosine_sim * mask
+    # The diversity loss encourages the average entropy across the batch to be high.
+    # A high average entropy means each sequence has a more uniform (and thus different)
+    # distribution over the MoG components.
 
-    # Compute the average pairwise similarity (excluding self-similarity)
-    avg_pairwise_sim = cosine_sim.sum() / (batch_size * (batch_size - 1))
+    # We want to maximize the average entropy. Directly maximizing entropy can be tricky.
+    # Instead, we can minimize the negative of the average entropy.
 
-    # Rescale the loss to approach 0 below the threshold
-    if avg_pairwise_sim < threshold:
-        # Smoothly transition the loss from 0 to the original value
-        rescale_factor = torch.sigmoid(smoothness * (avg_pairwise_sim - threshold))
-        diversity_loss = avg_pairwise_sim * rescale_factor
-    else:
-        # Use the original loss value above the threshold
-        diversity_loss = avg_pairwise_sim
+    average_entropy = torch.mean(entropy_per_sequence)
+    diversity_loss = -average_entropy
 
-    # Return the diversity loss (weighted)
     return weight * diversity_loss
+
+
+# def posterior_mogpreds_intersequence_diversity_loss(mogpreds, weight, threshold=0.5, smoothness=10.0):
+#     """
+#     Compute the diversity loss for MoG predictions, promoting sequences to be far apart in the latent space.
+#     The loss is rescaled so that it is 0 below a certain threshold and approaches the original loss gradually above the threshold.
+
+#     Args:
+#         mogpreds: MoG component probabilities, shape (batch_size, T, K)
+#         weight: Weight for the diversity loss
+#         threshold: Threshold below which the loss is 0 (default: 0.5)
+#         smoothness: Controls how smoothly the loss transitions from 0 to the original value (default: 10.0)
+#     """
+#     # Ensure mogpreds is a valid probability distribution
+#     assert torch.all(mogpreds >= 0), "mogpreds contains negative values"
+#     assert torch.allclose(mogpreds.sum(dim=-1), torch.ones_like(mogpreds.sum(dim=-1))), "mogpreds does not sum to 1"
+
+#     # Clamp mogpreds to avoid log(0)
+#     mogpreds = torch.clamp(mogpreds, min=1e-10, max=1.0)
+
+#     # Compute the mean prediction for each sequence (across time steps)
+#     # Shape: (batch_size, T, K) -> (batch_size, K)
+#     mean_mogpreds = mogpreds.mean(dim=1)
+
+#     # Compute pairwise cosine similarity between sequences
+#     # Shape: (batch_size, K) -> (batch_size, batch_size)
+#     cosine_sim = torch.nn.functional.cosine_similarity(
+#         mean_mogpreds.unsqueeze(1),  # Shape: (batch_size, 1, K)
+#         mean_mogpreds.unsqueeze(0),  # Shape: (1, batch_size, K)
+#         dim=-1
+#     )
+
+#     # Exclude self-similarity (diagonal elements)
+#     batch_size = mean_mogpreds.shape[0]
+#     mask = 1 - torch.eye(batch_size, device=mean_mogpreds.device)  # Mask for off-diagonal elements
+#     cosine_sim = cosine_sim * mask
+
+#     # Compute the average pairwise similarity (excluding self-similarity)
+#     avg_pairwise_sim = cosine_sim.sum() / (batch_size * (batch_size - 1))
+
+#     # Rescale the loss to approach 0 below the threshold
+#     if avg_pairwise_sim < threshold:
+#         # Smoothly transition the loss from 0 to the original value
+#         rescale_factor = torch.sigmoid(smoothness * (avg_pairwise_sim - threshold))
+#         diversity_loss = avg_pairwise_sim * rescale_factor
+#     else:
+#         # Use the original loss value above the threshold
+#         diversity_loss = avg_pairwise_sim
+
+#     # Return the diversity loss (weighted)
+#     return weight * diversity_loss
 
 
 # PRIOR only
