@@ -206,10 +206,10 @@ class GaussianProcessPrior(nn.Module):
         cov_matrix = self.sigma ** 2 * torch.exp(-0.5 * (diff / self.length_scale) ** 2)
 
         # Add a small diagonal noise (jitter) for numerical stability
-        jitter = 1e-6 * torch.eye(self.seq_len, dtype=torch.float32)
+        jitter = 1e-3 * torch.eye(self.seq_len, dtype=torch.float32)
         cov_matrix += jitter
 
-        return cov_matrix
+        return cov_matrix 
 
     def forward(self, z, weight):
         """

@@ -252,19 +252,17 @@ def entropy_based_intersequence_diversity_loss(mogpreds, weight, epsilon=1e-8):
     assert torch.all(mogpreds >= 0), "mogpreds contains negative values"
     assert torch.allclose(mogpreds.sum(dim=-1), torch.ones_like(mogpreds.sum(dim=-1))), "mogpreds does not sum to 1"
 
-    # Clamp mogpreds for numerical stability
-    mogpreds = torch.clamp(mogpreds, min=epsilon, max=1.0)
-
-    # Compute the mean prediction for each sequence (across time steps)
+    # Compute the mean component prediction for each sequence (across time steps)
     # Shape: (batch_size, T, K) -> (batch_size, K)
     mean_mogpreds = mogpreds.mean(dim=1)
 
+    # Compute the difference in mean predictions across all pairs of batch indexes (upper triangle)
     mean_abs_diffs = 0
     for i in range(batchsize):
         for j in range(i + 1, batchsize):
             mean_abs_diffs += torch.mean(torch.abs(mean_mogpreds[j, :] - mean_mogpreds[i, :]))
 
-    diversity_loss = 1 - mean_abs_diffs / batchsize
+    diversity_loss = 1 - mean_abs_diffs / ((batchsize ** 2 - batchsize)/2) # Divide by number of comparisons to standardize across batchsizes
 
     return weight * diversity_loss
 
