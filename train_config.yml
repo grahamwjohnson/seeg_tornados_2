@@ -77,7 +77,7 @@ adamW_beta2: 0.95
 
 # DISCRIMINATOR
 disc_hidden_dims: [4096, 2048, 1024, 512, 256]
-LR_disc: kwargs['LR_disc'] = 1e-6
+LR_disc: kwargs['LR_disc'] = 5e-7
 discriminator_training_iters: 2  # Discriminator advantage, e.g. 1-5, higher means more discrinimator iters before being used in GM-VAE adversarial loss
 KL_divergence_max_weight: kwargs['KL_divergence_max_weight'] = 0.01 # 5e-4 # 2e-4 # With current architecture, 1024 dimensions, and 8 MoG components, very unstable if higher than 5e-4
 KL_divergence_min_weight: kwargs['KL_divergence_min_weight'] = 0.01
@@ -194,7 +194,7 @@ inference_stride_sec_list: [64, 16, 16, 4,  1] # Both window and stride must be 
 total_collected_latents: 1024  # Currently just for plotting at the end of an epoch
 singlebatch_latent_printing: True
 num_singlebatch_channels_recon: 1 # Will be batch * this plotted
-singlebatch_printing_interval_train: 64 
+singlebatch_printing_interval_train: 256 
 singlebatch_printing_interval_val: 64
 num_recon_samples: 256 # this will limit how much is shown in recon plots, ERROR if not enough samples, pulls from START and END of transformer sequence 
 num_rand_recon_plots: 4
