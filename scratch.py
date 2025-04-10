@@ -1,7 +1,7 @@
 import torch
 
 # Load the 'sheldrake' model with pretrained weights
-model_sheldrake = torch.hub.load('grahamwjohnson/seeg_tornados_2', 'load', codename='sheldrake', pretrained=True, trust_repo=False)
+model_sheldrake = torch.hub.load('grahamwjohnson/seeg_tornados_2@o10_GMVAE', 'load', codename='sheldrake', pretrained=True, trust_repo=True, force_reload=True)
 print(model_sheldrake)
 
 # # rval_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/rapid_val'

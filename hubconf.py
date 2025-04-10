@@ -21,7 +21,7 @@ CONFIGS = {
         'gumbel_softmax_temperature_max': 0.05,
         'diag_mask_buffer_tokens': 16,
         'weight_file': 'gmvae_weights.pth',
-        'release_tag': 'v0.3-alpha'
+        'release_tag': 'v0.4-alpha'
     }
 }
 
@@ -66,7 +66,7 @@ def _load_gmvae(codename='sheldrake', pretrained=True, **kwargs):
     if pretrained and config.get('weight_file') and config.get('release_tag'):
         weight_file = config['weight_file']
         release_tag = config['release_tag']
-        checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/tag/{release_tag}/{weight_file}'
+        checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{weight_file}'
         try:
             state_dict = torch.hub.load_state_dict_from_url(checkpoint_url, progress=True, map_location='cpu')
             model.load_state_dict(state_dict)
