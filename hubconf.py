@@ -8,6 +8,13 @@ CONFIGS = {
         'encode_token_samples': 1,
         'padded_channels': 256,
         'transformer_seq_length': 512,
+        'max_seq_len': 512,
+        'max_batch_size': 8,
+        'n_layers': 16,
+        'n_heads': 32,
+        'multiple_of': 256,
+        'ffn_dim_multiplier': 1.0,
+        'attention_dropout': 0.1,
         'transformer_start_pos': 0,
         'transformer_dim': 1024,
         'encoder_transformer_activation': "silu",
@@ -29,14 +36,12 @@ CONFIGS = {
         'crattn_max_seq_len': 1,
         'crattn_dropout': 0.1, 
         'posterior_mogpredictor_hidden_dim_list': [2048, 1024, 512], 
-        'num_prior_mog_components': 8, 
         'posterior_mogpredictor_dropout': 0.1,
         'classifier_hidden_dims': [2048, 1024, 512], 
         'classifier_num_pats': 45, 
         'classifier_dropout': 0.1,
-        'decoder_base_dims': 4096,
         'weight_file': 'gmvae_weights.pth',
-        'release_tag': 'v0.6-alpha'
+        'release_tag': 'v0.7-alpha'
     }
 }
 
