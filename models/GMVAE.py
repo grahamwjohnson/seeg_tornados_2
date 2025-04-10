@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-import numpy as np
 from torchinfo import summary
 import torch.distributions as dist
 
@@ -775,44 +774,6 @@ class AdversarialClassifier(nn.Module):
         for layer in self.mlp_layers:
             mu = layer(mu)
         return self.softmax(mu)
-
-# class Discriminator(nn.Module):
-#     """
-#     Discriminates based on batch-level statistics
-#     """
-#     def __init__(self, gpu_id, latent_dim, disc_hidden_dims, posterior_disc_dropout = 0.1, **kwargs):
-#         super(Discriminator, self).__init__()
-
-#         self.gpu_id = gpu_id
-#         self.dropout = posterior_disc_dropout
-#         self.latent_dim = latent_dim
-
-#         # Statistics MLP
-#         self.stats_mlp_layers = nn.ModuleList()
-#         self.stats_mlp_layers.append(nn.Linear(2 * latent_dim, disc_hidden_dims[0])) # Input is mean and logvar
-#         self.stats_mlp_layers.append(nn.LeakyReLU(0.2, inplace=True))
-#         self.stats_mlp_layers.append(RMSNorm(disc_hidden_dims[0]))
-#         for i in range(len(disc_hidden_dims) - 1):
-#             self.stats_mlp_layers.append(LinearWithDropout(disc_hidden_dims[i], disc_hidden_dims[i + 1], self.dropout))
-#             self.stats_mlp_layers.append(nn.LeakyReLU(0.2, inplace=True))
-#             self.stats_mlp_layers.append(RMSNorm(disc_hidden_dims[i + 1]))
-#         self.stats_mlp_layers.append(nn.Linear(disc_hidden_dims[-1], 1))
-#         self.sigmoid = nn.Sigmoid()
-
-#     def calculate_aggregate_statistics(self, latent_codes):
-#         """Calculates mean and log variance across the batch for each dimension."""
-#         mean = torch.mean(latent_codes, dim=0)
-#         variance = torch.var(latent_codes, dim=0)
-#         logvar = torch.log(variance + 1e-8) # Add small epsilon for stability
-#         return torch.cat([mean, logvar], dim=-1)
-
-#     def forward(self, z_batch):
-#         aggregated_stats = self.calculate_aggregate_statistics(z_batch)
-#         z = aggregated_stats
-#         for layer in self.stats_mlp_layers:
-#             z = layer(z)
-#         return self.sigmoid(z)
-
 
 class Discriminator(nn.Module):
     def __init__(self, gpu_id, latent_dim, disc_hidden_dims, posterior_disc_dropout = 0.1, **kwargs):

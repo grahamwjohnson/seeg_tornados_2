@@ -992,6 +992,7 @@ class Trainer:
 
                     # PAD THE CHANNELS ACCORDING TO HASH
                     # NOTE: Just running for modifier '0' for inference
+                    raise Exception("Randomize at same scale as training, randomize every forward pass")
                     inference_modifier = 0
                     _, hash_channel_order = utils_functions.hash_to_vector(
                         input_string = pat_id_curr,
@@ -1002,6 +1003,8 @@ class Trainer:
                         hash_output_range = self.hash_output_range)
 
                     raise Exception("Need to pad and order channels according to hash")
+
+                    raise Exception("Need to scramble every single forward pass to promote channel order invariance")
 
                     start_idx = w * num_samples_in_forward
                     for embedding_idx in range(0, self.transformer_seq_length):
@@ -1014,11 +1017,11 @@ class Trainer:
                     # latent, _, _ = self.gmvae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
                     _, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, _ = self.gmvae(x, reverse=False) # No shift if not causal masking
                     
-                    # Theoretical Levels of detail to save (Token or Token-Meaned level):
+                    # Theoretical levels of detail to save (Token or Token-Meaned level):
                     # 1) Save mogpreds [CURRENTLY SAVED at Token-Mean level]
                     # 2) Save the weighted means from each component [CURRENTLY SAVED at Token-Mean level]
                     # 3) Save weighted means and uncertainty with weighted logvars [CURRENTLY SAVED at Token-Mean level]
-                    # 4) Or just save one component of interest 
+                    # 4) Or just save one component of interest [NOT currently saved in this way]
 
                     # Reshape back to token level 
                     mogpreds = mogpreds_pseudobatch.split(self.transformer_seq_length, dim=0)
