@@ -21,7 +21,7 @@ CONFIGS = {
         'gumbel_softmax_temperature_max': 0.05,
         'diag_mask_buffer_tokens': 16,
         'weight_file': 'gmvae_weights.pth',
-        'release_tag': 'v0.0-alpha'
+        'release_tag': 'v0.1-alpha'
     }
 }
 
@@ -93,10 +93,4 @@ def load(codename='sheldrake', pretrained=True, **kwargs):
     """
     return _load_gmvae(codename=codename, pretrained=pretrained, **kwargs)
 
-# Direct access to specific codenames for convenience
-def sheldrake(pretrained=True, **kwargs):
-    return load(codename='sheldrake', pretrained=pretrained, **kwargs)
-
-def another_run(pretrained=True, **kwargs):
-    return load(codename='another_run', pretrained=pretrained, **kwargs)
 
