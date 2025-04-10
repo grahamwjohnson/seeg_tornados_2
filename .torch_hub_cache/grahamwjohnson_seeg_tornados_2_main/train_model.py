@@ -1,47 +1,33 @@
+'''
+@author: grahamwjohnson
+Developed between 2023-2025
+
+Main script to train the Brain State Embedder (BSE)
+'''
+
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group, barrier
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 import sys  
 import os
-import shutil
-import matplotlib.pylab as pl
-import matplotlib.gridspec as gridspec
 import os
 import wandb
-import copy
-import pandas as pd
-import random
 import numpy as np
-import time
 import datetime
 import pickle
-import joblib
-import gc
-import heapq
-import traceback
 import glob
-import pacmap
 import yaml
-import auraloss
-import wandb
+import wandb 
 
 # Local Imports
-from utilities import latent_plotting
 from utilities import utils_functions
 from utilities import loss_functions
 from data import SEEG_Tornado_Dataset
-from models.Transformer import ModelArgs, Transformer
-from models.VAE_core import VAE_Enc, VAE_Dec
-from models.VAE_heads import BSE_Enc_Head, BSE_Dec_Head, BSE_Dec_Hint_Prep, Head_Optimizers
+from models.GMVAE import GMVAE, GaussianProcessPrior, Discriminator
 
-
-######
-torch.autograd.set_detect_anomaly(True)
-
+torch.autograd.set_detect_anomaly(False)
 
 def ddp_setup(gpu_id, world_size):
     """
@@ -54,6 +40,7 @@ def ddp_setup(gpu_id, world_size):
     # os.environ["NCCL_ASYNC_ERROR_HANDLING"] = 1  # Can only do this OR "NCCL_BLOCKING_WAIT" = 1
     # os.environ["NCCL_BLOCKING_WAIT"] = "1"
     # os.environ["NCCL_DEBUG"] = "INFO"
+    # os.environ['TORCH_DISTRIBUTED_DEBUG'] = 'DETAIL'
 
     init_process_group(backend="nccl", rank=gpu_id, world_size=world_size, timeout=datetime.timedelta(minutes=999999))
 
@@ -65,109 +52,176 @@ def load_train_objs(
     train_hour_dataset_range, 
     val_finetune_hour_dataset_range, 
     val_unseen_hour_dataset_range, 
-    inference_selection, 
+    num_dataloader_workers,
 
-    # BSE
-    core_weight_decay, 
-    head_weight_decay, 
-    
-    # transformer
-    max_seq_len, 
-    max_batch_size,
-    n_layers,
-    n_heads, 
-    multiple_of,
-    adamW_wd,
-    transformer_LR,    
+    # GM-VAE Optimizer
+    posterior_weight_decay, 
+    adamW_beta1,
+    adamW_beta2,
+
+    # Prior Optimizer
+    prior_weight_decay, 
+    adamW_beta1_prior, 
+    adamW_beta2_prior,
+
+    # Classifier Optimizer
+    classifier_weight_decay,
+    classifier_adamW_beta1,
+    classifier_adamW_beta2,
+
+    train_num_rand_hashes,
+    val_num_rand_hashes,
+
+    train_forward_passes,
+    valfinetune_forward_passes,
+    valunseen_forward_passes,
+
     **kwargs):
+
+    """
+    Initializes training objects, including datasets, dataloaders, the GM-VAE model, and its optimizer.
+    Splits patient data into training and validation sets, configures datasets, and sets up the model and optimizer.
+
+    Args:
+        gpu_id (int): GPU ID for training.
+        pat_dir (str): Directory containing patient data.
+        train_val_pat_perc (list): Percentage split for training and validation patients.
+        intrapatient_dataset_style (list): Dataset style and split (e.g., [1, 0] for all data, train split).
+        train_hour_dataset_range (list): Time range for training data.
+        val_finetune_hour_dataset_range (list): Time range for validation finetune data.
+        val_unseen_hour_dataset_range (list): Time range for validation unseen data.
+        num_dataloader_workers (int): Number of workers for dataloaders.
+        posterior_weight_decay (float): Weight decay for posterior parameters.
+        adamW_beta1, adamW_beta2 (float): AdamW optimizer parameters for posterior.
+        prior_weight_decay (float): Weight decay for prior parameters.
+        adamW_beta1_prior, adamW_beta2_prior (float): AdamW optimizer parameters for prior.
+        classifier_weight_decay (float): Weight decay for classifier parameters.
+        classifier_adamW_beta1, classifier_adamW_beta2 (float): AdamW optimizer parameters for classifier.
+        train_num_rand_hashes (int): Random hashes for training dataset.
+        val_num_rand_hashes (int): Random hashes for validation dataset.
+        train_forward_passes (int): Forward passes for training dataset.
+        valfinetune_forward_passes (int): Forward passes for validation finetune dataset.
+        valunseen_forward_passes (int): Forward passes for validation unseen dataset.
+        **kwargs: Additional arguments for dataset and model configuration.
+
+    Returns:
+        train_dataset, train_dataloader: Training dataset and dataloader.
+        valfinetune_dataset, valfinetune_dataloader: Validation finetune dataset and dataloader.
+        valunseen_dataset, valunseen_dataloader: Validation unseen dataset and dataloader.
+        gmvae: Initialized GM-VAE model.
+        opt_gmvae: Optimizer for the GM-VAE model.
+    """
 
     # Split pats into train and test
     all_pats_dirs = glob.glob(f"{pat_dir}/*pat*")
     all_pats_list = [x.split('/')[-1] for x in all_pats_dirs]
 
-    val_pats_count = int(np.ceil(train_val_pat_perc[1] * len(all_pats_list)))
-    val_pats_dirs = all_pats_dirs[-val_pats_count:]
-    val_pats_list = all_pats_list[-val_pats_count:]
+    # If validation patients indicated
+    if train_val_pat_perc[1] > 0:
+        val_pats_count = int(np.ceil(train_val_pat_perc[1] * len(all_pats_list)))
+        val_pats_dirs = all_pats_dirs[-val_pats_count:]
+        val_pats_list = all_pats_list[-val_pats_count:]
 
-    train_pats_dirs = all_pats_dirs[:-val_pats_count]
-    train_pats_list = all_pats_list[:-val_pats_count]
+        train_pats_dirs = all_pats_dirs[:-val_pats_count]
+        train_pats_list = all_pats_list[:-val_pats_count]
+
+        print(f"[GPU{str(gpu_id)}] Generating VALIDATION FINETUNE dataset")
+        kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs/Val_Grouped_Finetune'
+        valfinetune_dataset = SEEG_Tornado_Dataset(
+            gpu_id=gpu_id, 
+            pat_list=val_pats_list,
+            pat_dirs=val_pats_dirs,
+            intrapatient_dataset_style=intrapatient_dataset_style, 
+            hour_dataset_range=val_finetune_hour_dataset_range,
+            num_rand_hashes=val_num_rand_hashes,
+            num_forward_passes=valfinetune_forward_passes,
+            data_logger_enabled=True,
+            data_logger_file=f"{kwargs['log_dir']}/data_forward_pass_log_Valfinetune_GPU{gpu_id}.jsonl.gz",
+            **kwargs)
+
+        print(f"[GPU{str(gpu_id)}] Generating VALIDATION UNSEEN dataset")
+        kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs/Val_Grouped_Unseen'
+        valunseen_dataset = SEEG_Tornado_Dataset(
+            gpu_id=gpu_id, 
+            pat_list=val_pats_list,
+            pat_dirs=val_pats_dirs,
+            intrapatient_dataset_style=intrapatient_dataset_style, 
+            hour_dataset_range=val_unseen_hour_dataset_range,
+            num_rand_hashes=val_num_rand_hashes,
+            num_forward_passes=valunseen_forward_passes,
+            data_logger_enabled=True,
+            data_logger_file=f"{kwargs['log_dir']}/data_forward_pass_log_Valunseen_GPU{gpu_id}.jsonl.gz",
+            **kwargs)
+
+        # Random Dataloaders for Validation #
+        valfinetune_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
+        valfinetune_dataloader = utils_functions.prepare_dataloader(valfinetune_dataset, batch_size=None, num_workers=num_dataloader_workers)
+
+        valunseen_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
+        valunseen_dataloader = utils_functions.prepare_dataloader(valunseen_dataset, batch_size=None, num_workers=num_dataloader_workers)
+
+    else: # If no val, just make a train dataset
+        train_pats_dirs = all_pats_dirs
+        train_pats_list = all_pats_list
+        valfinetune_dataset = None
+        valunseen_dataset = None
+        valfinetune_dataloader = None
+        valunseen_dataloader = None
 
     # Sequential dataset used to run inference on train data and build PaCMAP projection
     print(f"[GPU{str(gpu_id)}] Generating TRAIN dataset")
-    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE/Train_Grouped'
-    train_set = SEEG_Tornado_Dataset(
+    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs/Train_Grouped'
+    train_dataset = SEEG_Tornado_Dataset(
         gpu_id=gpu_id, 
         pat_list=train_pats_list,
         pat_dirs=train_pats_dirs,
         intrapatient_dataset_style=intrapatient_dataset_style, 
         hour_dataset_range=train_hour_dataset_range,
-        **kwargs)
-    
-    print(f"[GPU{str(gpu_id)}] Generating VALIDATION FINETUNE dataset")
-    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE/Val_Grouped_Finetune'
-    val_finetune_set = SEEG_Tornado_Dataset(
-        gpu_id=gpu_id, 
-        pat_list=val_pats_list,
-        pat_dirs=val_pats_dirs,
-        intrapatient_dataset_style=intrapatient_dataset_style, 
-        hour_dataset_range=val_finetune_hour_dataset_range,
+        num_rand_hashes=train_num_rand_hashes,
+        num_forward_passes=train_forward_passes,
+        data_logger_enabled=True,
+        data_logger_file=f"{kwargs['log_dir']}/data_forward_pass_log_Train_GPU{gpu_id}.jsonl.gz",
         **kwargs)
 
-    print(f"[GPU{str(gpu_id)}] Generating VALIDATION UNSEEN dataset")
-    kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs_BSE/Val_Grouped_Unseen'
-    val_unseen_set = SEEG_Tornado_Dataset(
-        gpu_id=gpu_id, 
-        pat_list=val_pats_list,
-        pat_dirs=val_pats_dirs,
-        intrapatient_dataset_style=intrapatient_dataset_style, 
-        hour_dataset_range=val_unseen_hour_dataset_range,
-        **kwargs)
-     
-    # ### VAE HEADS ###
+    ### Random DataLoaders ###
+    train_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
+    train_dataloader = utils_functions.prepare_dataloader(train_dataset, batch_size=None, num_workers=num_dataloader_workers)
+         
+    ### GMVAE ###
+    gmvae = GMVAE(gpu_id=gpu_id, **kwargs) 
+    gmvae = gmvae.to(gpu_id) 
 
-    # Train
-    train_enc_heads = [-1]*len(train_pats_list)
-    train_dec_heads = [-1]*len(train_pats_list)
-    train_hint_preppers = [-1]*len(train_pats_list)
-    for i in range(0, len(train_pats_list)):
-        train_enc_heads[i] = BSE_Enc_Head(pat_id=train_pats_list[i], num_channels=train_set.pat_num_channels[i], **kwargs).to(gpu_id)
-        train_dec_heads[i] = BSE_Dec_Head(pat_id=train_pats_list[i], num_channels=train_set.pat_num_channels[i], **kwargs).to(gpu_id)
-        train_hint_preppers[i] = BSE_Dec_Hint_Prep(pat_id=train_pats_list[i], num_channels=train_set.pat_num_channels[i], **kwargs).to(gpu_id)
-    
-    train_heads = (train_enc_heads, train_dec_heads, train_hint_preppers)
-    opts_train = Head_Optimizers(heads=train_heads, wd=head_weight_decay, lr=kwargs['LR_min_heads'])
+    ### DISCRIMINATOR ###
+    disc = Discriminator(gpu_id=gpu_id, **kwargs)
+    disc = disc.to(gpu_id)
 
-    # Val
-    val_enc_heads = [-1]*len(val_pats_list)
-    val_dec_heads = [-1]*len(val_pats_list)
-    val_hint_preppers = [-1]*len(val_pats_list)
-    for i in range(0, len(val_pats_list)):
-        val_enc_heads[i] = BSE_Enc_Head(pat_id=val_pats_list[i], num_channels=val_finetune_set.pat_num_channels[i], **kwargs).to(gpu_id)
-        val_dec_heads[i] = BSE_Dec_Head(pat_id=val_pats_list[i], num_channels=val_finetune_set.pat_num_channels[i], **kwargs).to(gpu_id)
-        val_hint_preppers[i] = BSE_Dec_Hint_Prep(pat_id=val_pats_list[i], num_channels=val_finetune_set.pat_num_channels[i], **kwargs).to(gpu_id)
-    
-    val_heads = (val_enc_heads, val_dec_heads, val_hint_preppers)
-    opts_val = Head_Optimizers(heads=val_heads, wd=head_weight_decay, lr=kwargs['LR_min_heads'])
+    # Separate the parameters into two groups
+    gmvae_params = []
+    prior_params = []
+    classifier_params = []
 
-    ### VAE Enc ###
-    vae_enc = VAE_Enc(gpu_id=gpu_id, **kwargs) 
-    vae_enc = vae_enc.to(gpu_id) 
-    opt_enc = torch.optim.AdamW(vae_enc.parameters(), lr=kwargs['LR_min_core'], weight_decay=core_weight_decay)
-    
-    ### VAE Dec ###
-    vae_dec = VAE_Dec(gpu_id=gpu_id, **kwargs) 
-    vae_dec = vae_dec.to(gpu_id) 
-    opt_dec = torch.optim.AdamW(vae_dec.parameters(), lr=kwargs['LR_min_core'], weight_decay=core_weight_decay)
+    # Iterate through the model parameters
+    for name, param in gmvae.named_parameters():
+        # Check if the parameter is part of the encoder submodule
+        if 'adversarial_classifier' in name:
+            classifier_params.append(param)
+        elif 'prior' in name:
+            prior_params.append(param)
+        else:
+            gmvae_params.append(param)
 
-    ### Transformer ###
-    transformer = Transformer(ModelArgs(device=gpu_id, **kwargs))
-    transformer = transformer.to(gpu_id)
-    transformer_opt = torch.optim.AdamW(transformer.parameters(), lr=transformer_LR, weight_decay=adamW_wd)
-    print(f"[GPU{gpu_id}] transformer loaded")
+    # Separate the parameters
+    param_groups = [
+        {"params": gmvae_params, "lr":  kwargs['LR_min_posterior'], "weight_decay": posterior_weight_decay, "betas": (adamW_beta1, adamW_beta2)},  
+        {"params": prior_params, "lr":  kwargs['LR_min_prior'], "weight_decay": prior_weight_decay, "betas": (adamW_beta1_prior, adamW_beta2_prior)},  
+        {"params": classifier_params, "lr": kwargs['LR_min_classifier'], "weight_decay": classifier_weight_decay, "betas":(classifier_adamW_beta1, classifier_adamW_beta2)}  
+    ]
+    opt_gmvae = torch.optim.AdamW(param_groups)
+    opt_disc = torch.optim.AdamW(disc.parameters())
 
-    return train_set, val_finetune_set, val_unseen_set, transformer, transformer_opt, vae_enc, vae_dec, train_heads, val_heads, opt_enc, opt_dec, opts_train, opts_val  #infer_set
+    return train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, gmvae, disc, opt_gmvae, opt_disc
 
-def main(         
+def main(  
     # Ordered variables
     gpu_id: int, 
     world_size: int, 
@@ -177,21 +231,59 @@ def main(
     run_name: str,
     timestamp_id: int,
     start_epoch: int,
-    wdecode_batch_size: int,
-    onlylatent_batch_size: int,
-    train_subsample_file_factor: int,
-    PaCMAP_model_to_infer = [],
-    enc_state_dict_prev_path = [],
-    enc_opt_state_dict_prev_path = [],
-    dec_state_dict_prev_path = [],
-    dec_opt_state_dict_prev_path = [],
-    transformer_state_dict_prev_path = [],
-    transformer_opt_state_dict_prev_path = [],
-    heads_prev_dir = [],
+    LR_val_gmvae: float,
+    LR_val_prior: float,
+    LR_val_cls: float,
+    LR_val_disc: float,
+    val_finetine_bool: bool,
+    finetune_inference: bool, 
+    finetune_inference_epochs: int,
+    singlebatch_printing_interval_val,
+    singlebatch_printing_interval_train,
+    gmvae_state_dict_prev_path = [],
+    gmvae_opt_state_dict_prev_path = [],
+    disc_state_dict_prev_path = [],
+    disc_opt_state_dict_prev_path = [],
+    running_mean_path = [],
+    running_logvar_path = [],
+    running_zmeaned_path = [],
+    running_mogpreds_path = [],
+    running_patidxs_path = [],
     epochs_to_train: int = -1,
     **kwargs):
+    
+    """
+    Main training loop for the GM-VAE model with support for distributed data parallelism (DDP) 
+    and model inference.
 
-    # Initialize new WandB here aand group GPUs together with DDP
+    This script handles the entire process of training, validation, and inference for the GM-VAE model. 
+    It initializes key components such as datasets, models, and optimizers, and sets up the Distributed Data 
+    Parallel (DDP) framework to facilitate multi-GPU training. The training process includes optional fine-tuning 
+    of the model on validation data, as well as inference on the entire dataset to export embeddings.
+
+    Key Features:
+    - Initializes WandB for experiment tracking.
+    - Handles multi-GPU distributed training with DDP setup.
+    - Loads and saves model checkpoints during training.
+    - Supports fine-tuning on validation datasets before inference.
+    - Exports embeddings for multiple datasets after training.
+    - Manages the training and validation loops, including dynamic learning rate adjustments.
+    - Handles data generators and ensures that the model continues training from previous states when necessary.
+
+    Arguments:
+    - gpu_id: GPU identifier for multi-GPU training.
+    - world_size: Number of GPUs used in training.
+    - config: Configuration dictionary with hyperparameters and settings.
+    - run_name, timestamp_id, and other parameters for experiment tracking and model fine-tuning.
+    - Various paths for loading pre-trained model weights, running statistics, and checkpoints.
+
+    Functions:
+    - Main loop through epochs, including training, validation, and inference stages.
+    - Dynamic loading and saving of model weights.
+    - Regular saving of checkpoints and management of data generators.
+    """
+
+    # Initialize new WandB here and group GPUs together with DDP
     wandb.require("service")
     wandb_run = wandb.init(
         resume="allow",
@@ -209,142 +301,233 @@ def main(
     ddp_setup(gpu_id, world_size)
 
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
-    train_dataset, valfinetune_dataset, valunseen_dataset, transformer, transformer_opt, vae_enc, vae_dec, train_heads, val_heads, opt_enc, opt_dec, opts_train, opts_val = load_train_objs(gpu_id=gpu_id, **kwargs) 
+    train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, gmvae, disc, opt_gmvae, opt_disc = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
-    # Load the model/opt/sch states if not first epoch & if in training mode
+    # Load the model/opt states if not first epoch & if in training mode
     if (start_epoch > 0):
         map_location = {'cuda:%d' % 0: 'cuda:%d' % gpu_id}
 
-        # Load in VAE Core weights and opts
-        enc_state_dict_prev = torch.load(enc_state_dict_prev_path, map_location=map_location)
-        vae_enc.load_state_dict(enc_state_dict_prev)
-        enc_opt_state_dict_prev = torch.load(enc_opt_state_dict_prev_path, map_location=map_location)
-        opt_enc.load_state_dict(enc_opt_state_dict_prev)
+        # Load in GMVAE weights and opts
+        gmvae_state_dict_prev = torch.load(gmvae_state_dict_prev_path, map_location=map_location)
+        gmvae.load_state_dict(gmvae_state_dict_prev)
+        gmvae_opt_state_dict_prev = torch.load(gmvae_opt_state_dict_prev_path, map_location=map_location)
+        opt_gmvae.load_state_dict(gmvae_opt_state_dict_prev)
+        print(f"[GPU{gpu_id}] GM-VAE Model and Opt weights loaded from checkpoints")
 
-        dec_state_dict_prev = torch.load(dec_state_dict_prev_path, map_location=map_location)
-        vae_dec.load_state_dict(dec_state_dict_prev)
-        dec_opt_state_dict_prev = torch.load(dec_opt_state_dict_prev_path, map_location=map_location)
-        opt_dec.load_state_dict(dec_opt_state_dict_prev)
+        # Load in Discriminator weights and opts
+        disc_state_dict_prev = torch.load(disc_state_dict_prev_path, map_location=map_location)
+        disc.load_state_dict(disc_state_dict_prev)
+        disc_opt_state_dict_prev = torch.load(disc_opt_state_dict_prev_path, map_location=map_location)
+        opt_disc.load_state_dict(disc_opt_state_dict_prev)
+        print(f"[GPU{gpu_id}] Discriminator and Opt weights loaded from checkpoints")
 
-        # Load in Transformer model weights and opt
-        transformer_state_dict_prev = torch.load(transformer_state_dict_prev_path, map_location=map_location)
-        transformer.load_state_dict(transformer_state_dict_prev)
-        transformer_opt_state_dict_prev = torch.load(transformer_opt_state_dict_prev_path, map_location=map_location)
-        transformer_opt.load_state_dict(transformer_opt_state_dict_prev)
+        # Load running mean 
+        with open(running_mean_path, "rb") as f: accumulated_mean = pickle.load(f)
+        print(f"[GPU{gpu_id}] Running Means loaded from checkpoints")
 
-        # Load in train heads and opts, val heads are never pretrained by design
-        enc_head_weight_files = glob.glob(heads_prev_dir + "/*enc_head.pt")
-        enc_head_opt_files = glob.glob(heads_prev_dir + "/*enc_head_opt.pt")
-        dec_head_weight_files = glob.glob(heads_prev_dir + "/*dec_head.pt")
-        dec_head_opt_files = glob.glob(heads_prev_dir + "/*dec_head_opt.pt")
-        hinter_head_weight_files = glob.glob(heads_prev_dir + "/*hinter_head.pt")
-        hinter_head_opt_files = glob.glob(heads_prev_dir + "/*hinter_head_opt.pt")
+        # Load running logvar
+        with open(running_logvar_path, "rb") as f: accumulated_logvar = pickle.load(f)
+        print(f"[GPU{gpu_id}] Running Logvars loaded from checkpoints")
 
-        # Sort the file names to line up with pat idxs
-        enc_head_weight_files.sort()
-        enc_head_opt_files.sort()
-        dec_head_weight_files.sort()
-        dec_head_opt_files.sort()
-        hinter_head_weight_files.sort()
-        hinter_head_opt_files.sort()
+        # Load running zmeaned
+        with open(running_zmeaned_path, "rb") as f: accumulated_zmeaned = pickle.load(f)
+        print(f"[GPU{gpu_id}] Running Z Token-Averaged loaded from checkpoints")
 
-        for pat_idx in range(len(train_heads[0])):
-            # Load model weights for heads (enc, dec, hinter)
-            filename_enc = enc_head_weight_files[pat_idx]
-            pat_idx_in_filename = int(filename_enc.split("/")[-1].split("_")[2].replace("patidx",""))
-            if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
-            train_heads[0][pat_idx].load_state_dict(torch.load(filename_enc, map_location=map_location))
+        # Load running mog predictions
+        with open(running_mogpreds_path, "rb") as f: accumulated_mogpreds = pickle.load(f)
+        print(f"[GPU{gpu_id}] Running MoG Predictions loaded from checkpoints")
 
-            filename_dec = dec_head_weight_files[pat_idx]
-            pat_idx_in_filename = int(filename_dec.split("/")[-1].split("_")[2].replace("patidx",""))
-            if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
-            train_heads[1][pat_idx].load_state_dict(torch.load(filename_dec, map_location=map_location))
+        # Load running patidxs
+        with open(running_patidxs_path, "rb") as f: accumulated_patidxs = pickle.load(f)
+        print(f"[GPU{gpu_id}] Running MoG Predictions loaded from checkpoints")
+    
+    else:
+        accumulated_mean = []
+        accumulated_logvar = []
+        accumulated_zmeaned = []
+        accumulated_mogpreds = []
+        accumulated_patidxs = []
 
-            filename_hinter = hinter_head_weight_files[pat_idx]
-            pat_idx_in_filename = int(filename_hinter.split("/")[-1].split("_")[2].replace("patidx",""))
-            if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
-            train_heads[2][pat_idx].load_state_dict(torch.load(filename_hinter, map_location=map_location))
-
-            # Load the optimizers
-            filename_enc_OPT = enc_head_opt_files[pat_idx]
-            pat_idx_in_filename = int(filename_enc_OPT.split("/")[-1].split("_")[2].replace("patidx",""))
-            if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
-            opts_train.enc_head_opts[pat_idx].load_state_dict(torch.load(filename_enc_OPT, map_location=map_location))
-
-            filename_dec_OPT = dec_head_opt_files[pat_idx]
-            pat_idx_in_filename = int(filename_dec_OPT.split("/")[-1].split("_")[2].replace("patidx",""))
-            if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
-            opts_train.dec_head_opts[pat_idx].load_state_dict(torch.load(filename_dec_OPT, map_location=map_location))
-
-            filename_hinter_OPT = hinter_head_opt_files[pat_idx]
-            pat_idx_in_filename = int(filename_hinter_OPT.split("/")[-1].split("_")[2].replace("patidx",""))
-            if pat_idx_in_filename != pat_idx: raise Exception("Pat idx mismatch in head state loading")
-            opts_train.hint_preppers_opts[pat_idx].load_state_dict(torch.load(filename_hinter_OPT, map_location=map_location))
-
-        print("Core and Head Weights and Opts loaded from checkpoints")
-
+    # Create the training object
     trainer = Trainer(
         world_size=world_size,
         gpu_id=gpu_id, 
-        transformer=transformer,
-        transformer_opt=transformer_opt,
-        vae_enc=vae_enc, 
-        vae_dec=vae_dec, 
-        train_heads=train_heads,
-        val_heads=val_heads,
+        gmvae=gmvae, 
+        disc=disc,
+        opt_gmvae=opt_gmvae,
+        opt_disc=opt_disc,
         start_epoch=start_epoch,
         train_dataset=train_dataset, 
+        train_dataloader=train_dataloader,
         valfinetune_dataset=valfinetune_dataset,
+        valfinetune_dataloader=valfinetune_dataloader,
         valunseen_dataset=valunseen_dataset,
-        opt_enc=opt_enc,
-        opt_dec=opt_dec, 
-        opts_train=opts_train,
-        opts_val=opts_val,
-        wdecode_batch_size=wdecode_batch_size,
-        onlylatent_batch_size=onlylatent_batch_size,
-        PaCMAP_model_to_infer=PaCMAP_model_to_infer,
+        valunseen_dataloader=valunseen_dataloader,
         wandb_run=wandb_run,
+        finetune_inference=finetune_inference,
+        accumulated_mean=accumulated_mean,
+        accumulated_logvar=accumulated_logvar,
+        accumulated_zmeaned=accumulated_zmeaned,
+        accumulated_mogpreds=accumulated_mogpreds,
+        accumulated_patidxs=accumulated_patidxs,
         **kwargs)
+
+    # Kill the val data generators if val_every is set artificially high
+    if (kwargs['val_every'] > 999) & (kwargs['inference_every'] > 999) & (trainer.valfinetune_dataset != None) & (trainer.valunseen_dataset != None):
+        print(f"[GPU{str(trainer.gpu_id)}] WARNING: val_every is {kwargs['val_every']}, which is over arbitrary limit of 999, thus going to kill val generators")
+        trainer.valfinetune_dataset.kill_generator()
+        trainer.valunseen_dataset.kill_generator()
     
-    # Run through all epochs
+    # Main loop through all epochs
     for epoch in range(start_epoch, epochs_to_train):
         trainer.epoch = epoch
-        
-        # PACMAP
-        if (trainer.epoch + 1) % trainer.pacmap_every == 0:
-            trainer._pacmap(**kwargs)
-            # Checkpoint after PACMAP, do not save finetuned model weights
-            print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
+
+        # INFERENCE on all data
+        if (epoch > 0) & ((trainer.epoch + 1) % trainer.inference_every == 0):
+
+            if trainer.valunseen_dataset != None: trainer.valunseen_dataset.kill_generator()
+            trainer.train_dataset.kill_generator()
+            print(f"[GPU{trainer.gpu_id}] Killed Train/ValUnseen random generators for inference mode")
+
+            # Save pre-finetune model/opt weights
+            if finetune_inference:
+                gmvae_dict = trainer.gmvae.module.state_dict()
+                disc_dict = trainer.disc.module.state_dict()
+                gmvae_opt_dict = trainer.opt_gmvae.state_dict()
+                disc_opt_dict = trainer.opt_disc.state_dict()
+                accumulated_mean = trainer.accumulated_mean
+                accumulated_logvar = trainer.accumulated_logvar
+                accumulated_zmeaned = trainer.accumulated_zmeaned
+                accumulated_mogpreds = trainer.accumulated_mogpreds
+                accumulated_patidxs = trainer.accumulated_patidxs
+
+                # FINETUNE on beginning of validation patients (currently only one epoch)
+                # Set to train and change LR to validate settings
+                trainer._set_to_train()
+                trainer.opt_gmvae.param_groups[0]['lr'] = LR_val_gmvae
+                trainer.opt_gmvae.param_groups[1]['lr'] = LR_val_prior
+                trainer.opt_gmvae.param_groups[2]['lr'] = LR_val_cls
+                trainer.opt_disc['lr'] = LR_val_disc
+                for finetune_epoch in range(finetune_inference_epochs):
+                    trainer.epoch = epoch + finetune_epoch
+                    trainer._run_train_epoch(
+                        dataloader_curr = trainer.valfinetune_dataloader, 
+                        dataset_string = "valfinetune",
+                        val_finetune = True,
+                        val_unseen = False,
+                        singlebatch_printing_interval = singlebatch_printing_interval_val,
+                        **kwargs)
+
+                # Finetuned, so setup inference for all datasets
+                dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
+                dataset_strs = ["train", "valfinetune", "valunseen"]
+
+            else: # No finetune, only run data for Train and ValUnseen datasets (running on val_finetune would just create confusion later when using embeddings)
+                dataset_list = [trainer.train_dataset, trainer.valunseen_dataset]
+                dataset_strs = ["train", "valunseen"]
+            
+            # INFERENCE on all selected datasets, kill finetune now that we also do not need it
+            if trainer.valfinetune_dataset != None: trainer.valfinetune_dataset.kill_generator()
+            print(f"[GPU{trainer.gpu_id}] Killed val_finetune for inference mode")
+
+            trainer._set_to_eval()
+            with torch.inference_mode():
+                for d in range(0, len(dataset_list)):
+                    trainer._run_export_embeddings(
+                        dataset_curr = dataset_list[d],  # Takes in a Dataset, NOT a DataLoader
+                        dataset_string = dataset_strs[d],
+                        **kwargs)
+
+            # Restore model/opt weights to pre-finetune, and restart data generators
+            if finetune_inference:
+                trainer.gmvae.module.load_state_dict(gmvae_dict)
+                trainer.disc.module.load_state_dict(disc_dict)
+                trainer.opt_gmvae.load_state_dict(gmvae_opt_dict)
+                trainer.opt_disc.load_state_dict(disc_opt_dict)
+                trainer.accumulated_mean = accumulated_mean
+                trainer.accumulated_logvar = accumulated_logvar
+                trainer.accumulated_zmeaned = accumulated_zmeaned
+                trainer.accumulated_mogpreds = accumulated_mogpreds
+                trainer.accumulated_patidxs = accumulated_patidxs
+
+            
+            trainer.train_dataset.initiate_generator()
+            trainer.valfinetune_dataset.initiate_generator()
+            trainer.valunseen_dataset.initiate_generator()
+            print(f"GPU{str(trainer.gpu_id)} at post inference barrier - restarted random data generators")
             barrier()
-            if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=False, savePaCMAP=True, **kwargs)
         
-
-        # QUICK RECON
-        if (trainer.epoch + 1) % trainer.quick_recon_val_every == 0:
-            trainer._quick_recon(**kwargs)
-
         # TRAIN
         trainer._set_to_train()
-        trainer._run_epoch(
-                dataset_curr = trainer.train_dataset, 
-                batchsize=trainer.wdecode_batch_size,
-                heads_curr = trainer.train_heads,
-                head_opts_curr = trainer.opts_train,
-                random_bool = True, # will subsample and randomize
-                subsample_file_factor_curr = train_subsample_file_factor, # only valid if 'random_bool' is True
-                only_latent = False, # Do not run decoder or transformer
-                save_latents = False, # will save the latents to tmp_directory
-                all_files_bool = False, # this will run every file for every patient instead of subsampling (changes how dataloaders are made)
-                val_finetune = False,
-                **kwargs)
+        trainer._run_train_epoch(
+            dataloader_curr = trainer.train_dataloader, 
+            dataset_string = "train",
+            val_finetune = False,
+            val_unseen = False,
+            singlebatch_printing_interval = singlebatch_printing_interval_train,
+            **kwargs)
         
-        # Checkpoint after every train epoch, optionally delete old checkpoints
-        print(f"GPU{str(trainer.gpu_id)} at pre checkpoint save barrier")
+        # CHECKPOINT
+        # After every train epoch, optionally delete old checkpoints
+        if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, **kwargs)
+        print(f"GPU{str(trainer.gpu_id)} at post checkpoint save barrier")
         barrier()
-        if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, saveModels=True, savePaCMAP=False, **kwargs)
+
+        # VALIDATE 
+        if ((trainer.epoch + 1) % trainer.val_every == 0):
+            
+            if val_finetine_bool:
+                # Save pre-finetune model/opt weights
+                gmvae_dict = trainer.gmvae.module.state_dict()
+                disc_dict = trainer.disc.module.state_dict()
+                gmvae_opt_dict = trainer.opt_gmvae.state_dict()
+                disc_opt_dict = trainer.opt_disc.state_dict()
+                accumulated_mean = trainer.accumulated_mean
+                accumulated_logvar = trainer.accumulated_logvar
+                accumulated_zmeaned = trainer.accumulated_zmeaned
+                accumulated_mogpreds = trainer.accumulated_mogpreds
+                accumulated_patidxs = trainer.accumulated_patidxs
+
+                # FINETUNE on beginning of validation patients (currently only one epoch)
+                # Set to train and change LR to validate settings
+                trainer._set_to_train()
+                trainer.opt_gmvae.param_groups[0]['lr'] = LR_val_gmvae
+                trainer.opt_gmvae.param_groups[1]['lr'] = LR_val_prior
+                trainer.opt_gmvae.param_groups[2]['lr'] = LR_val_cls
+                trainer.opt_disc['lr'] = LR_val_disc
+                trainer._run_train_epoch(
+                    dataloader_curr = trainer.valfinetune_dataloader, 
+                    dataset_string = "valfinetune",
+                    val_finetune = True,
+                    val_unseen = False,
+                    singlebatch_printing_interval = singlebatch_printing_interval_val,
+                    **kwargs)
+
+            # UNSEEN portion of validation patients 
+            trainer._set_to_eval()
+            with torch.inference_mode():
+                trainer._run_train_epoch(
+                    dataloader_curr = trainer.valunseen_dataloader, 
+                    dataset_string = "valunseen",
+                    val_finetune = False,
+                    val_unseen = True,
+                    singlebatch_printing_interval = singlebatch_printing_interval_val,
+                    **kwargs)
+
+            # Restore model/opt weights to pre-finetune
+            if val_finetine_bool:
+                trainer.gmvae.module.load_state_dict(gmvae_dict)
+                trainer.disc.module.load_state_dict(disc_dict)
+                trainer.opt_gmvae.load_state_dict(gmvae_opt_dict)
+                trainer.opt_disc.load_state_dict(disc_opt_dict)
+                trainer.accumulated_mean = accumulated_mean
+                trainer.accumulated_logvar = accumulated_logvar
+                trainer.accumulated_zmeaned = accumulated_zmeaned
+                trainer.accumulated_mogpreds = accumulated_mogpreds
+                trainer.accumulated_patidxs = accumulated_patidxs
 
     # Kill the process after training loop completes
-    print(f"[GPU{gpu_id}]: End of train loop, killing subprocess")
+    print(f"[GPU{gpu_id}]: End of train loop, killing 'main' subprocess")
     wandb.finish()
     destroy_process_group() 
 
@@ -353,589 +536,970 @@ class Trainer:
         self,
         world_size: int,
         gpu_id: int,
-        transformer: torch.nn.Module,
-        transformer_opt: torch.optim.Optimizer,
-        vae_enc: torch.nn.Module,
-        vae_dec: torch.nn.Module,
-        train_heads: tuple,
-        val_heads: tuple,
+        gmvae: torch.nn.Module,
+        disc: torch.nn.Module,
         start_epoch: int,
         train_dataset: SEEG_Tornado_Dataset,
         valfinetune_dataset: SEEG_Tornado_Dataset,
         valunseen_dataset: SEEG_Tornado_Dataset,
-        opt_enc: torch.optim.Optimizer,
-        opt_dec: torch.optim.Optimizer,
-        opts_train,
-        opts_val,
-        wdecode_batch_size: int,
-        onlylatent_batch_size: int,
+        train_dataloader: DataLoader,
+        valfinetune_dataloader: DataLoader,
+        valunseen_dataloader: DataLoader,
+        opt_gmvae: torch.optim.Optimizer,
+        opt_disc: torch.optim.Optimizer,
         wandb_run,
         model_dir: str,
-        quick_recon_val_every: int,
-        finetune_quickrecon: bool,
-        pacmap_every: int,
-        finetune_pacmap: bool,
-        pic_save_dir: str,
-        mini_batch_window_size: int, 
-        mini_batch_stride: int,
+        val_every: int,
+        inference_every: int,
+        finetune_inference: bool,
         latent_dim: int,
-        decode_samples: int,
-        precode_samples: int,
-        feedforward_hint_samples: int,
+        prior_mog_components: int,
+        encode_token_samples: int,
         num_samples: int,
         transformer_seq_length: int,
+        transformer_start_pos: int,
         FS: int,
+        hash_output_range: tuple,
         intrapatient_dataset_style: list,
-        transformer_weight: float,
-        recon_weight: float,
         atd_file: str,
-        PaCMAP_model_to_infer,
-        pre_PaCMAP_window_sec: float,
-        pre_PaCMAP_stride_sec: float,
+        inference_window_sec_list: list,
+        inference_stride_sec_list: list,
         recent_display_iters: int,
+        total_collected_latents: int,
+        classifier_num_pats: int,
+        accumulated_mean,
+        accumulated_logvar,
+        accumulated_zmeaned,
+        accumulated_mogpreds,
+        accumulated_patidxs,
         **kwargs
     ) -> None:
         self.world_size = world_size
         self.gpu_id = gpu_id
-        self.transformer = transformer
-        self.transformer_opt = transformer_opt
-        self.vae_enc = vae_enc
-        self.vae_dec = vae_dec
-        self.train_heads = train_heads
-        self.val_heads = val_heads
+        self.gmvae = gmvae
+        self.disc = disc
         self.start_epoch = start_epoch
         self.train_dataset = train_dataset
         self.valfinetune_dataset = valfinetune_dataset
         self.valunseen_dataset = valunseen_dataset
-        self.opt_enc = opt_enc
-        self.opt_dec = opt_dec
-        self.opts_train = opts_train
-        self.opts_val = opts_val
-        self.wdecode_batch_size = wdecode_batch_size
-        self.onlylatent_batch_size = onlylatent_batch_size
+        self.train_dataloader = train_dataloader
+        self.valfinetune_dataloader = valfinetune_dataloader
+        self.valunseen_dataloader = valunseen_dataloader
+        self.opt_gmvae = opt_gmvae
+        self.opt_disc = opt_disc
         self.model_dir = model_dir
-        self.quick_recon_val_every = quick_recon_val_every
-        self.finetune_quickrecon = finetune_quickrecon
-        self.pacmap_every = pacmap_every
-        self.finetune_pacmap = finetune_pacmap
-        self.pic_save_dir = pic_save_dir
-        self.mini_batch_window_size = mini_batch_window_size
-        self.mini_batch_stride = mini_batch_stride
+        self.val_every = val_every
+        self.inference_every = inference_every
+        self.finetune_inference = finetune_inference
         self.latent_dim = latent_dim
-        self.decode_samples = decode_samples
-        self.precode_samples = precode_samples
-        self.feedforward_hint_samples = feedforward_hint_samples
+        self.prior_mog_components = prior_mog_components
+        self.encode_token_samples = encode_token_samples
         self.num_samples = num_samples
         self.transformer_seq_length = transformer_seq_length
+        self.transformer_start_pos = transformer_start_pos
         self.FS = FS
+        self.hash_output_range = hash_output_range
         self.intrapatient_dataset_style = intrapatient_dataset_style
-        self.curr_LR_core = -1
-        self.curr_LR_heads = -1
-        self.transformer_weight = transformer_weight
-        self.recon_weight = recon_weight
+        self.curr_LR_posterior = -1
         self.atd_file = atd_file
-        self.PaCMAP_model_to_infer = PaCMAP_model_to_infer
-        self.pre_PaCMAP_window_sec = pre_PaCMAP_window_sec
-        self.pre_PaCMAP_stride_sec = pre_PaCMAP_stride_sec
+        self.inference_window_sec_list = inference_window_sec_list
+        self.inference_stride_sec_list = inference_stride_sec_list
         self.recent_display_iters = recent_display_iters
+        self.total_collected_latents = total_collected_latents
+        self.classifier_num_pats = classifier_num_pats
+        self.accumulated_mean = accumulated_mean
+        self.accumulated_logvar = accumulated_logvar
+        self.accumulated_zmeaned = accumulated_zmeaned
+        self.accumulated_mogpreds = accumulated_mogpreds
+        self.accumulated_patidxs = accumulated_patidxs
         self.wandb_run = wandb_run
         self.kwargs = kwargs
 
-        self.KL_multiplier = -1 # dummy variable, only needed when debugging and training is skipped
+        """
+        Initialization method for the GM-VAE training object.
 
-        # Set up Core/Heads & transformer with DDP
-        self.vae_enc = DDP(vae_enc, device_ids=[gpu_id])   # find_unused_parameters=True
-        self.vae_dec = DDP(vae_dec, device_ids=[gpu_id])   # find_unused_parameters=True
-        self.transformer = DDP(transformer, device_ids=[gpu_id])   # find_unused_parameters=True
-        
-        self.train_heads = [[-1]*len(train_heads[i]) for i in range(len(train_heads))]
-        for i in range(0, len(train_heads)):
-            for j in range(len(train_heads[i])):
-                self.train_heads[i][j] = DDP(train_heads[i][j], device_ids=[gpu_id])
+        This method sets up all necessary configurations for training a GM-VAE model 
+        in a distributed environment. It initializes model parameters, datasets, 
+        dataloaders, optimization settings, and various training-related variables. 
+        Additionally, it sets up the model for Distributed Data Parallel (DDP) and 
+        prepares accumulated variables to track and manage latent data throughout 
+        the training process.
 
-        self.val_heads = [[-1]*len(val_heads[i]) for i in range(len(val_heads))]
-        for i in range(0, len(val_heads)):
-            for j in range(len(val_heads[i])):
-                self.val_heads[i][j] = DDP(val_heads[i][j], device_ids=[gpu_id])
+        Key Initializations:
+        - Distributed training setup with DDP.
+        - Model and optimization state (GM-VAE, optimizer).
+        - Guassian Process prior for temporal regularization across sequential tokens
+        - Training and validation datasets, dataloaders, and sampling strategies.
+        - Accumulated statistics for latent data and prior distribution.
+        - Integration with WandB for model monitoring.
 
-        self.num_train_pats = len(train_heads[0]) 
-        self.train_pat_ids = [self.train_heads[0][i].module.pat_id for i in range(len(self.train_heads[0]))]
+        Assertions and checks are performed to ensure correct configurations and 
+        prevent potential runtime errors.
+        """
 
-        self.num_val_pats = len(val_heads[0])
-        self.val_pat_ids = [self.val_heads[0][i].module.pat_id for i in range(len(self.val_heads[0]))]
-                
+        # Check variables that will cause delayed crashes 
+        assert len(self.inference_window_sec_list) == len(self.inference_stride_sec_list)
+
+        self.kl_weight = -1 # dummy variable, only needed when debugging and training is skipped
+
+        # Number of iterations per file
+        self.num_windows = int((self.num_samples - self.transformer_seq_length * self.encode_token_samples - self.encode_token_samples)/self.encode_token_samples) - 2
+
+        # Set up gmvae & transformer with DDP
+        self.gmvae = DDP(gmvae, device_ids=[gpu_id])   # find_unused_parameters=True
+        self.disc = DDP(disc, device_ids=[gpu_id])
+        self.gp_prior = GaussianProcessPrior(self.gpu_id, self.transformer_seq_length, self.latent_dim, **kwargs)
+                    
+        # Running Regulizer window for latent data
+        if self.accumulated_mean == []:
+            # If first initialziing, then start off with random
+            self.accumulated_mean = torch.randn(self.total_collected_latents, self.prior_mog_components, self.latent_dim).to(self.gpu_id)
+            self.accumulated_logvar = torch.randn(self.total_collected_latents, self.prior_mog_components, self.latent_dim).to(self.gpu_id)
+            self.accumulated_zmeaned = torch.randn(self.total_collected_latents, self.latent_dim).to(self.gpu_id)
+            self.accumulated_mogpreds = torch.softmax(torch.randn(self.total_collected_latents, self.prior_mog_components), dim=1).to(self.gpu_id)
+            self.accumulated_patidxs = (torch.ones(self.total_collected_latents) * -1).to(self.gpu_id)
+        else: 
+            # Ensure on proper device because loading from pickle
+            self.accumulated_mean = self.accumulated_mean.to(self.gpu_id)
+            self.accumulated_logvar = self.accumulated_logvar.to(self.gpu_id)
+            self.accumulated_zmeaned = self.accumulated_zmeaned.to(self.gpu_id)
+            self.accumulated_mogpreds = self.accumulated_mogpreds.to(self.gpu_id)
+            self.accumulated_patidxs = self.accumulated_patidxs.to(self.gpu_id)
+
+        # Running tab of update index
+        self.next_update_index = 0
+
         # Watch with WandB
-        # TODO: watch heads as well?
-        wandb.watch(self.vae_enc)
-        wandb.watch(self.vae_dec)
-        wandb.watch(self.transformer)
+        wandb.watch(self.gmvae)
+        wandb.watch(self.disc)
         
     def _set_to_train(self):
-        self.vae_enc.train()
-        self.vae_dec.train()
-        self.transformer.train()
-        self._set_heads_to_train(self.train_heads)
-        self._set_heads_to_train(self.val_heads)
+        self.gmvae.train()
+        self.disc.train()
 
     def _set_to_eval(self):
-        self.vae_enc.eval()
-        self.vae_dec.eval()
-        self.transformer.eval()
-        self._set_heads_to_eval(self.train_heads)
-        self._set_heads_to_eval(self.val_heads)
+        self.gmvae.eval()
+        self.disc.eval()
 
-    def _set_heads_to_train(self, head_tuple):
-        for i in range(0, len(head_tuple)):
-            for j in range(0, len(head_tuple[i])):
-                head_tuple[i][j].train()
-                           
-    def _set_heads_to_eval(self, head_tuple):
-        for i in range(0, len(head_tuple)):
-            for j in range(0, len(head_tuple[i])):
-                head_tuple[i][j].eval()
+    def _save_checkpoint(self, epoch, delete_old_checkpoints, **kwargs):
+        """
+        Saves a checkpoint of the GM-VAE model, optimizer, and accumulated statistics (means, logvars, etc.)
+        at the specified epoch. Optionally deletes old checkpoints to save disk space.
 
-    def _zero_all_grads(self):
-        self.opt_enc.zero_grad()
-        self.opt_dec.zero_grad()
-        self.transformer_opt.zero_grad()
-        self.opts_train.zero_grad()
-        self.opts_val.zero_grad()
+        Args:
+            epoch (int): Current epoch number.
+            delete_old_checkpoints (bool): If True, deletes old checkpoints except those at the end of
+                regularization annealing periods.
+            **kwargs: Additional arguments for checkpoint deletion.
 
-    def _save_checkpoint(self, epoch, saveModels, savePaCMAP, delete_old_checkpoints, head_names, **kwargs):
-            
-            print("CHECKPOINT SAVE")
+        Saves:
+            - GM-VAE model weights and optimizer state.
+            - Accumulated statistics: running means, logvars, z-meaned, MoG predictions, and patient indices.
+        """
 
-            # Create new directory for this epoch
-            base_checkpoint_dir = self.model_dir + f"/checkpoints"
-            check_epoch_dir = base_checkpoint_dir + f"/Epoch_{str(epoch)}"
+        print("CHECKPOINT SAVE")
 
-            # MODEL SAVES
-            if saveModels:
+        # Create new directory for this epoch
+        base_checkpoint_dir = self.model_dir + f"/checkpoints"
+        check_epoch_dir = base_checkpoint_dir + f"/Epoch_{str(epoch)}"
 
-                print("Saving core/head model weights")
+        print("Saving gmvae model weights")
 
-                ### CORE CHECKPOINT 
-                check_core_dir = check_epoch_dir + "/core_checkpoints"
-                if not os.path.exists(check_core_dir): os.makedirs(check_core_dir)
+        ### GMVAE CHECKPOINT 
+        check_posterior_dir = check_epoch_dir + "/posterior_checkpoints"
+        if not os.path.exists(check_posterior_dir): os.makedirs(check_posterior_dir)
 
-                # Save core model
-                ckp = self.vae_enc.module.state_dict()
-                check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_enc.pt"
-                torch.save(ckp, check_path)
-                
-                ckp = self.vae_dec.module.state_dict()
-                check_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_dec.pt"
-                torch.save(ckp, check_path)
+        # Save GMVAE model
+        ckp = self.gmvae.module.state_dict()
+        check_path = check_posterior_dir + "/checkpoint_epoch" + str(epoch) + "_gmvae.pt"
+        torch.save(ckp, check_path)
 
-                # Save opt core
-                opt_ckp = self.opt_enc.state_dict()
-                opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_enc_opt.pt"
-                torch.save(opt_ckp, opt_path)
+        # Save DISC model
+        ckp = self.disc.module.state_dict()
+        check_path = check_posterior_dir + "/checkpoint_epoch" + str(epoch) + "_disc.pt"
+        torch.save(ckp, check_path)
 
-                opt_ckp = self.opt_dec.state_dict()
-                opt_path = check_core_dir + "/checkpoint_epoch" +str(epoch) + "_vae_dec_opt.pt"
-                torch.save(opt_ckp, opt_path)
+        # Save GMVAE optimizer
+        opt_ckp = self.opt_gmvae.state_dict()
+        opt_path = check_posterior_dir + "/checkpoint_epoch" + str(epoch) + "_gmvae_opt.pt"
+        torch.save(opt_ckp, opt_path)
 
-                ### HEADS CHECKPOINT
-                check_heads_dir = check_epoch_dir + "/heads_checkpoints"
-                if not os.path.exists(check_heads_dir): os.makedirs(check_heads_dir)
+        # Save DISC optimizer
+        opt_ckp = self.opt_disc.state_dict()
+        opt_path = check_posterior_dir + "/checkpoint_epoch" + str(epoch) + "_disc_opt.pt"
+        torch.save(opt_ckp, opt_path)
 
-                # Save train heads model
-                if len(head_names) != len(self.train_heads): raise Exception(f"Got {len(self.train_heads)} from self.train_heads, but expected {len(head_names)} based on provided head names in config.yml file")
-                for head_style in range(0, len(self.train_heads)):
-                    for pat_idx in range(0, len(self.train_heads[head_style])):
-                        ckp = self.train_heads[head_style][pat_idx].module.state_dict()
-                        check_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_{head_names[head_style]}_head.pt"
-                        torch.save(ckp, check_path)
+        # Save DISC optimizer
+        opt_ckp = self.opt_disc.state_dict()
+        opt_path = check_posterior_dir + "/checkpoint_epoch" + str(epoch) + "_disc_opt.pt"
+        torch.save(opt_ckp, opt_path)
 
-                # Opts are indexed by head name, thus must iterate #TODO not hardcoded
-                for pat_idx in range(0, len(self.train_heads[0])):
-                    opt_ckp = self.opts_train.enc_head_opts[pat_idx].state_dict()
-                    opt_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_enc_head_opt.pt"
-                    torch.save(opt_ckp, opt_path)
+        # Save Running Mean 
+        latents_path = check_posterior_dir + "/checkpoint_epoch" +str(epoch) + "_running_means.pkl"
+        output_obj = open(latents_path, 'wb')
+        pickle.dump(self.accumulated_mean, output_obj)
+        output_obj.close()
+        print("Saved running means")
 
-                    opt_ckp = self.opts_train.dec_head_opts[pat_idx].state_dict()
-                    opt_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_dec_head_opt.pt"
-                    torch.save(opt_ckp, opt_path)
+        # Save Running Logvar 
+        latents_path = check_posterior_dir + "/checkpoint_epoch" +str(epoch) + "_running_logvars.pkl"
+        output_obj = open(latents_path, 'wb')
+        pickle.dump(self.accumulated_logvar, output_obj)
+        output_obj.close()
+        print("Saved running logvars")
 
-                    opt_ckp = self.opts_train.hint_preppers_opts[pat_idx].state_dict()
-                    opt_path = check_heads_dir + "/checkpoint_epoch" +str(epoch) + f"_patidx{pat_idx}_hinter_head_opt.pt"
-                    torch.save(opt_ckp, opt_path)
+        # Save Running Z
+        latents_path = check_posterior_dir + "/checkpoint_epoch" +str(epoch) + "_running_zmeaned.pkl"
+        output_obj = open(latents_path, 'wb')
+        pickle.dump(self.accumulated_zmeaned, output_obj)
+        output_obj.close()
+        print("Saved running Z Token-Meaned")
 
+        # Save Running MoG Predictions 
+        latents_path = check_posterior_dir + "/checkpoint_epoch" +str(epoch) + "_running_mogpreds.pkl"
+        output_obj = open(latents_path, 'wb')
+        pickle.dump(self.accumulated_mogpreds, output_obj)
+        output_obj.close()
+        print("Saved running MoG Predictions")
 
-                ### Transformer ###
+        # Save Running Pat Idxs
+        latents_path = check_posterior_dir + "/checkpoint_epoch" +str(epoch) + "_running_patidxs.pkl"
+        output_obj = open(latents_path, 'wb')
+        pickle.dump(self.accumulated_patidxs, output_obj)
+        output_obj.close()
+        print("Saved running Pat Idxs")
 
-                print("Saving Transformer model weights")
+        print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
 
-                # Save transformer model
-                check_transformer_dir = check_epoch_dir + "/transformer_checkpoints"
-                if not os.path.exists(check_transformer_dir): os.makedirs(check_transformer_dir)
-                ckp = self.transformer.module.state_dict()
-                check_path = check_transformer_dir + "/checkpoint_epoch" +str(epoch) + "_transformer.pt"
-                torch.save(ckp, check_path)
-                
-                # Save transformer optimizer
-                opt_ckp = self.transformer_opt.state_dict()
-                opt_path = check_transformer_dir + "/checkpoint_epoch" +str(epoch) + "_transformer_opt.pt"
-                torch.save(opt_ckp, opt_path)
+        if delete_old_checkpoints:
+            utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch, **kwargs)
+            print("Deleted old checkpoints, except epochs at end of reguaization annealing period")
+    
+    def _update_reg_window(self, mean, logvar, zmeaned, mogpreds, patidxs):
 
-                print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
+        """
+        This function collects and updates the most recent encoder outputs for plotting purposes. 
+        Historically, it was used for maintaining a running regularization window, but the cost 
+        became prohibitive after switching to outputting K means and K logvars. As a result, 
+        this function is now only used for visualization of the encoder outputs.
 
+        The function accumulates the following data:
+        - `mean`: The means from the encoder output.
+        - `logvar`: The log variances from the encoder output.
+        - `zmeaned`: The reparameterized means for latent variable z.
+        - `mogpreds`: The predictions from the mixture of Gaussians.
+        - `patidxs`: The patient indices associated with the data.
 
-            ### PACMAP & HDBSCAN
-            if savePaCMAP:
+        The accumulated data is stored in predefined arrays, and once the arrays are full, 
+        the function rolls over to overwrite the oldest data. This ensures that the window 
+        always contains the most recent `total_collected_latents` updates.
 
-                print("Saving PaCMAP models")
+        ### Key Features:
+        - **Window-based Accumulation:** The function maintains a running window of the 
+        most recent encoder outputs.
+        - **Rollover Mechanism:** When the window is full, older data is overwritten, 
+        keeping the window size constant.
+        - **Detachment for Backpropagation:** The accumulated data is detached from the 
+        computation graph, allowing it to be used for plotting while preventing 
+        gradients from flowing through it in subsequent backward passes.
 
-                # Path
-                pacmap_dir = check_epoch_dir + "/pacmap"
-                if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir) 
+        ### Parameters:
+        - `mean` (torch.Tensor): The means output by the encoder.
+        - `logvar` (torch.Tensor): The log variances output by the encoder.
+        - `zmeaned` (torch.Tensor): The reparameterized means of the latent variable z.
+        - `mogpreds` (torch.Tensor): The mixture of Gaussian predictions from the encoder.
+        - `patidxs` (torch.Tensor): The patient indices associated with the current batch.
 
-                # Save the PaCMAP model for use in inference
-                PaCMAP_common_prefix = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_PaCMAP"
-                pacmap.save(self.PaCMAP, PaCMAP_common_prefix)
+        ### Outputs:
+        - The function updates the accumulated encoder outputs, which are stored in 
+        `self.accumulated_mean`, `self.accumulated_logvar`, `self.accumulated_zmeaned`, 
+        `self.accumulated_mogpreds`, and `self.accumulated_patidxs`.
 
-                PaCMAP_common_prefix_MedDim = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_PaCMAP_MedDim"
-                pacmap.save(self.PaCMAP_MedDim, PaCMAP_common_prefix_MedDim)
+        ### Notes:
+        - **Averaging:** This function requires that the encoder outputs be averaged across tokens before being passed in.
+        - **Plotting Purpose:** The primary purpose of this function is for visualization and monitoring of the encoder's behavior.
+        - **Memory Efficiency:** By detaching the accumulated values, the function ensures that 
+        memory is managed efficiently while still allowing the data to be used for plotting.
 
-                pre_PaCMAP_window_sec_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_pre_PaCMAP_window_sec.pkl"
-                output_obj2 = open(pre_PaCMAP_window_sec_path, 'wb')
-                pickle.dump(self.pre_PaCMAP_window_sec, output_obj2)
-                output_obj2.close()
+        """
 
-                pre_PaCMAP_stride_sec_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_pre_PaCMAP_stride_sec.pkl"
-                output_obj3 = open(pre_PaCMAP_stride_sec_path, 'wb')
-                pickle.dump(self.pre_PaCMAP_stride_sec, output_obj3)
-                output_obj3.close()
-                print("Saved PaCMAP 2-dim and MedDim models")
+        num_new_updates = mean.shape[0]
+        if (self.next_update_index + num_new_updates) < self.total_collected_latents:
+            self.accumulated_mean[self.next_update_index: self.next_update_index + num_new_updates, :, :] = mean
+            self.accumulated_logvar[self.next_update_index: self.next_update_index + num_new_updates, :, :] = logvar
+            self.accumulated_zmeaned[self.next_update_index: self.next_update_index + num_new_updates, :] = zmeaned
+            self.accumulated_mogpreds[self.next_update_index: self.next_update_index + num_new_updates, :] = mogpreds
+            self.accumulated_patidxs[self.next_update_index: self.next_update_index + num_new_updates] = patidxs
+            self.next_update_index = self.next_update_index + num_new_updates
 
-                hdbscan_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_hdbscan.pkl"
-                output_obj4 = open(hdbscan_path, 'wb')
-                pickle.dump(self.HDBSCAN, output_obj4)
-                output_obj4.close()
-                print("Saved HDBSCAN model")
+        else: # Rollover
+            residual_num = (self.next_update_index + num_new_updates) % self.total_collected_latents
+            end_num = num_new_updates - residual_num
 
-                pca_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_PCA.pkl"
-                output_obj5 = open(pca_path, 'wb')
-                pickle.dump(self.pca, output_obj5)
-                output_obj5.close()
-                print("Saved PCA model")
+            self.accumulated_mean[self.next_update_index: self.next_update_index + end_num, :] = mean[:end_num, :, :]
+            self.accumulated_mean[0: residual_num, :] = mean[end_num:, :, :]
 
-                reorder_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_cluster_reorder_indexes.pkl"
-                output_obj6 = open(reorder_path, 'wb')
-                pickle.dump(self.cluster_reorder_indexes, output_obj6)
-                output_obj6.close()
-                print("Saved cluster reorder indexes")
+            self.accumulated_logvar[self.next_update_index: self.next_update_index + end_num, :] = logvar[:end_num, :, :]
+            self.accumulated_logvar[0: residual_num, :] = logvar[end_num:, :, :]
 
-                xylim_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_xy_lims.pkl"
-                output_obj7 = open(xylim_path, 'wb')
-                pickle.dump(self.xy_lims, output_obj7)
-                output_obj7.close()
-                print("Saved xy_lims for PaCMAP")
+            self.accumulated_zmeaned[self.next_update_index: self.next_update_index + end_num, :] = zmeaned[:end_num, :]
+            self.accumulated_zmeaned[0: residual_num, :] = zmeaned[end_num:, :]
 
-                xylims_RAWDIMS_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_xy_lims_RAW_DIMS.pkl"
-                output_obj8 = open(xylims_RAWDIMS_path, 'wb')
-                pickle.dump(self.xy_lims_RAW_DIMS, output_obj8)
-                output_obj8.close()
-                print("Saved xy_lims RAW DIMS")
+            self.accumulated_mogpreds[self.next_update_index: self.next_update_index + end_num, :] = mogpreds[:end_num, :]
+            self.accumulated_mogpreds[0: residual_num, :] = mogpreds[end_num:, :]
 
-                xylims_PCA_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_xy_lims_PCA.pkl"
-                output_obj9 = open(xylims_PCA_path, 'wb')
-                pickle.dump(self.xy_lims_PCA, output_obj9)
-                output_obj9.close()
-                print("Saved xy_lims PCA")
+            self.accumulated_patidxs[self.next_update_index: self.next_update_index + end_num] = patidxs[:end_num]
+            self.accumulated_patidxs[0: residual_num] = patidxs[end_num:]
 
-                infoscore_path = pacmap_dir + "/checkpoint_epoch" +str(epoch) + "_info_score_idxs.pkl"
-                output_obj10 = open(infoscore_path, 'wb')
-                pickle.dump(self.info_score_idxs, output_obj10)
-                output_obj10.close()
-                print("Saved info score indexes for raw dims")
+            self.next_update_index = residual_num
 
-            if delete_old_checkpoints:
-                utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir, curr_epoch = epoch)
-                print("Deleted old checkpoints, except epochs with PaCMAP/HDBSCAN models")
+        # Detach to allow next backpass
+        self.accumulated_mean = self.accumulated_mean.detach() 
+        self.accumulated_logvar = self.accumulated_logvar.detach() 
+        self.accumulated_zmeaned = self.accumulated_zmeaned.detach() 
+        self.accumulated_mogpreds = self.accumulated_mogpreds.detach() 
+        self.accumulated_patidxs = self.accumulated_patidxs.detach() 
 
-    def _quick_recon(self, **kwargs):
-
-        # Train Pats pre-valfinetune
-
-        if self.finetune_quickrecon:
-             raise Exception("TODO")
-
-            # Val Finetune
-
-            # Val Unseen
-
-            # Train Pats post-valfinetune
-
-        raise Exception("TODO")
-
-    def _pacmap(self, **kwargs):
-
-        if self.finetune_pacmap:
-            raise Exception("TODO")
-
+    def remove_padded_channels(self, x: torch.Tensor, hash_channel_order):
+        """
+        Removes padded channels (-1) from x for each sample in the batch.
         
-        raise Exception("TODO")
-
-    def _train_start_idxs(self, subsample_file_factor, random_bool):
-
-        np.random.seed(seed=None) # should replace with Generator for newer code
+        Args:
+            x: Input tensor of shape [batch, tokens, max_channels, seq_len].
+            hash_channel_order: List of lists where -1 indicates padded channels.
         
-        if random_bool: frame_shift = int(random.uniform(0, self.precode_samples + self.decode_samples -1))
-        else: frame_shift = 0
-        
-        start_idxs = np.arange(0,self.num_windows - self.transformer_seq_length - 1) * self.decode_samples + frame_shift
-        if random_bool: np.random.shuffle(start_idxs)
+        Returns:
+            List of tensors with padded channels removed (one per batch sample).
+        """
+        # Convert hash_channel_order to a tensor
+        channel_order_tensor = torch.tensor(hash_channel_order, dtype=torch.long).to(self.gpu_id)  # [batch, max_channels]
+        valid_mask = (channel_order_tensor != -1)  # [batch, max_channels]
 
-        if random_bool: start_idxs = start_idxs[0::subsample_file_factor]
-        
-        return start_idxs
+        # Filter out padded channels per sample
+        x_nopad = []
+        for i in range(x.shape[0]):  # Loop over batch
+            x_nopad.append(x[i, :, valid_mask[i], :])  # [tokens, valid_channels, seq_len]
 
-    def _run_epoch(
+        return x_nopad
+
+    def _run_export_embeddings(
         self, 
         dataset_curr, 
-        batchsize,
-        heads_curr,
-        head_opts_curr,
-        random_bool, # will subsample and randomize
-        subsample_file_factor_curr, # only valid if 'random' is True
-        only_latent,
-        save_latents, 
-        all_files_bool,
-        num_dataloader_workers_SEQUENTIAL,
-        val_finetune,
-        realtime_latent_printing,
-        realtime_printing_interval,
+        dataset_string,
+        num_dataloader_workers,
+        max_batch_size,
+        padded_channels,
         **kwargs):
 
-        print(f"Past/Decode Samples: {self.precode_samples}/{self.decode_samples}")
+        """
+        This function runs inference with the GMVAE encoder (only the encoder) and saves 
+        the resulting latent space embeddings for each file, in the form of pickle files. 
+        Unlike the `_run_train_epoch` function, which pulls random data, this function 
+        iterates sequentially through the entire dataset (one patient at a time). 
 
-        ### ALL FILES ### 
-        # If wanting all files from every patiet, need to run patients serially
-        if all_files_bool: 
-            # Go through every subject 
-            for pat_idx in range(0,len(dataset_curr.pat_ids)):
-                dataset_curr.set_pat_curr(pat_idx)
-                dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
-                raise Exception("not coded up")
+        The function processes the dataset and saves latent embeddings using the GMVAE encoder 
+        for each patient, file, and window-stride configuration. The embeddings are smoothed 
+        according to specified window and stride sizes.
 
-        
-        ### SUBSET OF FILES ###
-        # Can run the patients in parallel
-        else: 
-            dataset_curr.set_pat_curr(-1) # -1 enables all pat mode
+        ### Key Features:
+        - **Sequential Inference:** This function sequentially processes data for each patient 
+        and file, as opposed to random data pulls.
+        - **Latent Embedding Calculation:** It calculates latent embeddings for each file's 
+        data and saves them as pickle files.
+        - **Window-Stride Smoothing:** The latent embeddings are smoothed according to the 
+        window and stride sizes defined by `inference_window_sec_list` and 
+        `inference_stride_sec_list`.
+        - **Conditioning:** Hashes for each patient and channel are generated to condition 
+        the feedforward process.
+        - **GPU Support:** The function processes the data on GPU for efficient computations.
 
-            # Build dataloader from dataset
-            dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=batchsize, num_workers=num_dataloader_workers_SEQUENTIAL)
-            num_pats_curr = dataloader_curr.dataset.get_pat_count()
-            
-            # Number of iterations per file
-            self.num_windows = int((self.num_samples - self.transformer_seq_length * self.decode_samples - self.mini_batch_window_size)/self.decode_samples) - 2
+        ### Parameters:
+        - `dataset_curr` (Dataset): The dataset object that holds the current patient data 
+        to be processed.
+        - `dataset_string` (str): A string identifier for the dataset (for tracking or naming).
+        - `attention_dropout` (float): Dropout rate for attention layers (though not directly 
+        used in this function).
+        - `num_dataloader_workers` (int): Number of worker threads for loading data batches.
+        - `max_batch_size` (int): The maximum batch size used for inference.
+        - `inference_batch_mult` (float): A multiplier for adjusting batch size during inference.
+        - `padded_channels` (int): The number of padded channels in the data tensor (to 
+        accommodate variable input sizes).
+        - `**kwargs` (dict): Additional arguments that may be passed (not used directly here).
 
-            # Get miniepoch start indexes. Same random indexes will be used for all patients' files.
-            start_idxs = self._train_start_idxs(random_bool=random_bool, subsample_file_factor=subsample_file_factor_curr)
-            total_train_iters = int(len(dataloader_curr) * len(start_idxs) * num_pats_curr) # 
-            iter_curr = 0 # Iteration across all sequential trian files
+        ### Outputs:
+        - For each patient, the function processes their data and saves the computed latent 
+        embeddings into pickle files. 
+        - The files are organized according to the window and stride configurations, with 
+        directories and filenames reflecting these settings (e.g., `latent_60secWindow_30secStride.pkl`).
+        - Each file’s latent space embeddings are saved after the GMVAE encoder processes the 
+        raw data windows with the specified stride and window sizes.
 
-            for data_tensor_by_pat, file_name_by_pat in dataloader_curr: # Paralell random file pull accross patients
-                for start_idx in start_idxs: # Same start_idx for all patients (has no biological meaning)
+        ### Notes:
+        - **Data Processing:** The function processes files one by one per patient. Data for 
+        each file is passed through the GMVAE encoder to extract the latent space.
+        - **Windowing and Striding:** After processing each file, the latent space is divided 
+        into overlapping windows based on the stride and window settings, smoothing the 
+        embeddings as necessary.
+        - **File Structure:** Latent embeddings are saved in directories named after the 
+        window and stride sizes, and each file's latent embeddings are saved separately.
 
-                    # Update the KL multiplier (BETA), and Learning Rate according for Heads Models and Core Model
-                    self.KL_multiplier, self.curr_LR_core, self.curr_LR_heads = utils_functions.BSE_KL_LR_schedule(
-                        epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=int(total_train_iters), **self.kwargs)
+        """
+
+        print(f"[GPU{self.gpu_id}] encode_token_samples: {self.encode_token_samples}")
+
+        ### ALL/FULL FILES - LATENT ONLY - FULL TRANSFORMER CONTEXT ### 
+        print("WARNING: Setting alpha = 0")
+        self.classifier_alpha = 0
+
+        # Go through every subject in this dataset
+        for pat_idx in range(0,len(dataset_curr.pat_ids)):
+            dataset_curr.set_pat_curr(pat_idx)
+            _, pat_id_curr, _, _ = dataset_curr.get_pat_curr()
+            dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=max_batch_size, num_workers=num_dataloader_workers)
+
+            # Go through every file in dataset
+            file_count = 0
+            for data_tensor, file_name, _ in dataloader_curr: # Hash done outside data.py for single pat inference
+
+                file_count = file_count + len(file_name)
+
+                num_channels_curr = data_tensor.shape[1]
+
+                # Create the sequential latent sequence array for the file 
+                num_samples_in_forward = self.transformer_seq_length * self.encode_token_samples
+                num_windows_in_file = data_tensor.shape[2] / num_samples_in_forward
+                assert (num_windows_in_file % 1) == 0
+                num_windows_in_file = int(num_windows_in_file)
+                num_samples_in_forward = int(num_samples_in_forward)
+
+                # Prep the output tensor and put on GPU
+                files_means = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
+                files_logvars = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
+                files_mogpreds = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.prior_mog_components]).to(self.gpu_id)
+
+                # Put whole file on GPU
+                data_tensor = data_tensor.to(self.gpu_id)
+
+                for w in range(num_windows_in_file):
                     
-                    # Update Core and Heads LR
-                    self.opt_enc.param_groups[0]['lr'] = self.curr_LR_core
-                    self.opt_dec.param_groups[0]['lr'] = self.curr_LR_core
-                    head_opts_curr.set_all_lr(self.curr_LR_heads)
+                    # Print Status
+                    print_interval = 100
+                    if (self.gpu_id == 0) & (w % print_interval == 0):
+                        sys.stdout.write(f"\r{dataset_string}: Pat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP), Intrafile Iter {w}/{num_windows_in_file}          ") 
+                        sys.stdout.flush() 
+                    
+                    x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, padded_channels, self.encode_token_samples).to(self.gpu_id)
 
-                    # Reset the cumulative losses & zero gradients
-                    kld_loss = 0
-                    recon_loss = 0
-                    transformer_loss = 0
-                    self._zero_all_grads()
+                    # PAD THE CHANNELS ACCORDING TO HASH
+                    # NOTE: Just running for modifier '0' for inference
+                    raise Exception("Randomize at same scale as training, randomize every forward pass")
+                    inference_modifier = 0
+                    _, hash_channel_order = utils_functions.hash_to_vector(
+                        input_string = pat_id_curr,
+                        num_channels = num_channels_curr,
+                        padded_channels = padded_channels,
+                        latent_dim = self.latent_dim,
+                        modifier = inference_modifier, 
+                        hash_output_range = self.hash_output_range)
 
-                    # # Save mean/logvar across all patients' transformer sequences so we can calculate KLD across patient cohort instead on individual transformer sequences
-                    # # [pat, batch, transformer seq idx, vals]
-                    # mean_allpats = torch.zeros(num_pats_curr, batchsize, self.transformer_seq_length, self.latent_dim).to(self.gpu_id)
-                    # logvar_allpats = torch.zeros(num_pats_curr, batchsize, self.transformer_seq_length, self.latent_dim).to(self.gpu_id)
+                    raise Exception("Need to pad and order channels according to hash")
 
-                    # Iterate through all patients and accumulate losses before stepping optimizers
-                    for pat_idx in np.arange(0,num_pats_curr): 
+                    raise Exception("Need to scramble every single forward pass to promote channel order invariance")
 
-                        # Pull out the patient's heads
-                        enc_head=heads_curr[0][pat_idx] # Heads are [enc, dec, hint_prepper]
-                        dec_head=heads_curr[1][pat_idx]
-                        hint_prepper=heads_curr[2][pat_idx]
+                    start_idx = w * num_samples_in_forward
+                    for embedding_idx in range(0, self.transformer_seq_length):
+                        # Pull out data for this window - NOTE: no hashing random order, channels just put in order with zero pad at end
+                        end_idx = start_idx + self.encode_token_samples * embedding_idx + self.encode_token_samples 
+                        x[:, embedding_idx, :num_channels_curr, :] = data_tensor[:, :, end_idx-self.encode_token_samples : end_idx]
 
-                        # Pull patient's data
-                        data_tensor = data_tensor_by_pat[pat_idx]
+                    ### GMVAE ENCODER
+                    # Forward pass in stacked batch through GMVAE encoder
+                    # latent, _, _ = self.gmvae(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
+                    _, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, _ = self.gmvae(x, reverse=False) # No shift if not causal masking
+                    
+                    # Theoretical levels of detail to save (Token or Token-Meaned level):
+                    # 1) Save mogpreds [CURRENTLY SAVED at Token-Mean level]
+                    # 2) Save the weighted means from each component [CURRENTLY SAVED at Token-Mean level]
+                    # 3) Save weighted means and uncertainty with weighted logvars [CURRENTLY SAVED at Token-Mean level]
+                    # 4) Or just save one component of interest [NOT currently saved in this way]
 
-                        # Reset the data vars for Transformer Sequence and put on GPU
-                        x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.mini_batch_window_size).to(self.gpu_id)
-                        x_decode = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, data_tensor.shape[1], self.decode_samples).to(self.gpu_id)
+                    # Reshape back to token level 
+                    mogpreds = mogpreds_pseudobatch.split(self.transformer_seq_length, dim=0)
+                    mogpreds = torch.stack(mogpreds, dim=0)
+                    mean = mean_pseudobatch.split(self.transformer_seq_length, dim=0)
+                    mean = torch.stack(mean, dim=0)
+                    logvar = logvar_pseudobatch.split(self.transformer_seq_length, dim=0)
+                    logvar = torch.stack(logvar, dim=0)
 
-                        # Collect sequential embeddings for transformer by running sequential raw data windows through BSE N times 
-                        for embedding_idx in range(0, self.transformer_seq_length):
+                    # Weight the means using mogpreds
+                    # mogpreds shape: [batch_size, seq_length, num_components]
+                    # mean shape: [batch_size, seq_length, num_components, latent_dim]
+                    # Expand mogpreds to match the latent_dim for broadcasting
+                    mogpreds_expanded = mogpreds.unsqueeze(-1)  # Shape: [batch_size, seq_length, num_components, 1]
 
-                            # Pull out data for this window
-                            end_idx = start_idx + self.decode_samples * embedding_idx + self.mini_batch_window_size 
-                            x[:,embedding_idx, :, :] = data_tensor[:, :, end_idx-self.mini_batch_window_size : end_idx]
-                            x_decode[:, embedding_idx, :, :] = x[:, embedding_idx, :, :] [:, :, self.precode_samples:self.precode_samples + self.decode_samples]
+                    # Weight the means & logvars
+                    weighted_means = mean * mogpreds_expanded  # Shape: [batch_size, seq_length, num_components, latent_dim]
+                    weighted_logvars = logvar * mogpreds_expanded 
 
-                        # Stack the vars into batch dimension 
-                        x_batched = x.reshape([x.shape[0]*x.shape[1], x.shape[2], x.shape[3]])
-                        x_decode_shifted = x_decode[:, 1:, :, :]
-                        x_decode_shifted_batched = x_decode_shifted.reshape([x_decode_shifted.shape[0]*x_decode_shifted.shape[1], x_decode_shifted.shape[2], x_decode_shifted.shape[3]])
+                    # Sum over the components to get the final weighted mean for each token
+                    weighted_means_summed = torch.sum(weighted_means, dim=2)  # Shape: [batch_size, seq_length, latent_dim]
+                    weighted_logvars_summed = torch.sum(weighted_logvars, dim=2)  # Shape: [batch_size, seq_length, latent_dim]
 
-                        # To remeber how to split back to original
-                        # a = torch.split(x_decode_shifted_batched, self.transformer_seq_length-1, dim=0)
-                        # b = torch.stack(a, dim=0)
+                    # Take the mean across the token dimension (optional, if you want to reduce further)
+                    mean_tokenmeaned = torch.mean(weighted_means_summed, dim=1)  # Shape: [batch_size, latent_dim]
+                    logvar_tokenmeaned = torch.mean(weighted_logvars_summed, dim=1)  # Shape: [batch_size, latent_dim]
 
-                        ### VAE ENCODER
-                        # Forward pass in stacked batch through head then VAE encoder
-                        x_pre = x_batched[:, :, 0:self.precode_samples]
-                        x_pre_posthead = enc_head(x_pre)
-                        mean_batched, logvar_batched, latent_batched, = self.vae_enc(x_pre_posthead)
+                    # Save the results
+                    files_means[:, w, :] = mean_tokenmeaned
+                    files_logvars[:, w, :] = logvar_tokenmeaned
+                    files_mogpreds[:, w, :] = torch.mean(mogpreds, dim=1)  # Save the mean mogpreds across tokens
 
-                        # Split the batched dimension and stack into sequence dimension [batch, seq, latent_dims]
-                        latent = torch.split(latent_batched, self.transformer_seq_length, dim=0)
-                        latent_seq = torch.stack(latent, dim=0)
-  
-                        ### TRANSFORMER
-                        # Run sequence through transformer and get transformer loss
-                        transformer_input = latent_seq[:, :-1, :]
-                        target_embeddings = latent_seq[:, 1:, :]
-                        predicted_embeddings = self.transformer(transformer_input)
-                        
-                        ### VAE DECODER
-                        # Run the predicted embeddings through decoder
-                        predicted_embeddings_batched = predicted_embeddings.reshape(predicted_embeddings.shape[0]*predicted_embeddings.shape[1], predicted_embeddings.shape[2])
-                        # Prep the phase hints (shifted by 1 because it's after transformer) then run through VAE Core encoder and head
-                        x_hints = x[:, 1:, :, -(self.decode_samples + self.feedforward_hint_samples):-self.decode_samples]
-                        x_hints_batched = x_hints.reshape(x_hints.shape[0]*x_hints.shape[1], x_hints.shape[2], x_hints.shape[3])
-                        x_pre_hint_flat_prepped = hint_prepper(x_hints_batched)
-                        
-                        core_out = self.vae_dec(predicted_embeddings_batched, x_pre_hint_flat_prepped)  
-                        x_hat_batched = dec_head(core_out)
-                        
-                        # For use later
-                        x_hat = torch.split(x_hat_batched, self.transformer_seq_length-1, dim=0)
-                        x_hat = torch.stack(x_hat, dim=0)
+                # After file complete, pacmap_window/stride the file and save each file from batch seperately
+                # Seperate directory for each win/stride combination
+                # First pull off GPU and convert to numpy
+                files_means = files_means.cpu().numpy()
+                files_logvars = files_logvars.cpu().numpy()
+                files_mogpreds = files_mogpreds.cpu().numpy()
+                for i in range(len(self.inference_window_sec_list)):
 
-                        # # LOSSES: Intra-Patient 
-                        transformer_loss = loss_functions.transformer_loss_function(
-                            target_embeddings,  
-                            predicted_embeddings, 
-                            transformer_weight=self.transformer_weight)
+                    win_sec_curr = self.inference_window_sec_list[i]
+                    stride_sec_curr = self.inference_stride_sec_list[i]
+                    sec_in_forward = num_samples_in_forward/self.FS
 
-                        recon_loss = loss_functions.recon_loss_function(
-                            x=x_decode_shifted_batched, # Shifted by 1 due to predictions having gone through transformer
-                            x_hat=x_hat_batched,
-                            recon_weight=self.recon_weight)
+                    if (win_sec_curr < sec_in_forward) or (stride_sec_curr < sec_in_forward):
+                        raise Exception("Window or stride is too small compared to input sequence to encoder")
+                    
+                    num_latents_in_win = win_sec_curr / sec_in_forward
+                    assert (num_latents_in_win % 1) == 0
+                    num_latents_in_win = int(num_latents_in_win)
 
-                        kld_loss = loss_functions.kld_loss_function(
-                            mean=mean_batched, 
-                            logvar=logvar_batched, 
-                            KL_multiplier=self.KL_multiplier)
+                    num_latents_in_stride = stride_sec_curr / sec_in_forward
+                    assert (num_latents_in_stride % 1) == 0 
+                    num_latents_in_stride = int(num_latents_in_stride)
 
-                        # Intrapatient backprop
-                        loss = recon_loss + kld_loss              ################ TRANSFORMER NOT INCLUDED ##############
-                        loss.backward()
+                    # May not go in evenly, that is ok
+                    num_strides_in_file = int((files_means.shape[1] - num_latents_in_win) / num_latents_in_stride) 
+                    windowed_file_means = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
+                    windowed_file_logvars = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
+                    windowed_file_mogpreds = np.zeros([data_tensor.shape[0], num_strides_in_file, self.prior_mog_components])
+                    for s in range(num_strides_in_file):
+                        windowed_file_means[:, s, :] = np.mean(files_means[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win, :], axis=1)
+                        windowed_file_logvars[:, s, :] = np.mean(files_logvars[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win, :], axis=1)
+                        windowed_file_mogpreds[:, s, :] = np.mean(files_mogpreds[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win, :], axis=1)
 
-                        # Realtime info as epoch is running
-                        if (iter_curr%self.recent_display_iters==0):
-                            if val_finetune: state_str = "VAL FINETUNE"
-                            else: state_str = "TRAIN"
-                            now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
-                            if (self.gpu_id == 1):
-                                sys.stdout.write(f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, Iter [BatchSize:{batchsize}]: " + 
-                                                str(iter_curr) + "/" + str(total_train_iters) + 
-                                                ", MeanLoss: " + str(round(loss.detach().item(), 2)) + ", [" + 
-                                                    "Rec: " + str(round(recon_loss.detach().item(), 2)) + " + " + 
-                                                    "KLD: {:0.3e}".format(kld_loss.detach().item(), 2) + " + " +
-                                                    "Trnsfr {:0.3e}".format(transformer_loss.detach().item(), 2) + "], " + 
-                                                    "Core LR: {:0.3e}".format(self.opt_enc.param_groups[0]['lr']) + 
-                                                    ", Head LR: {:0.3e}".format(head_opts_curr.get_lr()) + 
-                                                    ", Transformer LR: {:0.3e}".format(self.transformer_opt.param_groups[0]['lr']) +
-                                                ", Beta: {:0.3e}".format(self.KL_multiplier) + "         ")
-                                sys.stdout.flush() 
+                    # Save each windowed latent in a pickle for each file
+                    for b in range(data_tensor.shape[0]):
+                        filename_curr = file_name[b]
+                        save_dir = f"{self.model_dir}/latent_files/Epoch{self.epoch}/{win_sec_curr}SecondWindow_{stride_sec_curr}SecondStride/{dataset_string}"
+                        if not os.path.exists(save_dir): os.makedirs(save_dir)
+                        output_obj = open(f"{save_dir}/{filename_curr}_latent_{win_sec_curr}secWindow_{stride_sec_curr}secStride.pkl", 'wb')
+                        save_dict = {
+                            'windowed_weighted_means': windowed_file_means[b, :, :],
+                            'windowed_weighted_logvars': windowed_file_logvars[b, :, :],
+                            'windowed_mogpreds': windowed_file_mogpreds[b, :, :]}
+                        pickle.dump(save_dict, output_obj)
+                        output_obj.close()
 
-                            # Log to WandB
-                            wandb.define_metric('Steps')
-                            wandb.define_metric("*", step_metric="Steps")
-                            train_step = self.epoch * int(total_train_iters) + iter_curr
-                            if not val_finetune:
-                                metrics = dict(
-                                    train_loss=loss,
-                                    train_transformer_loss=transformer_loss,
-                                    train_recon_loss=recon_loss, 
-                                    train_kld_loss=kld_loss, 
-                                    train_LR_encoder=self.opt_enc.param_groups[0]['lr'], 
-                                    train_LR_decoder=self.opt_dec.param_groups[0]['lr'], 
-                                    train_LR_transformer=self.transformer_opt.param_groups[0]['lr'],
-                                    train_LR_heads=head_opts_curr.get_lr(),
-                                    train_KL_Beta=self.KL_multiplier, 
-                                    train_ReconWeight=self.recon_weight,
-                                    train_Transformer_weight=self.transformer_weight,
-                                    train_epoch=self.epoch)
-                            else:
-                                metrics = dict(
-                                    val_finetune_loss=loss, 
-                                    val_finetune_transformer_loss=transformer_loss,
-                                    val_finetune_recon_loss=recon_loss, 
-                                    val_finetune_kld_loss=kld_loss, 
-                                    val_finetune_LR_heads=head_opts_curr.get_lr(),
-                                    val_finetune_LR_encoder=self.opt_enc.param_groups[0]['lr'], 
-                                    val_finetune_LR_decoder=self.opt_dec.param_groups[0]['lr'], 
-                                    val_finetune_LR_transformer=self.transformer_opt.param_groups[0]['lr'],
-                                    val_finetune_KL_Beta=self.KL_multiplier, 
-                                    val_finetune_ReconWeight=self.recon_weight,
-                                    val_finetune_Transformer_weight=self.transformer_weight,
-                                    val_finetune_epoch=self.epoch)
+    def _run_train_epoch( ### RANDOM SUBSET OF FILES ###    
+        self, 
+        dataloader_curr, 
+        dataset_string,
+        attention_dropout,
+        val_finetune,
+        val_unseen,
+        singlebatch_latent_printing,
+        singlebatch_printing_interval,
+        **kwargs):
 
-                            wandb.log({**metrics, 'Steps': train_step})
+        """
+        This function is responsible for training the model for one complete epoch. It iterates through the batches 
+        in the given dataloader, performs forward and backward passes, computes loss, and updates model parameters 
+        through gradient descent.
 
-                        # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
-                        iter_curr = iter_curr + 1
+        The function performs the following steps:
+        1. Fetches random subsets of data (random files, portions of files, etc.) from the DataLoader.
+        2. Transfers data to the GPU for efficient computation.
+        3. Updates learning rates and weights for various components of the model based on the current epoch and iteration.
+        4. Passes the data through the GM-VAE encoder and decoder to compute the reconstructed output.
+        5. Computes various loss components such as reconstruction loss, KL divergence, mean matching, logvar matching,
+           posterior entropy loss, and adversarial loss.
+        6. Backpropagates the gradients and updates the model parameters using the optimizer.
+        7. Logs the training metrics and loss values to WandB for visualization and tracking.
+        8. Optionally prints visualizations for latent representations, reconstructions, and attention weights for 
+           debugging or inspection purposes.
+        9. Optionally updates buffers that accumulate various statistics about the model’s predictions.
+        10. Handles validation modes (fine-tuning or unseen data) where the classifier component is frozen, and no 
+            backpropagation is performed for evaluation.
 
-                        # Realtime latent visualizations
-                        if realtime_latent_printing & ((iter_curr + 1) % realtime_printing_interval == 0):
-                            # # Regenerate random GPU idx each call
-                            # np.random.seed(seed=None)
-                            # rand_gpu = int(random.uniform(0, torch.cuda.device_count()))
-                            if self.gpu_id == 0:
-                                utils_functions.print_latent_realtime(
-                                    target_emb = target_embeddings.cpu().detach().numpy(), 
-                                    predicted_emb = predicted_embeddings.cpu().detach().numpy(),
-                                    savedir = self.model_dir + "/realtime_latents",
-                                    epoch = self.epoch,
-                                    iter_curr = iter_curr,
-                                    pat_id = dataset_curr.pat_ids[pat_idx],
-                                    **kwargs)
-                                utils_functions.print_recon_realtime(
-                                    x_decode_shifted=x_decode_shifted, 
-                                    x_hat=x_hat, 
-                                    savedir = self.model_dir + "/realtime_recon",
-                                    epoch = self.epoch,
-                                    iter_curr = iter_curr,
-                                    pat_id = dataset_curr.pat_ids[pat_idx],
-                                    **kwargs
-                                )
-            
-                    ### AFTER PATIENT LOOP ###
-                    # Step optimizers after all patients have been backpropgated
-                    self.transformer_opt.step()
-                    self.opt_enc.step()
-                    self.opt_dec.step()
-                    for pat_idx in np.arange(0,num_pats_curr): 
-                        head_opts_curr.step(pat_idx)
-                        
-        return self
+        Key Parameters:
+        IMPORTANT: Takes in a *DataLoader*, not a *Dataset*
+
+        - dataloader_curr: The DataLoader that provides the data for the current epoch. It is expected to return batches
+          of data containing input tensors, file names, class labels, channel orders, and patient embeddings.
+        - dataset_string: A string identifying the dataset being used (for logging and file saving purposes).
+        - attention_dropout: A dropout rate applied during attention mechanisms to regularize the model.
+        - val_finetune: A boolean indicating whether the model is being fine-tuned on validation data.
+        - val_unseen: A boolean indicating whether the model is being evaluated on unseen data.
+        - singlebatch_latent_printing: A boolean flag that determines whether latent representations for a single batch 
+          should be printed.
+        - singlebatch_printing_interval: The frequency (in terms of iterations) at which latent printing occurs.
+        - kwargs: Additional keyword arguments that might include configuration parameters such as learning rate schedules, 
+          regularization weights, or Gumbel-Softmax temperature.
+
+        Returns:
+        - None. The function performs in-place updates to the model and logs training metrics during the epoch.
+
+        """
+
+        self.curr_LR_discriminator = kwargs['LR_disc']
+
+        print(f"[GPU{self.gpu_id}] encode_token_samples: {self.encode_token_samples}")
+
+        iter_curr = 0
+        total_iters = len(dataloader_curr)
+        for x, file_name, file_class_label, hash_channel_order, _ in dataloader_curr: 
+
+            # Put the data and labels on GPU
+            x = x.to(self.gpu_id)
+            file_class_label = file_class_label.to(self.gpu_id)
         
+            # LR & WEIGHT SCHEDULES
+            self.gumbel_softmax_temp, self.mean_match_weight, self.logvar_match_weight, self.mse_weight, self.kl_weight, self.gp_weight, self.curr_LR_posterior, self.curr_LR_prior, self.curr_LR_cls, self.posterior_mogpreds_entropy_weight, self.posterior_mogpreds_intersequence_diversity_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
+                epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
+            
+            if (not val_finetune) & (not val_unseen): 
+                self.opt_gmvae.param_groups[0]['lr'] = self.curr_LR_posterior
+                self.opt_gmvae.param_groups[1]['lr'] = self.curr_LR_prior
+                self.opt_gmvae.param_groups[2]['lr'] = self.curr_LR_cls
 
+                self.opt_disc.param_groups[0]['lr'] = self.curr_LR_discriminator
+            else: 
+                self.classifier_alpha = 0 # For validation, do not consider classifier
+                self.opt_gmvae.param_groups[2]['lr'] = 0
+
+            # Set the temperature in the model itself
+            self.gmvae.module.set_temp(self.gumbel_softmax_temp)
+
+            # Check for NaNs
+            if torch.isnan(x).any(): raise Exception(f"ERROR: found nans in one of these files: {file_name}")
+
+            # DISCRIMINATOR TRAINING
+            total_disc_loss = 0
+            total_disc_real_loss = 0 
+            total_disc_fake_loss = 0
+            for _ in range(kwargs['discriminator_training_iters']):
+                self.opt_disc.zero_grad()
+                with torch.no_grad():
+                    z_posterior, _, _, mog_weights, _ = self.gmvae(x, reverse=False)
+                    z_prior = self.gmvae.module.prior.sample_prior(z_posterior.shape[0], mog_weights=mog_weights)
+                disc_loss, disc_real_loss, disc_fake_loss = loss_functions.discriminator_loss(z_posterior.detach(), z_prior.detach(), self.disc) 
+                disc_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.disc.module.parameters(), max_norm=1.0)
+                self.opt_disc.step()
+                total_disc_loss += disc_loss.item() 
+                total_disc_real_loss += disc_real_loss.item()
+                total_disc_fake_loss += disc_fake_loss.item()
+            disc_loss = total_disc_loss / kwargs['discriminator_training_iters']
+            disc_real_loss = total_disc_real_loss / kwargs['discriminator_training_iters']
+            disc_fake_loss = total_disc_fake_loss / kwargs['discriminator_training_iters']
+
+            # GM-VAE ENCODER: 
+            z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, attW = self.gmvae(x, reverse=False) # No 1-shift if not causal masking
+
+            # Reshape variables back to token level 
+            z_token = z_pseudobatch.split(self.transformer_seq_length, dim=0)
+            z_token = torch.stack(z_token, dim=0)
+            mogpreds = mogpreds_pseudobatch.split(self.transformer_seq_length, dim=0)
+            mogpreds = torch.stack(mogpreds, dim=0)
+            mean = mean_pseudobatch.split(self.transformer_seq_length, dim=0)
+            mean = torch.stack(mean, dim=0)
+            logvar = logvar_pseudobatch.split(self.transformer_seq_length, dim=0)
+            logvar = torch.stack(logvar, dim=0)
+
+            # GMVAE DECODER - at Token Level
+            x_hat = self.gmvae(z_token, reverse=True)  
+
+            # CLASSIFIER - on the mean of Z
+            z_tokenmeaned = torch.mean(z_token, dim=1)
+            class_probs_mean_of_latent = self.gmvae.module.adversarial_classifier(z_tokenmeaned, alpha=self.classifier_alpha)
+   
+            # REMOVE PADDING - otherwise would reward recon loss for patients with fewer channels
+            x_nopad_list = self.remove_padded_channels(x, hash_channel_order) 
+            x_hat_nopad_list = self.remove_padded_channels(x_hat, hash_channel_order) 
+
+            # LOSSES
+            mse_loss = loss_functions.recon_loss(
+                x=x_nopad_list, 
+                x_hat=x_hat_nopad_list,
+                mse_weight=self.mse_weight)
+            
+            gmvae_adversarial_loss = loss_functions.gmvae_adversarial_loss(
+                z_posterior=z_pseudobatch,
+                discriminator=self.disc, # Try to fool it
+                beta=self.kl_weight)
+            
+            neg_gp_log_prob = (-1) * self.gp_prior(z_token, self.gp_weight) # On sequential token-level of z posterior
+
+            mean_match_loss = loss_functions.mean_matching_loss(
+                mean_posterior = mean_pseudobatch,
+                mean_prior = self.gmvae.module.prior.means,
+                weight=self.mean_match_weight)
+
+            logvar_match_loss = loss_functions.logvar_matching_loss(
+                logvar_posterior = logvar_pseudobatch,
+                logvar_prior = self.gmvae.module.prior.logvars,
+                weight= self.logvar_match_weight) 
+
+            posterior_mogpreds_entropy_loss = loss_functions.posterior_mogpreds_entropy_loss(
+                mogpreds=mogpreds,
+                posterior_mogpreds_entropy_weight=self.posterior_mogpreds_entropy_weight,
+                **kwargs)
+
+            posterior_mogpreds_intersequence_diversity_loss = loss_functions.entropy_based_intersequence_diversity_loss(
+                mogpreds=mogpreds,
+                weight=self.posterior_mogpreds_intersequence_diversity_weight)  
+
+            # posterior_mogpreds_intersequence_diversity_loss = loss_functions.posterior_mogpreds_intersequence_diversity_loss(
+            #     mogpreds=mogpreds,
+            #     weight=self.posterior_mogpreds_intersequence_diversity_weight)  
+
+            prior_entropy = loss_functions.prior_entropy_regularization(
+                weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0), 
+                logvars = self.gmvae.module.prior.logvars, 
+                **kwargs)
+            
+            prior_repulsion = loss_functions.prior_repulsion_regularization(
+                weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0), 
+                means = self.gmvae.module.prior.means, 
+                **kwargs)
+
+            patient_adversarial_loss = loss_functions.patient_adversarial_loss_function(
+                probs=class_probs_mean_of_latent, 
+                labels=file_class_label,
+                classifier_weight=self.classifier_weight)
+
+            # Accumulate all losses      # 
+            loss = mse_loss + gmvae_adversarial_loss + mean_match_loss + logvar_match_loss + neg_gp_log_prob + posterior_mogpreds_entropy_loss + posterior_mogpreds_intersequence_diversity_loss + prior_entropy + prior_repulsion + patient_adversarial_loss 
+
+            # For plotting visualization purposes
+            mean_tokenmeaned = torch.mean(mean, dim=1)
+            logvar_tokenmeaned = torch.mean(logvar, dim=1)
+            mogpreds_logsofmaxed_tokenmeaned = torch.mean(mogpreds, dim=1)
+
+            # Do not backprop for pure validation (i.e. val unseen), but do for training & finetuning
+            if not val_unseen: 
+                self.opt_gmvae.zero_grad()
+                loss.backward()    
+                torch.nn.utils.clip_grad_norm_(self.gmvae.module.parameters(), max_norm=1.0)
+                self.opt_gmvae.step()
+                self._update_reg_window(mean_tokenmeaned, logvar_tokenmeaned, z_tokenmeaned, mogpreds_logsofmaxed_tokenmeaned, file_class_label) # Update the buffers & detach() 
+
+            # Realtime terminal info and WandB 
+            if (iter_curr%self.recent_display_iters==0):
+                if val_finetune: state_str = "VAL FINETUNE"
+                elif val_unseen: state_str = "VAL UNSEEN"
+                else: state_str = "TRAIN"
+                now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
+                if (self.gpu_id == 1):
+                    sys.stdout.write(
+                        f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, EPOCH {self.epoch}, Iter [BatchSize: {x.shape[0]}] {iter_curr}/{total_iters}, " + 
+                        f"MeanLoss: {round(loss.detach().item(), 2)}                 ")
+                    sys.stdout.flush() 
+
+                # Log to WandB
+                wandb.define_metric('Steps')
+                wandb.define_metric("*", step_metric="Steps")
+                train_step = self.epoch * int(total_iters) + iter_curr
+                if (not val_finetune) & (not val_unseen):
+                    metrics = dict(
+                        train_attention_dropout=attention_dropout,
+                        train_loss=loss,
+                        train_recon_MSE_loss=mse_loss, 
+                        train_discriminator_combined_loss=disc_loss,
+                        train_discriminator_fake_loss=disc_fake_loss,
+                        train_discriminator_real_loss=disc_real_loss,
+                        train_gmvae_adversarial_loss=gmvae_adversarial_loss,
+                        train_neg_gp_log_prob = neg_gp_log_prob,
+                        train_neg_gp_weight = self.gp_weight,
+                        train_mean_match_loss = mean_match_loss,
+                        train_logvar_match_loss = logvar_match_loss,
+                        train_mean_match_weight = self.mean_match_weight,
+                        train_logvar_match_weight = self.logvar_match_weight,
+                        train_posterior_mogpreds_entropy_loss=posterior_mogpreds_entropy_loss,
+                        train_posterior_mogpreds_intersequence_diversity_weight = self.posterior_mogpreds_intersequence_diversity_weight,
+                        train_posterior_mogpreds_entropy_weight = self.posterior_mogpreds_entropy_weight,
+                        train_posterior_mogpreds_intersequence_diversity_loss = posterior_mogpreds_intersequence_diversity_loss,
+                        train_gumbel_softmax_temperature=self.gumbel_softmax_temp, # TODO: probably should schedule an annealing pattern
+                        train_prior_entropy_loss=prior_entropy,
+                        train_prior_repulsion_loss=prior_repulsion,
+                        train_patient_adversarial_loss=patient_adversarial_loss,
+                        train_patient_adversarial_alpha=self.classifier_alpha,
+                        train_LR_gmvae=self.opt_gmvae.param_groups[0]['lr'], 
+                        train_LR_disc=self.opt_disc.param_groups[0]['lr'], 
+                        train_LR_prior=self.opt_gmvae.param_groups[1]['lr'], 
+                        train_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
+                        train_KL_weight=self.kl_weight, 
+                        train_ReconMSE_Weight=self.mse_weight,
+                        train_epoch=self.epoch)
+
+                elif val_finetune:
+                    metrics = dict(
+                        val_finetune_attention_dropout=attention_dropout,
+                        val_finetune_loss=loss, 
+                        val_finetune_recon_MSE_loss=mse_loss, 
+                        # val_finetune_KL_divergence=KL_divergence, 
+                        val_finetune_neg_gp_weight = self.gp_weight,
+                        val_finetune_neg_gp_log_prob = neg_gp_log_prob,
+                        # val_finetune_mean_match_loss = mean_match_loss,
+                        # val_finetune_logvar_match_loss = logvar_match_loss,
+                        # val_finetune_mean_match_weight = self.mean_match_weight,
+                        # val_finetune_logvar_match_weight = self.logvar_match_weight,
+                        val_finetune_LR_gmvae=self.opt_gmvae.param_groups[0]['lr'], 
+                        val_finetune_LR_disc=self.opt_disc.param_groups[0]['lr'], 
+                        val_finetune_LR_prior=self.opt_gmvae.param_groups[1]['lr'], 
+                        val_finetune_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
+                        val_finetune_KL_weight=self.kl_weight, 
+                        val_finetune_ReconMSE_Weight=self.mse_weight,
+                        val_finetune_epoch=self.epoch)
+
+                elif val_unseen:
+                    metrics = dict(
+                        val_unseen_attention_dropout=attention_dropout,
+                        val_unseen_loss=loss, 
+                        val_unseen_recon_MSE_loss=mse_loss, 
+                        # val_unseen_KL_divergence=KL_divergence, 
+                        val_unseen_neg_gp_weight = self.gp_weight,
+                        val_unseen_neg_gp_log_prob = neg_gp_log_prob,
+                        # val_unseen_mean_match_loss = mean_match_loss,
+                        # val_unseen_logvar_match_loss = logvar_match_loss,
+                        # val_unseen_mean_match_weight = self.mean_match_weight,
+                        # val_unseen_logvar_match_weight = self.logvar_match_weight,
+                        val_unseen_LR_gmvae=self.opt_gmvae.param_groups[0]['lr'], 
+                        val_unseen_LR_disc=self.opt_disc.param_groups[0]['lr'], 
+                        val_unseen_LR_prior=self.opt_gmvae.param_groups[1]['lr'],
+                        val_unseen_LR_classifier=self.opt_gmvae.param_groups[2]['lr'],
+                        val_unseen_KL_weight=self.kl_weight, 
+                        val_unseen_ReconMSE_Weight=self.mse_weight,
+                        val_unseen_epoch=self.epoch)
+
+            try:
+                wandb.log({**metrics, 'Steps': train_step})
+            except Exception as e:
+                print(f"An error occurred during WandB logging': {e}")
+
+            # Realtime latent visualizations
+            if singlebatch_latent_printing & ((iter_curr + 1) % singlebatch_printing_interval == 0):
+                try:
+                    if self.gpu_id == 0:
+                        if torch.isnan(loss).any():
+                            print("WARNING: Loss is nan, no plots can be made")
+                        else:
+                            utils_functions.print_latent_singlebatch(
+                                epoch = self.epoch, 
+                                iter_curr = iter_curr,
+                                mean = mean.cpu().detach().numpy(), 
+                                logvar = logvar.cpu().detach().numpy(),
+                                mogpreds = mogpreds.cpu().detach().numpy(),
+                                prior_means = self.gmvae.module.prior.means.detach().cpu().numpy(), 
+                                prior_logvars = self.gmvae.module.prior.logvars.detach().cpu().numpy(), 
+                                prior_weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0).detach().cpu().numpy(), 
+                                savedir = self.model_dir + f"/plots/{dataset_string}/latents", 
+                                **kwargs)
+                            utils_functions.print_recon_singlebatch(
+                                x=x, 
+                                x_hat=x_hat, 
+                                savedir = self.model_dir + f"/plots/{dataset_string}/recon",
+                                epoch = self.epoch,
+                                iter_curr = iter_curr,
+                                file_name = file_name,
+                                **kwargs)
+                            utils_functions.print_attention_singlebatch(
+                                epoch = self.epoch, 
+                                iter_curr = iter_curr,
+                                pat_idxs = file_class_label, 
+                                scores_byLayer_meanHeads = attW, 
+                                savedir = self.model_dir + f"/plots/{dataset_string}/attention", 
+                                **kwargs)
+
+                            # NOTE: for finetuning, will still be guess the training patients, and TODO: idxs in dataset are wrong for class labels anyway
+                            if (not val_unseen) & (not val_finetune): # Will not have accumulated for val_unseen
+                                utils_functions.print_classprobs_singlebatch(
+                                    class_probs = class_probs_mean_of_latent,
+                                    class_labels = file_class_label,
+                                    savedir = self.model_dir + f"/plots/{dataset_string}/classprobs",
+                                    epoch = self.epoch,
+                                    iter_curr = iter_curr,
+                                    file_name = file_name,
+                                    **kwargs)
+
+                                utils_functions.print_patposteriorweights_cumulative( 
+                                    mogpreds = self.accumulated_mogpreds.cpu().detach().numpy(),
+                                    patidxs = self.accumulated_patidxs.cpu().detach().numpy(),
+                                    patname_list = dataloader_curr.dataset.pat_ids,
+                                    savedir = self.model_dir + f"/plots/{dataset_string}/patposteriorweights",
+                                    epoch = self.epoch,
+                                    iter_curr = iter_curr,
+                                    **kwargs)
+                except Exception as e:
+                    print(f"An error occurred during realtime plotting': {e}")
+                                
+            # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
+            iter_curr = iter_curr + 1
+
+        # Plot the accumulated running posterior outputs at end of epoch 
+        # Already meaned at the token level
+        # Not necessarily everything from epoch, the number of accumulated samples is defined by 'total_collected_latents'
+        try:
+            utils_functions.plot_posterior( # Plot all GPUs
+                gpu_id = self.gpu_id, 
+                prior_means = self.gmvae.module.prior.means.detach().cpu().numpy(), 
+                prior_logvars = self.gmvae.module.prior.logvars.detach().cpu().numpy(), 
+                prior_weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0).detach().cpu().numpy(), 
+                encoder_means = self.accumulated_mean.detach().cpu().numpy(),
+                encoder_logvars = self.accumulated_logvar.detach().cpu().numpy(),
+                encoder_zmeaned = self.accumulated_zmeaned.detach().cpu().numpy(),
+                encoder_mogpreds = self.accumulated_mogpreds.detach().cpu().numpy(),
+                savedir = self.model_dir + f"/plots/{dataset_string}/posterior",
+                epoch = self.epoch,
+                **kwargs)
+            
+            if self.gpu_id == 0: utils_functions.plot_prior(
+                prior_means = self.gmvae.module.prior.means.detach().cpu().numpy(), 
+                prior_logvars = self.gmvae.module.prior.logvars.detach().cpu().numpy(), 
+                prior_weights = torch.softmax(self.gmvae.module.prior.weightlogits, dim=0).detach().cpu().numpy(), 
+                savedir = self.model_dir + f"/plots/{dataset_string}/prior",
+                epoch = self.epoch,
+                **kwargs)
+            
+            print(f"[GPU{str(self.gpu_id)}] at end of epoch")
+            # barrier()
+            # gc.collect()
+            # torch.cuda.empty_cache()
+        except Exception as e:
+            print(f"An error occurred during end-of-epoch plotting': {e}")
+            
 if __name__ == "__main__":
+
+    """
+    Main script to initialize and run a distributed training session.
+
+    This script performs the following steps:
+    1. Sets the Python hash seed for reproducibility.
+    2. Loads configuration settings from a YAML file (`train_config.yml`).
+    3. Executes arithmetic build in the configuration and sets up the environment.
+    4. Spawns multiple subprocesses (using the `spawn` method) to execute the main training function in parallel across multiple processes.
+    5. Each subprocess runs the training with distributed settings, ensuring synchronization and coordination across workers.
+    6. Waits for all subprocesses to complete before printing "End of script."
+
+    Key functions:
+    - Loading and executing configuration settings (`exec_kwargs`, `run_setup`).
+    - Parallelizing the training process across multiple workers using multiprocessing.
+
+    Note: The script avoids using `mp.spawn` due to potential memory errors and directly manages subprocesses.
+    """
+
+    # Set the hash seed 
+    os.environ['PYTHONHASHSEED'] = '1234'  
 
     # Read in configuration file & setup the run
     config_f = 'train_config.yml'

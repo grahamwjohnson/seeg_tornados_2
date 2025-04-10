@@ -9,6 +9,8 @@ import multiprocessing as mp
 import functools
 import seaborn as sns
 import matplotlib as mpl
+from scipy.stats import gaussian_kde
+from matplotlib.colors import LinearSegmentedColormap
 
 # Turn of interactive polotting for speed
 plt.ioff()
@@ -43,81 +45,37 @@ def cmap_map(function, cmap):
 
     return matplotlib.colors.LinearSegmentedColormap('colormap',cdict,1024)
 
-# def get_window_mean_data(samp_idxs, data, win_samps, win_style):
-#     # pull out window data & remove any NaN values from samp_idxs 
-#     nan_bool_all = np.isnan(data[0,:]) | np.isnan(data[1,:])
-#     nan_bool_inWinRange = np.full(len(samp_idxs), False, dtype=bool)
-#     data_windowed = np.full([2, len(samp_idxs)], np.nan)
-#     for i in range(0,len(samp_idxs)):
-
-#         # Datetime stamp is at the END of the window (i.e. plotting an average of the PAST as window slides forward)
-#         if (win_style == 'end') & (samp_idxs[i] > 0):
-#             # Do partial window length average for first windows if near very beginning of file
-#             if samp_idxs[i] < win_samps: 
-#                 if nan_bool_all[0: samp_idxs[i]].sum() > 0:  # If any NaNs in window, then return NaN
-#                     nan_bool_inWinRange[i] = True
-#                     data_windowed[:, i] = np.nan
-#                 else:
-#                     nan_bool_inWinRange[i] = False
-#                     data_windowed[:, i] = np.mean(data[:, 0:samp_idxs[i]], axis = 1)
-
-#             # All the rest of the windows should now be away from file start
-#             else:
-#                 if nan_bool_all[samp_idxs[i] - win_samps : samp_idxs[i]].sum() > 0: 
-#                     nan_bool_inWinRange[i] = True
-#                     data_windowed[:, i] = np.nan
-#                 else:
-#                     nan_bool_inWinRange[i] = False
-#                     data_windowed[:, i] = np.mean(data[:, samp_idxs[i] - win_samps : samp_idxs[i]], axis = 1)
-
-
-#     data_windowed_noNaN = np.delete(data_windowed, nan_bool_inWinRange == True, axis=1)
-#     samp_idxs_noNaN = np.delete(samp_idxs, nan_bool_inWinRange == True)
-#     # print("Removed " + str(nan_bool_inWinRange.sum()) + " windows that contained NaN values. Windows remaining: " + str(data_windowed_noNaN.shape[1]))
-
-#     return data_windowed_noNaN, samp_idxs_noNaN
-
-# # This will return a centered window average
-# def get_latent_datapoints(
-#         data, win_style, modified_samp_freq, start_datetimes_sorted, stop_datetimes_sorted, abs_start_datetime, abs_stop_datetime, 
-#         win_sec, stride_sec, absolute_latent=False, max_latent=False):
-
-#     if absolute_latent:
-#         data = abs(data)
-
-#     win_samps = round(win_sec * modified_samp_freq)
-#     step_samps = round(stride_sec * modified_samp_freq)
-#     start_samp = round((start_datetimes_sorted-abs_start_datetime).total_seconds()*modified_samp_freq) # - win_samps # Add a buffer to capture averaging window
-#     end_samp = round((stop_datetimes_sorted-abs_start_datetime).total_seconds()*modified_samp_freq) # + win_samps # Add a buffer to capture averaging window
-    
-#     # Get a sliding window over the desired data range
-#     samp_idxs = np.linspace(start_samp, end_samp, int((end_samp-start_samp)/step_samps + 1), dtype=int)
-
-#     # Parallelize window averaging
-#     # Functools takes in the functions and the constant, then pass the iterable to map
-#     # with mp.Pool() as pool:
-#     #     data_windowed_noNaN, samp_idxs_noNaN = pool.map(functools.partial(get_window_mean_data, 
-#     #                                                                       data=data,
-#     #                                                                       win_samps=win_samps, 
-#     #                                                                       win_style=win_style,
-#     #                                                                       max_latent=max_latent), samp_idxs)
-#     data_windowed_noNaN, samp_idxs_noNaN = get_window_mean_data(samp_idxs=samp_idxs, data=data, win_samps=win_samps, win_style=win_style, max_latent=max_latent)
-
-#     # Get the datetime object for every sample
-#     # Get this in REVERSE because the amount of time collapse indicates how far into the past the current latent value looked at
-#     # x_datetimes_noNaN = [abs_start_datetime + datetime.timedelta(microseconds=(samp/modified_samp_freq)*1e6) for samp in samp_idxs_noNaN]
-#     x_datetimes_noNaN = [abs_stop_datetime - datetime.timedelta(microseconds=((end_samp - samp)/modified_samp_freq)*1e6) for samp in samp_idxs_noNaN]
-
-#     return samp_idxs_noNaN, x_datetimes_noNaN, data_windowed_noNaN
-
-
 def plot_latent(
-    ax, interCont_ax, seiztype_ax, time_ax, cluster_ax, 
-    latent_data, modified_samp_freq, start_datetimes, stop_datetimes, 
-    win_sec, stride_sec, seiz_start_dt, seiz_stop_dt, seiz_types,
-    preictal_dur, postictal_dur, seiz_type_list, seiz_plot_mult, hdb_labels, hdb_probabilities, hdb,
-    tab2_lighten=False, plot_alpha=0.5, plot_alpha_TIME=0.3, s_plot=15, SPES_colorbar=False, auto_scale_plot=True, xy_lims = [],
-    plot_ictal=True, **kwargs): 
+    ax, 
+    interCont_ax, 
+    seiztype_ax, 
+    time_ax, 
+    cluster_ax,  
+    latent_data, 
+    modified_samp_freq, 
+    start_datetimes, 
+    stop_datetimes, 
+    win_sec, 
+    stride_sec, 
+    seiz_start_dt, 
+    seiz_stop_dt, 
+    seiz_types,
+    preictal_dur, 
+    postictal_dur, 
+    seiz_type_list, 
+    seiz_plot_mult, 
+    hdb_labels, 
+    hdb_probabilities, 
+    hdb,
+    tab2_lighten=False, 
+    plot_alpha=0.5, 
+    plot_alpha_TIME=0.3, 
+    s_plot=15, 
+    SPES_colorbar=False, 
+    auto_scale_plot=True, 
+    xy_lims = [],
+    plot_ictal=True, 
+    **kwargs): 
     
     if len(latent_data.shape) != 3: raise Exception("Must pass 3D latent data [epoch, 2, timesample]")
 
@@ -125,6 +83,11 @@ def plot_latent(
     sort_idxs = sorted(range(len(start_datetimes)), key=lambda k: start_datetimes[k])
     start_datetimes_sorted = [start_datetimes[sort_idx] for sort_idx in sort_idxs]
     stop_datetimes_sorted = [stop_datetimes[sort_idx] for sort_idx in sort_idxs]
+
+    seiz_start_dt_sorted = [seiz_start_dt[sort_idx] for sort_idx in sort_idxs]
+    seiz_stop_dt_sorted = [seiz_stop_dt[sort_idx] for sort_idx in sort_idxs]
+    seiz_types_sorted = [seiz_types[sort_idx] for sort_idx in sort_idxs]
+
     latent_data_sorted = latent_data[sort_idxs, :, :]  # can use direct indexing because it's a numpy array
     hdb_labels_sorted = hdb_labels[sort_idxs, :, :]
     hdb_probabilities = hdb_probabilities[sort_idxs, :, :]
@@ -172,17 +135,17 @@ def plot_latent(
         c_ST = np.ones(len(x_datetimes)) * c_interictal_val_MIN
 
         # Calculate colors for each subplot type
-        for i in range(0, len(seiz_start_dt)):
+        for i in range(0, len(seiz_start_dt_sorted[iii])):
             # THIS WILL BE POSITIVE IF ANY PART OF AVERAGING WINDOW IS ICTAL
-            x_win_ictal_bool_curr = [(d >= seiz_start_dt[i]) & (d - datetime.timedelta(seconds=win_sec) <= seiz_stop_dt[i]) for d in x_datetimes] 
+            x_win_ictal_bool_curr = [(d >= seiz_start_dt_sorted[iii][i]) & (d - datetime.timedelta(seconds=win_sec) <= seiz_stop_dt_sorted[iii][i]) for d in x_datetimes] 
             
             # WILL BE POSITIVE IF leading edge of sliding window hits preictal period, but has not entered ictal period AT ALL
             # Add a 2 second buffer to account for coloring gap (any ictal encroaching will be overwtitten by ictal later)
-            x_win_preictal_bool_curr = [(d > (seiz_start_dt[i] - datetime.timedelta(seconds=preictal_sec))) & (d < seiz_start_dt[i] + datetime.timedelta(seconds=2)) for d in x_datetimes]
+            x_win_preictal_bool_curr = [(d > (seiz_start_dt_sorted[iii][i] - datetime.timedelta(seconds=preictal_sec))) & (d < seiz_start_dt_sorted[iii][i] + datetime.timedelta(seconds=2)) for d in x_datetimes]
             x_win_preictal_IDXs = [i for i, x in enumerate(x_win_preictal_bool_curr) if x]
             
             # WIll be Positive if TRAILING edge of window is out of ictal period and TRAILING edge is within postictal seconds desired
-            x_win_postictal_bool_curr = [(d - datetime.timedelta(seconds=win_sec) > seiz_stop_dt[i]) & (d - datetime.timedelta(seconds=win_sec) < seiz_stop_dt[i] + datetime.timedelta(seconds=postictal_sec)) for d in x_datetimes]
+            x_win_postictal_bool_curr = [(d - datetime.timedelta(seconds=win_sec) > seiz_stop_dt_sorted[iii][i]) & (d - datetime.timedelta(seconds=win_sec) < seiz_stop_dt_sorted[iii][i] + datetime.timedelta(seconds=postictal_sec)) for d in x_datetimes]
             x_win_postictal_IDXs = [i for i, x in enumerate(x_win_postictal_bool_curr) if x] 
 
             # Update colors if this seizure is in plot's time range.
@@ -190,7 +153,7 @@ def plot_latent(
             # Prioritize color override as ictal > preictyal > postictal
 
             # Seiztype colorvals, cyclical surrounding CHANGES based on seiz_type
-            curr_seiz_type = seiz_types[i]
+            curr_seiz_type = seiz_types_sorted[iii][i]
             seiz_type_shiftval = seiz_plot_mult[seiz_type_list.index(curr_seiz_type)]
             c_ST_interictal_val_MIN = 0 + seiz_type_shiftval
             c_ST_preictal_max_val = 0.25 + seiz_type_shiftval
@@ -231,14 +194,14 @@ def plot_latent(
                 c[x_win_ictal_bool_curr] = c_ictal_val
                 c_ST[x_win_ictal_bool_curr] = c_ST_ictal_val
 
-        # DELETE SEIZURES (if selected)
-        title_ictal_included = " with Seizures Plotted"
-        if not plot_ictal:
-            x_datetimes = np.array(x_datetimes)[c != 0].tolist()
-            lat_data_windowed = lat_data_windowed[:, c != 0]
-            c = c[c != 0]
-            c_ST = c_ST[c != 0]
-            title_ictal_included = " without Seizures Plotted"
+        # # DELETE SEIZURES (if selected)
+        # title_ictal_included = " with Seizures Plotted"
+        # if not plot_ictal:
+        #     x_datetimes = np.array(x_datetimes)[c != 0].tolist()
+        #     lat_data_windowed = lat_data_windowed[:, c != 0]
+        #     c = c[c != 0]
+        #     c_ST = c_ST[c != 0]
+        #     title_ictal_included = " without Seizures Plotted"
 
         # Collect each epochs data and color scheme
         if lat_data_windowed.shape[1] != c.shape[0]: raise Exception("Arrays have different number of time samples")
@@ -269,18 +232,21 @@ def plot_latent(
         s = ax.scatter(x_plot[plot_order], y_plot[plot_order], c=c_toplot[plot_order], alpha=plot_alpha, s=s_plot, cmap=cmap, edgecolors='none', vmin=c_interictal_val_MIN, vmax=c_interictal_val_MAX)
         
         # Peri-ictal colorbar
-        cbar = plt.colorbar(ax.collections[0], ax=ax, ticks=[c_interictal_val_MIN,
-                                                    c_interictal_val_MIN/2, 
-                                                    0,
-                                                    c_interictal_val_MAX/2,
-                                                    c_interictal_val_MAX], 
-                                                    orientation='horizontal',
-                                                    shrink=0.7)
+        cbar = plt.colorbar(
+            ax.collections[0], 
+            ax=ax, 
+            ticks=[c_interictal_val_MIN,
+            c_interictal_val_MIN/2, 
+            0,
+            c_interictal_val_MAX/2,
+            c_interictal_val_MAX], 
+            orientation='horizontal',
+            shrink=0.7)
         cbar.ax.set_xticklabels(['Interictal', 'Preictal', 'Ictal', 'Postictal', 'Interictal'])
         # cbar.ax.set_title('Peri-Ictal Labels')
 
         # Scale the plot
-        ax.set_title('Latent Space' + title_ictal_included)
+        ax.set_title('Latent Space')
         ax.set_ylabel("Latent Var 1")
         ax.set_xlabel("Latent Var 0")
         ax.set_aspect('equal')
@@ -310,10 +276,46 @@ def plot_latent(
 
         # *** COUNTOUR PLOT ***
             
+        # Interictal
         x_plot_contour = x_plot[np.abs(c_toplot) ==1]
         y_plot_contour = y_plot[np.abs(c_toplot) ==1]
         cbar_dict = {'location': 'bottom', 'orientation': 'horizontal', 'label': 'Interictal Density', 'format': '%.2e'}
-        s = sns.kdeplot(x=x_plot_contour, y=y_plot_contour, ax=interCont_ax, cmap="Greys", fill=True, bw_adjust=.5, cbar=True, cbar_kws=cbar_dict)
+        s = sns.kdeplot(x=x_plot_contour, y=y_plot_contour, ax=interCont_ax, cmap="Greys", fill=True, bw_adjust=.5, alpha=0.7, cbar=False, cbar_kws=cbar_dict)
+
+        # Pre-ictal
+        x_plot_contour_PREICTAL = x_plot[(c_toplot > -1) & (c_toplot < 0)]
+        y_plot_contour_PREICTAL = y_plot[(c_toplot > -1) & (c_toplot < 0)]
+
+        # preictal_data = lat_data_windowed_toplot[:, (c_toplot > -1) & (c_toplot < 0)]
+        # # Compute the KDE density values manually
+        # kde = gaussian_kde(preictal_data) 
+        # x, y = preictal_data[0,:], preictal_data[1,:]
+        # xgrid, ygrid = np.mgrid[x.min():x.max():500, y.min():y.max():500]
+        # positions = np.vstack([xgrid.ravel(), ygrid.ravel()])
+        # density = kde(positions).reshape(xgrid.shape)
+
+        # # Normalize the density values to [0, 1] for alpha mapping
+        # density_normalized = (density - density.min()) / (density.max() - density.min())
+
+        # # Create a custom colormap with alpha fading to 0 for lower densities
+        # cmap = LinearSegmentedColormap.from_list(
+        #     "custom_reds", [(1, 0, 0, alpha) for alpha in np.linspace(0, 1, 256)]  # Alpha starts at 0
+        # )
+
+        # # Plot the KDE with the custom colormap
+        # plt.imshow(
+        #     density_normalized.T,
+        #     extent=[x.min(), x.max(), y.min(), y.max()],
+        #     origin="lower",
+        #     cmap=cmap,
+        #     alpha=0.8,  # Overall transparency of the KDE
+        # )
+
+        cbar_levels = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+        cmap_preictal = sns.color_palette(palette='flare', as_cmap=True)
+        cbar_dict = {'location': 'bottom', 'orientation': 'horizontal', 'label': 'Pre-Ictal Density', 'format': '%.2e', 'ticks': cbar_levels}
+        s_pre = sns.kdeplot(x=x_plot_contour_PREICTAL, y=y_plot_contour_PREICTAL, ax=interCont_ax, cmap=cmap_preictal, fill=True, bw_adjust=.5, cbar=True, cbar_kws=cbar_dict, alpha=0.5, levels=cbar_levels)
+
         # plt.colorbar(shrink=0.7) 
         # Reset the limits based on peri-ictal plot
         interCont_ax.set_xlim(ax.get_xlim())
@@ -381,7 +383,7 @@ def plot_latent(
         y_plot_time = lat_data_windowed_toplot[1,:]  
         s_time = time_ax.scatter(
             x_plot_time, y_plot_time, c=np.linspace(0, 1, len(x_plot_time)).tolist(), 
-            alpha=plot_alpha_TIME, s=s_plot, cmap=cmap_time, edgecolors='none', vmin=0, vmax=1) 
+            alpha=plot_alpha_TIME, s=s_plot, cmap=cmap_time, edgecolors='none', vmin=0, vmax=1)
         
         # Colorbar: Find the number of midnights and set as x-axis ticks at each midnight's percentage of total EMU time
         midnights_perc_list = []
@@ -410,7 +412,6 @@ def plot_latent(
         time_ax.set_aspect('equal')
 
 
-
         # **** HDBSCAN CLUSTER PLOTTING ****
 
         plot_order_CLUSTER = np.argsort(c_CLUSTER_toplot)
@@ -435,47 +436,6 @@ def plot_latent(
         # labels = ['Interictal'] + seiz_type_list
         cbar_CLUSTER = plt.colorbar(cluster_ax.collections[0], ax=cluster_ax, cmap=cmap_CLUSTER, orientation='horizontal', shrink=0.7, label='Cluster Index')
         # cbar_CLUSTER.ax.set_xticklabels(labels)
-
-
-
-        # DEBUGGING
-        # import os
-        # plt.savefig(f"{os.getcwd()}/test.jpg")
-
-        # plt.close()
-        # fig = plt.figure(figsize=(26, 26))
-        # gs = gridspec.GridSpec(2, 2, figure=fig)
-        # ax = fig.add_subplot(gs[0, 0]) 
-        # interCont_ax = fig.add_subplot(gs[0, 1]) 
-        # seiztype_ax = fig.add_subplot(gs[1, 0]) 
-
-    # Special SPES colorbar
-    else:
-        # Cut the Gray colormap
-        spes_cmin = 0.2 # 0.4 for Greys
-        spes_cmax = 1
-        # cmap = plt.get_cmap('Greys')
-        cmap = plt.get_cmap('YlOrBr')
-        norm = matplotlib.colors.Normalize(vmin=spes_cmin, vmax =spes_cmax)
-        #generate colors from original colormap in the range equivalent to [vmin, vamx] 
-        colors = cmap(np.linspace(1.-(spes_cmax-spes_cmin)/float(spes_cmax), 1, cmap.N))
-        # Create a new colormap from those colors
-        color_map = matplotlib.colors.LinearSegmentedColormap.from_list('cut_Greys', colors)
-
-
-        c_toplot=np.linspace(spes_cmin, spes_cmax,  c_toplot.shape[0])
-        spes_sc = ax.scatter(lat_data_windowed_toplot[0,:], lat_data_windowed_toplot[1,:], c=c_toplot, alpha=plot_alpha, s=s_plot, cmap=color_map, norm=norm, edgecolors='none')
-        ax.set_title('Latent Space' + title_ictal_included)
-
-        cbar_spes = plt.colorbar(spes_sc, ax=ax, ticks=[spes_cmin, spes_cmax], orientation='vertical')
-        cbar_spes.ax.set_yticklabels(['Start\nSPES', 'Stop\nSPES'])
-
-        ax.set_ylabel("Latent Var 1")
-        ax.set_xlabel("Latent Var 0")
-        ax.set_aspect('equal')
-        if not auto_scale_plot:
-            ax.set_xlim(-1, 1)
-            ax.set_ylim(-1, 1)
 
     # Return all axes    
     xy_lims = [ax.get_xlim(), ax.get_ylim()]

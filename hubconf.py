@@ -20,8 +20,10 @@ CONFIGS = {
         'logvar_lims': [-5, 1],
         'gumbel_softmax_temperature_max': 0.05,
         'diag_mask_buffer_tokens': 16,
+        'prior_initial_mean_spread':3,
+        'prior_initial_logvar':-2,
         'weight_file': 'gmvae_weights.pth',
-        'release_tag': 'v0.4-alpha'
+        'release_tag': 'v0.5-alpha'
     }
 }
 

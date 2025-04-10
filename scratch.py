@@ -2,7 +2,7 @@ import torch
 
 torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
 model = torch.hub.load(
-    'grahamwjohnson/seeg_tornados_2@o10_GMVAE',
+    'grahamwjohnson/seeg_tornados_2',
     'load',
     codename='sheldrake',
     pretrained=True,

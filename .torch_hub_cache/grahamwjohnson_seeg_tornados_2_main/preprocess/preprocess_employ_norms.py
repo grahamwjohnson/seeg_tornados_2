@@ -14,20 +14,6 @@ import multiprocess.context as ctx
 
 PARALELL_NODES = 16
 
-# # Ghassan Pool example
-# def plot_zpara(self, channels, out_dir, nodes):
-#     self.calc_ylims()
-#     with Pool(nodes) as p:
-#         print('Mapping to {} channels'.format(len(channels)))
-#         plotter = partial(self.plot_zavg_epoch, out_dir=out_dir)
-#         figs = p.map(plotter, channels)
-
-# def transform_hist(linear_interp_by_ch: list,
-#                    in_channel_data: list):
-    
-#     return linear_interp_by_ch[ch_idx](in_channel_data)
-
-
 def employ_norm(
     files: list,
     file_starts_dt: list,
@@ -44,6 +30,43 @@ def employ_norm(
     savename_base: str,
     PROCESS_FILE_DEBUG_LIST: list
     ):
+
+    """
+    @author grahamwjohnson
+    @author: grahamwjohnson
+    Developed between 2023-2025
+
+    Script for Normalizing, Scaling, and Epoching Time Series Data
+
+    This script processes a list of time series files by applying different normalization and scaling techniques to the data. The file data is then segmented into epochs with specified duration and stride, and the epochs are saved to disk as pickle files.
+
+    Parameters:
+    - files (list): List of file paths to the time series data files to be processed.
+    - file_starts_dt (list): List of start datetime objects corresponding to each file, used to calculate timestamps for epochs.
+    - num_channels (int): The number of channels in the time series data.
+    - file_buffer_sec (float): Buffer time (in seconds) at the beginning and end of each file to exclude from epoching.
+    - resamp_freq (float): Resampling frequency of the time series data in Hz.
+    - save_dir (str): Directory where the processed files and histograms will be saved.
+    - scale_type (str): The type of scaling to apply to the data (options: 'LinearScale', 'CubeRootScale', 'HyperTanScaling', 'HistEqualScale').
+    - scale_factors (list): List of scale factors for each channel.
+    - linear_interp_by_ch (list): List of interpolation functions for histogram equalization.
+    - out_dur (float): Desired duration of each epoch in seconds.
+    - out_stride (float): Desired stride (step size) between consecutive epochs in seconds.
+    - montage (str): Type of montage ('BIPOLE' or 'MONOPOLE').
+    - savename_base (str): Base name used for saving epoch files.
+    - PROCESS_FILE_DEBUG_LIST (list): List of indices of files to process for debugging; if empty, all files are processed.
+
+    Outputs:
+    - Processed data is saved as pickle files in the specified save_dir.
+    - Normalization histograms are saved in the '/metadata/normalization_histograms/' subdirectory.
+    - Zero-padded files are saved in the '/metadata/zero_padded_epochs' subdirectory.
+
+    Note:
+    - The script allows for debugging certain files if the PROCESS_FILE_DEBUG_LIST is provided.
+    - The script handles scaling using different methods and ensures the data is normalized and clipped to a specified range before epoching.
+    - Epoching is done based on the specified duration and stride, with data saved in pickle format for further analysis.
+
+    """
     
     zero_pad_dir = save_dir + '/metadata/zero_padded_epochs'
     if not os.path.exists(zero_pad_dir): os.makedirs(zero_pad_dir)

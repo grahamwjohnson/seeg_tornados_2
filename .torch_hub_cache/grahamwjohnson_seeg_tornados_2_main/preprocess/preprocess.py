@@ -1,10 +1,68 @@
+"""
+@author: grahamwjohnson
+Developed between 2023-2025
+
+This script processes raw EEG/SEEG data by performing the following steps:
+
+1. **File Preparation and Filtering:**
+   - It reads the raw data from EDF files for a given patient, filtering the data based on a specified montage (e.g., Bipolar), frequency bands, and unit expectations.
+   - The raw data is pickled and saved to a specified directory for further use, with options for scaling and filtering before storing.
+   - It applies a predefined set of channel names to ignore (e.g., non-relevant channels or artifacts).
+
+2. **Path and Directory Setup:**
+   - Constructs the directory paths required for saving the processed data, ensuring that directories exist before writing data.
+   - Copies the current script into the output directory for record-keeping, allowing reproducibility of the preprocessing steps.
+
+3. **Scaling Parameters Acquisition:**
+   - Acquires normalization and scaling parameters for the data, including the choice of scaling method (Linear, HyperTan, CubeRoot, or Histogram Equalization).
+   - If scaling parameters were previously computed and saved, it loads those parameters for reuse.
+   - If not, it computes the necessary scaling factors or linear interpolations based on the raw data, saving these parameters for later use.
+
+4. **Data Normalization:**
+   - Applies the computed or loaded scaling parameters to normalize the data, resulting in scaled data epochs suitable for machine learning or other downstream analysis.
+   - This normalization is done by utilizing the scaling factors or interpolated values for each channel and frequency band.
+   - Data is saved to the specified directory, with file timestamps and other metadata included to facilitate future data management.
+
+### Key Parameters:
+- `pat_id`: Patient identifier (e.g., 'Epat38') to find the relevant data.
+- `montage`: The montage used for the bipolar channel configuration.
+- `freq_bands`: Frequency bands to apply to the data, or empty for the full frequency range.
+- `num_channels`: Total number of channels to process, typically 144 for bipolar data.
+- `resamp_freq`: Sampling frequency after resampling, default is 512 Hz.
+- `scale_type`: Type of normalization applied to the data (e.g., 'HistEqualScale', 'LinearScale').
+- `scale_epoch_hours`: Time window (in hours) used for scaling the data.
+- `buffer_start_hours`: Buffer time (in hours) to account for any setup issues or data irregularities.
+- `scale_epoch_type`: The type of scaling normalization method to apply (e.g., 'data_normalized_to_first').
+- `histo_min`/`histo_max`: Histogram equalization scaling range in microvolts.
+- `file_buffer_sec`: Buffer in seconds to ignore at the beginning and end of each file during processing.
+
+### Output:
+- Scaled data is saved to a directory structured by the patient ID, montage, scaling method, and frequency band.
+- Metadata and code used during the preprocessing are also saved for reproducibility and transparency.
+
+### Dependencies:
+- `utils_functions`: Custom utility functions for data manipulation and file handling.
+- `preprocess_aquire_params`: Module to acquire scaling parameters based on the data.
+- `preprocess_employ_norms`: Module to apply normalization and scaling to the data.
+
+### Assumptions:
+- The script assumes a specific file naming convention for EDF files (e.g., '<patname>_MMDDYYYY_HHMMSSss').
+- The data is processed in a way that all EDF files from the same patient are combined into a single set of pickles for that patient.
+
+### Notes:
+- The function is highly configurable and can accommodate various scaling methods and frequency bands.
+- The script ensures that the entire pipeline is run only when necessary, checking whether previous pickling and scaling steps have already been completed to save computation time.
+- Make sure to update the `ch_names_to_ignore` list when there are additional or irrelevant channels for a new dataset.
+
+"""
+
 # TODO - add stats output to SEE: percent overlap, any gaps in time
 
 import glob, os
 import datetime
 import shutil
-from tools import utils_functions
-from tools import preprocess_aquire_params, preprocess_employ_norm
+from utilities import utils_functions
+from preprocess import preprocess_aquire_params, preprocess_employ_norms
 import pickle
 
 # TODO pull out usable channels e.g. Epat02...
@@ -144,7 +202,7 @@ else:
 
 # ### EMPLOY NORMALIZATION
 
-preprocess_employ_norm.employ_norm(
+preprocess_employ_norms.employ_norm(
     files=files  ,                    
     file_starts_dt=file_starts_dt,
     num_channels=num_channels,

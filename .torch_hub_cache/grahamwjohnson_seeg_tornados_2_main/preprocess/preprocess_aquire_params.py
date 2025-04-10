@@ -2,7 +2,7 @@ import os
 import shutil
 import glob
 import datetime
-import tools.utils_functions as utils_functions
+import utilities.utils_functions as utils_functions
 import pandas as pd
 import numpy as np
 import pickle
@@ -36,24 +36,66 @@ def find_contiguous_true_indexes(array):
   # contiguous region of True values.
   return list(zip(start_indexes, end_indexes))
 
+def aquire_scale_params(
+        pat_id: str,
+        num_channels: int,
+        big_pickle_dir: str,
+        files: list,
+        file_starts_dt: list,
+        atd_file: str,
+        save_dir: str,
+        scale_epoch_type: str,
+        scale_epoch_hours: float,
+        buffer_start_hours: float,
+        channel_scale_style: str,
+        scale_type: str,
+        resamp_freq: float,
+        histo_min: float,
+        histo_max: float,
+        num_bins: int):    
 
-def aquire_scale_params(pat_id: str,
-                        num_channels: int,
-                        big_pickle_dir: str,
-                        files: list,
-                        file_starts_dt: list,
-                        atd_file: str,
-                        save_dir: str,
-                        scale_epoch_type: str,
-                        scale_epoch_hours: float,
-                        buffer_start_hours: float,
-                        channel_scale_style: str,
-                        scale_type: str,
-                        resamp_freq: float,
-                        histo_min: float,
-                        histo_max: float,
-                        num_bins: int,
-                        ):    
+    """
+    @author: grahamwjohnson
+    Developed between 2023-2025
+
+    Aquire normalization and scaling parameters for EEG data processing.
+
+    This function processes a list of EEG data files, calculating normalization and scaling parameters 
+    based on specified scaling strategies and epoch types. The function supports different normalization 
+    strategies including using data normalized to the first available data or seizure-centered epochs. 
+    It also calculates scaling parameters for channels based on either global scaling or individual channel scaling. 
+    The scaling approach can include histogram-based equal scaling or percentile-based normalization.
+
+    Key steps involved:
+    - Define the time range for normalization based on the epoch type.
+    - Load and process EEG data files to extract normalization values within the desired epoch range.
+    - Handle edge cases where zero-padding or missing data might affect the normalization range.
+    - Calculate and store scaling parameters such as scale factors for each channel, or histogram-based scaling parameters.
+    - Save the resulting scaling and normalization data (including histograms and interpolated CDFs) to CSV and Pickle files for later use.
+
+    Parameters:
+        pat_id (str): Patient ID used to retrieve seizure event data if required for seizure-centered normalization.
+        num_channels (int): The number of EEG channels to process.
+        big_pickle_dir (str): Directory containing large Pickle files to be processed.
+        files (list): List of file paths to EEG data Pickle files.
+        file_starts_dt (list): List of datetimes corresponding to the start of each EEG file.
+        atd_file (str): Path to the file containing seizure information for the patient.
+        save_dir (str): Directory to save the resulting scaling and normalization metadata.
+        scale_epoch_type (str): Type of epoch to use for normalization, either 'data_normalized_to_first' or 'data_normalized_to_first_seizure_centered'.
+        scale_epoch_hours (float): The number of hours to use for the scaling epoch.
+        buffer_start_hours (float): The number of hours from the start of the data to buffer for normalization.
+        channel_scale_style (str): Strategy for scaling the channels, either 'Same_Scale_For_All_Channels' or 'By_Channel_Scale'.
+        scale_type (str): Type of scaling to apply, such as 'HistEqualScale' or another method.
+        resamp_freq (float): The resampling frequency (in Hz) of the EEG data.
+        histo_min (float): Minimum value for histogram binning in histogram-based scaling.
+        histo_max (float): Maximum value for histogram binning in histogram-based scaling.
+        num_bins (int): Number of bins to use for histogram-based scaling.
+
+    Returns:
+        tuple: 
+            - scale_factors (list): A list of scale factors for each channel (if not using histogram scaling).
+            - linear_interp_by_ch (list): A list of linear interpolation functions for each channel (used for histogram equal scaling).
+    """
 
     scale_factors = [] # WIll output for all non-hist strategies
     linear_interp_by_ch = [] # Will output for hist normalization
@@ -74,15 +116,16 @@ def aquire_scale_params(pat_id: str,
     elif scale_epoch_type == 'data_normalized_to_first_seizure_centered':
         print("data_normalized_to_first_seizure_centered")
         # Get the seizure datetimes for this patient
-        seiz_start_datetimes, seiz_stop_datetimes, seiz_types = utils_functions.get_pat_seiz_datetimes(pat_id=pat_id, 
-                                                                                            atd_file=atd_file,                           
-                                                                                            FBTC_bool=True, 
-                                                                                            FIAS_bool=True, 
-                                                                                            FAS_to_FIAS_bool=True,
-                                                                                            FAS_bool=True, 
-                                                                                            subclinical_bool=False, 
-                                                                                            unknown_bool=False,  ################################
-                                                                                            non_electro_bool=False)
+        seiz_start_datetimes, seiz_stop_datetimes, seiz_types = utils_functions.get_pat_seiz_datetimes(
+            pat_id=pat_id, 
+            atd_file=atd_file,                           
+            FBTC_bool=True, 
+            FIAS_bool=True, 
+            FAS_to_FIAS_bool=True,
+            FAS_bool=True, 
+            subclinical_bool=False, 
+            unknown_bool=False,  
+            non_electro_bool=False)
 
         # If seizure is too close to beginning, then start normalizatiomn at beginning of EMU stay
         seiz_1_start = seiz_start_datetimes[0]
@@ -94,9 +137,7 @@ def aquire_scale_params(pat_id: str,
             normalization_epoch_sec = [((seiz_1_start - datetime.timedelta(hours=scale_epoch_hours/2)) - first_file_start_datetime).total_seconds(),
                                     ((seiz_1_start + datetime.timedelta(hours=scale_epoch_hours/2)) - first_file_start_datetime).total_seconds()]
 
-
-    else:
-        raise Exception("'scale_epoch_type' must equal 'data_normalized_to_first_seizure_centered' or 'data_normalized_to_first'")
+    else: raise Exception("'scale_epoch_type' must equal 'data_normalized_to_first_seizure_centered' or 'data_normalized_to_first'")
         
         
     # Save the normalization epoch seconds
