@@ -20,10 +20,23 @@ CONFIGS = {
         'logvar_lims': [-5, 1],
         'gumbel_softmax_temperature_max': 0.05,
         'diag_mask_buffer_tokens': 16,
-        'prior_initial_mean_spread':3,
-        'prior_initial_logvar':-2,
+        'prior_initial_mean_spread': 3,
+        'prior_initial_logvar': -2,
+        'gp_sigma': 2.5, 
+        'gp_length_scale': 128,
+        'crattn_num_heads': 8,
+        'crattn_num_layers': 16,
+        'crattn_max_seq_len': 1,
+        'crattn_dropout': 0.1, 
+        'posterior_mogpredictor_hidden_dim_list': [2048, 1024, 512], 
+        'num_prior_mog_components': 8, 
+        'posterior_mogpredictor_dropout': 0.1,
+        'classifier_hidden_dims': [2048, 1024, 512], 
+        'classifier_num_pats': 45, 
+        'classifier_dropout': 0.1,
+        'decoder_base_dims': 4096,
         'weight_file': 'gmvae_weights.pth',
-        'release_tag': 'v0.5-alpha'
+        'release_tag': 'v0.6-alpha'
     }
 }
 
@@ -46,23 +59,7 @@ def _load_gmvae(codename='sheldrake', pretrained=True, **kwargs):
     config.update(kwargs)  # Override with any user-provided kwargs
 
     # Create model with architecture parameters
-    model = GMVAE(
-        encode_token_samples=config['encode_token_samples'],
-        padded_channels=config['padded_channels'],
-        transformer_seq_length=config['transformer_seq_length'],
-        transformer_start_pos=config['transformer_start_pos'],
-        transformer_dim=config['transformer_dim'],
-        encoder_transformer_activation=config['encoder_transformer_activation'],
-        top_dims=config['top_dims'],
-        hidden_dims=config['hidden_dims'],
-        latent_dim=config['latent_dim'],
-        decoder_base_dims=config['decoder_base_dims'],
-        prior_mog_components=config['prior_mog_components'],
-        mean_lims=config['mean_lims'],
-        logvar_lims=config['logvar_lims'],
-        gumbel_softmax_temperature_max=config['gumbel_softmax_temperature_max'],
-        diag_mask_buffer_tokens=config['diag_mask_buffer_tokens'],
-    )
+    model = GMVAE(**config)
 
     # Load pretrained weights if requested
     if pretrained and config.get('weight_file') and config.get('release_tag'):
