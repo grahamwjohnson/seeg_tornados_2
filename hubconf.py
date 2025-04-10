@@ -21,7 +21,7 @@ CONFIGS = {
         'gumbel_softmax_temperature_max': 0.05,
         'diag_mask_buffer_tokens': 16,
         'weight_file': 'gmvae_weights.pth',
-        'release_tag': 'v0.1-alpha'
+        'release_tag': 'v0.3-alpha'
     }
 }
 
