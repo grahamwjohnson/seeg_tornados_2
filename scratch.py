@@ -1,15 +1,15 @@
 import torch
 
 torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
-model = torch.hub.load(
+bse, bsp = torch.hub.load(
     'grahamwjohnson/seeg_tornados_2',
     'load',
     codename='sheldrake',
     pretrained=True,
     trust_repo='check',
-    force_reload=True
+    # force_reload=True
 )
-print(model)
+print(bse)
 
 # # rval_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/rapid_val'
 # # rval_files = glob.glob(f"{rval_dir}/*.pkl")

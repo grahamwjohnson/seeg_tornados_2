@@ -1,10 +1,12 @@
 import torch
-from models.GMVAE import GMVAE
+from models.BSE import BSE
+from models.BSP import BSP
 
 dependencies = ['torch', 'numpy']
 
 CONFIGS = {
     'sheldrake': {
+        # BSE Params
         'encode_token_samples': 1,
         'padded_channels': 256,
         'transformer_seq_length': 512,
@@ -40,8 +42,11 @@ CONFIGS = {
         'classifier_hidden_dims': [2048, 1024, 512], 
         'classifier_num_pats': 45, 
         'classifier_dropout': 0.1,
-        'weight_file': 'gmvae_weights.pth',
+        'bse_weight_file': 'bse_weights.pth',
+        'bsp_weight_file': 'bsp_weights.pth',
         'release_tag': 'v0.7-alpha'
+
+        # BSP Params
     }
 }
 
@@ -63,24 +68,46 @@ def _load_gmvae(codename='sheldrake', pretrained=True, **kwargs):
     config = CONFIGS[codename].copy()
     config.update(kwargs)  # Override with any user-provided kwargs
 
-    # Create model with architecture parameters
-    model = GMVAE(**config)
 
-    # Load pretrained weights if requested
-    if pretrained and config.get('weight_file') and config.get('release_tag'):
-        weight_file = config['weight_file']
+    # *** Brain-State Embedder (BSE) ***
+
+    bse = BSE(**config)
+
+    # BSE: Load pretrained weights if requested
+    if pretrained and config.get('bse_weight_file') and config.get('release_tag'):
+        weight_file = config['bse_weight_file']
         release_tag = config['release_tag']
         checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{weight_file}'
         try:
             state_dict = torch.hub.load_state_dict_from_url(checkpoint_url, progress=True, map_location='cpu')
-            model.load_state_dict(state_dict)
+            bse.load_state_dict(state_dict)
         except Exception as e:
             print(f"Error loading pretrained weights for codename '{codename}': {e}")
             print("Continuing with randomly initialized model.")
     elif pretrained:
         print(f"No weight file or release tag specified for codename '{codename}'. Continuing with randomly initialized model.")
 
-    return model
+
+    # *** Brain-Sate Predictor (BSP) ***
+    
+    bsp = BSP(**config)
+
+    # BSP: Load pretrained weights if requested
+    if pretrained and config.get('bsp_weight_file') and config.get('release_tag'):
+        weight_file = config['bsp_weight_file']
+        release_tag = config['release_tag']
+        checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{weight_file}'
+        try:
+            state_dict = torch.hub.load_state_dict_from_url(checkpoint_url, progress=True, map_location='cpu')
+            bsp.load_state_dict(state_dict)
+        except Exception as e:
+            print(f"Error loading pretrained weights for codename '{codename}': {e}")
+            print("Continuing with randomly initialized model.")
+    elif pretrained:
+        print(f"No weight file or release tag specified for codename '{codename}'. Continuing with randomly initialized model.")
+
+    # Return both models
+    return bse, bsp
 
 def load(codename='sheldrake', pretrained=True, **kwargs):
     """

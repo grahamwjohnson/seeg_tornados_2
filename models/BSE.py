@@ -492,7 +492,7 @@ class MoGPredictor(nn.Module):
 
     The `MoGPredictor` is a fully connected neural network that predicts the logits for 
     selecting a Gaussian mixture component in the latent space. It takes an encoded 
-    representation from the GMVAE and outputs unnormalized logits for each MoG component. 
+    representation from the BSE and outputs unnormalized logits for each MoG component. 
     The logits are later processed using the Gumbel-Softmax trick to enable differentiable 
     sampling.
 
@@ -563,7 +563,7 @@ class MoGPredictor(nn.Module):
 
 class Decoder_MLP(nn.Module):
     """
-    Multi-Layer Perceptron (MLP) Decoder for GMVAE.
+    Multi-Layer Perceptron (MLP) Decoder for BSE.
 
     This decoder is a non-autoregressive MLP-based architecture designed to reconstruct 
     sequences from the latent representation. It transforms latent variables into waveform 
@@ -679,7 +679,7 @@ class LinearWithDropout(nn.Module):
 
 class AdversarialClassifier(nn.Module):
     """
-    Adversarial Classifier for GMVAE.
+    Adversarial Classifier for BSE.
 
     This classifier is designed to predict patient labels from the latent space 
     while using a Gradient Reversal Layer (GRL) to enable adversarial training. 
@@ -799,11 +799,11 @@ class Discriminator(nn.Module):
         z = F.sigmoid(z) # Final activation is sigmoid for discriminator
         return z
 
-class GMVAE(nn.Module):
+class BSE(nn.Module):
     """
-    Gaussian Mixture Variational Autoencoder (GMVAE) with Reversible Encoder/Decoder.
+    Gaussian Mixture Variational Autoencoder (BSE) with Reversible Encoder/Decoder.
 
-    This GMVAE model incorporates a mixture of Gaussians (MoG) prior with a transformer-based 
+    This BSE model incorporates a mixture of Gaussians (MoG) prior with a transformer-based 
     encoder for time-series data. The encoder leverages cross-attention mechanisms to process 
     raw input data before passing it through a transformer for further feature extraction.
     The latent space is modeled as a mixture of Gaussians, where posterior sampling is done 
@@ -900,7 +900,7 @@ class GMVAE(nn.Module):
     Methods:
     --------
     forward(x, reverse=False)
-        Forward pass through the GMVAE. If `reverse=False`, encodes input `x` into a latent 
+        Forward pass through the BSE. If `reverse=False`, encodes input `x` into a latent 
         representation. If `reverse=True`, decodes a given latent `x` back into waveform data.
 
     sample_posterior(encoder_means, encoder_logvars, encoder_mogpreds, gumbel_softmax_temperature)
@@ -927,7 +927,7 @@ class GMVAE(nn.Module):
         gpu_id=None,  
         **kwargs):
 
-        super(GMVAE, self).__init__()
+        super(BSE, self).__init__()
 
         self.gpu_id = gpu_id
         self.encode_token_samples = encode_token_samples
@@ -1016,7 +1016,7 @@ class GMVAE(nn.Module):
             # TRANSFORMER
             y, attW = self.transformer_encoder(y, start_pos=self.transformer_start_pos, return_attW = True, diag_mask_buffer_tokens=self.diag_mask_buffer_tokens)
 
-            # GMVAE CORE
+            # GM-VAE CORE
             y = self.top_to_hidden(y)
             mean, logvar, mogpreds = self.mean_encode_layer(y), self.logvar_encode_layer(y), self.mogpreds_layer(y)
             mean = mean.view(-1, self.transformer_seq_length, self.prior_mog_components, self.latent_dim)
@@ -1094,7 +1094,7 @@ def print_models_flow(x, **kwargs):
     '''
 
     # Build the WAE
-    gmvae = GMVAE(**kwargs) 
+    gmvae = BSE(**kwargs) 
 
     # Run through Encoder
     print(f"INPUT TO <ENC>\n"

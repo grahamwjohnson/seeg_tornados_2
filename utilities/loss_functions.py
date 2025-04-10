@@ -48,14 +48,14 @@ def discriminator_loss(z_posterior, z_prior, discriminator):
     return total_discriminator_loss, real_loss, fake_loss
 
 # Loss functions for GMVAE adversarial training
-def gmvae_adversarial_loss(z_posterior, discriminator, beta):
+def bse_adversarial_loss(z_posterior, discriminator, beta):
     # We want the discriminator to be unable to distinguish posterior samples from prior samples
     discriminator_output_posterior = discriminator(z_posterior)
     adversarial_loss = -torch.mean(torch.log(discriminator_output_posterior + 1e-8)) # Try to make output close to 1
 
     return beta * adversarial_loss
 
-# def gmvae_kl_loss(z, encoder_means, encoder_logvars, encoder_mogpreds, prior_means, prior_logvars, prior_weights, weight, num_samples_kl=10, **kwargs):
+# def bse_kl_loss(z, encoder_means, encoder_logvars, encoder_mogpreds, prior_means, prior_logvars, prior_weights, weight, num_samples_kl=10, **kwargs):
 #     """
 #     GM-VAE KL-Divergence Loss using Monte Carlo Approximation.
 

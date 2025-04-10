@@ -176,9 +176,9 @@ val_finetine_bool: True # If False, will skip finetuning and just validate on un
 val_every: 99999 # Will only do one epoch, so update 'valfinetune_forward_passes' if want to finetune longer
 val_finetune_hour_dataset_range: kwargs['val_finetune_hour_dataset_range'] = [2, 50]
 val_unseen_hour_dataset_range: kwargs['val_unseen_hour_dataset_range'] = [50, -1]
-LR_val_gmvae: kwargs['LR_val_gmvae'] = 1e-7 # SHould probably set finetuning LR to about min of training LR if pulsing train LR, or down 1-2 orders of magnitude if train LR is constant (i.e. not pulsing)
+LR_val_bse: kwargs['LR_val_bse'] = 1e-7 # SHould probably set finetuning LR to about min of training LR if pulsing train LR, or down 1-2 orders of magnitude if train LR is constant (i.e. not pulsing)
 LR_val_cls: kwargs['LR_val_cls'] = 1e-4
-LR_val_prior: kwargs['LR_val_prior'] = kwargs['LR_val_gmvae']
+LR_val_prior: kwargs['LR_val_prior'] = kwargs['LR_val_bse']
 LR_val_disc: kwargs['LR_val_disc'] = 1e-5
 val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
 
