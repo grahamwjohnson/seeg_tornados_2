@@ -1,8 +1,15 @@
 import torch
 
-# Load the 'sheldrake' model with pretrained weights
-model_sheldrake = torch.hub.load('grahamwjohnson/seeg_tornados_2@o10_GMVAE', 'load', codename='sheldrake', pretrained=True, trust_repo=True, force_reload=True)
-print(model_sheldrake)
+torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
+model = torch.hub.load(
+    'grahamwjohnson/seeg_tornados_2@o10_GMVAE',
+    'load',
+    codename='sheldrake',
+    pretrained=True,
+    trust_repo='check',
+    force_reload=True
+)
+print(model)
 
 # # rval_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/rapid_val'
 # # rval_files = glob.glob(f"{rval_dir}/*.pkl")

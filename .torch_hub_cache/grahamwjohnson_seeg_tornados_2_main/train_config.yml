@@ -1,0 +1,190 @@
+# Patient selection
+# pat_id: 'Epat31'
+
+pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats' 
+train_val_pat_perc: kwargs['train_val_pat_perc'] = [0.8, 0.2]
+num_freq_bands: 1
+pat_num_channels_LUT: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/pats_num_channels_LUT.csv'
+num_samples: kwargs['num_samples'] = 1024*512 # MATCH TO FILE SELECTION 'duration_stride_str' BELOW 512*512, 10*512 , 60*512    
+FS: 512             
+
+# Dataset formation variables
+atd_file: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/all_time_data_01092023_112957.csv'
+data_dir_subfolder: '/scaled_data_epochs'
+base_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results'
+scale_type: 'HistEqualScale'  # 'LinearScale', 'HyperTanScaling', 'CubeRootScale', 'HistEqualScale'
+channel_scale_style: 'By_Channel_Scale' # 'Same_Scale_For_All_Channels' # By_Channel_Scale # If using multiple freq bands, the preprocessing script rescaales, so be careful and should use 'by channel' scaling 
+bipole_or_monopole: 'Bipole_datasets'
+scale_epoch_str: 'data_normalized_to_first_24_hours' # 'data_normalized_to_first_24_hours' # 'data_normalized_to_first_seizure_centered_24_hours' # , 'Dictated by preprocessing: Should probably decide to have duration match 'train_hours_desired', but do not HAVE to
+# duration_stride_str: 'DurStr_1024s896s_epoched_datasets' # 'DurStr_1024s896s_epoched_datasets', 'DurStr_512s480s_epoched_datasets', 'DurStr_10s2s_epoched_datasets', 'DurStr_60s10s_epoched_datasets'
+duration_stride_str: '10pats'
+freq_bands_str: 'wholeband' # 1to12Hz_12to59Hz_61to179Hz, wholeband
+intrapatient_dataset_style: 2 # 1 all data (no SPES), 2 all data (with SPES), 3 ONLY SPES
+train_hour_dataset_range: kwargs['train_hour_dataset_range'] = [-1, -1]  # [-1, -1] means all, [X, -1] means from X to end
+rand_name_json: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/code2/utilities/animals.json'
+periictal_augmentation_perc: 0.0 # May mess with sequential saving of latents if enabled
+preictal_augmentation_seconds: 1800
+
+# Training settings
+continue_existing_training: False  # if True and 'cont_train_model_dir' is '', will ask for directory with dialog box 
+cont_train_model_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/10pats/trained_models/dataset_train80.0_val20.0/hawaiianmonkseal_Thu_Jan__2_15_22_44_2025' 
+inference_selection: 2 # 1: all data w/o SPES, 2: all data w/ SPES, 3: only SPES 
+
+
+# Model settings
+mini_batch_stride: kwargs['mini_batch_stride'] = kwargs['decode_samples'] # For RANDOM dataset this does not matter
+mini_batch_window_size: kwargs['mini_batch_window_size'] = kwargs['precode_samples'] + kwargs['decode_samples']
+
+precode_samples: 1024
+common_ENC_cnn_channels: 128 # How many channels at the top of core model on ENCODE SIDE
+enc_conv_depth: 5 
+enc_conv_resblock_size: 1
+enc_kernel_sizes: [3,9,15,27] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [3,7,15,31,63]
+hidden_encode_dims: 1024
+
+latent_dim: 256  # 1024
+
+feedforward_hint_samples: 4 # Numnber of samples on each side of embedded sequence to give to decoder (presumably to give it phase info)
+hint_size_factor: 2 # How much info is allowed to exist for phase when passed forward after latent bottleneck: latent_dim/hint_size_factor --> conc to latent vector for decoder
+hidden_decode_dims: 512
+common_DEC_cnn_channels: 512 # calculated based on number of kernels and decision to sequentially group after FC layers or not
+transconv_kernel_sizes: [3,9,15,27] # [3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33] # [2,4,8,16,32,64]
+dec_conv_dilator_depth: 3
+dec_conv_dilator_resblock_size: 1
+dec_conv_flat_depth: 2
+dec_conv_flat_resblock_size: 1
+decode_samples: 8 #64  
+
+backprop_sec: kwargs['backprop_sec'] = kwargs['decode_samples'] / kwargs['FS'] # 0.125 # Will backprop after sequential forward pass of this many single epochs worth of data
+dropout_enc: 0.0
+dropout_dec: 0.1 
+core_weight_decay: 0
+head_weight_decay: 0
+head_names: ['enc', 'dec', 'hinter']
+
+train_subsample_file_factor: 8192 # randomly decreases training passes per file per epoch, Max subsampling is num_samples / (decode_samples * train_seq_minis)
+wdecode_batch_size: 4 # This is for full enc-dec passes for loss calculations and backprop. Currently, must use 1 for circular loss
+onlylatent_batch_size: 8 # this is for when loss is not being calculated
+pacmap_every: 99999 # Must be within a 'quick_recon_val_every' to be reached
+finetune_pacmap: True
+quick_recon_val_every: 99999  # this will just run a few recon iterations on the VALIDATE dataset
+finetune_quickrecon: True
+quickval_red: 8 # This will divide num_samples in a file to do a very quick validation recon by truncating mid file
+num_rand_recon_plots: 4
+epochs_to_train: 999999 
+
+realtime_latent_printing: True
+num_realtime_channels_recon: 2 # columns of random channel plots
+realtime_printing_interval: 1
+num_realtime_dims: 5
+
+# Beta VAE controls
+KL_max: kwargs['KL_max'] = 0 #1e-3 # 1e-3 
+KL_min: kwargs['KL_min'] = 0
+KL_epochs_AT_max: 5
+KL_epochs_TO_max: 5
+
+# Recon Weight
+recon_weight: 0.2
+
+# Transformer weight
+transformer_weight: 1
+
+# Train heads learning rate controls
+LR_max_heads: kwargs['LR_max_heads'] = 1e-5
+LR_min_heads: kwargs['LR_min_heads'] = 1e-6
+LR_epochs_TO_max_heads: 1
+LR_epochs_AT_max_heads: 1
+manual_gamma_heads: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
+manual_step_size_heads: 99999
+
+# Core learning rate controls
+LR_max_core: kwargs['LR_max_core'] = 1e-5
+LR_min_core: kwargs['LR_min_core'] = 1e-6
+LR_epochs_TO_max_core: 2
+LR_epochs_AT_max_core: 2
+manual_gamma_core: 0.25 # Will be applied to the LR_max & LR_min every 'manual_step_size'
+manual_step_size_core: 99999
+
+# Transdformer LR Controls
+transformer_LR: kwargs['transformer_LR'] = 2e-8
+
+
+# Val FineTune controls
+val_finetune_hour_dataset_range: kwargs['val_finetune_hour_dataset_range'] = [2, 50]
+val_unseen_hour_dataset_range: kwargs['val_unseen_hour_dataset_range'] = [50, -1]
+epochs_val_finetune: 1
+LR_val_heads: kwargs['LR_val_heads'] = 1e-4
+manual_step_size_val_heads: 10
+manual_gamma_val_heads: 0.5
+LR_val_core: kwargs['LR_val_core'] = 1e-7
+manual_step_size_val_core: 10
+manual_gamma_val_core: 0.5
+val_subsample_file_factor: 64 # Only iterates through file_lnegth/X
+
+delete_old_checkpoints: True   
+
+
+# Previous model initial params
+tmp_file_dir: '/tmp_files'
+
+# PaCMAP and HDBSCAN settings
+# NN local, MN: global, FP global and local
+# Phase 1:
+  # w_MN = (1 - itr/phase_1_iters) * w_MN_init + itr/phase_1_iters * 3.0     Starts high, goes down to 3
+  # w_neighbors = 2.0
+  # w_FP = 1.0
+# Phase 2:
+  # w_MN = 3.0
+  # w_neighbors = 3
+  # w_FP = 1
+# Phase 3:
+  # w_MN = 0.0
+  # w_neighbors = 1.
+  # w_FP = 1.
+pre_PaCMAP_window_sec: 10 # kwargs['pre_PaCMAP_window_sec'] = kwargs['decode_samples'] / kwargs['FS']  #  10 ##############################
+pre_PaCMAP_stride_sec: 5 # kwargs['pre_PaCMAP_stride_sec'] = kwargs['decode_samples'] / kwargs['FS']  # 1
+pacmap_LR: 1 # 0.5                                                                                              #################
+pacmap_NumIters: kwargs['pacmap_NumIters'] = (300,150,150) # (Phase 1,2,3), default (100, 100, 250) ##################################
+pacmap_NN: kwargs['pacmap_NN'] = None
+pacmap_MN_ratio: 0.5 # 2.0 # 2.0 # Default 0.5
+pacmap_FP_ratio: 2.0 # 0.5 # Default 2.0
+pacmap_MN_ratio_MedDim: 0.5 # 2.0 #2.0
+pacmap_FP_ratio_MedDim: 2.0 # 0.5
+pacmap_MedDim_numdims: 10
+HDBSCAN_min_cluster_size: 200 # e.g. value of 50: 10 seconds avg window with 1 second stride would be ~1 min
+HDBSCAN_min_samples: 100 # Closer to min_cluster_size --> more conservative
+save_windowed_latent: True # If true, the data after running through embedder and wonswing will be saved
+
+# Multiprocessing 
+subprocess_num_threads: 1
+num_dataloader_workers_RANDOM: 0
+num_dataloader_workers_SEQUENTIAL: 0
+
+# Printing settings
+recent_display_iters: 1 # How often to print to console when training
+
+# Plotting variables
+plot_alpha: 0.5
+plot_preictal_color_sec: 3600
+plot_postictal_color_sec: 3600
+s_plot: 5
+seiz_type_list: kwargs['seiz_type_list'] = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Focal unknown awareness', 'Unknown', 'Subclinical', 'Non-electrographic'] # Leftward overwites rightward
+seiz_plot_mult: kwargs['seiz_plot_mult'] = [1,       3,     5,              7,    9,                           11,        13,            15] # Assuming increasing order, NOTE: base value of 3 is added in the code
+pic_sub_dirs: kwargs['pic_sub_dirs'] = [] #['MeanLogvar_Train_SEQUENTIAL', 'MeanLogvar_Val_SEQUENTIAL','Recon_Train_SEQUENTIAL' ,'Recon_Val_SEQUENTIAL','Recon_Inference','PaCMAP_EpochWide_Train', 'PaCMAP_EpochWide_Val','PaCMAP_SingleFile_Inference', 'Cluster_Timeline_Train', 'Cluster_Timeline_Val','Cluster_Timeline_Inference'] 
+pic_types: kwargs['pic_types'] = ['JPEGs','SVGs']
+
+
+# LBM
+transformer_seq_length: 128
+
+adamW_wd: 0
+
+# Model hardware limits
+max_seq_len: 512
+max_batch_size: 16
+
+# Model size
+n_layers: 32
+n_heads: 32
+multiple_of: 256 # Feedforward scaling?
