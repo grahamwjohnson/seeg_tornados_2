@@ -50,9 +50,9 @@ CONFIGS = {
     }
 }
 
-def _load_gmvae(codename='sheldrake', pretrained=True, **kwargs):
+def _load_models(codename='sheldrake', pretrained=True, **kwargs):
     """
-    Loads the GM-VAE model with specified configuration and optionally pretrained weights.
+    Loads the BSE model & BSP model with specified configuration and optionally pretrained weights.
 
     Args:
         codename (str): The codename of the training run to load (e.g., 'sheldrake').
@@ -60,7 +60,7 @@ def _load_gmvae(codename='sheldrake', pretrained=True, **kwargs):
         **kwargs: Additional parameters to override default configuration.
 
     Returns:
-        Pretrained GM-VAE model with the specified configuration.
+        Pretrained BSE & BSP models with the specified configuration.
     """
     if codename not in CONFIGS:
         raise ValueError(f"Codenam '{codename}' not found in available configurations: {list(CONFIGS.keys())}")
@@ -111,7 +111,7 @@ def _load_gmvae(codename='sheldrake', pretrained=True, **kwargs):
 
 def load(codename='sheldrake', pretrained=True, **kwargs):
     """
-    Loads the GM-VAE model with a specific training run's configuration
+    Loads the BSE & BSP models with a specific training run's configuration
     and optionally pretrained weights.
 
     Args:
@@ -120,8 +120,8 @@ def load(codename='sheldrake', pretrained=True, **kwargs):
         **kwargs: Additional parameters to override default configuration.
 
     Returns:
-        Pretrained GM-VAE model with the specified configuration.
+        Pretrained BSE & BSP models with the specified configuration.
     """
-    return _load_gmvae(codename=codename, pretrained=pretrained, **kwargs)
+    return _load_models(codename=codename, pretrained=pretrained, **kwargs)
 
 

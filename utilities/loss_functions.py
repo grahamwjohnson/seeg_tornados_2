@@ -47,89 +47,12 @@ def discriminator_loss(z_posterior, z_prior, discriminator):
     total_discriminator_loss = (real_loss + fake_loss) / 2
     return total_discriminator_loss, real_loss, fake_loss
 
-# Loss functions for GMVAE adversarial training
 def bse_adversarial_loss(z_posterior, discriminator, beta):
     # We want the discriminator to be unable to distinguish posterior samples from prior samples
     discriminator_output_posterior = discriminator(z_posterior)
     adversarial_loss = -torch.mean(torch.log(discriminator_output_posterior + 1e-8)) # Try to make output close to 1
 
     return beta * adversarial_loss
-
-# def bse_kl_loss(z, encoder_means, encoder_logvars, encoder_mogpreds, prior_means, prior_logvars, prior_weights, weight, num_samples_kl=10, **kwargs):
-#     """
-#     GM-VAE KL-Divergence Loss using Monte Carlo Approximation.
-
-#     Parameters:
-#         z (Tensor): Latent variable sampled from the encoder (batch, latent_dimension).
-#         encoder_means (Tensor): Means of the Gaussian mixture components (batch, mog_component, latent_dimension).
-#         encoder_logvars (Tensor): Log variances of the Gaussian mixture components (batch, mog_component, latent_dimension).
-#         encoder_mogpreds (Tensor): Mixture probabilities (already softmaxed) (batch, mog_component).
-#         prior_means (Tensor): Means of the prior Gaussian components (mog_component, latent_dimension).
-#         prior_logvars (Tensor): Log variances of the prior Gaussian components (mog_component).
-#         prior_weights (Tensor): Mixture weights of the prior distribution (mog_component). ALREADY softmaxed before being passed in. 
-#         num_samples_kl (int): Number of samples to use for Monte Carlo estimation.
-
-#     Returns:
-#         kl_loss (Tensor): Approximate KL divergence loss term.
-#     """
-#     batch_size, num_components, latent_dim = encoder_means.shape
-#     kl_loss = torch.zeros(batch_size, device=z.device)
-
-#     for i in range(batch_size):
-#         posterior_mixture = Categorical(probs=encoder_mogpreds[i])
-#         posterior_components = Normal(encoder_means[i], torch.exp(0.5 * encoder_logvars[i]))
-#         posterior = MixtureSameFamily(posterior_mixture, Independent(posterior_components, 1))
-
-#         prior_mixture = Categorical(probs=prior_weights)
-#         prior_components = Normal(prior_means, torch.exp(0.5 * prior_logvars))
-#         prior = MixtureSameFamily(prior_mixture, Independent(prior_components, 1))
-
-#         samples = posterior.sample((num_samples_kl,))
-#         log_prob_posterior = posterior.log_prob(samples)
-#         log_prob_prior = prior.log_prob(samples)
-#         kl_loss[i] = torch.mean(log_prob_posterior - log_prob_prior)
-
-#     return kl_loss.mean() * weight
-
-#     # """
-#     # GM-VAE KL-Divergence Loss Function with Prior Parameters
-
-#     # Parameters:
-#     #     z (Tensor): Latent variable sampled from the encoder (batch, latent_dimension).
-#     #     encoder_means (Tensor): Means of the Gaussian mixture components (batch, mog_component, latent_dimension).
-#     #     encoder_logvars (Tensor): Log variances of the Gaussian mixture components (batch, mog_component, latent_dimension).
-#     #     encoder_mogpreds (Tensor): Mixture probabilities (already softmaxed) (batch, mog_component).
-#     #     prior_means (Tensor): Means of the prior Gaussian components (mog_component, latent_dimension).
-#     #     prior_logvars (Tensor): Log variances of the prior Gaussian components (mog_component).
-#     #     prior_weights (Tensor): Mixture weights of the prior distribution (mog_component). ALREADY softmaxed before being passed in. 
-
-#     # Returns:
-#     #     kl_loss (Tensor): KL divergence loss term.
-#     # """
-#     # batch_size, mog_component, latent_dim = encoder_means.shape
-
-#     # # Expand z to align with encoder_means and encoder_logvars
-#     # z = z.unsqueeze(1)  # Reshape z to (batch, 1, latent_dimension)
-
-#     # # Compute log probability of z under encoder components
-#     # log_prob_encoder = -0.5 * (encoder_logvars + (z - encoder_means) ** 2 / encoder_logvars.exp())
-#     # log_prob_encoder = log_prob_encoder.mean(dim=2)  # Sum over the latent dimensions (batch, mog_component)
-
-#     # # Compute log probability of z under prior components
-#     # prior_means = prior_means.unsqueeze(0)  # (1, mog_component, latent_dimension)
-#     # prior_logvars = prior_logvars.unsqueeze(0)  # (1, mog_component, latent_dimension)
-    
-#     # log_prob_prior = -0.5 * (prior_logvars + (z - prior_means) ** 2 / prior_logvars.exp())
-#     # log_prob_prior = log_prob_prior.mean(dim=2)  # (batch, mog_component)
-
-#     # # Incorporate prior mixture weights
-#     # log_prior_weights = torch.log(prior_weights + 1e-6)  # Add small value for numerical stability
-#     # log_prob_prior += log_prior_weights  # (batch, mog_component)
-
-#     # # Compute KL divergence
-#     # kl_divergence = torch.sum(encoder_mogpreds * (log_prob_encoder - log_prob_prior), dim=1)  # (batch)
-
-#     # return kl_divergence.mean() * weight  # Return the mean KL loss across the batch
 
 def logvar_matching_loss(logvar_posterior, logvar_prior, weight):
     """
@@ -176,74 +99,6 @@ def mean_matching_loss(mean_posterior, mean_prior, weight):
     # Apply weight
     return weight * loss
 
-
-# POSTERIOR only
-
-def posterior_mogpreds_entropy_loss(mogpreds, posterior_mogpreds_entropy_weight, **kwargs):
-    """
-    Compute the entropy loss for MoG predictions, promoting entropy across the entire dataset.
-    mogpreds: MoG component probabilities, shape (batch_size, T, K)
-    posterior_mogpreds_entropy_weight: Weight for the entropy loss
-    """
-    # Ensure mogpreds is a valid probability distribution
-    assert torch.all(mogpreds >= 0), "mogpreds contains negative values"
-    assert torch.allclose(mogpreds.sum(dim=-1, keepdim=True), torch.ones_like(mogpreds.sum(dim=-1, keepdim=True))), "mogpreds does not sum to 1"
-
-    # Clamp mogpreds to avoid log(0) issues
-    mogpreds = torch.clamp(mogpreds, min=1e-10, max=1.0)
-
-    # Compute the average probability of each component across all samples
-    # Shape: (batch_size * T, K) -> (K,)
-    aggregated_probs = mogpreds.mean(dim=(0, 1))  # Average over batch & time
-
-    # Compute entropy across all MoG components
-    entropy = -torch.mean(aggregated_probs * torch.log(aggregated_probs))
-
-    # Return the negative entropy (maximize entropy to promote diverse component usage)
-    return -posterior_mogpreds_entropy_weight * entropy
-
-# def entropy_based_intersequence_diversity_loss(mogpreds, weight, epsilon=1e-8):
-#     """
-#     Compute an entropy-based diversity loss by encouraging pairwise dissimilarity
-#     in the mean MoG predictions using a Jensen-Shannon Divergence proxy.
-
-#     Args:
-#         mogpreds: MoG component probabilities, shape (batch_size, T, K)
-#         weight: Weight for the diversity loss
-#         epsilon: Small value for numerical stability (default: 1e-8)
-#     """
-#     # Ensure mogpreds is a valid probability distribution
-#     assert torch.all(mogpreds >= 0), "mogpreds contains negative values"
-#     assert torch.allclose(mogpreds.sum(dim=-1), torch.ones_like(mogpreds.sum(dim=-1))), "mogpreds does not sum to 1"
-
-#     # Clamp mogpreds for numerical stability
-#     mogpreds = torch.clamp(mogpreds, min=epsilon, max=1.0)
-
-#     # Compute the mean prediction for each sequence (across time steps)
-#     # Shape: (batch_size, T, K) -> (batch_size, K)
-#     mean_mogpreds = mogpreds.mean(dim=1)
-
-#     batch_size = mean_mogpreds.shape[0]
-#     diversity_loss = 0.0
-#     num_pairs = 0
-
-#     for i in range(batch_size):
-#         for j in range(i + 1, batch_size):
-#             p = mean_mogpreds[i]
-#             q = mean_mogpreds[j]
-
-#             # Proxy for Jensen-Shannon Divergence (related to the average entropy)
-#             m = 0.5 * (p + q)
-#             loss = 0.5 * torch.sum(p * torch.log(p / m + epsilon)) + 0.5 * torch.sum(q * torch.log(q / m + epsilon))
-#             diversity_loss += loss
-#             num_pairs += 1
-
-#     if num_pairs > 0:
-#         diversity_loss /= num_pairs
-
-#     return weight * diversity_loss
-
-
 def entropy_based_intersequence_diversity_loss(mogpreds, weight, epsilon=1e-8):
 
     batchsize = mogpreds.shape[0]
@@ -265,7 +120,6 @@ def entropy_based_intersequence_diversity_loss(mogpreds, weight, epsilon=1e-8):
     diversity_loss = 1 - mean_abs_diffs / ((batchsize ** 2 - batchsize)/2) # Divide by number of comparisons to standardize across batchsizes
 
     return weight * diversity_loss
-
 
 def posterior_mogpreds_intersequence_diversity_loss(mogpreds, weight, threshold=0.5, smoothness=10.0):
     """
@@ -368,7 +222,7 @@ def prior_repulsion_regularization(weights, means, prior_repulsion_weight, **kwa
     return prior_repulsion_weight * repulsion_term  
 
 
-# ADVERSARIAL
+# ADVERSARIAL CLASSIFIER
 
 def patient_adversarial_loss_function(probs, labels, classifier_weight):
     """
