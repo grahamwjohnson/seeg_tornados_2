@@ -8,7 +8,7 @@ import random
 @author: grahamwjohnson
 March 2025
 
-Ad-hoc script to run UMAP/PR-PaCMAP/PaCMAP/PHATE/Histograms on latent files
+Ad-hoc script to run UMAP/PR-PaCMAP/PaCMAP/PHATE/Kohonen(SOM)/Histograms on latent files
 '''
 
 def custom_paramrep_weight_schedule(epoch: int):
