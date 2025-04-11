@@ -18,6 +18,9 @@ import threading
 March 2025
 
 To be run continously as a subprocess to generate adequate random data to keep the Trainer DataLoader happy
+Does not offer speed improvement over Dataloader class doing all of the data curation, but allows data to be 
+generated while main threads are busy doing other tasks like plotting or saving model weights. Also seems
+to be more stable on long runs. 
 
 '''
 
@@ -157,7 +160,7 @@ if __name__ == "__main__":
     try: # Put in try clause to avoid debugging truggers when killing script purposefully by deleteing tmp directory 
 
         # Read in configuration file & setup the run
-        config_f = 'train_config.yml'
+        config_f = 'config.yml'
         with open(config_f, "r") as f: kwargs = yaml.load(f,Loader=yaml.FullLoader)
         kwargs = utils_functions.exec_kwargs(kwargs) # Execute the arithmatic build into kwargs and reassign kwargs
 

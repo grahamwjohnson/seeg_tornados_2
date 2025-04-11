@@ -801,7 +801,7 @@ class Discriminator(nn.Module):
 
 class BSE(nn.Module):
     """
-    This BSE model incorporates a mixture of Gaussians (MoG) prior with a transformer-based 
+    This BSE model incorporates a Mixture of Gaussians (MoG) prior with a transformer-based 
     encoder for time-series data. The encoder leverages cross-attention mechanisms to process 
     raw input data before passing it through a transformer for further feature extraction.
     The latent space is modeled as a mixture of Gaussians (GM-VAE), where posterior sampling is done 
@@ -809,6 +809,10 @@ class BSE(nn.Module):
 
     The decoder reconstructs the original input data from the latent space, and an adversarial 
     classifier is optionally included for additional regularization.
+
+    Importantly, the KL diveregence is approximated with an adversarial discriminator due to the 
+    computational complexity of numerically approximating KL with standaard methods like Monte-Carlo for 
+    a MoG prior. 
 
     Parameters:
     -----------
@@ -1088,6 +1092,8 @@ def print_models_flow(x, **kwargs):
     Builds models on CPU and prints sizes of forward passes with random data as inputs
 
     No losses are computed, just data flow through model
+
+    Helpful for debugging or understanding data sizes as it flows through the model
     
     '''
 
