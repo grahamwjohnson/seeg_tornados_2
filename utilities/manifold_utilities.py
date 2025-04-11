@@ -15,7 +15,7 @@ import numpy as np
 import pickle
 from sklearn.decomposition import PCA
 from minisom import MiniSom
-from SOM import SOM
+from models.SOM import SOM
 import sys
 import torch
 import matplotlib.colors as mcolors
