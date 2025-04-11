@@ -801,12 +801,10 @@ class Discriminator(nn.Module):
 
 class BSE(nn.Module):
     """
-    Gaussian Mixture Variational Autoencoder (BSE) with Reversible Encoder/Decoder.
-
     This BSE model incorporates a mixture of Gaussians (MoG) prior with a transformer-based 
     encoder for time-series data. The encoder leverages cross-attention mechanisms to process 
     raw input data before passing it through a transformer for further feature extraction.
-    The latent space is modeled as a mixture of Gaussians, where posterior sampling is done 
+    The latent space is modeled as a mixture of Gaussians (GM-VAE), where posterior sampling is done 
     using the Gumbel-Softmax trick for differentiable selection of mixture components.
 
     The decoder reconstructs the original input data from the latent space, and an adversarial 

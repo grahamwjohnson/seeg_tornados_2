@@ -74,7 +74,6 @@ posterior_weight_decay: 0.1
 adamW_beta1: 0.9
 adamW_beta2: 0.95 
 
-
 # DISCRIMINATOR
 disc_hidden_dims: [4096, 2048, 1024, 512, 256]
 LR_disc: kwargs['LR_disc'] = 5e-7
@@ -161,7 +160,11 @@ classifier_weight_decay: 0
 classifier_adamW_beta1: 0.9
 classifier_adamW_beta2: 0.999
 
-# TRAINING 
+# Brain-State Predictor (BSP)
+
+
+
+# BSE TRAINING 
 random_pulls_in_batch: 8 # BATCHSIZE
 train_forward_passes: 1024 # Independent of batchsize, just random pulls of data
 epochs_to_train: 1000 
@@ -182,7 +185,7 @@ LR_val_prior: kwargs['LR_val_prior'] = kwargs['LR_val_bse']
 LR_val_disc: kwargs['LR_val_disc'] = 1e-5
 val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
 
-# INFERENCE
+# BSE INFERENCE
 finetune_inference: False # If False, will just run inference on model trained on only 'train' patients
 finetune_inference_epochs: -1 # NOTE: will  increase the epoch count overall to keep track of finetuning inference
 inference_every: 99999

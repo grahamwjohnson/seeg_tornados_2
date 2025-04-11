@@ -43,7 +43,7 @@ if __name__ == "__main__":
     run_umap = False
     run_pacmap = False
     run_phate = False
-    run_kohenen = True
+    run_kohonen = True
     run_histo = False
 
     # Master formatted timestamp file - "All Time Data (ATD)"
@@ -177,7 +177,7 @@ if __name__ == "__main__":
     if run_umap: 
         umap_dir = f"{model_dir}/umap/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
         if not os.path.exists(umap_dir): os.makedirs(umap_dir)
-    if run_kohenen: 
+    if run_kohonen: 
         kohenen_dir = f"{model_dir}/kohenen/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
         if not os.path.exists(kohenen_dir): os.makedirs(kohenen_dir)
    
@@ -485,7 +485,7 @@ if __name__ == "__main__":
         # TODO
         # if eval_filepaths != []:
 
-    if run_kohenen:
+    if run_kohonen:
         ### Run the Self Organizing Maps (SOM) Algorithm
         if single_pats == []: kohenen_savedir = f"{kohenen_dir}/all_pats/generation"
         else: kohenen_savedir = f"{kohenen_dir}/{'_'.join(single_pats)}/generation"

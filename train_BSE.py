@@ -1485,7 +1485,7 @@ if __name__ == "__main__":
 
     This script performs the following steps:
     1. Sets the Python hash seed for reproducibility.
-    2. Loads configuration settings from a YAML file (`train_config.yml`).
+    2. Loads configuration settings from a YAML file (`config.yml`).
     3. Executes arithmetic build in the configuration and sets up the environment.
     4. Spawns multiple subprocesses (using the `spawn` method) to execute the main training function in parallel across multiple processes.
     5. Each subprocess runs the training with distributed settings, ensuring synchronization and coordination across workers.
@@ -1502,7 +1502,7 @@ if __name__ == "__main__":
     os.environ['PYTHONHASHSEED'] = '1234'  
 
     # Read in configuration file & setup the run
-    config_f = 'train_config.yml'
+    config_f = 'config.yml'
     with open(config_f, "r") as f: kwargs = yaml.load(f,Loader=yaml.FullLoader)
     kwargs = utils_functions.exec_kwargs(kwargs) # Execute the arithmatic build into kwargs and reassign kwargs
     world_size, kwargs = utils_functions.run_setup(**kwargs)

@@ -171,6 +171,28 @@ def posterior_mogpreds_intersequence_diversity_loss(mogpreds, weight, threshold=
     # Return the diversity loss (weighted)
     return weight * diversity_loss
 
+def posterior_mogpreds_entropy_loss(mogpreds, posterior_mogpreds_entropy_weight, **kwargs):
+    """
+    Compute the entropy loss for MoG predictions, promoting entropy across the entire dataset.
+    mogpreds: MoG component probabilities, shape (batch_size, T, K)
+    posterior_mogpreds_entropy_weight: Weight for the entropy loss
+    """
+    # Ensure mogpreds is a valid probability distribution
+    assert torch.all(mogpreds >= 0), "mogpreds contains negative values"
+    assert torch.allclose(mogpreds.sum(dim=-1, keepdim=True), torch.ones_like(mogpreds.sum(dim=-1, keepdim=True))), "mogpreds does not sum to 1"
+
+    # Clamp mogpreds to avoid log(0) issues
+    mogpreds = torch.clamp(mogpreds, min=1e-10, max=1.0)
+
+    # Compute the average probability of each component across all samples
+    # Shape: (batch_size * T, K) -> (K,)
+    aggregated_probs = mogpreds.mean(dim=(0, 1))  # Average over batch & time
+
+    # Compute entropy across all MoG components
+    entropy = -torch.mean(aggregated_probs * torch.log(aggregated_probs))
+
+    # Return the negative entropy (maximize entropy to promote diverse component usage)
+    return -posterior_mogpreds_entropy_weight * entropy
 
 # PRIOR only
 
