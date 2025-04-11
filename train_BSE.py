@@ -1204,7 +1204,7 @@ class Trainer:
             disc_fake_loss = total_disc_fake_loss / kwargs['discriminator_training_iters']
 
             # GM-VAE ENCODER: 
-            z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, attW = self.bse(x, reverse=False) # No 1-shift if not causal masking
+            z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, attW = self.bse(x, reverse=False) # No 1-shift because not causal masking
 
             # Reshape variables back to token level 
             z_token = z_pseudobatch.split(self.transformer_seq_length, dim=0)
@@ -1258,10 +1258,6 @@ class Trainer:
             posterior_mogpreds_intersequence_diversity_loss = loss_functions.entropy_based_intersequence_diversity_loss(
                 mogpreds=mogpreds,
                 weight=self.posterior_mogpreds_intersequence_diversity_weight)  
-
-            # posterior_mogpreds_intersequence_diversity_loss = loss_functions.posterior_mogpreds_intersequence_diversity_loss(
-            #     mogpreds=mogpreds,
-            #     weight=self.posterior_mogpreds_intersequence_diversity_weight)  
 
             prior_entropy = loss_functions.prior_entropy_regularization(
                 weights = torch.softmax(self.bse.module.prior.weightlogits, dim=0), 
