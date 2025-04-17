@@ -1,6 +1,6 @@
 import torch
 from models.BSE import BSE
-from models.BSP import BSP
+# from models.BSP import BSP
 
 dependencies = ['torch', 'numpy']
 
@@ -93,23 +93,23 @@ def _load_models(codename='sheldrake', pretrained=True, load_bse=True, load_bsp=
 
 
     # *** Brain-Sate Predictor (BSP) ***
-    
-    if load_bsp:
-        bsp = BSP(**config)
+    bsp = None
+    # if load_bsp:
+    #     bsp = BSP(**config)
 
-        # BSP: Load pretrained weights if requested
-        if pretrained and config.get('bsp_weight_file') and config.get('release_tag'):
-            weight_file = config['bsp_weight_file']
-            release_tag = config['release_tag']
-            checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{weight_file}'
-            try:
-                state_dict = torch.hub.load_state_dict_from_url(checkpoint_url, progress=True, map_location='cpu')
-                bsp.load_state_dict(state_dict)
-            except Exception as e:
-                print(f"Error loading pretrained weights for codename '{codename}': {e}")
-                print("Continuing with randomly initialized model.")
-        elif pretrained:
-            print(f"No weight file or release tag specified for codename '{codename}'. Continuing with randomly initialized model.")
+    #     # BSP: Load pretrained weights if requested
+    #     if pretrained and config.get('bsp_weight_file') and config.get('release_tag'):
+    #         weight_file = config['bsp_weight_file']
+    #         release_tag = config['release_tag']
+    #         checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{weight_file}'
+    #         try:
+    #             state_dict = torch.hub.load_state_dict_from_url(checkpoint_url, progress=True, map_location='cpu')
+    #             bsp.load_state_dict(state_dict)
+    #         except Exception as e:
+    #             print(f"Error loading pretrained weights for codename '{codename}': {e}")
+    #             print("Continuing with randomly initialized model.")
+    #     elif pretrained:
+    #         print(f"No weight file or release tag specified for codename '{codename}'. Continuing with randomly initialized model.")
 
     # Return selected model(s)
     if load_bse and not load_bsp: return bse

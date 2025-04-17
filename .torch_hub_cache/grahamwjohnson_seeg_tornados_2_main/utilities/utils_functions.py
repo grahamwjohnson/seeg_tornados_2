@@ -29,7 +29,7 @@ import matplotlib.colors as mcolors
 mpl.use('agg')
 
 # Local imports
-from models.GMVAE import print_models_flow
+from models.BSE import print_models_flow
 
 
 # PREPROCESSING 
@@ -411,8 +411,8 @@ def initialize_directories(
         print(f"Resuming training after saved epoch: {str(max_epoch)}")
         
         # Construct the proper file names to get CORE state dicts
-        kwargs['gmvae_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_gmvae.pt'
-        kwargs['gmvae_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_gmvae_opt.pt'
+        kwargs['bse_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_bse.pt'
+        kwargs['bse_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_bse_opt.pt'
         kwargs['disc_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_disc.pt'
         kwargs['disc_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/posterior_checkpoints/checkpoint_epoch{str(max_epoch)}_disc_opt.pt'
 

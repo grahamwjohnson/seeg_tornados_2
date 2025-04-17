@@ -1,13 +1,15 @@
 import torch
 
 torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
-bse, bsp = torch.hub.load(
+bse = torch.hub.load(
     'grahamwjohnson/seeg_tornados_2',
     'load',
     codename='sheldrake',
     pretrained=True,
+    load_bse=True, 
+    load_bsp=False,
     trust_repo='check',
-    # force_reload=True
+    force_reload=True
 )
 print(bse)
 
