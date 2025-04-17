@@ -49,7 +49,7 @@ CONFIGS = {
         # Weight files
         'bse_weight_file': 'bse_weights.pth',
         'bsp_weight_file': 'bsp_weights.pth',
-        'release_tag': 'v0.7-alpha'
+        'release_tag': 'v0.8-alpha'
     }
 }
 
