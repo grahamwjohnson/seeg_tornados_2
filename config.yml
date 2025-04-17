@@ -1,5 +1,5 @@
 # Grahamwjohnon  
-# Created Feb 2023
+# Created Feb 2023-2025
 
 num_gpus: 2 
  
@@ -35,12 +35,12 @@ nested_max_workers: 8 # For the get_batch subprocess
 encode_token_samples: 1 # Token size for encoder transformer
 diag_mask_buffer_tokens: 16 # Left/Right how many tokens to mask off diagonal, so total masking is 2x this number along diagonal
 padded_channels: 256 # input channels randomly padded up to this number to allow for different number of channels, this is the cross-attention dimension
-crattn_num_heads: 8 # padding dimension / h = head dimension e.g. 256/8 = 32
+crattn_num_heads: 8 # padding dimension / h = head dimension (e.g. 256/8 = 32 dimension head)
 crattn_num_layers: 16 
 crattn_max_seq_len: kwargs['crattn_max_seq_len'] = kwargs['encode_token_samples']
 crattn_dropout: 0.1 
 transformer_dim: 1024 
-transformer_seq_length: 512 # each ok these is 'padded_channels' x 'encode_token_samples' worth of data
+transformer_seq_length: 512 # each of these is 'padded_channels' x 'encode_token_samples' worth of data
 max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
 max_batch_size: kwargs['max_batch_size'] = kwargs['random_pulls_in_batch'] * kwargs['inference_batch_mult']
 n_layers: 16
@@ -51,8 +51,8 @@ attention_dropout: 0.1
 encoder_transformer_activation: "silu"
 transformer_start_pos: 0 # Not currently coded up to work if > 0
 top_dims: kwargs['top_dims'] = kwargs['transformer_dim'] # kwargs['num_encode_concat_transformer_tokens'] * kwargs['transformer_dim']
-hidden_dims: 1024 # 4096
-latent_dim: 1024 # 2048
+hidden_dims: 1024 
+latent_dim: 1024 
 
 posterior_mogpredictor_hidden_dim_list: [2048, 1024, 512] # Top should be approximately hidden dim of encoder, bottom bigger than prior_prior_mog_components to prevent bottlenecks
 posterior_mogpredictor_dropout: 0.1
@@ -63,8 +63,8 @@ mse_weight_stall_epochs: 0
 mse_weight_epochs_TO_max: 0
 mse_weight_epochs_AT_max: 99999 # Static weight
 
-LR_max_posterior: kwargs['LR_max_posterior'] = 1e-6 # 5e-7
-LR_min_posterior: kwargs['LR_min_posterior'] = 1e-6 # 1e-8 
+LR_max_posterior: kwargs['LR_max_posterior'] = 1e-7 # 5e-7
+LR_min_posterior: kwargs['LR_min_posterior'] = 1e-7 # 1e-8 
 LR_epochs_stall_posterior: 0
 LR_epochs_TO_max_posterior: 2
 LR_epochs_AT_max_posterior: 2
@@ -76,10 +76,10 @@ adamW_beta2: 0.95
 
 # DISCRIMINATOR
 disc_hidden_dims: [4096, 2048, 1024, 512, 256]
-LR_disc: kwargs['LR_disc'] = 5e-7
-discriminator_training_iters: 2  # Discriminator advantage, e.g. 1-5, higher means more discrinimator iters before being used in GM-VAE adversarial loss
-KL_divergence_max_weight: kwargs['KL_divergence_max_weight'] = 0.01 # 5e-4 # 2e-4 # With current architecture, 1024 dimensions, and 8 MoG components, very unstable if higher than 5e-4
-KL_divergence_min_weight: kwargs['KL_divergence_min_weight'] = 0.01
+LR_disc: kwargs['LR_disc'] = 5e-8
+discriminator_training_iters: 1  # Discriminator advantage, e.g. 1-5. Higher means more discrinimator iters before being used in GM-VAE adversarial loss
+KL_divergence_max_weight: kwargs['KL_divergence_max_weight'] = 0.5
+KL_divergence_min_weight: kwargs['KL_divergence_min_weight'] = 0.5
 KL_divergence_stall_epochs: 0 # Will keep at KL_divergence_min_weight until stall is complete
 KL_divergence_epochs_TO_max: 0 # How fast to anneal in KL weight
 KL_divergence_epochs_AT_max: 99999 
@@ -90,8 +90,8 @@ mean_match_weight_min: kwargs['mean_match_weight_min'] = 1e-2 # 5e-4
 mean_match_weight_stall_epochs: 0
 mean_match_weight_gamma: 1.0
 
-logvar_match_weight_max: kwargs['logvar_match_weight_max'] = 1e-2 # 1e-2 # 5e-2 # 5e-2
-logvar_match_weight_min: kwargs['logvar_match_weight_min'] = 1e-2 # 1e-2 # 5e-3
+logvar_match_weight_max: kwargs['logvar_match_weight_max'] = 1e-1 # 1e-2 # 5e-2 # 5e-2
+logvar_match_weight_min: kwargs['logvar_match_weight_min'] = 1e-1 # 1e-2 # 5e-3
 logvar_match_weight_stall_epochs: 0
 logvar_match_weight_gamma: 1.0
 
@@ -116,7 +116,7 @@ gp_sigma: kwargs['gp_sigma'] = int(kwargs['mean_lims'][1] - kwargs['mean_lims'][
 gp_length_scale: kwargs['gp_length_scale'] = int(kwargs['transformer_seq_length'] / 4) # Token-level kernel smoothing
 gp_weight_max: kwargs['gp_weight_max'] = 1e-8
 gp_weight_min: kwargs['gp_weight_min'] = 0
-gp_weight_stall_epochs: 40 # WWait for global latent structure to establish before smoothing small zones
+gp_weight_stall_epochs: 40 # Wait for global latent structure to establish before smoothing small zones temporally
 gp_weight_epochs_AT_max: 50 
 gp_weight_epochs_TO_max: 25
 
@@ -134,7 +134,7 @@ prior_initial_logvar: -2 # will be range [x, 0]. How tight/wide to randomly init
 prior_entropy_weight: kwargs['prior_entropy_weight'] = 1e-6 # Helps prevent mode collapse in PRIOR
 prior_repulsion_weight: kwargs['prior_repulsion_weight'] = 1e-1 # Helps keep centers of PRIOR guassians far apart, need to scale with number of MoG components to keep loss around 0.2
 
-LR_max_prior: kwargs['LR_max_prior'] = 1e-6
+LR_max_prior: kwargs['LR_max_prior'] = 1e-7
 LR_min_prior: kwargs['LR_min_prior'] = 0
 LR_epochs_stall_prior: 2 # Don't let it get whipped around at training initiation while model posterior is getting established with baseline regularization (i.e. mean/logvar matching, entropy, diversity)
 LR_epochs_TO_max_prior: 1
@@ -155,7 +155,7 @@ classifier_alpha_min: kwargs['classifier_alpha_min'] = 0
 classifier_epochs_AT_max: 99999
 classifier_epochs_TO_max: 50
 classifier_rise_first: True
-LR_min_classifier: kwargs['LR_min_classifier'] = 1e-4 # 5e-7
+LR_min_classifier: kwargs['LR_min_classifier'] = 1e-5 # 5e-7
 classifier_weight_decay: 0
 classifier_adamW_beta1: 0.9
 classifier_adamW_beta2: 0.999
@@ -167,7 +167,7 @@ classifier_adamW_beta2: 0.999
 # BSE TRAINING 
 random_pulls_in_batch: 8 # BATCHSIZE
 train_forward_passes: 1024 # Independent of batchsize, just random pulls of data
-epochs_to_train: 1000 
+epochs_to_train: 99999 
 train_num_rand_hashes: kwargs['train_num_rand_hashes'] = 2**20  # Number of random channel orders per pat to input into encoder 
 # Observed Phenonemon: Position of channels is learned somehow during encoding and embedded diffusely across latent dimensions, 
 # Thus, no need for conditional decoding with unique hashing per channel order added to latent vector. Decoder just knows somehow, even with unseen patients. 
