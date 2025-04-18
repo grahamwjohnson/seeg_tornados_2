@@ -29,7 +29,8 @@ import matplotlib.colors as mcolors
 mpl.use('agg')
 
 # Local imports
-from models.BSE import print_models_flow
+from models.BSE import bse_print_models_flow
+from models.BSP import bsp_print_models_flow
 
 
 # PREPROCESSING 
@@ -388,7 +389,15 @@ def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_wo
         persistent_workers=persistent_workers
     )
 
-def initialize_directories(
+def get_training_dir_name(train_val_pat_perc, **kwargs):
+    
+    train_str = str(train_val_pat_perc[0]*100)
+    val_str = str(train_val_pat_perc[1]*100)
+    run_params_dir_name = "dataset_train" + train_str + "_val" + val_str 
+
+    return run_params_dir_name
+
+def bse_initialize_directories(
         run_notes,
         cont_train_model_dir,
         **kwargs):
@@ -443,7 +452,52 @@ def initialize_directories(
 
     return kwargs
 
-def run_setup(**kwargs):
+def bsp_initialize_directories(
+        run_notes,
+        cont_train_model_dir,
+        **kwargs):
+
+    # *** CONTINUE EXISTING RUN initialization ***
+
+    if kwargs['continue_existing_training']:
+
+        raise Exception("Need to check this code")
+
+        kwargs['model_dir'] = cont_train_model_dir
+        kwargs['log_dir'] =  kwargs['model_dir'] + '/data_logs'
+
+        # Find the epoch to start training
+        check_dir = kwargs['model_dir'] + "/checkpoints"
+        epoch_dirs = glob.glob(check_dir + '/Epoch*')
+        epoch_nums = [int(f.split("/")[-1].replace("Epoch_","")) for f in epoch_dirs]
+
+        # Find the highest epoch already trained
+        max_epoch = max(epoch_nums)
+        print(f"Resuming training after saved epoch: {str(max_epoch)}")
+        
+        # Construct the proper file names to get CORE state dicts
+        kwargs['bsp_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/bsp_checkpoints/checkpoint_epoch{str(max_epoch)}_bsp.pt'
+        kwargs['bsp_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/bsp_checkpoints/checkpoint_epoch{str(max_epoch)}_bsp_opt.pt'
+
+        # Set the start epoch 1 greater than max trained
+        kwargs['start_epoch'] = (max_epoch + 1) 
+        
+
+    # *** NEW RUN initialization ***  
+
+    else:
+        # Make run directories
+        kwargs['model_dir'] = append_timestamp(kwargs['root_save_dir'] + '/bsp_trained_models/' + run_notes + '_')
+        os.makedirs(kwargs['model_dir'])
+        kwargs['log_dir'] =  kwargs['model_dir'] + '/data_logs'
+        os.makedirs(kwargs['log_dir'])
+
+        # Fresh run 
+        kwargs['start_epoch'] = 0
+
+    return kwargs
+
+def bse_run_setup(**kwargs):
     # Print to console
     print("\n\n***************** MAIN START " + datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y") + "******************\n\n")        
     os.environ['KMP_DUPLICATE_LIB_OK']='True'    
@@ -466,11 +520,56 @@ def run_setup(**kwargs):
     run_notes = random_animal(**kwargs) 
 
     # Call the initialization script to start new run or continue existing run
-    kwargs = initialize_directories(run_notes=run_notes, **kwargs)
+    kwargs = bse_initialize_directories(run_notes=run_notes, **kwargs)
 
     # Print the model forward pass sizes
     fake_data = torch.rand(kwargs['max_batch_size'], kwargs['transformer_seq_length'], kwargs['padded_channels'], kwargs['encode_token_samples']) 
-    print_models_flow(x=fake_data, **kwargs)
+    bse_print_models_flow(x=fake_data, **kwargs)
+
+    # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)
+    s = kwargs['model_dir'].split("/")[-1]
+    kwargs['timestamp_id'] = ''.join(map(str, s))
+    kwargs['run_name'] = '_'.join(map(str,s.split('_')[0:2]))
+
+    # Save the post-processed kwargs to a file in model directory
+    savedir = f"{kwargs['model_dir']}/config"
+    if not os.path.exists(savedir): os.makedirs(savedir)
+    save_name = f"{savedir}/kwargs_execd_epoch{kwargs['start_epoch']}.pkl"
+    with open(save_name, "wb") as f: pickle.dump(kwargs, f)
+
+    # Export the conda environment
+    env_name = os.environ.get("CONDA_DEFAULT_ENV")
+    if env_name:
+        output_file = f"{savedir}/{env_name}_environment.yml"
+        try:
+            subprocess.run(["conda", "env", "export", "--file", output_file], check=True)
+            print(f"Conda environment '{env_name}' exported to {output_file}")
+        except subprocess.CalledProcessError as e:
+            print(f"Error exporting Conda environment: {e}")
+    else:
+        print("No active Conda environment detected.")
+
+    return world_size, kwargs
+
+def bsp_run_setup(**kwargs):
+    # Print to console
+    print("\n\n***************** MAIN START " + datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y") + "******************\n\n")        
+    os.environ['KMP_DUPLICATE_LIB_OK']='True'    
+    mp.set_start_method('spawn', force=True)
+    mp_lock = mp.Lock()
+
+    # Set world size to number of GPUs in system available to CUDA
+    world_size = torch.cuda.device_count()
+        
+    # Random animal name
+    run_notes = random_animal(**kwargs) 
+
+    # Call the initialization script to start new run or continue existing run
+    kwargs = bsp_initialize_directories(run_notes=run_notes, **kwargs)
+
+    # Print the model forward pass sizes
+    fake_data = torch.rand(1)                            # TODO
+    bsp_print_models_flow(x=fake_data, **kwargs)
 
     # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)
     s = kwargs['model_dir'].split("/")[-1]
@@ -647,14 +746,6 @@ def digest_SPES_notes(spes_file):
 
     return spes_stim_pair_names, spes_start_datetimes, spes_stop_datetimes, stim_session_start, stim_session_stop
 
-def get_training_dir_name(train_val_pat_perc, **kwargs):
-    
-    train_str = str(train_val_pat_perc[0]*100)
-    val_str = str(train_val_pat_perc[1]*100)
-    run_params_dir_name = "dataset_train" + train_str + "_val" + val_str 
-
-    return run_params_dir_name
-
 def get_pat_seiz_datetimes(
     pat_id, 
     atd_file, 
@@ -662,7 +753,7 @@ def get_pat_seiz_datetimes(
     FIAS_bool=True, 
     FAS_to_FIAS_bool=True,
     FAS_bool=True, 
-    subclinical_bool=True, 
+    subclinical_bool=False,   
     focal_unknown_bool=True,
     unknown_bool=True, 
     non_electro_bool=False,

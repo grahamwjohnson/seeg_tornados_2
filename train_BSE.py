@@ -1003,7 +1003,7 @@ class Trainer:
                 elif val_unseen: state_str = "VAL UNSEEN"
                 else: state_str = "TRAIN"
                 now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
-                if (self.gpu_id == 1):
+                if (self.gpu_id == 0):
                     sys.stdout.write(
                         f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, EPOCH {self.epoch}, Iter [BatchSize: {x.shape[0]}] {iter_curr}/{total_iters}, " + 
                         f"MeanLoss: {round(loss.detach().item(), 2)}                 ")
@@ -1198,7 +1198,7 @@ if __name__ == "__main__":
     config_f = 'config.yml'
     with open(config_f, "r") as f: kwargs = yaml.load(f,Loader=yaml.FullLoader)
     kwargs = utils_functions.exec_kwargs(kwargs) # Execute the arithmatic build into kwargs and reassign kwargs
-    world_size, kwargs = utils_functions.run_setup(**kwargs)
+    world_size, kwargs = utils_functions.bse_run_setup(**kwargs)
 
     # Spawn subprocesses with start/join (mp.spawn causes memory sigdev errors??)
     ctx = mp.get_context('spawn') # necessary to use context if have set_start_method anove?

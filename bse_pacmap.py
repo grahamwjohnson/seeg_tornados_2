@@ -17,6 +17,13 @@ from utilities import utils_functions, manifold_utilities
 
 if __name__ == "__main__":
 
+    # if None, will train a new pacmap
+    pretrained_pacmap_dir = None # '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/pacmap/256SecondWindow_256SecondStride/all_pats'
+    pacmap_basename = 'PaCMAP'
+    
+    if pretrained_pacmap_dir == None: reducer = hdb = xy_lims = []
+    else: reducer, hdb, xy_lims = manifold_utilities.load_pacmap_objects(pretrained_pacmap_dir, pacmap_basename)
+
     FS = 512 # Currently hardcoded in many places
 
     # Master formatted timestamp file - "All Time Data (ATD)"
@@ -30,8 +37,8 @@ if __name__ == "__main__":
     single_pats = [] # ['Spat18'] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats 
     
     # Rewindowing data
-    rewin_windowsecs = 256
-    rewin_strideseconds = 256
+    rewin_windowsecs = 64
+    rewin_strideseconds = 64
 
     # HDBSCAN Settings
     HDBSCAN_min_cluster_size = 200
@@ -125,6 +132,9 @@ if __name__ == "__main__":
     if single_pats == []: pacmap_savedir = f"{pacmap_dir}/all_pats"
     else: pacmap_savedir = f"{pacmap_dir}/{'_'.join(single_pats)}"
     axis_20, reducer, hdb, xy_lims = manifold_utilities.pacmap_subfunction(
+        premade_PaCMAP = reducer,
+        premade_HDBSCAN = hdb,
+        xy_lims = xy_lims,
         atd_file = atd_file,
         pat_ids_list=build_pat_ids_list,
         latent_data_windowed=rewin_means_allfiles, 
@@ -147,12 +157,13 @@ if __name__ == "__main__":
         **kwargs)
 
     # SAVE PACMAP 
-    manifold_utilities.save_pacmap_objects(
-        pacmap_dir=pacmap_savedir,
-        axis=axis_20,
-        reducer=reducer, 
-        hdb=hdb, 
-        xy_lims=xy_lims)
+    if pretrained_pacmap_dir == None:
+        manifold_utilities.save_pacmap_objects(
+            pacmap_dir=pacmap_savedir,
+            axis=axis_20,
+            reducer=reducer, 
+            hdb=hdb, 
+            xy_lims=xy_lims)
 
 
 

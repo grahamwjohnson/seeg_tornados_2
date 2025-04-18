@@ -47,11 +47,7 @@ def pacmap_subfunction(
     interictal_contour=False,
     verbose=True,
     xy_lims = [],
-    xy_lims_RAW_DIMS = [],
-    xy_lims_PCA = [],
     premade_PaCMAP = [],
-    premade_PaCMAP_MedDim = [],
-    premade_PCA = [],
     premade_HDBSCAN = [],
     **kwargs):
 
@@ -259,6 +255,18 @@ def save_pacmap_objects(pacmap_dir, axis, reducer, hdb, xy_lims):
     pickle.dump(axis, output_obj10)
     output_obj10.close()
     print("Saved plot axis")
+
+def load_pacmap_objects(pacmap_dir, pacmap_basename):
+    basepath = f'{pacmap_dir}/{pacmap_basename}'
+    reducer = pacmap.load(basepath)
+
+    hdbscan_path = pacmap_dir + "/hdbscan.pkl"
+    with open(hdbscan_path, "rb") as f: hdb = pickle.load(f)
+
+    xy_path = pacmap_dir + "/xy_lims.pkl"
+    with open(xy_path, "rb") as f: xy_lims = pickle.load(f)
+
+    return reducer, hdb, xy_lims
 
 def save_som_model(som, grid_size, input_dim, lr, sigma, lr_epoch_decay, sigma_epoch_decay, sigma_min, epoch, batch_size, save_path):
     # Save the state_dict (model weights), weights, and relevant hyperparameters
@@ -686,7 +694,7 @@ def get_pat_seiz_datetimes(
     FIAS_bool=True, 
     FAS_to_FIAS_bool=True,
     FAS_bool=True, 
-    subclinical_bool=True, 
+    subclinical_bool=False, 
     focal_unknown_bool=True,
     unknown_bool=True, 
     non_electro_bool=False,

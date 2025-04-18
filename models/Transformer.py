@@ -39,7 +39,7 @@ class ModelArgs:
         max_seq_len: int = 2048,
         device: int = None,
         activation: str = None, # "silu" or "tanh"
-        **kwargs):
+        **kwargs): 
 
         super().__init__()
         self.dim = dim

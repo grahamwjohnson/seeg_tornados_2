@@ -1087,7 +1087,7 @@ class BSE(nn.Module):
         self.gumbel_softmax_temperature = gumbel_softmax_temperature # Controls posterior sampling
         self.prior.gumbel_softmax_temperature = gumbel_softmax_temperature # Controls prior sampling
 
-def print_models_flow(x, **kwargs):
+def bse_print_models_flow(x, **kwargs):
     '''
     Builds models on CPU and prints sizes of forward passes with random data as inputs
 

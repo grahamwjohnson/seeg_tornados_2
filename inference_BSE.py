@@ -168,6 +168,9 @@ def bse_export_embeddings(
     for pat_idx in range(0,len(dataset_curr.pat_ids)):
         dataset_curr.set_pat_curr(pat_idx)
         _, pat_id_curr, _, _ = dataset_curr.get_pat_curr()
+
+        # Check which files have already been processed and update file list accordingly before building dataloader
+        dataset_curr.update_pat_inference_status(inference_save_dir, inference_window_sec_list, inference_stride_sec_list)
         dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=max_batch_size, num_workers=num_dataloader_workers)
 
         # Go through every file in dataset

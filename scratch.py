@@ -1,17 +1,35 @@
-import torch
 
-torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
-bse = torch.hub.load(
-    'grahamwjohnson/seeg_tornados_2',
-    'load',
-    codename='sheldrake',
-    pretrained=True,
-    load_bse=True, 
-    load_bsp=False,
-    trust_repo='check',
-    force_reload=True
-)
-print(bse)
+import yaml
+import torch
+from models.BSP import bsp_print_models_flow
+from utilities import utils_functions
+
+# Read in configuration file & setup the run
+config_f = 'config.yml'
+with open(config_f, "r") as f: kwargs = yaml.load(f,Loader=yaml.FullLoader)
+kwargs = utils_functions.exec_kwargs(kwargs) # Execute the arithmatic build into kwargs and reassign kwargs
+
+batchsize = 4
+fake_data = torch.rand(batchsize, 64, 2048)
+
+bsp_print_models_flow(x=fake_data, **kwargs)
+
+
+
+# import torch
+
+# torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
+# bse = torch.hub.load(
+#     'grahamwjohnson/seeg_tornados_2',
+#     'load',
+#     codename='sheldrake',
+#     pretrained=True,
+#     load_bse=True, 
+#     load_bsp=False,
+#     trust_repo='check',
+#     force_reload=True
+# )
+# print(bse)
 
 # # rval_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/rapid_val'
 # # rval_files = glob.glob(f"{rval_dir}/*.pkl")
