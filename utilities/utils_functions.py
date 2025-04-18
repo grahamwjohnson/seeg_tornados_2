@@ -498,7 +498,7 @@ def run_setup(**kwargs):
     return world_size, kwargs
 
 
-# FILE I/O
+# FILE I/O & DATA MANIPULATIONS
 
 def exec_kwargs(kwargs):
     # exec all kwargs in case there is python code
@@ -836,6 +836,211 @@ def append_timestamp(filename):
     ts = ts.replace(" ", "_")
     ts = ts.replace(":", "_")
     return filename + ts
+
+def rewindow_data(
+    means: np.ndarray,
+    logvars: np.ndarray,
+    mogpreds: np.ndarray,
+    file_windowsecs: int,
+    file_stridesecs: int,
+    rewin_windowsecs: int,
+    rewin_strideseconds: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Rewindows sequential data (means, logvars, mogpreds) from an original
+    windowing scheme to a new windowing scheme.
+
+    Args:
+        means:  Array of windowed weighted means, shape [original_windows, latent_dim].
+        logvars: Array of windowed weighted log variances, shape [original_windows, latent_dim].
+        mogpreds: Array of windowed MoG predictions, shape [original_windows, num_mog_components].
+        file_windowsecs: Window duration in seconds of the original data.
+        file_stridesecs: Stride in seconds of the original data.
+        rewin_windowsecs: Desired window duration in seconds.
+        rewin_strideseconds: Desired stride in seconds.
+
+    Returns:
+        A tuple containing the rewindowed means, logvars, and mogpreds, each as a numpy array.
+        The shapes of the returned arrays will be:
+        - rewin_means: [new_windows, latent_dim]
+        - rewin_logvars: [new_windows, latent_dim]
+        - rewin_mogpreds: [new_windows, num_mog_components]
+    """
+
+    original_windows = means.shape[0]
+    latent_dim = means.shape[1]
+    num_mog_components = mogpreds.shape[1]
+
+    # Calculate the number of samples per original window and new window.
+    original_samples_per_window = file_windowsecs
+    new_samples_per_window = rewin_windowsecs
+
+    if new_samples_per_window % original_samples_per_window != 0:
+        raise ValueError(
+            "New window duration (rewin_windowsecs) must be an even multiple of the original window duration (file_windowsecs)."
+        )
+    if rewin_strideseconds % file_stridesecs != 0:
+        raise ValueError(
+            "New stride (rewin_strideseconds) must be an even multiple of the original stride (file_stridesecs)."
+        )
+
+    if rewin_windowsecs < file_stridesecs and rewin_strideseconds > file_stridesecs:
+        raise ValueError(
+            "New window duration (rewin_windowsecs) cannot be less than the original stride (file_stridesecs) when the new stride (rewin_strideseconds) is greater than the original stride (file_stridesecs)."
+        )
+
+    # Calculate the start indices for the new windows.
+    new_window_starts_in_original_samples = np.arange(0, original_windows * file_stridesecs, rewin_strideseconds)
+    # Convert the start indices from samples to original window indices.
+    new_window_starts_in_original_windows = new_window_starts_in_original_samples // file_stridesecs
+
+    # Calculate the number of new windows.  Handle the edge case where the last new window extends
+    # beyond the available original windows.
+    new_windows = (original_windows * file_stridesecs - (rewin_windowsecs - rewin_strideseconds)) // rewin_strideseconds
+    if (original_windows * file_stridesecs) % rewin_strideseconds != 0: # corrected this line
+        new_windows += 1
+    new_windows = max(0, new_windows) # Ensure new_windows is not negative
+
+
+    # Initialize the output arrays.
+    rewin_means = np.zeros((new_windows, latent_dim), dtype=means.dtype)
+    rewin_logvars = np.zeros((new_windows, latent_dim), dtype=logvars.dtype)
+    rewin_mogpreds = np.zeros((new_windows, num_mog_components), dtype=mogpreds.dtype)
+
+    for i in range(new_windows):
+        start_original_window = new_window_starts_in_original_windows[i]
+        end_original_window = start_original_window + (new_samples_per_window // file_stridesecs)
+        # Ensure we don't go beyond the available original windows
+        end_original_window = min(end_original_window, original_windows)
+
+        # Handle the case where the new window extends beyond the available original data
+        if end_original_window - start_original_window < (new_samples_per_window // file_stridesecs):
+            # If the new window is cut off, we only use the available original windows.
+            valid_original_windows_means = means[start_original_window:end_original_window]
+            valid_original_windows_logvars = logvars[start_original_window:end_original_window]
+            valid_original_windows_mogpreds = mogpreds[start_original_window:end_original_window]
+        else:
+            valid_original_windows_means = means[start_original_window:end_original_window]
+            valid_original_windows_logvars = logvars[start_original_window:end_original_window]
+            valid_original_windows_mogpreds = mogpreds[start_original_window:end_original_window]
+
+
+        # Average the data from the original windows to create the new window.
+        if valid_original_windows_means.size > 0: # Check to avoid errors when valid_original_windows is empty.
+            rewin_means[i, :] = np.mean(valid_original_windows_means, axis=0)
+            rewin_logvars[i, :] = np.mean(valid_original_windows_logvars, axis=0)  # Use means for logvars as well
+            rewin_mogpreds[i, :] = np.mean(valid_original_windows_mogpreds, axis=0)
+        else:
+            rewin_means[i, :] = 0
+            rewin_logvars[i, :] = 0
+            rewin_mogpreds[i, :] = 0
+
+
+    return rewin_means, rewin_logvars, rewin_mogpreds
+
+def rewindow_data_filewise(
+    means: np.ndarray,
+    logvars: np.ndarray,
+    mogpreds: np.ndarray,
+    file_windowsecs: int,
+    file_stridesecs: int,
+    rewin_windowsecs: int,
+    rewin_strideseconds: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Rewindows sequential data (means, logvars, mogpreds) from an original
+    windowing scheme to a new windowing scheme, handling an initial 'file' dimension.
+    Enforces constraints on new window duration and stride.
+
+    Args:
+        means:  Array of windowed weighted means, shape [num_files, original_windows, latent_dim].
+        logvars: Array of windowed weighted log variances, shape [num_files, original_windows, latent_dim].
+        mogpreds: Array of windowed MoG predictions, shape [num_files, original_windows, num_mog_components].
+        file_windowsecs: Window duration in seconds of the original data.
+        file_stridesecs: Stride in seconds of the original data.
+        rewin_windowsecs: Desired window duration in seconds.
+        rewin_strideseconds: Desired stride in seconds.
+
+    Returns:
+        A tuple containing the rewindowed means, logvars, and mogpreds, each as a numpy array.
+        The shapes of the returned arrays will be:
+        - rewin_means: [num_files, new_windows, latent_dim]
+        - rewin_logvars: [num_files, new_windows, latent_dim]
+        - rewin_mogpreds: [num_files, new_windows, num_mog_components]
+
+    Raises:
+        ValueError: If new window duration or stride is not an even multiple of the original,
+                    or if the new window duration is less than the original stride and the new stride is greater than the original stride.
+    """
+
+    num_files = means.shape[0]
+    original_windows = means.shape[1]
+    latent_dim = means.shape[2]
+    num_mog_components = mogpreds.shape[2]
+
+    # Calculate the number of samples per original window and new window.
+    original_samples_per_window = file_windowsecs
+    new_samples_per_window = rewin_windowsecs
+
+    if new_samples_per_window % original_samples_per_window != 0:
+        raise ValueError(
+            "New window duration (rewin_windowsecs) must be an even multiple of the original window duration (file_windowsecs)."
+        )
+    if rewin_strideseconds % file_stridesecs != 0:
+        raise ValueError(
+            "New stride (rewin_strideseconds) must be an even multiple of the original stride (file_stridesecs)."
+        )
+
+    if rewin_windowsecs < file_stridesecs and rewin_strideseconds > file_stridesecs:
+        raise ValueError(
+            "New window duration (rewin_windowsecs) cannot be less than the original stride (file_stridesecs) when the new stride (rewin_strideseconds) is greater than the original stride (file_stridesecs)."
+        )
+
+    # Calculate the start indices for the new windows.
+    new_window_starts_in_original_samples = np.arange(0, original_windows * file_stridesecs, rewin_strideseconds)
+    # Convert the start indices from samples to original window indices.
+    new_window_starts_in_original_windows = new_window_starts_in_original_samples // file_stridesecs
+
+    # Calculate the number of new windows.  Handle the edge case where the last new window extends
+    # beyond the available original windows.
+    new_windows = (original_windows * file_stridesecs - (rewin_windowsecs - rewin_strideseconds)) // rewin_strideseconds
+    if (original_windows * file_stridesecs) % rewin_strideseconds != 0:
+        new_windows += 1
+    new_windows = max(0, new_windows)  # Ensure new_windows is not negative
+
+    # Initialize the output arrays.
+    rewin_means = np.zeros((num_files, new_windows, latent_dim), dtype=means.dtype)
+    rewin_logvars = np.zeros((num_files, new_windows, latent_dim), dtype=logvars.dtype)
+    rewin_mogpreds = np.zeros((num_files, new_windows, num_mog_components), dtype=mogpreds.dtype)
+
+    for i in range(new_windows):
+        start_original_window = new_window_starts_in_original_windows[i]
+        end_original_window = start_original_window + (new_samples_per_window // file_stridesecs)
+        # Ensure we don't go beyond the available original windows
+        end_original_window = min(end_original_window, original_windows)
+
+        # Handle the case where the new window extends beyond the available original data
+        if end_original_window - start_original_window < (new_samples_per_window // file_stridesecs):
+            # If the new window is cut off, we only use the available original windows.
+            valid_original_windows_means = means[:, start_original_window:end_original_window, :]
+            valid_original_windows_logvars = logvars[:, start_original_window:end_original_window, :]
+            valid_original_windows_mogpreds = mogpreds[:, start_original_window:end_original_window, :]
+        else:
+            valid_original_windows_means = means[:, start_original_window:end_original_window, :]
+            valid_original_windows_logvars = logvars[:, start_original_window:end_original_window, :]
+            valid_original_windows_mogpreds = mogpreds[:, start_original_window:end_original_window, :]
+
+        # Average the data from the original windows to create the new window.
+        if valid_original_windows_means.size > 0:  # Check to avoid errors when the window is empty
+            rewin_means[:, i, :] = np.mean(valid_original_windows_means, axis=1)
+            rewin_logvars[:, i, :] = np.mean(valid_original_windows_logvars, axis=1)
+            rewin_mogpreds[:, i, :] = np.mean(valid_original_windows_mogpreds, axis=1)
+        else:
+            rewin_means[:, i, :] = 0
+            rewin_logvars[:, i, :] = 0
+            rewin_mogpreds[:, i, :] = 0
+
+    return rewin_means, rewin_logvars, rewin_mogpreds
 
 
 # LEARNING RATES & LOSS WEIGHTS

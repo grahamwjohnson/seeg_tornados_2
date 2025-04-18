@@ -238,6 +238,9 @@ class SEEG_Tornado_Dataset(Dataset):
         # Initilaize the lists of lists for data filenames
         self.pat_fnames = [[] for i in range(len(self.pat_ids))]
 
+        # Incase the random generator is never initialized 
+        self.tmp_dir = None
+
         # ### Now determine which files in the data directory shoud be given to the dataset
         # Dataset splits is a tuple of 3 floats for train/val/test and must add up to 1
         # NOTE: the ratio referes to seizures had, no longer is based on time in EMU        
@@ -274,9 +277,10 @@ class SEEG_Tornado_Dataset(Dataset):
         self.rand_generator_process = utils_functions.run_script_from_shell(self.env_python_path, self.random_gen_script_path, self.tmp_dir, 'fnames.csv', f"{self.num_rand_hashes}")
 
     def kill_generator(self):
-        # To kill the generator, just delete the tmp dir path
-        if os.path.exists(self.tmp_dir):
-            shutil.rmtree(self.tmp_dir)
+        if self.tmp_dir != None:
+            # To kill the generator, just delete the tmp dir path
+            if os.path.exists(self.tmp_dir):
+                shutil.rmtree(self.tmp_dir)
 
     def get_script_filename(self):
         return __file__

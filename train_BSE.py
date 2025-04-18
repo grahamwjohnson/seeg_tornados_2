@@ -168,7 +168,7 @@ def load_train_objs(
         valfinetune_dataloader = None
         valunseen_dataloader = None
 
-    # Sequential dataset used to run inference on train data and build PaCMAP projection
+    # Sequential dataset used to run inference on train data 
     print(f"[GPU{str(gpu_id)}] Generating TRAIN dataset")
     kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs/Train_Grouped'
     train_dataset = SEEG_Tornado_Dataset(
@@ -381,81 +381,6 @@ def main(
     # Main loop through all epochs
     for epoch in range(start_epoch, epochs_to_train):
         trainer.epoch = epoch
-
-        # INFERENCE on all data
-        if (epoch > 0) & ((trainer.epoch + 1) % trainer.inference_every == 0):
-
-            if trainer.valunseen_dataset != None: trainer.valunseen_dataset.kill_generator()
-            trainer.train_dataset.kill_generator()
-            print(f"[GPU{trainer.gpu_id}] Killed Train/ValUnseen random generators for inference mode")
-
-            # Save pre-finetune model/opt weights
-            if finetune_inference:
-                bse_dict = trainer.bse.module.state_dict()
-                disc_dict = trainer.disc.module.state_dict()
-                bse_opt_dict = trainer.opt_bse.state_dict()
-                disc_opt_dict = trainer.opt_disc.state_dict()
-                accumulated_mean = trainer.accumulated_mean
-                accumulated_logvar = trainer.accumulated_logvar
-                accumulated_zmeaned = trainer.accumulated_zmeaned
-                accumulated_mogpreds = trainer.accumulated_mogpreds
-                accumulated_patidxs = trainer.accumulated_patidxs
-
-                # FINETUNE on beginning of validation patients (currently only one epoch)
-                # Set to train and change LR to validate settings
-                trainer._set_to_train()
-                trainer.opt_bse.param_groups[0]['lr'] = LR_val_bse
-                trainer.opt_bse.param_groups[1]['lr'] = LR_val_prior
-                trainer.opt_bse.param_groups[2]['lr'] = LR_val_cls
-                trainer.opt_disc['lr'] = LR_val_disc
-                for finetune_epoch in range(finetune_inference_epochs):
-                    trainer.epoch = epoch + finetune_epoch
-                    trainer._run_train_epoch(
-                        dataloader_curr = trainer.valfinetune_dataloader, 
-                        dataset_string = "valfinetune",
-                        val_finetune = True,
-                        val_unseen = False,
-                        singlebatch_printing_interval = singlebatch_printing_interval_val,
-                        **kwargs)
-
-                # Finetuned, so setup inference for all datasets
-                dataset_list = [trainer.train_dataset, trainer.valfinetune_dataset, trainer.valunseen_dataset]
-                dataset_strs = ["train", "valfinetune", "valunseen"]
-
-            else: # No finetune, only run data for Train and ValUnseen datasets (running on val_finetune would just create confusion later when using embeddings)
-                dataset_list = [trainer.train_dataset, trainer.valunseen_dataset]
-                dataset_strs = ["train", "valunseen"]
-            
-            # INFERENCE on all selected datasets, kill finetune now that we also do not need it
-            if trainer.valfinetune_dataset != None: trainer.valfinetune_dataset.kill_generator()
-            print(f"[GPU{trainer.gpu_id}] Killed val_finetune for inference mode")
-
-            trainer._set_to_eval()
-            with torch.inference_mode():
-                for d in range(0, len(dataset_list)):
-                    trainer._run_export_embeddings(
-                        dataset_curr = dataset_list[d],  # Takes in a Dataset, NOT a DataLoader
-                        dataset_string = dataset_strs[d],
-                        **kwargs)
-
-            # Restore model/opt weights to pre-finetune, and restart data generators
-            if finetune_inference:
-                trainer.bse.module.load_state_dict(bse_dict)
-                trainer.disc.module.load_state_dict(disc_dict)
-                trainer.opt_bse.load_state_dict(bse_opt_dict)
-                trainer.opt_disc.load_state_dict(disc_opt_dict)
-                trainer.accumulated_mean = accumulated_mean
-                trainer.accumulated_logvar = accumulated_logvar
-                trainer.accumulated_zmeaned = accumulated_zmeaned
-                trainer.accumulated_mogpreds = accumulated_mogpreds
-                trainer.accumulated_patidxs = accumulated_patidxs
-
-            
-            trainer.train_dataset.initiate_generator()
-            trainer.valfinetune_dataset.initiate_generator()
-            trainer.valunseen_dataset.initiate_generator()
-            print(f"GPU{str(trainer.gpu_id)} at post inference barrier - restarted random data generators")
-            barrier()
         
         # TRAIN
         trainer._set_to_train()
@@ -860,7 +785,7 @@ class Trainer:
         self.accumulated_mogpreds = self.accumulated_mogpreds.detach() 
         self.accumulated_patidxs = self.accumulated_patidxs.detach() 
 
-    def remove_padded_channels(self, x: torch.Tensor, hash_channel_order):
+    def _remove_padded_channels(self, x: torch.Tensor, hash_channel_order):
         """
         Removes padded channels (-1) from x for each sample in the batch.
         
@@ -881,224 +806,6 @@ class Trainer:
             x_nopad.append(x[i, :, valid_mask[i], :])  # [tokens, valid_channels, seq_len]
 
         return x_nopad
-
-    def _run_export_embeddings(
-        self, 
-        dataset_curr, 
-        dataset_string,
-        num_dataloader_workers,
-        max_batch_size,
-        padded_channels,
-        **kwargs):
-
-        """
-        This function runs inference with the BSE encoder (only the encoder) and saves 
-        the resulting latent space embeddings for each file, in the form of pickle files. 
-        Unlike the `_run_train_epoch` function, which pulls random data, this function 
-        iterates sequentially through the entire dataset (one patient at a time). 
-
-        The function processes the dataset and saves latent embeddings using the BSE encoder 
-        for each patient, file, and window-stride configuration. The embeddings are smoothed 
-        according to specified window and stride sizes.
-
-        ### Key Features:
-        - **Sequential Inference:** This function sequentially processes data for each patient 
-        and file, as opposed to random data pulls.
-        - **Latent Embedding Calculation:** It calculates latent embeddings for each file's 
-        data and saves them as pickle files.
-        - **Window-Stride Smoothing:** The latent embeddings are smoothed according to the 
-        window and stride sizes defined by `inference_window_sec_list` and 
-        `inference_stride_sec_list`.
-        - **Conditioning:** Hashes for each patient and channel are generated to condition 
-        the feedforward process.
-        - **GPU Support:** The function processes the data on GPU for efficient computations.
-
-        ### Parameters:
-        - `dataset_curr` (Dataset): The dataset object that holds the current patient data 
-        to be processed.
-        - `dataset_string` (str): A string identifier for the dataset (for tracking or naming).
-        - `attention_dropout` (float): Dropout rate for attention layers (though not directly 
-        used in this function).
-        - `num_dataloader_workers` (int): Number of worker threads for loading data batches.
-        - `max_batch_size` (int): The maximum batch size used for inference.
-        - `inference_batch_mult` (float): A multiplier for adjusting batch size during inference.
-        - `padded_channels` (int): The number of padded channels in the data tensor (to 
-        accommodate variable input sizes).
-        - `**kwargs` (dict): Additional arguments that may be passed (not used directly here).
-
-        ### Outputs:
-        - For each patient, the function processes their data and saves the computed latent 
-        embeddings into pickle files. 
-        - The files are organized according to the window and stride configurations, with 
-        directories and filenames reflecting these settings (e.g., `latent_60secWindow_30secStride.pkl`).
-        - Each file’s latent space embeddings are saved after the BSE encoder processes the 
-        raw data windows with the specified stride and window sizes.
-
-        ### Notes:
-        - **Data Processing:** The function processes files one by one per patient. Data for 
-        each file is passed through the BSE encoder to extract the latent space.
-        - **Windowing and Striding:** After processing each file, the latent space is divided 
-        into overlapping windows based on the stride and window settings, smoothing the 
-        embeddings as necessary.
-        - **File Structure:** Latent embeddings are saved in directories named after the 
-        window and stride sizes, and each file's latent embeddings are saved separately.
-
-        """
-
-        print(f"[GPU{self.gpu_id}] encode_token_samples: {self.encode_token_samples}")
-
-        ### ALL/FULL FILES - LATENT ONLY - FULL TRANSFORMER CONTEXT ### 
-        print("WARNING: Setting alpha = 0")
-        self.classifier_alpha = 0
-
-        # Go through every subject in this dataset
-        for pat_idx in range(0,len(dataset_curr.pat_ids)):
-            dataset_curr.set_pat_curr(pat_idx)
-            _, pat_id_curr, _, _ = dataset_curr.get_pat_curr()
-            dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=max_batch_size, num_workers=num_dataloader_workers)
-
-            # Go through every file in dataset
-            file_count = 0
-            for data_tensor, file_name, _ in dataloader_curr: # Hash done outside data.py for single pat inference
-
-                file_count = file_count + len(file_name)
-
-                num_channels_curr = data_tensor.shape[1]
-
-                # Create the sequential latent sequence array for the file 
-                num_samples_in_forward = self.transformer_seq_length * self.encode_token_samples
-                num_windows_in_file = data_tensor.shape[2] / num_samples_in_forward
-                assert (num_windows_in_file % 1) == 0
-                num_windows_in_file = int(num_windows_in_file)
-                num_samples_in_forward = int(num_samples_in_forward)
-
-                # Prep the output tensor and put on GPU
-                files_means = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
-                files_logvars = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.latent_dim]).to(self.gpu_id)
-                files_mogpreds = torch.zeros([data_tensor.shape[0], num_windows_in_file, self.prior_mog_components]).to(self.gpu_id)
-
-                # Put whole file on GPU
-                data_tensor = data_tensor.to(self.gpu_id)
-
-                for w in range(num_windows_in_file):
-                    
-                    # Print Status
-                    print_interval = 100
-                    if (self.gpu_id == 0) & (w % print_interval == 0):
-                        sys.stdout.write(f"\r{dataset_string}: Pat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/self.world_size - 1}  * GPUs (DDP), Intrafile Iter {w}/{num_windows_in_file}          ") 
-                        sys.stdout.flush() 
-                    
-                    x = torch.zeros(data_tensor.shape[0], self.transformer_seq_length, padded_channels, self.encode_token_samples).to(self.gpu_id)
-
-                    # PAD THE CHANNELS ACCORDING TO HASH
-                    # NOTE: Just running for modifier '0' for inference
-                    raise Exception("Randomize at same scale as training, randomize every forward pass")
-                    inference_modifier = 0
-                    _, hash_channel_order = utils_functions.hash_to_vector(
-                        input_string = pat_id_curr,
-                        num_channels = num_channels_curr,
-                        padded_channels = padded_channels,
-                        latent_dim = self.latent_dim,
-                        modifier = inference_modifier, 
-                        hash_output_range = self.hash_output_range)
-
-                    raise Exception("Need to pad and order channels according to hash")
-
-                    raise Exception("Need to scramble every single forward pass to promote channel order invariance")
-
-                    start_idx = w * num_samples_in_forward
-                    for embedding_idx in range(0, self.transformer_seq_length):
-                        # Pull out data for this window - NOTE: no hashing random order, channels just put in order with zero pad at end
-                        end_idx = start_idx + self.encode_token_samples * embedding_idx + self.encode_token_samples 
-                        x[:, embedding_idx, :num_channels_curr, :] = data_tensor[:, :, end_idx-self.encode_token_samples : end_idx]
-
-                    ### BSE ENCODER
-                    # Forward pass in stacked batch through BSE encoder
-                    # latent, _, _ = self.bse(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
-                    _, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, _ = self.bse(x, reverse=False) # No shift if not causal masking
-                    
-                    # Theoretical levels of detail to save (Token or Token-Meaned level):
-                    # 1) Save mogpreds [CURRENTLY SAVED at Token-Mean level]
-                    # 2) Save the weighted means from each component [CURRENTLY SAVED at Token-Mean level]
-                    # 3) Save weighted means and uncertainty with weighted logvars [CURRENTLY SAVED at Token-Mean level]
-                    # 4) Or just save one component of interest [NOT currently saved in this way]
-
-                    # Reshape back to token level 
-                    mogpreds = mogpreds_pseudobatch.split(self.transformer_seq_length, dim=0)
-                    mogpreds = torch.stack(mogpreds, dim=0)
-                    mean = mean_pseudobatch.split(self.transformer_seq_length, dim=0)
-                    mean = torch.stack(mean, dim=0)
-                    logvar = logvar_pseudobatch.split(self.transformer_seq_length, dim=0)
-                    logvar = torch.stack(logvar, dim=0)
-
-                    # Weight the means using mogpreds
-                    # mogpreds shape: [batch_size, seq_length, num_components]
-                    # mean shape: [batch_size, seq_length, num_components, latent_dim]
-                    # Expand mogpreds to match the latent_dim for broadcasting
-                    mogpreds_expanded = mogpreds.unsqueeze(-1)  # Shape: [batch_size, seq_length, num_components, 1]
-
-                    # Weight the means & logvars
-                    weighted_means = mean * mogpreds_expanded  # Shape: [batch_size, seq_length, num_components, latent_dim]
-                    weighted_logvars = logvar * mogpreds_expanded 
-
-                    # Sum over the components to get the final weighted mean for each token
-                    weighted_means_summed = torch.sum(weighted_means, dim=2)  # Shape: [batch_size, seq_length, latent_dim]
-                    weighted_logvars_summed = torch.sum(weighted_logvars, dim=2)  # Shape: [batch_size, seq_length, latent_dim]
-
-                    # Take the mean across the token dimension (optional, if you want to reduce further)
-                    mean_tokenmeaned = torch.mean(weighted_means_summed, dim=1)  # Shape: [batch_size, latent_dim]
-                    logvar_tokenmeaned = torch.mean(weighted_logvars_summed, dim=1)  # Shape: [batch_size, latent_dim]
-
-                    # Save the results
-                    files_means[:, w, :] = mean_tokenmeaned
-                    files_logvars[:, w, :] = logvar_tokenmeaned
-                    files_mogpreds[:, w, :] = torch.mean(mogpreds, dim=1)  # Save the mean mogpreds across tokens
-
-                # After file complete, pacmap_window/stride the file and save each file from batch seperately
-                # Seperate directory for each win/stride combination
-                # First pull off GPU and convert to numpy
-                files_means = files_means.cpu().numpy()
-                files_logvars = files_logvars.cpu().numpy()
-                files_mogpreds = files_mogpreds.cpu().numpy()
-                for i in range(len(self.inference_window_sec_list)):
-
-                    win_sec_curr = self.inference_window_sec_list[i]
-                    stride_sec_curr = self.inference_stride_sec_list[i]
-                    sec_in_forward = num_samples_in_forward/self.FS
-
-                    if (win_sec_curr < sec_in_forward) or (stride_sec_curr < sec_in_forward):
-                        raise Exception("Window or stride is too small compared to input sequence to encoder")
-                    
-                    num_latents_in_win = win_sec_curr / sec_in_forward
-                    assert (num_latents_in_win % 1) == 0
-                    num_latents_in_win = int(num_latents_in_win)
-
-                    num_latents_in_stride = stride_sec_curr / sec_in_forward
-                    assert (num_latents_in_stride % 1) == 0 
-                    num_latents_in_stride = int(num_latents_in_stride)
-
-                    # May not go in evenly, that is ok
-                    num_strides_in_file = int((files_means.shape[1] - num_latents_in_win) / num_latents_in_stride) 
-                    windowed_file_means = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
-                    windowed_file_logvars = np.zeros([data_tensor.shape[0], num_strides_in_file, self.latent_dim])
-                    windowed_file_mogpreds = np.zeros([data_tensor.shape[0], num_strides_in_file, self.prior_mog_components])
-                    for s in range(num_strides_in_file):
-                        windowed_file_means[:, s, :] = np.mean(files_means[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win, :], axis=1)
-                        windowed_file_logvars[:, s, :] = np.mean(files_logvars[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win, :], axis=1)
-                        windowed_file_mogpreds[:, s, :] = np.mean(files_mogpreds[:, s*num_latents_in_stride: s*num_latents_in_stride + num_latents_in_win, :], axis=1)
-
-                    # Save each windowed latent in a pickle for each file
-                    for b in range(data_tensor.shape[0]):
-                        filename_curr = file_name[b]
-                        save_dir = f"{self.model_dir}/latent_files/Epoch{self.epoch}/{win_sec_curr}SecondWindow_{stride_sec_curr}SecondStride/{dataset_string}"
-                        if not os.path.exists(save_dir): os.makedirs(save_dir)
-                        output_obj = open(f"{save_dir}/{filename_curr}_latent_{win_sec_curr}secWindow_{stride_sec_curr}secStride.pkl", 'wb')
-                        save_dict = {
-                            'windowed_weighted_means': windowed_file_means[b, :, :],
-                            'windowed_weighted_logvars': windowed_file_logvars[b, :, :],
-                            'windowed_mogpreds': windowed_file_mogpreds[b, :, :]}
-                        pickle.dump(save_dict, output_obj)
-                        output_obj.close()
 
     def _run_train_epoch( ### RANDOM SUBSET OF FILES ###    
         self, 
@@ -1224,8 +931,8 @@ class Trainer:
             class_probs_mean_of_latent = self.bse.module.adversarial_classifier(z_tokenmeaned, alpha=self.classifier_alpha)
    
             # REMOVE PADDING - otherwise would reward recon loss for patients with fewer channels
-            x_nopad_list = self.remove_padded_channels(x, hash_channel_order) 
-            x_hat_nopad_list = self.remove_padded_channels(x_hat, hash_channel_order) 
+            x_nopad_list = self._remove_padded_channels(x, hash_channel_order) 
+            x_hat_nopad_list = self._remove_padded_channels(x_hat, hash_channel_order) 
 
             # LOSSES
             mse_loss = loss_functions.recon_loss(
@@ -1274,7 +981,7 @@ class Trainer:
                 labels=file_class_label,
                 classifier_weight=self.classifier_weight)
 
-            # Accumulate all losses      # 
+            # Accumulate all losses     
             loss = mse_loss + bse_adversarial_loss + mean_match_loss + logvar_match_loss + neg_gp_log_prob + posterior_mogpreds_entropy_loss + posterior_mogpreds_intersequence_diversity_loss + prior_entropy + prior_repulsion + patient_adversarial_loss 
 
             # For plotting visualization purposes
@@ -1343,13 +1050,8 @@ class Trainer:
                         val_finetune_attention_dropout=attention_dropout,
                         val_finetune_loss=loss, 
                         val_finetune_recon_MSE_loss=mse_loss, 
-                        # val_finetune_KL_divergence=KL_divergence, 
                         val_finetune_neg_gp_weight = self.gp_weight,
                         val_finetune_neg_gp_log_prob = neg_gp_log_prob,
-                        # val_finetune_mean_match_loss = mean_match_loss,
-                        # val_finetune_logvar_match_loss = logvar_match_loss,
-                        # val_finetune_mean_match_weight = self.mean_match_weight,
-                        # val_finetune_logvar_match_weight = self.logvar_match_weight,
                         val_finetune_LR_bse=self.opt_bse.param_groups[0]['lr'], 
                         val_finetune_LR_disc=self.opt_disc.param_groups[0]['lr'], 
                         val_finetune_LR_prior=self.opt_bse.param_groups[1]['lr'], 
@@ -1363,13 +1065,8 @@ class Trainer:
                         val_unseen_attention_dropout=attention_dropout,
                         val_unseen_loss=loss, 
                         val_unseen_recon_MSE_loss=mse_loss, 
-                        # val_unseen_KL_divergence=KL_divergence, 
                         val_unseen_neg_gp_weight = self.gp_weight,
                         val_unseen_neg_gp_log_prob = neg_gp_log_prob,
-                        # val_unseen_mean_match_loss = mean_match_loss,
-                        # val_unseen_logvar_match_loss = logvar_match_loss,
-                        # val_unseen_mean_match_weight = self.mean_match_weight,
-                        # val_unseen_logvar_match_weight = self.logvar_match_weight,
                         val_unseen_LR_bse=self.opt_bse.param_groups[0]['lr'], 
                         val_unseen_LR_disc=self.opt_disc.param_groups[0]['lr'], 
                         val_unseen_LR_prior=self.opt_bse.param_groups[1]['lr'],

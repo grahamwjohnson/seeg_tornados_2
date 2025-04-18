@@ -40,7 +40,7 @@ def load_data_sample(pat_idx, file_idx, start_idx, pat_fnames, pat_ids, latent_d
     with open(pat_fnames[pat_idx][file_idx], 'rb') as file:
         data = pickle.load(file)
 
-    # Generate hashes for feedforward conditioning
+    # Generate random channel order
     rand_modifier = int(random.uniform(0, num_rand_hashes - 1))
     hash_pat_embedding, hash_channel_order = utils_functions.hash_to_vector(
         input_string=pat_ids[pat_idx], 
