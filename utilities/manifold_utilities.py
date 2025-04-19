@@ -16,6 +16,9 @@ import torch
 import matplotlib.colors as mcolors
 from mpl_toolkits.mplot3d import Axes3D
 from scipy.ndimage import gaussian_filter
+import seaborn as sns
+from matplotlib.colors import LinearSegmentedColormap
+import matplotlib.lines as mlines
 
 '''
 @author: grahamwjohnson
@@ -213,8 +216,7 @@ def pacmap_subfunction(
         f'NN: {pacmap_NN}, MN_ratio: {str(pacmap_MN_ratio)}, FP_ratio: {str(pacmap_FP_ratio)}'
         )
     
-    if interictal_contour:
-        ax21.title.set_text('Interictal Contour (no peri-ictal data)')
+    if interictal_contour: ax21.title.set_text('Interictal & Pre-Ictal Contours')
 
     # **** Save entire figure *****
     if not os.path.exists(savedir): os.makedirs(savedir)
@@ -266,7 +268,238 @@ def load_pacmap_objects(pacmap_dir, pacmap_basename):
     xy_path = pacmap_dir + "/xy_lims.pkl"
     with open(xy_path, "rb") as f: xy_lims = pickle.load(f)
 
-    return reducer, hdb, xy_lims
+    axis_path = pacmap_dir + "/plotaxis.pkl"
+    with open(axis_path, "rb") as f: plot_axis = pickle.load(f)
+
+    return reducer, hdb, xy_lims, plot_axis
+
+def plot_pacmap_prediction(save_dir, reducer, hdb, xy_lims, plot_axis, embeddings, predicted_start_idx, predicted_embeddings, line_plot=True):
+    """
+    Projects embeddings onto an existing PaCMAP and HDBSCAN space,
+    visualizes context, predictions, and ground truth on a provided matplotlib axis.
+
+    Args:
+        save_dir (str): Directory to save the plot.
+        reducer (pacmap.PaCMAP): Trained PaCMAP object.
+        hdb (hdbscan.HDBSCAN): Trained HDBSCAN object.
+        xy_lims (list): Limits for the x and y axes of the plot [(xmin, xmax), (ymin, ymax)].
+        plot_axis (matplotlib.axes.Axes): Existing matplotlib axis to plot on.
+        embeddings (np.ndarray): Embeddings containing context and ground truth, shape [seq_len, latent_dim].
+        predicted_start_idx (int): Starting index of the ground truth portion within embeddings.
+        predicted_embeddings (np.ndarray): Predicted embeddings, shape [num_predictions, latent_dim].
+        line_plot (bool, optional): Whether to plot the sequences as lines. Defaults to True.
+    Returns:
+        matplotlib.axes.Axes: The updated matplotlib axis with the new points plotted.
+    """
+
+    print("Projecting embeddings onto existing PaCMAP space")
+    projected_embeddings = reducer.transform(embeddings)
+    projected_predictions = reducer.transform(predicted_embeddings)
+
+    print("Predicting HDBSCAN labels for embeddings and predictions")
+    all_projected = np.vstack((projected_embeddings, projected_predictions))
+    new_labels, new_probabilities = hdbscan.prediction.approximate_predict(hdb, all_projected)
+
+    # Implicitly define context based on predicted_start_idx
+    context_projected = projected_embeddings[:predicted_start_idx]
+    ground_truth_projected = projected_embeddings[predicted_start_idx:]
+
+    # Define a custom brown colormap
+    brown_cmap_data = {
+        'red':   [(0.0, 0.8, 0.8),  # Light brown
+                  (1.0, 0.4, 0.4)],  # Darker brown
+        'green': [(0.0, 0.6, 0.6),
+                  (1.0, 0.3, 0.3)],
+        'blue':  [(0.0, 0.4, 0.4),
+                  (1.0, 0.2, 0.2)]
+    }
+    cmap_brown = LinearSegmentedColormap('custom_brown', brown_cmap_data.copy())
+    cmap_brown_r = cmap_brown.reversed()
+
+    # --- Plotting ---
+    print("Plotting embeddings, predictions, and ground truth")
+
+    # Plot context points with connecting lines in a gradient of browns (darker forward, reversed)
+    num_context = len(context_projected)
+    if num_context > 1:
+        context_cmap = cmap_brown # Now not reversed for darker forward
+        context_colors = [context_cmap(min(1.0, i / (num_context - 1) * 0.7)) for i in range(num_context)] # Adjusted range
+        # Plot connecting lines for context
+        for i in range(num_context - 1):
+            plot_axis.plot(
+                context_projected[i:i+2, 0],
+                context_projected[i:i+2, 1],
+                c=context_colors[i],
+                linewidth=1,
+                alpha=0.7,
+                label='_nolegend_'
+            )
+        # Plot individual context points
+        plot_axis.scatter(context_projected[:, 0], context_projected[:, 1], c=context_colors, s=10, label='_nolegend_')
+    elif num_context == 1:
+        context_color = cmap_brown(0.3)  # Single point will be a medium-dark brown
+        plot_axis.scatter(context_projected[:, 0], context_projected[:, 1], c=context_color, s=10, label='_nolegend_')
+    elif num_context == 0:
+        pass # Handle case with no context
+
+    # Plot ground truth points with connecting lines in a blue gradient (darkest first)
+    num_ground_truth = len(ground_truth_projected)
+    if num_ground_truth > 1 and num_context > 0:
+        ground_truth_cmap = pl.cm.Blues # Now using the forward colormap
+        # Restrict to the darker 50% and stretch, darkest first
+        ground_truth_colors = [ground_truth_cmap(0.5 * (1 - i / (num_ground_truth - 1)) + 0.5) for i in range(num_ground_truth)]
+        # Plot connecting line from the last context point to the first ground truth point
+        plot_axis.plot(
+            [context_projected[-1, 0], ground_truth_projected[0, 0]],
+            [context_projected[-1, 1], ground_truth_projected[0, 1]],
+            c=ground_truth_colors[0],
+            linewidth=1,
+            linestyle='--',
+            alpha=0.7,
+            label='_nolegend_'
+        )
+        # Plot connecting lines for ground truth
+        for i in range(num_ground_truth - 1):
+            plot_axis.plot(
+                ground_truth_projected[i:i+2, 0],
+                ground_truth_projected[i:i+2, 1],
+                c=ground_truth_colors[i],
+                linewidth=1,
+                linestyle='--',
+                alpha=0.7,
+                label='_nolegend_'
+            )
+        # Plot individual ground truth points
+        plot_axis.scatter(ground_truth_projected[:, 0], ground_truth_projected[:, 1], c=ground_truth_colors, s=10, marker='o', label='_nolegend_')
+    elif num_ground_truth == 1 and num_context > 0:
+        ground_truth_cmap = pl.cm.Blues
+        ground_truth_color = ground_truth_cmap(0.5 * (1 - 0) + 0.5) # Equivalent to 1.0 (darkest)
+        # Plot connecting line from the last context point to the single ground truth point
+        plot_axis.plot(
+            [context_projected[-1, 0], ground_truth_projected[0, 0]],
+            [context_projected[-1, 1], ground_truth_projected[0, 1]],
+            c=ground_truth_color,
+            linewidth=1,
+            linestyle='--',
+            alpha=0.7,
+            label='Ground Truth'
+        )
+        plot_axis.scatter(ground_truth_projected[:, 0], ground_truth_projected[:, 1], c=ground_truth_color, s=10, marker='o', label='_nolegend_')
+    elif num_ground_truth > 0 and num_context == 0:
+        ground_truth_cmap = pl.cm.Blues
+        # Restrict to the darker 50% and stretch, darkest first
+        ground_truth_colors = [ground_truth_cmap(0.5 * (1 - i / (num_ground_truth - 1)) + 0.5) for i in range(num_ground_truth)]
+        # Plot connecting lines for ground truth
+        for i in range(num_ground_truth - 1):
+            plot_axis.plot(
+                ground_truth_projected[i:i+2, 0],
+                ground_truth_projected[i:i+2, 1],
+                c=ground_truth_colors[i],
+                linewidth=1,
+                linestyle='--',
+                alpha=0.7,
+                label='_nolegend_'
+            )
+        # Plot individual ground truth points
+        plot_axis.scatter(ground_truth_projected[:, 0], ground_truth_projected[:, 1], c=ground_truth_colors, s=10, marker='o', label='_nolegend_')
+    elif num_ground_truth == 1 and num_context == 0:
+        ground_truth_cmap = pl.cm.Blues
+        ground_truth_color = ground_truth_cmap(0.5 * (1 - 0) + 0.5) # Equivalent to 1.0 (darkest)
+        plot_axis.scatter(ground_truth_projected[:, 0], ground_truth_projected[:, 1], c=ground_truth_color, s=10, marker='o', label='Ground Truth')
+
+
+    # Plot predicted points with connecting lines using the "Greens" colormap (darkest first)
+    num_predicted = len(projected_predictions)
+    if num_predicted > 1 and num_context > 0:
+        predicted_cmap = pl.cm.Greens # Now using the forward colormap
+        # Restrict to the darker 50% and stretch, darkest first
+        predicted_colors = [predicted_cmap(0.5 * (1 - i / (num_predicted - 1)) + 0.5) for i in range(num_predicted)]
+        # Connect context to prediction (dashed)
+        plot_axis.plot(
+            [context_projected[-1, 0], projected_predictions[0, 0]],
+            [context_projected[-1, 1], projected_predictions[0, 1]],
+            c=predicted_colors[0],
+            linewidth=1,
+            alpha=0.7,
+            linestyle='--'
+        )
+        # Plot connecting lines for predictions (segment by segment, dashed)
+        for i in range(num_predicted - 1):
+            plot_axis.plot(
+                projected_predictions[i:i+2, 0],
+                projected_predictions[i:i+2, 1],
+                c=predicted_colors[i],
+                linewidth=1,
+                linestyle='--',
+                alpha=0.7,
+                label='_nolegend_'
+            )
+        # Plot individual predicted points
+        plot_axis.scatter(projected_predictions[:, 0], projected_predictions[:, 1], c=predicted_colors, s=10, marker='x', label='_nolegend_')
+    elif num_predicted == 1 and num_context > 0:
+        predicted_cmap = pl.cm.Greens
+        predicted_color = predicted_cmap(0.5 * (1 - 0) + 0.5) # Equivalent to 1.0 (darkest)
+        # Connect context to prediction (dashed)
+        plot_axis.plot(
+            [context_projected[-1, 0], projected_predictions[0, 0]],
+            [context_projected[-1, 1], projected_predictions[0, 1]],
+            c=predicted_color,
+            linewidth=1,
+            alpha=0.7,
+            linestyle='--'
+        )
+        plot_axis.scatter(projected_predictions[:, 0], projected_predictions[:, 1], c=predicted_color, s=10, marker='x', label='Prediction')
+    elif num_predicted > 0 and num_context == 0:
+        predicted_cmap = pl.cm.Greens
+        # Restrict to the darker 50% and stretch, darkest first
+        predicted_colors = [predicted_cmap(0.5 * (1 - i / (num_predicted - 1)) + 0.5) for i in range(num_predicted)]
+        # Plot connecting lines for predictions (segment by segment, dashed)
+        for i in range(num_predicted - 1):
+            plot_axis.plot(
+                projected_predictions[i:i+2, 0],
+                projected_predictions[i:i+2, 1],
+                c=predicted_colors[i],
+                linewidth=1,
+                linestyle='--',
+                alpha=0.7,
+                label='_nolegend_'
+            )
+        # Plot individual predicted points
+        plot_axis.scatter(projected_predictions[:, 0], projected_predictions[:, 1], c=predicted_colors, s=10, marker='x', label='_nolegend_')
+    elif num_predicted == 1 and num_context == 0:
+        predicted_cmap = pl.cm.Greens
+        predicted_color = predicted_cmap(0.5 * (1 - 0) + 0.5) # Equivalent to 1.0 (darkest)
+        plot_axis.scatter(projected_predictions[:, 0], projected_predictions[:, 1], c=predicted_color, s=10, marker='x', label='Prediction')
+
+
+    # Create proxy artists for the legend
+    legend_lines = [mlines.Line2D([], [], color='saddlebrown', linestyle='-', marker='o', markersize=5, label='Context'),
+                    mlines.Line2D([], [], color='blue', linestyle='--', marker='o', markersize=5, label='Ground Truth'),
+                    mlines.Line2D([], [], color='green', linestyle='--', marker='x', markersize=5, label='Prediction')]
+
+    # Add the proxy artists to the legend
+    plot_axis.legend(handles=legend_lines, loc='best')
+
+    # Set plot limits if provided
+    if xy_lims and len(xy_lims) == 2 and len(xy_lims[0]) == 2 and len(xy_lims[1]) == 2:
+        plot_axis.set_xlim(xy_lims[0][0], xy_lims[0][1])
+        plot_axis.set_ylim(xy_lims[1][0], xy_lims[1][1])
+    elif xy_lims:
+        print("Warning: xy_lims is not in the expected format [(xmin, xmax), (ymin, ymax)]. Skipping axis limits.")
+
+    plot_axis.set_xlabel("PaCMAP Dimension 1")
+    plot_axis.set_ylabel("PaCMAP Dimension 2")
+    plot_axis.set_title("PaCMAP Projection: Context, Prediction, Ground Truth")
+    # plot_axis.grid(True, alpha=0.3) # Removed grid
+
+    # Save the updated figure
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    savename_jpg = os.path.join(save_dir, "pacmap_prediction_overlay.jpg")
+    plot_axis.figure.savefig(savename_jpg, dpi=300)
+    print(f"Prediction plot saved to: {savename_jpg}")
+
+    return plot_axis
 
 def save_som_model(som, grid_size, input_dim, lr, sigma, lr_epoch_decay, sigma_epoch_decay, sigma_min, epoch, batch_size, save_path):
     # Save the state_dict (model weights), weights, and relevant hyperparameters

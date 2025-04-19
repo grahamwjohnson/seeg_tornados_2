@@ -324,7 +324,7 @@ class SEEG_Tornado_Dataset(Dataset):
         self.pat_fnames[self.pat_curr] = updated_pat_fnames
 
         # Optional: Print the updated list to verify
-        print(f"[{self.pat_ids[self.pat_curr]}] Updated self.pat_fnames: There are {len(missing_indices)} missing files out of {len(pat_all_roots)}")
+        print(f"[{self.pat_ids[self.pat_curr]}] Updated self.pat_fnames: There are {len(missing_indices)} files left to process out of {len(pat_all_roots)}")
 
     def __len__(self):
 

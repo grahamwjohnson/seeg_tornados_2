@@ -12,7 +12,9 @@ if __name__ == "__main__":
     source_dir = f'/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/latent_files/{file_windowsecs}SecondWindow_{file_stridesecs}SecondStride'
     filename_base = None 
     rewin_windowsecs = 64
-    rewin_strideseconds = 4
+    rewin_strideseconds = 1
+
+    save_dir = '/media/glommy1/tornados/tmp_plots'
 
     files = glob.glob(f'{source_dir}/*.pkl')
 
@@ -103,7 +105,12 @@ if loaded_data is not None and isinstance(loaded_data, dict):
 
         fig.suptitle(pat_id)
         plt.tight_layout()
-        plt.show()
+
+        # Save the updated figure
+        if not os.path.exists(save_dir): os.makedirs(save_dir)
+        savename_jpg = os.path.join(save_dir, "brainstate_snapshot.jpg")
+        fig.savefig(savename_jpg, dpi=300)
+        print(f"Plot saved to: {savename_jpg}")
 
     except KeyError as e:
         print(f"Error during plotting: Key '{e}' not found in loaded data.")

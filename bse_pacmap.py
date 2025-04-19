@@ -18,11 +18,11 @@ from utilities import utils_functions, manifold_utilities
 if __name__ == "__main__":
 
     # if None, will train a new pacmap
-    pretrained_pacmap_dir = None # '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/pacmap/256SecondWindow_256SecondStride/all_pats'
+    pretrained_pacmap_dir = None # '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/pacmap/64SecondWindow_64SecondStride/all_pats'
     pacmap_basename = 'PaCMAP'
     
     if pretrained_pacmap_dir == None: reducer = hdb = xy_lims = []
-    else: reducer, hdb, xy_lims = manifold_utilities.load_pacmap_objects(pretrained_pacmap_dir, pacmap_basename)
+    else: reducer, hdb, xy_lims, _ = manifold_utilities.load_pacmap_objects(pretrained_pacmap_dir, pacmap_basename)
 
     FS = 512 # Currently hardcoded in many places
 
@@ -30,15 +30,15 @@ if __name__ == "__main__":
     atd_file = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/all_time_data_01092023_112957.csv'
 
     # Source data selection
-    file_windowsecs = 64 # Used for directory construction, so must match directory name exactly
-    file_stridesecs = 64
-    parent_dir = f'/media/glommy1/tornados/bse_inference/sheldrake_epoch1138'
+    file_windowsecs = 64 # Used for directory construction as a string, so must match directory name exactly
+    file_stridesecs = 16
+    parent_dir = f'/media/glommy1/tornados/bse_inference/sheldrake_epoch1138' #_validation'
     source_dir = f'{parent_dir}/latent_files/{file_windowsecs}SecondWindow_{file_stridesecs}SecondStride'
     single_pats = [] # ['Spat18'] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats 
     
-    # Rewindowing data
+    # Rewindowing data (Must be multiples of original file duration & stride)
     rewin_windowsecs = 64
-    rewin_strideseconds = 64
+    rewin_strideseconds = 16
 
     # HDBSCAN Settings
     HDBSCAN_min_cluster_size = 200
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     # w_FP = 1.
     apply_pca = True # Before PaCMAP
     pacmap_LR = 0.1 # 0.1 #0.05
-    pacmap_NumIters = (100,100,100) # (1500,1500,1500)
+    pacmap_NumIters = (500,500,500) # (1500,1500,1500)
     pacmap_NN = None
     pacmap_MN_ratio = 7 # 7 #0.5
     pacmap_FP_ratio = 11 # 11 #2.0
@@ -78,8 +78,7 @@ if __name__ == "__main__":
     pacmap_dir = f"{parent_dir}/pacmap/{rewin_windowsecs}SecondWindow_{rewin_strideseconds}SecondStride"
     if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir)
 
-
-     ### IMPORT DATA ###
+    ### IMPORT DATA ###
     data_filepaths = [] 
     if single_pats == []: data_filepaths = data_filepaths + glob.glob(source_dir + f'/*.pkl')
     else: # Get all of the patients listing
@@ -103,10 +102,15 @@ if __name__ == "__main__":
     print("Loading all BUILD latent data from files")
     latent_data_fromfile = [''] * len(data_filepaths) # Load all of the data into system RAM - list of [window, latent_dim]
     for i in range(len(data_filepaths)):
-        with open(data_filepaths[i], "rb") as f: latent_data_fromfile = pickle.load(f)
-        ww_means_allfiles[i, :, :] = latent_data_fromfile['windowed_weighted_means']
-        ww_logvars_allfiles[i, :, :] = latent_data_fromfile['windowed_weighted_logvars']
-        w_mogpreds_allfiles[i, :, :] = latent_data_fromfile['windowed_mogpreds']
+        sys.stdout.write(f"\rLoading Pickles: {i}/{len(data_filepaths)}        ") 
+        sys.stdout.flush() 
+        try:
+            with open(data_filepaths[i], "rb") as f: latent_data_fromfile = pickle.load(f)
+            ww_means_allfiles[i, :, :] = latent_data_fromfile['windowed_weighted_means']
+            ww_logvars_allfiles[i, :, :] = latent_data_fromfile['windowed_weighted_logvars']
+            w_mogpreds_allfiles[i, :, :] = latent_data_fromfile['windowed_mogpreds']
+        except:
+            print(f"Error loading {data_filepaths[i]}")
 
     # Rewindow the data if needed
     print(f"Original shape of ww_means: {ww_means_allfiles.shape}")

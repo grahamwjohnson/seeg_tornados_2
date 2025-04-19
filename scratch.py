@@ -1,18 +1,67 @@
-
-import yaml
-import torch
-from models.BSP import bsp_print_models_flow
+from utilities import manifold_utilities
 from utilities import utils_functions
+import numpy as np
+import glob
+import random
+import pickle
 
-# Read in configuration file & setup the run
-config_f = 'config.yml'
-with open(config_f, "r") as f: kwargs = yaml.load(f,Loader=yaml.FullLoader)
-kwargs = utils_functions.exec_kwargs(kwargs) # Execute the arithmatic build into kwargs and reassign kwargs
+pretrained_pacmap_dir = '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/pacmap/64SecondWindow_64SecondStride/all_pats'
+pacmap_basename = 'PaCMAP'
+reducer, hdb, xy_lims, plot_axis = manifold_utilities.load_pacmap_objects(pretrained_pacmap_dir, pacmap_basename)
 
-batchsize = 4
-fake_data = torch.rand(batchsize, 64, 2048)
+save_dir = '/media/glommy1/tornados/tmp_plots'
 
-bsp_print_models_flow(x=fake_data, **kwargs)
+file_windowsecs = 1 
+file_stridesecs = 1
+rewin_windowsecs = 64
+rewin_strideseconds = 1
+dummy_dir = f'/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/latent_files/{file_windowsecs}SecondWindow_{file_stridesecs}SecondStride'
+dummy_files = glob.glob(f'{dummy_dir}/*.pkl')
+num_files = len(dummy_files)
+rand_idx = random.randint(0, num_files)
+rand_file = dummy_files[rand_idx]
+with open(rand_file, "rb") as f: latent_data_fromfile = pickle.load(f)
+ww_means = latent_data_fromfile['windowed_weighted_means']
+ww_logvars = latent_data_fromfile['windowed_weighted_logvars']
+w_mogpreds = latent_data_fromfile['windowed_mogpreds']
+print(f"Original shape of ww_means: {ww_means.shape}")
+print(f"Original shape of ww_logvars: {ww_logvars.shape}")
+print(f"Original shape of w_mogpreds: {w_mogpreds.shape}")
+rewin_means, rewin_logvars, rewin_mogpreds = utils_functions.rewindow_data(
+    ww_means, ww_logvars, w_mogpreds, file_windowsecs, file_stridesecs, rewin_windowsecs, rewin_strideseconds)
+print(f"Rewindowed shape of rewin_means: {rewin_means.shape}")
+print(f"Rewindowed shape of rewin_logvars: {rewin_logvars.shape}")
+print(f"Rewindowed shape of rewin_mogpreds: {rewin_mogpreds.shape}")
+
+# Just pull out part of file
+ww_means = ww_means[0:32, :]
+
+predicted_start_idx = int(ww_means.shape[0] * 0.7)
+fake_predictions = np.random.rand(ww_means.shape[0]-predicted_start_idx,1024)
+pred_plot_axis = manifold_utilities.plot_pacmap_prediction(save_dir, reducer, hdb, xy_lims, plot_axis, ww_means, predicted_start_idx, fake_predictions)
+
+
+
+
+
+
+
+
+
+# import yaml
+# import torch
+# from models.BSP import bsp_print_models_flow
+# from utilities import utils_functions
+
+# # Read in configuration file & setup the run
+# config_f = 'config.yml'
+# with open(config_f, "r") as f: kwargs = yaml.load(f,Loader=yaml.FullLoader)
+# kwargs = utils_functions.exec_kwargs(kwargs) # Execute the arithmatic build into kwargs and reassign kwargs
+
+# batchsize = 4
+# fake_data = torch.rand(batchsize, 64, 2048)
+
+# bsp_print_models_flow(x=fake_data, **kwargs)
 
 
 
