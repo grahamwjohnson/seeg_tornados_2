@@ -312,6 +312,7 @@ def plot_latent(
         # )
 
         cbar_levels = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+        # cbar_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
         cmap_preictal = sns.color_palette(palette='flare', as_cmap=True)
         cbar_dict = {'location': 'bottom', 'orientation': 'horizontal', 'label': 'Pre-Ictal Density', 'format': '%.2e', 'ticks': cbar_levels}
         s_pre = sns.kdeplot(x=x_plot_contour_PREICTAL, y=y_plot_contour_PREICTAL, ax=interCont_ax, cmap=cmap_preictal, fill=True, bw_adjust=.5, cbar=True, cbar_kws=cbar_dict, alpha=0.5, levels=cbar_levels)

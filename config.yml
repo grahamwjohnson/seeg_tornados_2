@@ -183,9 +183,9 @@ LR_val_disc: kwargs['LR_val_disc'] = 1e-5
 val_num_rand_hashes: 1 # By having at 1, it limits the number of configs that model needs to finetune for a new patient
 
 # BSE INFERENCE - Export Settings
-inference_pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats' 
-# inference_pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/validation_pats'
-inference_save_dir: '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138'  #_validation'
+# inference_pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats' 
+inference_pat_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/validation_pats'
+inference_save_dir: '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138_validation'
 bse_codename: 'sheldrake'
 inference_intrapatient_dataset_style: 1 # 1 all data (no SPES), 2 all data (with SPES), 3 ONLY SPES
 inference_hour_dataset_range: kwargs['inference_hour_dataset_range'] = [-1, -1] 

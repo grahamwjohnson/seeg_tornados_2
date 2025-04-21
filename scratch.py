@@ -5,16 +5,16 @@ import glob
 import random
 import pickle
 
-pretrained_pacmap_dir = '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/pacmap/64SecondWindow_64SecondStride/all_pats'
+pretrained_pacmap_dir = '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/pacmap/64SecondWindow_16SecondStride/all_pats'
 pacmap_basename = 'PaCMAP'
 reducer, hdb, xy_lims, plot_axis = manifold_utilities.load_pacmap_objects(pretrained_pacmap_dir, pacmap_basename)
 
 save_dir = '/media/glommy1/tornados/tmp_plots'
 
-file_windowsecs = 1 
-file_stridesecs = 1
+file_windowsecs = 64 
+file_stridesecs = 16
 rewin_windowsecs = 64
-rewin_strideseconds = 1
+rewin_strideseconds = 16
 dummy_dir = f'/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/latent_files/{file_windowsecs}SecondWindow_{file_stridesecs}SecondStride'
 dummy_files = glob.glob(f'{dummy_dir}/*.pkl')
 num_files = len(dummy_files)
@@ -34,9 +34,9 @@ print(f"Rewindowed shape of rewin_logvars: {rewin_logvars.shape}")
 print(f"Rewindowed shape of rewin_mogpreds: {rewin_mogpreds.shape}")
 
 # Just pull out part of file
-ww_means = ww_means[0:32, :]
+# ww_means = ww_means[0:32, :]
 
-predicted_start_idx = int(ww_means.shape[0] * 0.7)
+predicted_start_idx = int(ww_means.shape[0] * 0.8)
 fake_predictions = np.random.rand(ww_means.shape[0]-predicted_start_idx,1024)
 pred_plot_axis = manifold_utilities.plot_pacmap_prediction(save_dir, reducer, hdb, xy_lims, plot_axis, ww_means, predicted_start_idx, fake_predictions)
 
