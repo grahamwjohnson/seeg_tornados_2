@@ -18,14 +18,14 @@ from utilities import utils_functions, manifold_utilities
 if __name__ == "__main__":
 
     # Set to None, otherwise will override all data gathering settings and just run pacmap for the subset of files indicated. 
-    subset_override_dir = '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/latent_files/1SecondWindow_1SecondStride'
-    subset_override_idxs = [1000]
+    subset_override_dir = None # '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/latent_files/1SecondWindow_1SecondStride'
+    subset_override_idxs = [300,301,302,303,304,305]
 
     # if None, will gather files individually 
-    accumulated_data_pickle = None # '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/pacmap/256SecondWindow_256SecondStride/all_pats/allDataGathered_256SecWindow_256SecStride.pkl'  
+    accumulated_data_pickle = None # '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/pacmap/256SecondWindow_256SecondStride/all_pats/allDataGathered_256secWindow_256secStride.pkl'  
     
     # if None, will train a new pacmap
-    pretrained_pacmap_dir = None # '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/pacmap/256SecondWindow_256SecondStride/all_pats'  
+    pretrained_pacmap_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/pacmap/256SecondWindow_256SecondStride/all_pats'  
     pacmap_basename = 'PaCMAP'
 
     if pretrained_pacmap_dir == None: reducer = hdb = xy_lims = []
@@ -37,7 +37,8 @@ if __name__ == "__main__":
     atd_file = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/all_time_data_01092023_112957.csv'
     
     # Which patients to plot
-    parent_dir = f'/media/glommy1/tornados/bse_inference/sheldrake_epoch1138' #_validation'
+    parent_dir = f'/media/glommy1/tornados/bse_inference/sheldrake_epoch1138_validation'
+    # parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45'
     single_pats = [] # ['Spat18'] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats 
         
     # SOURCE DATA
@@ -51,14 +52,14 @@ if __name__ == "__main__":
         file_strideseconds = int(s[1].replace("SecondStride",""))
         
         # Rewindowing data (Must be multiples of original file duration & stride)
-        rewin_windowseconds = 64
+        rewin_windowseconds = 1
         rewin_strideseconds = 1
 
     # Get metadata from preloaded pickle
     elif accumulated_data_pickle != None: 
         s = accumulated_data_pickle.split("/")[-1].split("_")
-        rewin_windowseconds = int(s[1].replace("SecWindow",""))
-        rewin_strideseconds = int(s[2].replace("SecStride.pkl",""))
+        rewin_windowseconds = int(s[1].replace("secWindow",""))
+        rewin_strideseconds = int(s[2].replace("secStride.pkl",""))
 
     # Gather raw data
     else: 
@@ -69,6 +70,8 @@ if __name__ == "__main__":
         # Rewindowing data (Must be multiples of original file duration & stride)
         rewin_windowseconds = 256
         rewin_strideseconds = 256
+
+        subsample_file_factor = 8 # Not re-windowing, subsampled on a whole file level
     
     
     # Create paths and directories for saving dim reduction models and outputs
@@ -77,6 +80,7 @@ if __name__ == "__main__":
     if subset_override_dir != None: pacmap_savedir = f"{pacmap_dir}/file_subset"
     elif single_pats == []: pacmap_savedir = f"{pacmap_dir}/all_pats"
     else: pacmap_savedir = f"{pacmap_dir}/{'_'.join(single_pats)}"
+    if not os.path.exists(pacmap_savedir): os.makedirs(pacmap_savedir)
 
     # HDBSCAN Settings
     HDBSCAN_min_cluster_size = 200
@@ -102,7 +106,7 @@ if __name__ == "__main__":
     # w_FP = 1.
     apply_pca = True # Before PaCMAP
     pacmap_LR = 0.1 # 0.1 #0.05
-    pacmap_NumIters = (100,100,100) # (1500,1500,1500)
+    pacmap_NumIters = (50,50,50) # (1500,1500,1500)
     pacmap_NN = None
     pacmap_MN_ratio = 7 # 7 # 7 #0.5
     pacmap_FP_ratio = 11 # 11 # 11 #2.0
@@ -117,7 +121,7 @@ if __name__ == "__main__":
 
 
     ### IMPORT DATA ###
-    if (subset_override_dir != None) and (accumulated_data_pickle == None): # If override files or gathering raw files
+    if (subset_override_dir != None) or (accumulated_data_pickle == None): # If override files or gathering raw files
         
         if subset_override_dir != None: # File subset override
             print("FILE SUBSET OVERRIDE")
@@ -129,8 +133,9 @@ if __name__ == "__main__":
             else:
                 data_filepaths = [all_dir_files[i] for i in subset_override_idxs]
 
-        else: # Gather data form files
+        else: # Gather data from files
             print("No prelaoded data pickle supplied, gathering files seperately")
+            print(f"Source directory: {source_dir}")
             data_filepaths = [] 
             if single_pats == []: data_filepaths = data_filepaths + glob.glob(source_dir + f'/*.pkl')
             else: # Get all of the patients listing
@@ -138,6 +143,15 @@ if __name__ == "__main__":
                 for j in range(num_single_pats):
                     pat_curr = single_pats[j]
                     data_filepaths = data_filepaths + glob.glob(source_dir + f'/{single_pats[j]}*.pkl')
+
+            # Subsample files (to fit in RAM)
+            if subsample_file_factor > 1:
+                print(f"Subsampling files by {subsample_file_factor}")
+                random.shuffle(data_filepaths)
+                data_filepaths = data_filepaths[::subsample_file_factor]
+            else:
+                print("No file subsampling")
+
             
             assert (data_filepaths[0].split("/")[-1].split("_")[-1] == f"{file_strideseconds}secStride.pkl") & (data_filepaths[0].split("/")[-1].split("_")[-2] == f"{file_windowseconds}secWindow") # Double check window and stride are correct based on file naming [HARDCODED]
         
@@ -150,9 +164,9 @@ if __name__ == "__main__":
         ww_means_sentinel = latent_data_fromfile['windowed_weighted_means']
         ww_logvars_sentinel = latent_data_fromfile['windowed_weighted_logvars']
         w_mogpreds_sentinel = latent_data_fromfile['windowed_mogpreds']
-        ww_means_allfiles = np.zeros([len(data_filepaths), ww_means_sentinel.shape[0], ww_means_sentinel.shape[1]], dtype=np.float32)
-        ww_logvars_allfiles = np.zeros([len(data_filepaths), ww_logvars_sentinel.shape[0], ww_logvars_sentinel.shape[1]], dtype=np.float32)
-        w_mogpreds_allfiles = np.zeros([len(data_filepaths), w_mogpreds_sentinel.shape[0], w_mogpreds_sentinel.shape[1]], dtype=np.float32)
+        ww_means_allfiles = np.zeros([len(data_filepaths), ww_means_sentinel.shape[0], ww_means_sentinel.shape[1]], dtype=np.float16)
+        ww_logvars_allfiles = np.zeros([len(data_filepaths), ww_logvars_sentinel.shape[0], ww_logvars_sentinel.shape[1]], dtype=np.float16)
+        w_mogpreds_allfiles = np.zeros([len(data_filepaths), w_mogpreds_sentinel.shape[0], w_mogpreds_sentinel.shape[1]], dtype=np.float16)
         print("Loading all BUILD latent data from files")
         latent_data_fromfile = [''] * len(data_filepaths) # Load all of the data into system RAM - list of [window, latent_dim]
         for i in range(len(data_filepaths)):
@@ -187,7 +201,8 @@ if __name__ == "__main__":
 
         # Save the gathered data to save time for re-plotting
         if (subset_override_dir == None) and (accumulated_data_pickle == None):
-            output_obj = open(f"{pacmap_savedir}/allDataGathered_{rewin_windowseconds}secWindow_{rewin_strideseconds}secStride.pkl", 'wb')
+            savepath = f"{pacmap_savedir}/allDataGathered_subsampleFileFactor{subsample_file_factor}_{rewin_windowseconds}secWindow_{rewin_strideseconds}secStride.pkl"
+            output_obj = open(savepath, 'wb')
             save_dict = {
                 'rewin_means_allfiles': rewin_means_allfiles,
                 'rewin_logvars_allfiles': rewin_logvars_allfiles,
@@ -197,6 +212,7 @@ if __name__ == "__main__":
                 'build_pat_ids_list': build_pat_ids_list}
             pickle.dump(save_dict, output_obj)
             output_obj.close()
+            print(f"Gathered data saved to one big pickle: {savepath}")
 
     else: # Get metadata from preloaded pickle
         print("Preloaded single data pickle supplied for all data")

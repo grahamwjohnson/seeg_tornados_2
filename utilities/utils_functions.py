@@ -1095,8 +1095,8 @@ def rewindow_data_filewise(
     # Calculate the number of new windows.  Handle the edge case where the last new window extends
     # beyond the available original windows.
     new_windows = (original_windows * file_stridesecs - (rewin_windowsecs - rewin_strideseconds)) // rewin_strideseconds
-    if (original_windows * file_stridesecs) % rewin_strideseconds != 0:
-        new_windows += 1
+    # if (original_windows * file_stridesecs) % rewin_strideseconds != 0:
+    #     new_windows += 1
     new_windows = max(0, new_windows)  # Ensure new_windows is not negative
 
     # Initialize the output arrays.

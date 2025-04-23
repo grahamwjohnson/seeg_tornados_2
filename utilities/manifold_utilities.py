@@ -580,6 +580,8 @@ def kohonen_subfunction_pytorch(
     win_sec, 
     stride_sec, 
     savedir,
+    subsample_file_factor,
+    som_pca_init,
     som_batch_size,
     som_lr,
     som_lr_epoch_decay,
@@ -588,15 +590,10 @@ def kohonen_subfunction_pytorch(
     som_epochs,
     som_gridsize,
     som_sigma_min,
-    HDBSCAN_min_cluster_size,
-    HDBSCAN_min_samples,
     plot_preictal_color_sec,
     plot_postictal_color_sec,
-    interictal_contour=False,
-    verbose=True,
     som_precomputed_path = None,
     som_object = None,
-    premade_HDBSCAN = [],
     som_device = 0,
     **kwargs):
 
@@ -641,12 +638,14 @@ def kohonen_subfunction_pytorch(
         som = load_som_model(som_precomputed_path, som_device)
     
     else: # Make new Kohonen SOM object and train it
+        grid_size = (som_gridsize, som_gridsize)
         print(f"Training brand new SOM: gridsize:{som_gridsize}, lr:{som_lr} w/ {som_lr_epoch_decay} decay per epoch, sigma:{som_sigma} w/ {som_sigma_epoch_decay} decay per epoch")     
         som = SOM(grid_size=grid_size, input_dim=latent_input.shape[1], batch_size=som_batch_size, lr=som_lr, 
-                    lr_epoch_decay=som_lr_epoch_decay, sigma=som_sigma, sigma_epoch_decay=som_sigma_epoch_decay, sigma_min=som_sigma_min, device=som_device)
+                    lr_epoch_decay=som_lr_epoch_decay, sigma=som_sigma, sigma_epoch_decay=som_sigma_epoch_decay, sigma_min=som_sigma_min, device=som_device,
+                    init_pca=som_pca_init, data_for_pca=latent_input)
         # Train SOM
         som.train(latent_input, num_epochs=som_epochs)
-        savepath = savedir + "/som_state_dict.pt"
+        savepath = savedir + f"/GPU{som_device}_SOM_ObjectDict_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.pt"
         save_som_model(som, grid_size=som_gridsize, input_dim=latent_input.shape[1], 
             lr=som_lr, sigma=som_sigma, lr_epoch_decay=som_lr_epoch_decay, sigma_epoch_decay=som_sigma_epoch_decay, sigma_min=som_sigma_min,
             epoch=som_epochs, batch_size=som_batch_size, save_path=savepath)
@@ -773,7 +772,7 @@ def kohonen_subfunction_pytorch(
 
     # EXPORT FIGURE
     print("Exporting Kohonen to JPG")
-    savename_jpg = savedir + f"/SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
+    savename_jpg = savedir + f"/GPU{som_device}_SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
     pl.savefig(savename_jpg, dpi=600)
 
     # TODO Upload to WandB
@@ -802,7 +801,7 @@ def kohonen_subfunction_pytorch(
     ax_3d_3.set_zlabel('Density')
     ax_3d_3.view_init(elev=30, azim=45)  # Isometric view +45
     print("Exporting 3D Kohonen to JPG")
-    savename_jpg = savedir + f"/3Dpreictal_SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
+    savename_jpg = savedir + f"/GPU{som_device}_3Dpreictal_SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
     pl.savefig(savename_jpg, dpi=600)
     pl.close(fig_3d)
 
@@ -828,7 +827,7 @@ def kohonen_subfunction_pytorch(
     ax_3d_3.set_zlabel('Density')
     ax_3d_3.view_init(elev=30, azim=45)  # Isometric view +45
     print("Exporting 3D Rescaled Kohonen to JPG")
-    savename_jpg = savedir + f"/3DpreictalRescaled_SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
+    savename_jpg = savedir + f"/GPU{som_device}_3DpreictalRescaled_SOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_input.shape[0]}_dims{latent_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
     pl.savefig(savename_jpg, dpi=600)
     pl.close(fig_3d)
 
@@ -952,6 +951,8 @@ def get_pat_seiz_datetimes(
     unknown_bool=True, 
     non_electro_bool=False,
     artifact_bool=False,
+    stim_fas_bool=False,
+    stim_fias_bool=False,
     **kwargs
     ):
 
@@ -965,8 +966,8 @@ def get_pat_seiz_datetimes(
     
     # Look for each seizure type individually & delete if not desired
     # seiz_type_list = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Subclinical', 'Focal, unknown awareness', 'Unknown', 'Non-electrographic']
-    seiz_type_list = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Subclinical', 'Focal unknown awareness', 'Unknown', 'Non-electrographic', 'Artifact']
-    delete_seiz_type_bool_list = [FBTC_bool, FIAS_bool, FAS_to_FIAS_bool, FAS_bool, subclinical_bool, focal_unknown_bool, unknown_bool, non_electro_bool, artifact_bool]
+    seiz_type_list = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Subclinical', 'Focal unknown awareness', 'Unknown', 'Non-electrographic', 'Artifact', 'Stim-FAS', 'Stim-FIAS']
+    delete_seiz_type_bool_list = [FBTC_bool, FIAS_bool, FAS_to_FIAS_bool, FAS_bool, subclinical_bool, focal_unknown_bool, unknown_bool, non_electro_bool, artifact_bool, stim_fas_bool, stim_fias_bool]
     for i in range(0,len(seiz_type_list)):
         if delete_seiz_type_bool_list[i]==False:
             find_str = seiz_type_list[i]
