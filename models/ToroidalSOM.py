@@ -135,14 +135,22 @@ class ToroidalSOM(nn.Module):
         weight_update = torch.sum(delta, dim=0) / batch_size
         self.weights += weight_update
 
-    def train(self, data_in, num_epochs):
+    def sample_posterior(self, batch_means, batch_logvars):
+        # Add noise equivelant to magnitude of logvar to estimate uncertainty
+        std = torch.exp(0.5 * batch_logvars)  # Standard deviation
+        eps = torch.randn_like(std)     # Sample from a standard normal distribution
+        z = batch_means + eps * std            # Reparameterized sample
+        return z
+
+    def train(self, means_in, logvars_in, num_epochs):
         """Train the SOM on the input data."""
-        data_tensor = torch.tensor(data_in, dtype=torch.float32, device=self.device)
-        num_samples = data_tensor.shape[0]
+        means_tensor = torch.tensor(means_in, dtype=torch.float32, device=self.device)
+        logvars_tensor = torch.tensor(logvars_in, dtype=torch.float32, device=self.device)
+        num_samples = means_tensor.shape[0]
         indices = torch.arange(num_samples, device=self.device)
 
         if self.init_pca and self.data_for_pca is None:
-            self.data_for_pca = data_in
+            self.data_for_pca = means_in
             self.weights = self._initialize_weights()
 
         for epoch in range(num_epochs):
@@ -152,19 +160,21 @@ class ToroidalSOM(nn.Module):
             # Train in batches
             for batch_start in range(0, num_samples, self.batch_size):
                 batch_indices = shuffled_indices[batch_start:batch_start + self.batch_size]
-                batch = data_tensor[batch_indices]
+                batch_means = means_tensor[batch_indices]
+                batch_logvars = logvars_tensor[batch_indices]
+                batch_sampled = self.sample_posterior(batch_means, batch_logvars)
 
                 # Find BMUs
-                bmu_rows, bmu_cols = self.find_bmu(batch)
+                bmu_rows, bmu_cols = self.find_bmu(batch_sampled)
 
                 # Update weights
-                self.update_weights(batch, bmu_rows, bmu_cols)
+                self.update_weights(batch_sampled, bmu_rows, bmu_cols)
 
                 # Progress tracking
                 batch_num = batch_start // self.batch_size + 1
                 total_batches = math.ceil(num_samples / self.batch_size)
                 print(f"\rToroidal SOM Epoch: {epoch+1}/{num_epochs}, "
-                      f"Batch: {batch_num}/{total_batches}, "
+                      f"Batch: {batch_num}/{total_batches} [Batch Size: {self.batch_size}], "
                       f"Iter:{batch_start}/{shuffled_indices.shape[0]-1}, "
                       f"Sigma: {self.sigma:.4f}, LR: {self.lr:.6f}", end="")
 
@@ -182,6 +192,6 @@ class ToroidalSOM(nn.Module):
 
     def project_data(self, data):
         """Project data onto the SOM grid and return grid positions."""
-        data_tensor = torch.tensor(data, dtype=torch.float32, device=self.device)
-        bmu_rows, bmu_cols = self.find_bmu(data_tensor)
+        data = torch.tensor(data, dtype=torch.float32, device=self.device)
+        bmu_rows, bmu_cols = self.find_bmu(data)
         return bmu_rows.cpu().numpy(), bmu_cols.cpu().numpy()

@@ -936,6 +936,7 @@ def rewindow_data(
     file_stridesecs: int,
     rewin_windowsecs: int,
     rewin_strideseconds: int,
+    reduction: str = 'sum',  # 'sum', 'mean', 'cat'
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Rewindows sequential data (means, logvars, mogpreds) from an original
@@ -1014,14 +1015,25 @@ def rewindow_data(
 
         # Average the data from the original windows to create the new window.
         if valid_original_windows_means.size > 0: # Check to avoid errors when valid_original_windows is empty.
-            rewin_means[i, :] = np.mean(valid_original_windows_means, axis=0)
-            rewin_logvars[i, :] = np.mean(valid_original_windows_logvars, axis=0)  # Use means for logvars as well
-            rewin_mogpreds[i, :] = np.mean(valid_original_windows_mogpreds, axis=0)
+            if reduction == 'mean':
+                rewin_means[i, :] = np.mean(valid_original_windows_means, axis=0)
+                rewin_logvars[i, :] = np.mean(valid_original_windows_logvars, axis=0)  # Use means for logvars as well
+                rewin_mogpreds[i, :] = np.mean(valid_original_windows_mogpreds, axis=0)
+            elif reduction == 'sum':
+                rewin_means[i, :] = np.sum(valid_original_windows_means, axis=0)
+                rewin_logvars[i, :] = np.sum(valid_original_windows_logvars, axis=0)  # Use means for logvars as well
+                rewin_mogpreds[i, :] = np.sum(valid_original_windows_mogpreds, axis=0)     
+            elif reduction == 'cat':
+                raise Exception(f"reduction='{reduction} not coded up, will require larger variable initialization")
+                rewin_means[i, :] = np.concatenate(valid_original_windows_means, axis=0)
+                rewin_logvars[i, :] = np.concatenate(valid_original_windows_logvars, axis=0)  # Use means for logvars as well
+                rewin_mogpreds[i, :] = np.concatenate(valid_original_windows_mogpreds, axis=0)     
+            else:
+                raise Exception(f"reduction='{reduction} is not a valid choice")
         else:
             rewin_means[i, :] = 0
             rewin_logvars[i, :] = 0
             rewin_mogpreds[i, :] = 0
-
 
     return rewin_means, rewin_logvars, rewin_mogpreds
 

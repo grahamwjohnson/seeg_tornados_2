@@ -12,11 +12,10 @@ if __name__ == "__main__":
     subset_override_idxs = [300,301,302,303,304,305]
 
     # if None, will gather files individually 
-    accumulated_data_pickle = None #'/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13/kohonen/4SecondWindow_64SecondStride/all_pats/allDataGathered_subsampleFileFactor1_4secWindow_64secStride.pkl'
-    # accumulated_data_pickle = '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/pacmap/256SecondWindow_256SecondStride/all_pats/allDataGathered_subsampleFileFactor1_256secWindow_256secStride.pkl'
+    accumulated_data_pickle = None 
 
     # if 'som_precomputed_path' is None, will train a new SOM, otherwise will run data through pretrained Kohonen weights to make Kohonen map. 
-    som_precomputed_path = None # '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/4SecondWindow_64SecondStride/all_pats/GPU1_ToroidalSOM_ObjectDict_smoothsec4_Stride64_subsampleFileFactor64_preictalSec14400_gridsize64_lr2with1.0decay_sigma44.8with0.9761303581759546decay_numfeatures7088_dims1024_batchsize256_epochs100.pt'  
+    som_precomputed_path = None # '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_64SecondStride/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride64_subsampleFileFactor64_preictalSec14400_gridsize64_lr2with0.9930924954370359decay_sigma32.0with0.9616350847573034decay_numfeatures6645_dims1024_batchsize32_epochs100.pt'  
     
     FS = 512 # Currently hardcoded in many places
 
@@ -60,39 +59,41 @@ if __name__ == "__main__":
         source_dir = f'{parent_dir}/latent_files/{file_windowseconds}SecondWindow_{file_strideseconds}SecondStride'
 
         # Rewindowing data (Must be multiples of original file duration & stride)
-        rewin_windowseconds = 4
-        rewin_strideseconds = 64
+        rewin_windowseconds = 32
+        rewin_strideseconds = 32
 
-        subsample_file_factor = 64 # Not re-windowing, subsampled on a whole file level
+        subsample_file_factor = 32 # Not re-windowing, subsampled on a whole file level
 
 
     # Plotting Settings
-    plot_preictal_color_sec = 60*60*4 #60*60*4
+    plot_preictal_color_sec = 60*60*1 #60*60*4
     plot_postictal_color_sec = 0 #60*10 #60*60*4
 
     # Kohonen Settings [GPU 0]
     som_pca_init = False
+    reduction = 'mean' # Keep at mean because currently using reparam in SOM training
     som_device = 0 # GPU
     som_epochs = 100
-    som_batch_size = 256
+    som_batch_size = 32
     som_lr = 0.5
-    som_lr_min = 0.001
+    som_lr_min = 0.1 # 0.05
     som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
-    som_gridsize = 64 # 25
-    som_sigma = 0.5 * som_gridsize 
-    som_sigma_min = 1 # 0.01 * som_gridsize 
+    som_gridsize = 32 
+    som_sigma = 0.8 * som_gridsize 
+    som_sigma_min = 1.5 # 0.01 * som_gridsize 
     som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
 
-    # Kohonen Settings [GPU 1]
+    # # Kohonen Settings [GPU 1]
     # som_pca_init = False
+    # reduction = 'mean' # Keep at mean because currently using reparam in SOM training
     # som_device = 1 # GPU
     # som_epochs = 100
-    # som_batch_size = 256
-    # som_lr = 2
+    # som_batch_size = 32
+    # som_lr = 0.5
     # som_lr_min = 0.1
     # som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
-    # som_gridsize = 64 # 25
-    # som_sigma = 0.7 * som_gridsize 
+    # som_gridsize = 64 
+    # som_sigma = 0.8 * som_gridsize 
     # som_sigma_min = 1.5 # 0.01 * som_gridsize 
     # som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
     
@@ -102,7 +103,7 @@ if __name__ == "__main__":
     kwargs['seiz_plot_mult'] = [1,       3,     5,              7,    9,                           11,        13,            15] # Assuming increasing order, NOTE: base value of 3 is added in the code
 
     # Create paths and directories for saving dim reduction models and outputs
-    kohonen_dir = f"{parent_dir}/kohonen/{rewin_windowseconds}SecondWindow_{rewin_strideseconds}SecondStride"
+    kohonen_dir = f"{parent_dir}/kohonen/{rewin_windowseconds}SecondWindow_{rewin_strideseconds}SecondStride_Reduction{reduction}"
     if not os.path.exists(kohonen_dir): os.makedirs(kohonen_dir)
     if subset_override_dir != None: kohonen_savedir = f"{kohonen_dir}/file_subset"
     elif single_pats == []: kohonen_savedir = f"{kohonen_dir}/all_pats"
@@ -164,10 +165,13 @@ if __name__ == "__main__":
                 raise Exception("ERROR: desired window duration or stride is smaller than raw file duration or stride")
             else:
                 rewin_means_sentinel, rewin_logvars_sentinel, rewin_mogpreds_sentinel = utils_functions.rewindow_data(
-                    ww_means_sentinel, ww_logvars_sentinel, w_mogpreds_sentinel, file_windowseconds, file_strideseconds, rewin_windowseconds, rewin_strideseconds)
+                    ww_means_sentinel, ww_logvars_sentinel, w_mogpreds_sentinel, 
+                    file_windowseconds, file_strideseconds, rewin_windowseconds, rewin_strideseconds,
+                    reduction=reduction)
                 print(f"Rewindowed shape of rewin_means: {rewin_means_sentinel.shape}")
                 print(f"Rewindowed shape of rewin_logvars: {rewin_logvars_sentinel.shape}")
                 print(f"Rewindowed shape of rewin_mogpreds: {rewin_mogpreds_sentinel.shape}")
+                print(f"REDUCTION: {reduction}")
         else:
             rewin_means_sentinel = ww_means_sentinel
             rewin_logvars_sentinel = ww_logvars_sentinel
@@ -179,7 +183,6 @@ if __name__ == "__main__":
         ww_logvars_allfiles = np.zeros([len(data_filepaths), rewin_logvars_sentinel.shape[0], rewin_logvars_sentinel.shape[1]], dtype=np.float32)
         w_mogpreds_allfiles = np.zeros([len(data_filepaths), rewin_mogpreds_sentinel.shape[0], rewin_mogpreds_sentinel.shape[1]], dtype=np.float32)
         print("Loading all BUILD latent data from files")
-        latent_data_fromfile = [''] * len(data_filepaths) # Load all of the data into system RAM - list of [window, latent_dim]
         for i in range(len(data_filepaths)):
             sys.stdout.write(f"\rLoading Pickles: {i}/{len(data_filepaths)}        ") 
             sys.stdout.flush() 
@@ -190,7 +193,7 @@ if __name__ == "__main__":
                 w_mogpreds = latent_data_fromfile['windowed_mogpreds']
                 if (file_windowseconds != rewin_windowseconds) or (file_strideseconds != rewin_strideseconds):
                     ww_means_allfiles[i, :, :], ww_logvars_allfiles[i, :, :], w_mogpreds_allfiles[i, :, :] = utils_functions.rewindow_data(
-                        ww_means, ww_logvars, w_mogpreds, file_windowseconds, file_strideseconds, rewin_windowseconds, rewin_strideseconds)
+                        ww_means, ww_logvars, w_mogpreds, file_windowseconds, file_strideseconds, rewin_windowseconds, rewin_strideseconds, reduction=reduction)
                 else: # No re-windowing needed
                     ww_means_allfiles[i, :, :] = ww_means
                     ww_logvars_allfiles[i, :, :] = ww_logvars
@@ -222,63 +225,23 @@ if __name__ == "__main__":
         build_stop_datetimes = data_loaded['build_stop_datetimes']
         build_pat_ids_list = data_loaded['build_pat_ids_list']
 
-    # ### Run the Kohonen / Self Organizing Maps (SOM) Algorithm
-    # axes, som = manifold_utilities.kohonen_subfunction_pytorch(
-    #     atd_file = atd_file,
-    #     pat_ids_list=build_pat_ids_list,
-    #     latent_data_windowed=ww_means_allfiles, # Just the means for kohonen
-    #     start_datetimes_epoch=build_start_datetimes,  
-    #     stop_datetimes_epoch=build_stop_datetimes,
-    #     win_sec=rewin_windowseconds, 
-    #     stride_sec=rewin_strideseconds, 
-    #     savedir=kohonen_savedir,
-    #     subsample_file_factor=subsample_file_factor,
-    #     som_pca_init=som_pca_init,
-    #     som_precomputed_path=som_precomputed_path,
-    #     som_device=som_device,
-    #     som_batch_size=som_batch_size,
-    #     som_lr=som_lr,
-    #     som_epochs=som_epochs,
-    #     som_gridsize=som_gridsize,
-    #     som_lr_epoch_decay=som_lr_epoch_decay,
-    #     som_sigma=som_sigma,
-    #     som_sigma_epoch_decay=som_sigma_epoch_decay,
-    #     som_sigma_min=som_sigma_min,
-    #     FS = FS,
-    #     plot_preictal_color_sec = plot_preictal_color_sec,
-    #     plot_postictal_color_sec = plot_postictal_color_sec,
-    #     **kwargs)
-
-    # manifold_utilities.spherical_kohonen_subfunction_pytorch(
-    #     atd_file = atd_file,
-    #     pat_ids_list=build_pat_ids_list,
-    #     latent_data_windowed=ww_means_allfiles, # Just the means for kohonen
-    #     start_datetimes_epoch=build_start_datetimes,  
-    #     stop_datetimes_epoch=build_stop_datetimes,
-    #     win_sec=rewin_windowseconds, 
-    #     stride_sec=rewin_strideseconds, 
-    #     savedir=kohonen_savedir,
-    #     subsample_file_factor=subsample_file_factor,
-    #     som_pca_init=som_pca_init,
-    #     som_precomputed_path=som_precomputed_path,
-    #     som_device=som_device,
-    #     som_batch_size=som_batch_size,
-    #     som_lr=som_lr,
-    #     som_epochs=som_epochs,
-    #     som_gridsize=som_gridsize,
-    #     som_lr_epoch_decay=som_lr_epoch_decay,
-    #     som_sigma=som_sigma,
-    #     som_sigma_epoch_decay=som_sigma_epoch_decay,
-    #     som_sigma_min=som_sigma_min,
-    #     FS = FS,
-    #     plot_preictal_color_sec = plot_preictal_color_sec,
-    #     plot_postictal_color_sec = plot_postictal_color_sec,
-    #     **kwargs)
+    # Print broad statistics about dataset
+    print(f"Dataset general statistics:\n"
+          f"Means: Mean {np.mean(ww_means_allfiles):.2f}\n"
+          f"Means: Std {np.std(ww_means_allfiles):.2f}\n"
+          f"Means: Max {np.max(ww_means_allfiles):.2f}\n"
+          f"Means: Min {np.min(ww_means_allfiles):.2f}\n"
+          f"Logvars: Mean {np.mean(ww_logvars_allfiles):.2f}\n"
+          f"Logvars: Std {np.std(ww_logvars_allfiles):.2f}\n"
+          f"Logvars: Max {np.max(ww_logvars_allfiles):.2f}\n"
+          f"Logvars: Min {np.min(ww_logvars_allfiles):.2f}"
+          )
 
     manifold_utilities.toroidal_kohonen_subfunction_pytorch(
         atd_file = atd_file,
         pat_ids_list=build_pat_ids_list,
-        latent_data_windowed=ww_means_allfiles, # Just the means for kohonen
+        latent_means_windowed=ww_means_allfiles,
+        latent_logvars_windowed=ww_logvars_allfiles,
         start_datetimes_epoch=build_start_datetimes,  
         stop_datetimes_epoch=build_stop_datetimes,
         win_sec=rewin_windowseconds, 

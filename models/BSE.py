@@ -1063,7 +1063,7 @@ class BSE(nn.Module):
         encoder_mogpreds: [batch, components] - Component logits for the MoG posterior.
         gumbel_softmax_temperature: Temperature for Gumbel-Softmax.
 
-        Returns:
+        Returns: 
             z: [batch, latent_dim] - Sampled latent variable.
             component_weights: [batch, components] - Soft assignments of each sample to the MoG components.
         """
