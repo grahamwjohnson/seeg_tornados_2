@@ -637,7 +637,7 @@ def toroidal_kohonen_subfunction_pytorch(
 
         # Train and save SOM
         som.train(latent_means_input, latent_logvars_input, num_epochs=som_epochs)
-        savepath = savedir + f"/GPU{som_device}_ToroidalSOM_ObjectDict_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.pt"
+        savepath = savedir + f"/GPU{som_device}_ToroidalSOM_ObjectDict_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.pt"
         torch.save({
             'model_state_dict': som.state_dict(),
             'weights': som.weights,
@@ -826,7 +826,7 @@ def toroidal_kohonen_subfunction_pytorch(
 
             # Export 2D figure
             print("Exporting Toroidal SOM 2D visualizations to JPG")
-            savename_jpg_2d = savedir + f"/GPU{som_device}_2DPlots_ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_2D.jpg"
+            savename_jpg_2d = savedir + f"/GPU{som_device}_2DPlots_ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_2D.jpg"
             plt.savefig(savename_jpg_2d, dpi=600)
 
 
@@ -895,7 +895,7 @@ def toroidal_kohonen_subfunction_pytorch(
 
             # Export 3D figure
             print("Exporting Toroidal SOM 3D visualizations to JPG")
-            savename_jpg_3d = savedir + f"/GPU{som_device}_3DPlots_ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_3D.jpg"
+            savename_jpg_3d = savedir + f"/GPU{som_device}_3DPlots_ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_3D.jpg"
             plt.savefig(savename_jpg_3d, dpi=600)
 
 
@@ -967,7 +967,7 @@ def toroidal_kohonen_subfunction_pytorch(
 
             # Export Toroid figure
             print("Exporting Toroidal SOM visualizations projected onto a Toroid to JPG")
-            savename_jpg_toroid = savedir + f"/GPU{som_device}_ToroidPlots_ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay}decay_sigma{som_sigma}with{som_sigma_epoch_decay}decay_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_TOROID_3D.jpg"
+            savename_jpg_toroid = savedir + f"/GPU{som_device}_ToroidPlots_ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_TOROID_3D.jpg"
             plt.savefig(savename_jpg_toroid, dpi=600)
             
             break  # Success, exit the loop

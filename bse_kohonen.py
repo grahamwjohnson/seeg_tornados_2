@@ -62,7 +62,7 @@ if __name__ == "__main__":
         rewin_windowseconds = 32
         rewin_strideseconds = 32
 
-        subsample_file_factor = 32 # Not re-windowing, subsampled on a whole file level
+        subsample_file_factor = 8 # Not re-windowing, subsampled on a whole file level
 
 
     # Plotting Settings
@@ -70,32 +70,32 @@ if __name__ == "__main__":
     plot_postictal_color_sec = 0 #60*10 #60*60*4
 
     # Kohonen Settings [GPU 0]
-    som_pca_init = False
-    reduction = 'mean' # Keep at mean because currently using reparam in SOM training
-    som_device = 0 # GPU
-    som_epochs = 100
-    som_batch_size = 32
-    som_lr = 0.5
-    som_lr_min = 0.1 # 0.05
-    som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
-    som_gridsize = 32 
-    som_sigma = 0.8 * som_gridsize 
-    som_sigma_min = 1.5 # 0.01 * som_gridsize 
-    som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
-
-    # # Kohonen Settings [GPU 1]
     # som_pca_init = False
     # reduction = 'mean' # Keep at mean because currently using reparam in SOM training
-    # som_device = 1 # GPU
-    # som_epochs = 100
+    # som_device = 0 # GPU
+    # som_epochs = 1000
     # som_batch_size = 32
-    # som_lr = 0.5
-    # som_lr_min = 0.1
+    # som_lr = 0.5  # 0.5 to 0.01 was doing well
+    # som_lr_min = 0.05 
     # som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
-    # som_gridsize = 64 
-    # som_sigma = 0.8 * som_gridsize 
-    # som_sigma_min = 1.5 # 0.01 * som_gridsize 
+    # som_gridsize = 32 
+    # som_sigma = 0.5 * som_gridsize 
+    # som_sigma_min = 0.5 # 0.01 * som_gridsize 
     # som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
+
+    # # Kohonen Settings [GPU 1]
+    som_pca_init = False
+    reduction = 'mean' # Keep at mean because currently using reparam in SOM training
+    som_device = 1 # GPU
+    som_epochs = 1000
+    som_batch_size = 32
+    som_lr = 0.5
+    som_lr_min = 0.05
+    som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
+    som_gridsize = 64 
+    som_sigma = 0.5 * som_gridsize 
+    som_sigma_min = 0.5 # 0.01 * som_gridsize 
+    som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
     
     # Plotting variables
     kwargs = {}
