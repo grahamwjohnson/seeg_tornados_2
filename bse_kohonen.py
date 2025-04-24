@@ -12,13 +12,11 @@ if __name__ == "__main__":
     subset_override_idxs = [300,301,302,303,304,305]
 
     # if None, will gather files individually 
-    accumulated_data_pickle = None 
+    accumulated_data_pickle = None #'/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13/kohonen/4SecondWindow_64SecondStride/all_pats/allDataGathered_subsampleFileFactor1_4secWindow_64secStride.pkl'
     # accumulated_data_pickle = '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/pacmap/256SecondWindow_256SecondStride/all_pats/allDataGathered_subsampleFileFactor1_256secWindow_256secStride.pkl'
-    # accumulated_data_pickle = '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/kohonen/256SecondWindow_256SecondStride/all_pats/allDataGathered_subsampleFileFactor16_256secWindow_256secStride.pkl'
-    # accumulated_data_pickle = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/256SecondWindow_256SecondStride/all_pats/allDataGathered_subsampleFileFactor16_256secWindow_256secStride.pkl'  
 
     # if 'som_precomputed_path' is None, will train a new SOM, otherwise will run data through pretrained Kohonen weights to make Kohonen map. 
-    som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/4SecondWindow_32SecondStride/all_pats/GPU1_3DpreictalRescaled_SOM_latent_smoothsec4_Stride32_subsampleFileFactor4_preictalSec14400_gridsize64_lr2with1.0decay_sigma64.0with0.954992586021436decay_numfeatures226752_dims1024_batchsize256_epochs100.pt'  
+    som_precomputed_path = None # '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/4SecondWindow_64SecondStride/all_pats/GPU1_ToroidalSOM_ObjectDict_smoothsec4_Stride64_subsampleFileFactor64_preictalSec14400_gridsize64_lr2with1.0decay_sigma44.8with0.9761303581759546decay_numfeatures7088_dims1024_batchsize256_epochs100.pt'  
     
     FS = 512 # Currently hardcoded in many places
 
@@ -26,8 +24,8 @@ if __name__ == "__main__":
     atd_file = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/all_time_data_01092023_112957.csv'
     
     # Which patients to plot
-    # parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45'
-    parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13'
+    parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45'
+    # parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13'
     single_pats = [] # ['Spat18'] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats 
         
     save_loaded_data = True # Will save one big pickle after all files collected
@@ -65,37 +63,37 @@ if __name__ == "__main__":
         rewin_windowseconds = 4
         rewin_strideseconds = 64
 
-        subsample_file_factor = 1 # Not re-windowing, subsampled on a whole file level
+        subsample_file_factor = 64 # Not re-windowing, subsampled on a whole file level
 
 
     # Plotting Settings
     plot_preictal_color_sec = 60*60*4 #60*60*4
     plot_postictal_color_sec = 0 #60*10 #60*60*4
 
-    # Kohonen Settings
+    # Kohonen Settings [GPU 0]
     som_pca_init = False
     som_device = 0 # GPU
     som_epochs = 100
     som_batch_size = 256
-    som_lr = 2
-    som_lr_min = 2
+    som_lr = 0.5
+    som_lr_min = 0.001
     som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
     som_gridsize = 64 # 25
-    som_sigma = 1.0 * som_gridsize 
-    som_sigma_min = 0.01 * som_gridsize 
+    som_sigma = 0.5 * som_gridsize 
+    som_sigma_min = 1 # 0.01 * som_gridsize 
     som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
 
-    # Kohonen Settings
+    # Kohonen Settings [GPU 1]
     # som_pca_init = False
     # som_device = 1 # GPU
     # som_epochs = 100
     # som_batch_size = 256
     # som_lr = 2
-    # som_lr_min = 2
+    # som_lr_min = 0.1
     # som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
     # som_gridsize = 64 # 25
-    # som_sigma = 1.0 * som_gridsize 
-    # som_sigma_min = 0.01 * som_gridsize 
+    # som_sigma = 0.7 * som_gridsize 
+    # som_sigma_min = 1.5 # 0.01 * som_gridsize 
     # som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
     
     # Plotting variables
@@ -224,9 +222,60 @@ if __name__ == "__main__":
         build_stop_datetimes = data_loaded['build_stop_datetimes']
         build_pat_ids_list = data_loaded['build_pat_ids_list']
 
+    # ### Run the Kohonen / Self Organizing Maps (SOM) Algorithm
+    # axes, som = manifold_utilities.kohonen_subfunction_pytorch(
+    #     atd_file = atd_file,
+    #     pat_ids_list=build_pat_ids_list,
+    #     latent_data_windowed=ww_means_allfiles, # Just the means for kohonen
+    #     start_datetimes_epoch=build_start_datetimes,  
+    #     stop_datetimes_epoch=build_stop_datetimes,
+    #     win_sec=rewin_windowseconds, 
+    #     stride_sec=rewin_strideseconds, 
+    #     savedir=kohonen_savedir,
+    #     subsample_file_factor=subsample_file_factor,
+    #     som_pca_init=som_pca_init,
+    #     som_precomputed_path=som_precomputed_path,
+    #     som_device=som_device,
+    #     som_batch_size=som_batch_size,
+    #     som_lr=som_lr,
+    #     som_epochs=som_epochs,
+    #     som_gridsize=som_gridsize,
+    #     som_lr_epoch_decay=som_lr_epoch_decay,
+    #     som_sigma=som_sigma,
+    #     som_sigma_epoch_decay=som_sigma_epoch_decay,
+    #     som_sigma_min=som_sigma_min,
+    #     FS = FS,
+    #     plot_preictal_color_sec = plot_preictal_color_sec,
+    #     plot_postictal_color_sec = plot_postictal_color_sec,
+    #     **kwargs)
 
-    ### Run the Kohonen / Self Organizing Maps (SOM) Algorithm
-    axes, som = manifold_utilities.kohonen_subfunction_pytorch(
+    # manifold_utilities.spherical_kohonen_subfunction_pytorch(
+    #     atd_file = atd_file,
+    #     pat_ids_list=build_pat_ids_list,
+    #     latent_data_windowed=ww_means_allfiles, # Just the means for kohonen
+    #     start_datetimes_epoch=build_start_datetimes,  
+    #     stop_datetimes_epoch=build_stop_datetimes,
+    #     win_sec=rewin_windowseconds, 
+    #     stride_sec=rewin_strideseconds, 
+    #     savedir=kohonen_savedir,
+    #     subsample_file_factor=subsample_file_factor,
+    #     som_pca_init=som_pca_init,
+    #     som_precomputed_path=som_precomputed_path,
+    #     som_device=som_device,
+    #     som_batch_size=som_batch_size,
+    #     som_lr=som_lr,
+    #     som_epochs=som_epochs,
+    #     som_gridsize=som_gridsize,
+    #     som_lr_epoch_decay=som_lr_epoch_decay,
+    #     som_sigma=som_sigma,
+    #     som_sigma_epoch_decay=som_sigma_epoch_decay,
+    #     som_sigma_min=som_sigma_min,
+    #     FS = FS,
+    #     plot_preictal_color_sec = plot_preictal_color_sec,
+    #     plot_postictal_color_sec = plot_postictal_color_sec,
+    #     **kwargs)
+
+    manifold_utilities.toroidal_kohonen_subfunction_pytorch(
         atd_file = atd_file,
         pat_ids_list=build_pat_ids_list,
         latent_data_windowed=ww_means_allfiles, # Just the means for kohonen
