@@ -968,17 +968,13 @@ def rewindow_data(
 
     if new_samples_per_window % original_samples_per_window != 0:
         raise ValueError(
-            "New window duration (rewin_windowsecs) must be an even multiple of the original window duration (file_windowsecs)."
-        )
+            "New window duration (rewin_windowsecs) must be an even multiple of the original window duration (file_windowsecs).")
     if rewin_strideseconds % file_stridesecs != 0:
         raise ValueError(
-            "New stride (rewin_strideseconds) must be an even multiple of the original stride (file_stridesecs)."
-        )
-
+            "New stride (rewin_strideseconds) must be an even multiple of the original stride (file_stridesecs).")
     if rewin_windowsecs < file_stridesecs and rewin_strideseconds > file_stridesecs:
         raise ValueError(
-            "New window duration (rewin_windowsecs) cannot be less than the original stride (file_stridesecs) when the new stride (rewin_strideseconds) is greater than the original stride (file_stridesecs)."
-        )
+            "New window duration (rewin_windowsecs) cannot be less than the original stride (file_stridesecs) when the new stride (rewin_strideseconds) is greater than the original stride (file_stridesecs).")
 
     # Calculate the start indices for the new windows.
     new_window_starts_in_original_samples = np.arange(0, original_windows * file_stridesecs, rewin_strideseconds)
@@ -988,8 +984,8 @@ def rewindow_data(
     # Calculate the number of new windows.  Handle the edge case where the last new window extends
     # beyond the available original windows.
     new_windows = (original_windows * file_stridesecs - (rewin_windowsecs - rewin_strideseconds)) // rewin_strideseconds
-    if (original_windows * file_stridesecs) % rewin_strideseconds != 0: # corrected this line
-        new_windows += 1
+    # if (original_windows * file_stridesecs) % rewin_strideseconds != 0: # corrected this line
+    #     new_windows += 1
     new_windows = max(0, new_windows) # Ensure new_windows is not negative
 
 

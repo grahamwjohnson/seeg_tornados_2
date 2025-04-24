@@ -18,7 +18,7 @@ if __name__ == "__main__":
     # accumulated_data_pickle = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/256SecondWindow_256SecondStride/all_pats/allDataGathered_subsampleFileFactor16_256secWindow_256secStride.pkl'  
 
     # if 'som_precomputed_path' is None, will train a new SOM, otherwise will run data through pretrained Kohonen weights to make Kohonen map. 
-    som_precomputed_path = None # '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/results/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/Mobo_pats/trained_models/dataset_train90.0_val10.0/tmp_incatern/kohonen/Epoch33/64SecondWindow_64SecondStride/all_pats/generation/som_state_dict.pt'
+    som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/4SecondWindow_32SecondStride/all_pats/GPU1_3DpreictalRescaled_SOM_latent_smoothsec4_Stride32_subsampleFileFactor4_preictalSec14400_gridsize64_lr2with1.0decay_sigma64.0with0.954992586021436decay_numfeatures226752_dims1024_batchsize256_epochs100.pt'  
     
     FS = 512 # Currently hardcoded in many places
 
@@ -26,8 +26,8 @@ if __name__ == "__main__":
     atd_file = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/all_time_data_01092023_112957.csv'
     
     # Which patients to plot
-    # parent_dir = f'/media/glommy1/tornados/bse_inference/sheldrake_epoch1138' # _validation'
-    parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45'
+    # parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45'
+    parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13'
     single_pats = [] # ['Spat18'] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats 
         
     save_loaded_data = True # Will save one big pickle after all files collected
@@ -63,9 +63,9 @@ if __name__ == "__main__":
 
         # Rewindowing data (Must be multiples of original file duration & stride)
         rewin_windowseconds = 4
-        rewin_strideseconds = 32
+        rewin_strideseconds = 64
 
-        subsample_file_factor = 4 # Not re-windowing, subsampled on a whole file level
+        subsample_file_factor = 1 # Not re-windowing, subsampled on a whole file level
 
 
     # Plotting Settings
@@ -73,21 +73,8 @@ if __name__ == "__main__":
     plot_postictal_color_sec = 0 #60*10 #60*60*4
 
     # Kohonen Settings
-    # som_pca_init = False
-    # som_device = 0 # GPU
-    # som_epochs = 1000
-    # som_batch_size = 256
-    # som_lr = 2
-    # som_lr_min = 2
-    # som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
-    # som_gridsize = 64 # 25
-    # som_sigma = 1.0 * som_gridsize 
-    # som_sigma_min = 0.01 * som_gridsize 
-    # som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
-
-    # Kohonen Settings
     som_pca_init = False
-    som_device = 1 # GPU
+    som_device = 0 # GPU
     som_epochs = 100
     som_batch_size = 256
     som_lr = 2
@@ -97,6 +84,19 @@ if __name__ == "__main__":
     som_sigma = 1.0 * som_gridsize 
     som_sigma_min = 0.01 * som_gridsize 
     som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
+
+    # Kohonen Settings
+    # som_pca_init = False
+    # som_device = 1 # GPU
+    # som_epochs = 100
+    # som_batch_size = 256
+    # som_lr = 2
+    # som_lr_min = 2
+    # som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
+    # som_gridsize = 64 # 25
+    # som_sigma = 1.0 * som_gridsize 
+    # som_sigma_min = 0.01 * som_gridsize 
+    # som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
     
     # Plotting variables
     kwargs = {}
@@ -158,9 +158,28 @@ if __name__ == "__main__":
         ww_means_sentinel = latent_data_fromfile['windowed_weighted_means']
         ww_logvars_sentinel = latent_data_fromfile['windowed_weighted_logvars']
         w_mogpreds_sentinel = latent_data_fromfile['windowed_mogpreds']
-        ww_means_allfiles = np.zeros([len(data_filepaths), ww_means_sentinel.shape[0], ww_means_sentinel.shape[1]], dtype=np.float32)
-        ww_logvars_allfiles = np.zeros([len(data_filepaths), ww_logvars_sentinel.shape[0], ww_logvars_sentinel.shape[1]], dtype=np.float32)
-        w_mogpreds_allfiles = np.zeros([len(data_filepaths), w_mogpreds_sentinel.shape[0], w_mogpreds_sentinel.shape[1]], dtype=np.float32)
+        print(f"Original shape of ww_means: {ww_means_sentinel.shape}")
+        print(f"Original shape of ww_logvars: {ww_logvars_sentinel.shape}")
+        print(f"Original shape of w_mogpreds: {w_mogpreds_sentinel.shape}")
+        if (file_windowseconds != rewin_windowseconds) or (file_strideseconds != rewin_strideseconds):
+            if (file_windowseconds > rewin_windowseconds) or (file_strideseconds > rewin_strideseconds):
+                raise Exception("ERROR: desired window duration or stride is smaller than raw file duration or stride")
+            else:
+                rewin_means_sentinel, rewin_logvars_sentinel, rewin_mogpreds_sentinel = utils_functions.rewindow_data(
+                    ww_means_sentinel, ww_logvars_sentinel, w_mogpreds_sentinel, file_windowseconds, file_strideseconds, rewin_windowseconds, rewin_strideseconds)
+                print(f"Rewindowed shape of rewin_means: {rewin_means_sentinel.shape}")
+                print(f"Rewindowed shape of rewin_logvars: {rewin_logvars_sentinel.shape}")
+                print(f"Rewindowed shape of rewin_mogpreds: {rewin_mogpreds_sentinel.shape}")
+        else:
+            rewin_means_sentinel = ww_means_sentinel
+            rewin_logvars_sentinel = ww_logvars_sentinel
+            rewin_mogpreds_sentinel = w_mogpreds_sentinel
+            print("Data NOT re-windowed")
+
+        # Inialize all_file variables based on sentinel variables
+        ww_means_allfiles = np.zeros([len(data_filepaths), rewin_means_sentinel.shape[0], rewin_means_sentinel.shape[1]], dtype=np.float32)
+        ww_logvars_allfiles = np.zeros([len(data_filepaths), rewin_logvars_sentinel.shape[0], rewin_logvars_sentinel.shape[1]], dtype=np.float32)
+        w_mogpreds_allfiles = np.zeros([len(data_filepaths), rewin_mogpreds_sentinel.shape[0], rewin_mogpreds_sentinel.shape[1]], dtype=np.float32)
         print("Loading all BUILD latent data from files")
         latent_data_fromfile = [''] * len(data_filepaths) # Load all of the data into system RAM - list of [window, latent_dim]
         for i in range(len(data_filepaths)):
@@ -168,39 +187,26 @@ if __name__ == "__main__":
             sys.stdout.flush() 
             try:
                 with open(data_filepaths[i], "rb") as f: latent_data_fromfile = pickle.load(f)
-                ww_means_allfiles[i, :, :] = latent_data_fromfile['windowed_weighted_means']
-                ww_logvars_allfiles[i, :, :] = latent_data_fromfile['windowed_weighted_logvars']
-                w_mogpreds_allfiles[i, :, :] = latent_data_fromfile['windowed_mogpreds']
-            except:
-                print(f"Error loading {data_filepaths[i]}")
-
-        # Rewindow the data if needed
-        print(f"Original shape of ww_means: {ww_means_allfiles.shape}")
-        print(f"Original shape of ww_logvars: {ww_logvars_allfiles.shape}")
-        print(f"Original shape of w_mogpreds: {w_mogpreds_allfiles.shape}")
-        if (file_windowseconds != rewin_windowseconds) or (file_strideseconds != rewin_strideseconds):
-            if (file_windowseconds > rewin_windowseconds) or (file_strideseconds > rewin_strideseconds):
-                raise Exception("ERROR: desired window duration or stride is smaller than raw file duration or stride")
-            else:
-                rewin_means_allfiles, rewin_logvars_allfiles, rewin_mogpreds_allfiles = utils_functions.rewindow_data_filewise(
-                    ww_means_allfiles, ww_logvars_allfiles, w_mogpreds_allfiles, file_windowseconds, file_strideseconds, rewin_windowseconds, rewin_strideseconds)
-                print(f"Rewindowed shape of rewin_means: {rewin_means_allfiles.shape}")
-                print(f"Rewindowed shape of rewin_logvars: {rewin_logvars_allfiles.shape}")
-                print(f"Rewindowed shape of rewin_mogpreds: {rewin_mogpreds_allfiles.shape}")
-        else:
-            rewin_means_allfiles = ww_means_allfiles
-            rewin_logvars_allfiles = ww_logvars_allfiles
-            rewin_mogpreds_allfiles = w_mogpreds_allfiles
-            print("Data NOT re-windowed")
+                ww_means = latent_data_fromfile['windowed_weighted_means']
+                ww_logvars = latent_data_fromfile['windowed_weighted_logvars']
+                w_mogpreds = latent_data_fromfile['windowed_mogpreds']
+                if (file_windowseconds != rewin_windowseconds) or (file_strideseconds != rewin_strideseconds):
+                    ww_means_allfiles[i, :, :], ww_logvars_allfiles[i, :, :], w_mogpreds_allfiles[i, :, :] = utils_functions.rewindow_data(
+                        ww_means, ww_logvars, w_mogpreds, file_windowseconds, file_strideseconds, rewin_windowseconds, rewin_strideseconds)
+                else: # No re-windowing needed
+                    ww_means_allfiles[i, :, :] = ww_means
+                    ww_logvars_allfiles[i, :, :] = ww_logvars
+                    w_mogpreds_allfiles[i, :, :] = w_mogpreds                
+            except: print(f"Error loading {data_filepaths[i]}")
 
         # Save the gathered data to save time for re-plotting
         if save_loaded_data and ((subset_override_dir == None) and (accumulated_data_pickle == None)):
             savepath = f"{kohonen_savedir}/allDataGathered_subsampleFileFactor{subsample_file_factor}_{rewin_windowseconds}secWindow_{rewin_strideseconds}secStride.pkl"
             output_obj = open(savepath, 'wb')
             save_dict = {
-                'rewin_means_allfiles': rewin_means_allfiles,
-                'rewin_logvars_allfiles': rewin_logvars_allfiles,
-                'rewin_mogpreds_allfiles': rewin_mogpreds_allfiles,
+                'ww_means_allfiles': ww_means_allfiles,
+                'ww_logvars_allfiles': ww_logvars_allfiles,
+                'w_mogpreds_allfiles': w_mogpreds_allfiles,
                 'build_start_datetimes': build_start_datetimes,
                 'build_stop_datetimes': build_stop_datetimes,
                 'build_pat_ids_list': build_pat_ids_list}
@@ -211,9 +217,9 @@ if __name__ == "__main__":
     else: # Get metadata from preloaded pickle
         print("Preloaded single data pickle supplied for all data")
         with open(accumulated_data_pickle, "rb") as f: data_loaded = pickle.load(f)
-        rewin_means_allfiles = data_loaded['rewin_means_allfiles']
-        rewin_logvars_allfiles = data_loaded['rewin_logvars_allfiles']
-        rewin_mogpreds_allfiles = data_loaded['rewin_mogpreds_allfiles']
+        ww_means_allfiles = data_loaded['ww_means_allfiles']
+        ww_logvars_allfiles = data_loaded['ww_logvars_allfiles']
+        w_mogpreds_allfiles = data_loaded['w_mogpreds_allfiles']
         build_start_datetimes = data_loaded['build_start_datetimes']
         build_stop_datetimes = data_loaded['build_stop_datetimes']
         build_pat_ids_list = data_loaded['build_pat_ids_list']
@@ -223,7 +229,7 @@ if __name__ == "__main__":
     axes, som = manifold_utilities.kohonen_subfunction_pytorch(
         atd_file = atd_file,
         pat_ids_list=build_pat_ids_list,
-        latent_data_windowed=rewin_means_allfiles, # Just the means for kohonen
+        latent_data_windowed=ww_means_allfiles, # Just the means for kohonen
         start_datetimes_epoch=build_start_datetimes,  
         stop_datetimes_epoch=build_stop_datetimes,
         win_sec=rewin_windowseconds, 
