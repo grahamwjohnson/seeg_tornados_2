@@ -171,9 +171,9 @@ class ToroidalSOM(nn.Module):
                 self.update_weights(batch_sampled, bmu_rows, bmu_cols)
 
                 # Progress tracking
-                batch_num = batch_start // self.batch_size + 1
+                batch_num = batch_start // self.batch_size
                 total_batches = math.ceil(num_samples / self.batch_size)
-                print(f"\rToroidal SOM Epoch: {epoch+1}/{num_epochs}, "
+                print(f"\rToroidal SOM Epoch: {epoch}/{num_epochs-1}, "
                       f"Batch: {batch_num}/{total_batches} [Batch Size: {self.batch_size}], "
                       f"Iter:{batch_start}/{shuffled_indices.shape[0]-1}, "
                       f"Sigma: {self.sigma:.4f}, LR: {self.lr:.6f}", end="")

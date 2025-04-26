@@ -12,10 +12,11 @@ if __name__ == "__main__":
     subset_override_idxs = [300,301,302,303,304,305]
 
     # if None, will gather files individually 
-    accumulated_data_pickle = None 
+    accumulated_data_pickle = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_64SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_64secStride.pkl'
+    # accumulated_data_pickle = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13/kohonen/64SecondWindow_64SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_64secStride.pkl'
 
     # if 'som_precomputed_path' is None, will train a new SOM, otherwise will run data through pretrained Kohonen weights to make Kohonen map. 
-    som_precomputed_path = None # '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_64SecondStride/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride64_subsampleFileFactor64_preictalSec14400_gridsize64_lr2with0.9930924954370359decay_sigma32.0with0.9616350847573034decay_numfeatures6645_dims1024_batchsize32_epochs100.pt'  
+    som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_64SecondStride_Reductionmean/all_pats/good_ones/GPU1_ToroidalSOM_ObjectDict_smoothsec64_Stride64_subsampleFileFactor1_preictalSec3600_gridsize32_lr0.5with0.6762decay_sigma16.0with0.7071decay_numfeatures425115_dims1024_batchsize256_epochs10.pt'  
     
     FS = 512 # Currently hardcoded in many places
 
@@ -59,44 +60,44 @@ if __name__ == "__main__":
         source_dir = f'{parent_dir}/latent_files/{file_windowseconds}SecondWindow_{file_strideseconds}SecondStride'
 
         # Rewindowing data (Must be multiples of original file duration & stride)
-        rewin_windowseconds = 32
-        rewin_strideseconds = 32
-
-        subsample_file_factor = 8 # Not re-windowing, subsampled on a whole file level
+        rewin_windowseconds = 64
+        rewin_strideseconds = 64
+        subsample_file_factor = 1 # Not re-windowing, subsampled on a whole file level
 
 
     # Plotting Settings
     plot_preictal_color_sec = 60*60*1 #60*60*4
     plot_postictal_color_sec = 0 #60*10 #60*60*4
 
-    # Kohonen Settings [GPU 0]
+    # # Kohonen Settings [GPU 0]
+    som_pca_init = False
+    reduction = 'mean' # Keep at mean because currently using reparam in SOM training
+    som_device = 0 # GPU
+    som_epochs = 5
+    som_batch_size = 256
+    som_lr = 0.5
+    som_lr_min = 0.01
+    som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
+    som_gridsize = 32 
+    som_sigma = 0.5 * som_gridsize 
+    som_sigma_min = 0.5 # 0.01 * som_gridsize 
+    som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
+
+    # # Kohonen Settings [GPU 1]
     # som_pca_init = False
     # reduction = 'mean' # Keep at mean because currently using reparam in SOM training
-    # som_device = 0 # GPU
-    # som_epochs = 1000
-    # som_batch_size = 32
-    # som_lr = 0.5  # 0.5 to 0.01 was doing well
-    # som_lr_min = 0.05 
+    # som_device = 1 # GPU
+    # som_epochs = 100
+    # som_batch_size = 256
+    # som_lr = 0.5
+    # som_lr_min = 0.01
     # som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
     # som_gridsize = 32 
     # som_sigma = 0.5 * som_gridsize 
     # som_sigma_min = 0.5 # 0.01 * som_gridsize 
     # som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
 
-    # # Kohonen Settings [GPU 1]
-    som_pca_init = False
-    reduction = 'mean' # Keep at mean because currently using reparam in SOM training
-    som_device = 1 # GPU
-    som_epochs = 1000
-    som_batch_size = 32
-    som_lr = 0.5
-    som_lr_min = 0.05
-    som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
-    som_gridsize = 64 
-    som_sigma = 0.5 * som_gridsize 
-    som_sigma_min = 0.5 # 0.01 * som_gridsize 
-    som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
-    
+
     # Plotting variables
     kwargs = {}
     kwargs['seiz_type_list'] = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Focal unknown awareness', 'Unknown', 'Subclinical', 'Non-electrographic'] # Leftward overwites rightward

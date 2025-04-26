@@ -22,6 +22,8 @@ from scipy.ndimage import gaussian_filter
 # import matplotlib.patches as mpatches
 import matplotlib.patches as patches
 from matplotlib.patches import RegularPolygon
+from matplotlib.colors import ListedColormap, Normalize
+import matplotlib.cm as cm
 
 
 '''
@@ -672,7 +674,7 @@ def toroidal_kohonen_subfunction_pytorch(
             hit_map = np.zeros(grid_size)
             neuron_patient_dict = {}
 
-            # Inference on all data in batches
+            # SOM Inference on all data in batches
             for i in range(0, len(latent_means_input), som_batch_size):
                 batch = latent_means_input[i:i + som_batch_size]
                 batch_patients = pat_ids_input[i:i + som_batch_size]
@@ -809,7 +811,7 @@ def toroidal_kohonen_subfunction_pytorch(
                         cmap_str='viridis', vmin=0, vmax=1)
 
             # 5. Pre-Ictal Density (Hexagonal, Toroidal)
-            plot_hex_grid(ax_preictal, preictal_sums, "Pre-Ictal Density (Hexagonal, Toroidal)",
+            plot_hex_grid(ax_preictal, preictal_sums, f"Pre-Ictal Density (Hexagonal, Toroidal): {np.count_nonzero(np.array(preictal_float_input) != 0.0)}/{len(preictal_float_input)} Windows Pre-Ictal",
                         cmap_str='flare', vmin=0, vmax=1)
 
             # 6. Pre-Ictal * Patient Diversity (Hexagonal, Toroidal)
@@ -828,6 +830,48 @@ def toroidal_kohonen_subfunction_pytorch(
             print("Exporting Toroidal SOM 2D visualizations to JPG")
             savename_jpg_2d = savedir + f"/GPU{som_device}_2DPlots_ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_2D.jpg"
             plt.savefig(savename_jpg_2d, dpi=600)
+
+
+            # 2D OVERLAY: U-Matrix + Pre-Ictal
+            
+            # Create new figure for U-Matrix + Pre-Ictal Density Overlay
+            fig_overlay, ax_overlay = plt.subplots(figsize=(10, 10))
+
+            # Clip preictal_sums_smoothed at lower threshold 0.5
+            overlay_preictal = np.clip(preictal_sums_smoothed, 0.0, 1.0)
+
+            # Plot U-Matrix base
+            plot_hex_grid(ax_overlay, u_matrix_hex, "U-Matrix with Pre-Ictal Overlay", cmap_str='bone_r', vmin=0, vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
+
+            # Overlay Pre-Ictal smoothed density (alpha=0.6)
+            # We'll replot on top with a semi-transparent flare colormap
+            rows, cols = overlay_preictal.shape
+            radius = 1.0
+            overlay_thresh = 0.5
+            height = np.sqrt(3) * radius
+            cmap_overlay = cm.get_cmap('flare')
+            norm_overlay = plt.Normalize(vmin=0.0, vmax=1.0)
+
+            for i in range(rows):
+                for j in range(cols):
+                    x = j * 1.5 * radius
+                    y = i * height + (j % 2) * (height / 2)
+                    face_color = cmap_overlay(norm_overlay(overlay_preictal[i, j]))
+                    hexagon = patches.RegularPolygon((x, y), numVertices=6, radius=radius,
+                                                    orientation=np.radians(30),
+                                                    facecolor=face_color, alpha=0.5,
+                                                    edgecolor=None, linewidth=0)
+                    if overlay_preictal[i, j] > overlay_thresh:
+                        ax_overlay.add_patch(hexagon)
+
+            # Optional: add a colorbar for the overlay
+            sm_overlay = plt.cm.ScalarMappable(cmap=cmap_overlay, norm=norm_overlay)
+            sm_overlay.set_array([])
+            plt.colorbar(sm_overlay, ax=ax_overlay, label="Pre-Ictal Density (Clipped & Smoothed)")
+
+            # Save overlay figure
+            savename_overlay = savedir + f"/GPU{som_device}_UMatrix_PreIctalOverlay__ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_2D.jpg"
+            plt.savefig(savename_overlay, dpi=600)
 
 
 
@@ -976,7 +1020,6 @@ def toroidal_kohonen_subfunction_pytorch(
             print(f"Attempt {attempt + 1} failed: {e}")
             if attempt == 2:
                 print("All attempts failed.")
-
 
 def compute_histograms(data, min_val, max_val, B):
     """
@@ -1172,6 +1215,11 @@ def get_pat_seiz_datetimes(
 
 def preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input):
     
+    '''
+    Ictal is given 0 label - Not the focus of the BSE/SOM training, too rare, likely to give erroneous BSE embeddings/SOM mappings
+
+    '''
+
     data_window_preictal_score = np.zeros_like(pat_ids_input, dtype=float)
 
     # Generate numerical IDs for each unique patient, and give each datapoint an ID
@@ -1197,7 +1245,7 @@ def preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_date
             buffered_preictal_start = seiz_start - datetime.timedelta(seconds=plot_preictal_color_sec)
 
             # Compute time difference from seizure start (0 at start of preictal buffer, increasing as closer to seizure)
-            # Assign value of 1 for in seizure
+            # NOTE: IMPORTANT: Assign value of 0 for in seizure
 
             # Case where end of data window is in pre-ictal buffer (ignore start of preictal window)
             if data_window_stop < seiz_start and data_window_stop > buffered_preictal_start:
@@ -1208,13 +1256,13 @@ def preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_date
 
             # Case where end of the window is in the seizure
             elif data_window_stop > seiz_start and data_window_stop < seiz_stop:
-                data_window_preictal_score[i] = 1 
-                break # Cannot get higher value
+                data_window_preictal_score[i] = 0 
+                break # Want to exclude seizures
 
             # Case where start of the window overlaps the preictal/ictal buffer, but end is past seizure end
             elif data_window_start > buffered_preictal_start and data_window_start < seiz_stop:
-                data_window_preictal_score[i] = 1 
-                break # Cannot get higher value
+                data_window_preictal_score[i] = 0
+                break # Want to exclude seizures
 
     # Ensure values remain between 0 and 1
     return np.clip(data_window_preictal_score, 0, 1)
