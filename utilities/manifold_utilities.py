@@ -612,6 +612,8 @@ def toroidal_kohonen_subfunction_pytorch(
     som_device = 0,
     sigma_plot=1,
     hits_log_view=True,
+    umat_log_view=True,
+    preictal_log_view=True,
     **kwargs):
     """
     Toroidal SOM with hexagonal grid for latent space analysis.
@@ -757,7 +759,7 @@ def toroidal_kohonen_subfunction_pytorch(
             neuron_patient_dict[(bmu_row, bmu_col)].add(batch_patients[j])
 
     # If hits want to be viewed logarithmically
-    if hits_log_view == True:
+    if hits_log_view:
         epsilon = np.finfo(float).eps
         hit_map = np.log(hit_map + epsilon)
 
@@ -793,6 +795,11 @@ def toroidal_kohonen_subfunction_pytorch(
 
             u_matrix_hex[i, j] = np.mean(neighbor_distances) if neighbor_distances else 0
 
+     # If U-Matrix is decided to be viewed logarithmically
+    if umat_log_view:
+        epsilon = np.finfo(float).eps
+        u_matrix_hex = np.log(u_matrix_hex + epsilon)   
+
     # Apply smoothing
     preictal_sums_smoothed = gaussian_filter(preictal_sums, sigma=1.0)
     if np.max(preictal_sums_smoothed) > np.min(preictal_sums_smoothed):
@@ -807,6 +814,10 @@ def toroidal_kohonen_subfunction_pytorch(
     rescale_preictal_smoothed = gaussian_filter(rescale_preictal, sigma=1.0)
     if np.max(rescale_preictal_smoothed) > 0:
         rescale_preictal_smoothed = rescale_preictal_smoothed / np.max(rescale_preictal_smoothed)
+
+    if preictal_log_view:
+        epsilon = np.finfo(float).eps
+        preictal_sums = np.log(preictal_sums + epsilon)   
 
 
     # PLOTTING (2D Hexagonal Plots)
@@ -1013,7 +1024,7 @@ def toroidal_kohonen_subfunction_pytorch(
 
     # Export 3D figure
     print("Exporting Toroidal SOM 3D visualizations to JPG")
-    savename_jpg_3d = savedir + f"/GPU{som_device}_3DPlots_ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.6f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_3D.jpg"
+    savename_jpg_3d = savedir + f"/GPU{som_device}_3DPlots_smoothsec{win_sec}_Stride{stride_sec}_subsampFile{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.4f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
     plt.savefig(savename_jpg_3d, dpi=600)
 
 
@@ -1086,7 +1097,7 @@ def toroidal_kohonen_subfunction_pytorch(
 
     # Export Toroid figure
     print("Exporting Toroidal SOM visualizations projected onto a Toroid to JPG")
-    savename_jpg_toroid = savedir + f"/GPU{som_device}_ToroidPlots_ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.6f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_TOROID_3D.jpg"
+    savename_jpg_toroid = savedir + f"/GPU{som_device}_ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampFile{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.4f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
     plt.savefig(savename_jpg_toroid, dpi=600)
             
 

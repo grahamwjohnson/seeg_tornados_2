@@ -15,14 +15,14 @@ if __name__ == "__main__":
     som_precomputed_path = None # Unless overwritten below, 'None' will indicate calculating a new SOM
 
     # TRAIN DATA 
-    parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45'
-    accumulated_data_pickle = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_64SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_64secStride.pkl'
+    # parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45'
+    # accumulated_data_pickle = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_64SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_64secStride.pkl'
     
     # VAL DATA
-    # parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13' 
-    # accumulated_data_pickle = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13/kohonen/64SecondWindow_64SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_64secStride.pkl'
+    parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13' 
+    accumulated_data_pickle = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13/kohonen/64SecondWindow_64SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_64secStride.pkl'
     
-    # som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_64SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride64_subsampleFileFactor1_preictalSec3600_gridsize64_lr0.5with0.6762decay0.010000min_sigma51.2with0.6295decay0.5min_numfeatures513570_dims1024_batchsize256_epochs10.pt'  
+    som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_64SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride64_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.6762decay0.010000min_sigma32.0with0.7071decay1.0min_numfeatures513570_dims1024_batchsize64_epochs10.pt'  
 
     save_loaded_data = True # If need to collect files, then will save one big pickle after all files collected
 
@@ -76,28 +76,28 @@ if __name__ == "__main__":
     som_pca_init = False
     reduction = 'mean' # Keep at mean because currently using reparam in SOM training
     som_device = 0 # GPU
-    som_epochs = 100
-    som_batch_size = 256
+    som_epochs = 10
+    som_batch_size = 64
     som_lr = 0.5
     som_lr_min = 0.01
     som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
-    som_gridsize = 64
-    som_sigma = 0.8 * som_gridsize 
-    som_sigma_min = 0.5
+    som_gridsize = 128
+    som_sigma = 0.25 * som_gridsize 
+    som_sigma_min = 1.0
     som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
 
     # Kohonen Settings [GPU 1]
     # som_pca_init = False
     # reduction = 'mean' # Keep at mean because currently using reparam in SOM training
     # som_device = 1 # GPU
-    # som_epochs = 100
-    # som_batch_size = 256
+    # som_epochs = 10
+    # som_batch_size = 64
     # som_lr = 0.5
     # som_lr_min = 0.01
     # som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
-    # som_gridsize = 64
-    # som_sigma = 0.8 * som_gridsize 
-    # som_sigma_min = 0.1
+    # som_gridsize = 128
+    # som_sigma = 0.4 * som_gridsize 
+    # som_sigma_min = 1.0 
     # som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
 
     # Plotting variables
