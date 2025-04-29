@@ -24,7 +24,11 @@ import matplotlib.patches as patches
 from matplotlib.patches import RegularPolygon
 from matplotlib.colors import ListedColormap, Normalize
 import matplotlib.cm as cm
-
+from matplotlib.collections import LineCollection
+from matplotlib.colors import colorConverter
+from matplotlib import colors as mcolors
+import heapq
+import random
 
 '''
 @author: grahamwjohnson
@@ -33,498 +37,373 @@ Seperate utilities repository from utils_functions.py to enable a slimmer/simple
 
 '''
 
-def pacmap_subfunction(  
-    atd_file,
-    pat_ids_list,
-    latent_data_windowed, 
-    start_datetimes_epoch,  
-    stop_datetimes_epoch,
-    FS, 
-    win_sec, 
-    stride_sec, 
-    savedir,
-    pacmap_LR,
-    pacmap_NumIters,
-    pacmap_NN,
-    pacmap_MN_ratio,
-    pacmap_FP_ratio,
-    HDBSCAN_min_cluster_size,
-    HDBSCAN_min_samples,
-    plot_preictal_color_sec,
-    plot_postictal_color_sec,
-    apply_pca=True,
-    interictal_contour=False,
-    verbose=True,
-    xy_lims = [],
-    premade_PaCMAP = [],
-    premade_HDBSCAN = [],
-    **kwargs):
+import heapq
+import numpy as np
+from matplotlib.collections import LineCollection
+import matplotlib.colors as mcolors
 
-    '''
-    Goal of function:
-    Make 2D PaCMAP, make HigherDim PaCMAP, HDBSCAN cluster on HigherDim, visualize clusters on 2D
+import numpy as np
 
-    '''
-
-    # Metadata
-    latent_dim = latent_data_windowed.shape[2]
-    num_timepoints_in_windowed_file = latent_data_windowed.shape[1]
-    modified_FS = 1 / stride_sec
-
-    # Check for NaNs in files
-    delete_file_idxs = []
-    for i in range(latent_data_windowed.shape[0]):
-        if np.sum(np.isnan(latent_data_windowed[i,:,:])) > 0:
-            delete_file_idxs = delete_file_idxs + [i]
-            print(f"WARNING: Deleted file {start_datetimes_epoch[i]} that had NaNs")
-
-    # Delete entries/files in lists where there is NaN in latent space for that file
-    latent_data_windowed = np.delete(latent_data_windowed, delete_file_idxs, axis=0)
-    start_datetimes_epoch = [item for i, item in enumerate(start_datetimes_epoch) if i not in delete_file_idxs]  
-    stop_datetimes_epoch = [item for i, item in enumerate(stop_datetimes_epoch) if i not in delete_file_idxs]
-    pat_ids_list = [item for i, item in enumerate(pat_ids_list) if i not in delete_file_idxs]
-
-    # Flatten data into [miniepoch, dim] to feed into PaCMAP, original data is [file, seq_miniepoch_in_file, latent_dim]
-    latent_PaCMAP_input = np.concatenate(latent_data_windowed, axis=0)
-
-    # Generate numerical IDs for each unique patient, and give each datapoint an ID
-    unique_ids = list(set(pat_ids_list))
-    id_to_index = {id: idx for idx, id in enumerate(unique_ids)}  # Create mapping dictionary
-    pat_idxs = [id_to_index[id] for id in pat_ids_list]
-    pat_idxs_expanded = [item for item in pat_idxs for _ in range(latent_data_windowed[0].shape[0])]
-
-    ### PaCMAP 2-Dim ###
-
-    # Make new PaCMAP
-    if premade_PaCMAP == []:
-        print("Making new 2-dim PaCMAP to use for visualization")
-        # initializing the pacmap instance
-        # Setting n_neighbors to "None" leads to a default choice shown below in "parameter" section
-        reducer = pacmap.PaCMAP(
-            exclude_self_pat=False,
-            pat_idxs=pat_idxs_expanded,
-            distance='angular',
-            lr=pacmap_LR,
-            num_iters=pacmap_NumIters, # will default ~27 if left as None
-            n_components=2, 
-            n_neighbors=pacmap_NN, # default None, 
-            MN_ratio=pacmap_MN_ratio, # default 0.5, 
-            FP_ratio=pacmap_FP_ratio, # default 2.0,
-            save_tree=True, # Save tree to enable 'transform" method
-            apply_pca=apply_pca, 
-            verbose=verbose)  
-
-        # fit the data (The index of transformed data corresponds to the index of the original data)
-        latent_postPaCMAP_perfile = reducer.fit_transform(latent_PaCMAP_input, init='pca')
-        latent_postPaCMAP_perfile = np.stack(np.split(latent_postPaCMAP_perfile, len(latent_data_windowed), axis=0),axis=0)
-
-    # Use premade PaCMAP
-    else: 
-        print("Using existing 2-dim PaCMAP for visualization")
-        reducer = premade_PaCMAP  # Project data through reducer (i.e. PaCMAP) and split back into file
-        latent_postPaCMAP_perfile = reducer.transform(latent_PaCMAP_input)
-        latent_postPaCMAP_perfile = np.stack(np.split(latent_postPaCMAP_perfile, len(latent_data_windowed), axis=0),axis=0)
-
-    ### HDBSCAN ###
-    # If training, create new cluster model, otherwise "approximate_predict()" if running on val data
-    if premade_HDBSCAN == []:
-        # Now do the clustering with HDBSCAN
-        print("Building new HDBSCAN model")
-        hdb = hdbscan.HDBSCAN(
-            min_cluster_size=HDBSCAN_min_cluster_size,
-            min_samples=HDBSCAN_min_samples,
-            max_cluster_size=0,
-            metric='euclidean',  # cosine, manhattan
-            # memory=Memory(None, verbose=1)
-            algorithm='best',
-            cluster_selection_method='eom',
-            prediction_data=True
-            )
-        
-        hdb.fit(latent_postPaCMAP_perfile.reshape(latent_postPaCMAP_perfile.shape[0]*latent_postPaCMAP_perfile.shape[1], latent_postPaCMAP_perfile.shape[2]))  # []
-
-         #TODO Look into soft clustering
-        # soft_cluster_vecs = np.array(hdbscan.all_points_membership_vectors(hdb))
-        # soft_clusters = np.array([np.argmax(x) for x in soft_cluster_vecs], dtype=int)
-        # hdb_color_palette = sns.color_palette('Paired', int(np.max(soft_clusters) + 3))
-
-        hdb_labels_flat = hdb.labels_
-        # hdb_labels_flat = soft_clusters
-        hdb_probabilities_flat = hdb.probabilities_
-        # hdb_probabilities_flat = np.array([np.max(x) for x in soft_cluster_vecs])
-                
-    # If HDBSCAN is already made/provided, then predict cluster with built in HDBSCAN method
-    else:
-        print("Using pre-built HDBSCAN model")
-        hdb = premade_HDBSCAN
-        
-
-    #TODO Destaurate according to probability of being in cluster
-
-    # Per patient, Run data through model & Reshape the labels and probabilities for plotting
-    hdb_labels_flat_perfile = [-1] * latent_postPaCMAP_perfile.shape[0]
-    hdb_probabilities_flat_perfile = [-1] * latent_postPaCMAP_perfile.shape[0]
-    for i in range(len(latent_postPaCMAP_perfile)):
-        hdb_labels_flat_perfile[i], hdb_probabilities_flat_perfile[i] = hdbscan.prediction.approximate_predict(hdb, latent_postPaCMAP_perfile[i, :, :])
-
-
-    ###### START OF PLOTTING #####
-
-    # Get all of the seizure times and types
-    seiz_start_dt_perfile = [-1] * len(latent_postPaCMAP_perfile)
-    seiz_stop_dt_perfile = [-1] * len(latent_postPaCMAP_perfile)
-    seiz_types_perfile = [-1] * len(latent_postPaCMAP_perfile)
-    for i in range(len(latent_postPaCMAP_perfile)):
-        seiz_start_dt_perfile[i], seiz_stop_dt_perfile[i], seiz_types_perfile[i] = get_pat_seiz_datetimes(pat_ids_list[i], atd_file=atd_file)
-
-    # Intialize master figure 
-    fig = pl.figure(figsize=(40, 15))
-    gs = gridspec.GridSpec(1, 5, figure=fig)
-
-
-    # **** PACMAP PLOTTING ****
-
-    print(f"PaCMAP Plotting")
-    ax20 = fig.add_subplot(gs[0, 0]) 
-    ax21 = fig.add_subplot(gs[0, 1]) 
-    ax22 = fig.add_subplot(gs[0, 2]) 
-    ax23 = fig.add_subplot(gs[0, 3]) 
-    ax24 = fig.add_subplot(gs[0, 4]) 
-    ax20, ax21, ax22, ax23, ax24, xy_lims = plot_latent(
-        ax=ax20, 
-        interCont_ax=ax21,
-        seiztype_ax=ax22,
-        time_ax=ax23,
-        cluster_ax=ax24,
-        latent_data=latent_postPaCMAP_perfile.swapaxes(1,2), # [epoch, 2, timesample]
-        modified_samp_freq=modified_FS,  # accounts for windowing/stride
-        start_datetimes=start_datetimes_epoch, 
-        stop_datetimes=stop_datetimes_epoch, 
-        win_sec=win_sec,
-        stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt_perfile, 
-        seiz_stop_dt=seiz_stop_dt_perfile, 
-        seiz_types=seiz_types_perfile,
-        preictal_dur=plot_preictal_color_sec,
-        postictal_dur=plot_postictal_color_sec,
-        plot_ictal=True,
-        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
-        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
-        hdb=hdb,
-        xy_lims=xy_lims,
-        **kwargs)        
-
-    ax20.title.set_text('PaCMAP Latent Space: ' + 
-        'Window mean, dur/str=' + str(win_sec) + 
-        '/' + str(stride_sec) +' seconds,' + 
-        f'\nLR: {str(pacmap_LR)}, ' +
-        f'NumIters: {str(pacmap_NumIters)}, ' +
-        f'NN: {pacmap_NN}, MN_ratio: {str(pacmap_MN_ratio)}, FP_ratio: {str(pacmap_FP_ratio)}'
-        )
-    
-    if interictal_contour: ax21.title.set_text('Interictal & Pre-Ictal Contours')
-
-    # **** Save entire figure *****
-    if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = savedir + f"/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + f"PCA{apply_pca}_NN{pacmap_NN}_MNratio{pacmap_MN_ratio}_FPratio{pacmap_FP_ratio}_preictalHours{round(plot_preictal_color_sec/3600,2)}.jpg"
-    pl.savefig(savename_jpg, dpi=600)
-
-    # TODO Upload to WandB
-
-    pl.close(fig)
-
-    # Bundle the save metrics together
-    # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
-    return ax21, reducer, hdb, xy_lims # save_tuple
-
-def save_pacmap_objects(pacmap_dir, axis, reducer, hdb, xy_lims):
-
-    if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir) 
-
-    # Save the PaCMAP model for use in inference
-    PaCMAP_common_prefix = pacmap_dir + "/PaCMAP"
-    pacmap.save(reducer, PaCMAP_common_prefix)
-    print("Saved PaCMAP 2-dim model")
-
-    hdbscan_path = pacmap_dir + "/hdbscan.pkl"
-    output_obj4 = open(hdbscan_path, 'wb')
-    pickle.dump(hdb, output_obj4)
-    output_obj4.close()
-    print("Saved HDBSCAN model")
-
-    xylim_path = pacmap_dir + "/xy_lims.pkl"
-    output_obj7 = open(xylim_path, 'wb')
-    pickle.dump(xy_lims, output_obj7)
-    output_obj7.close()
-    print("Saved xy_lims for PaCMAP")
-
-    axis_path = pacmap_dir + "/plotaxis.pkl"
-    output_obj10 = open(axis_path, 'wb')
-    pickle.dump(axis, output_obj10)
-    output_obj10.close()
-    print("Saved plot axis")
-
-def load_pacmap_objects(pacmap_dir, pacmap_basename):
-    basepath = f'{pacmap_dir}/{pacmap_basename}'
-    reducer = pacmap.load(basepath)
-
-    hdbscan_path = pacmap_dir + "/hdbscan.pkl"
-    with open(hdbscan_path, "rb") as f: hdb = pickle.load(f)
-
-    xy_path = pacmap_dir + "/xy_lims.pkl"
-    with open(xy_path, "rb") as f: xy_lims = pickle.load(f)
-
-    axis_path = pacmap_dir + "/plotaxis.pkl"
-    with open(axis_path, "rb") as f: plot_axis = pickle.load(f)
-
-    return reducer, hdb, xy_lims, plot_axis
-
-def plot_pacmap_prediction(save_dir, reducer, hdb, xy_lims, plot_axes, embeddings, predicted_start_idx, predicted_embeddings, save_axes=[1]):
+def find_toroidal_low_cost_path(u_matrix, start, goal, undo_log):
     """
-    Projects embeddings onto existing PaCMAP spaces,
-    visualizes context, predictions, and ground truth on provided matplotlib axes.
+    Finds the lowest-cost path between two points on a toroidal U-Matrix by exploring small variations 
+    of direct and toroidal paths without using Dijkstra's algorithm.
 
     Args:
-        save_dir (str): Directory to save the plot.
-        reducer (pacmap.PaCMAP): Trained PaCMAP object.
-        hdb (hdbscan.HDBSCAN): Trained HDBSCAN object.
-        xy_lims (list): Limits for the x and y axes of the plot [(xmin, xmax), (ymin, ymax)].
-        plot_axes (matplotlib.axes.Axes or list): Single axis or list of matplotlib axes to plot on.
-        embeddings (np.ndarray): Embeddings containing context and ground truth, shape [seq_len, latent_dim].
-        predicted_start_idx (int): Starting index of the ground truth portion within embeddings.
-        predicted_embeddings (np.ndarray): Predicted embeddings, shape [num_predictions, latent_dim].
-        save_axes (list): Indices of axes to save in the final figure. Default: [1]
+        u_matrix (np.ndarray): 2D array representing the U-Matrix values (costs).
+        start (tuple): (x, y) start coordinates (integers).
+        goal (tuple): (x, y) goal coordinates (integers).
+        max_variations (int): Number of variations to explore.
+
     Returns:
-        list or matplotlib.axes.Axes: The updated matplotlib axes with the new points plotted.
+        path (list): List of (x, y) points from start to goal following the lowest U-Matrix cost.
     """
-    import os
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import matplotlib.lines as mlines
-    from matplotlib.colors import LinearSegmentedColormap
-    import pylab as pl
+    rows, cols = u_matrix.shape
 
-    # Handle case where a single axis is passed
-    single_axis_passed = False
-    if hasattr(plot_axes, 'figure'):  # It's a single Axes object
-        single_axis_passed = True
-        # Get the figure that contains this axis
-        fig = plot_axes.figure
-        
-        # Try to get all axes from the figure
-        all_axes = fig.get_axes()
-        
-        # If only one axis, wrap it in a list
-        if len(all_axes) == 1:
-            plot_axes = [plot_axes]
-            # Adjust save_axes to only save the axis we have
-            save_axes = [0] if save_axes else []
+    start = (start[1], start[0])  # Switch to (row, col) internally
+    goal = (goal[1], goal[0])
+
+    def compute_path_cost(path, u_matrix, undo_log):
+        """Compute the total cost of a given path."""
+        if undo_log:
+            return sum(np.exp(u_matrix[r, c]) for r, c in path)
         else:
-            # We have multiple axes in the figure
-            plot_axes = all_axes
-            # Keep the original save_axes
-    else:
-        # Multiple axes were passed directly
-        plot_axes = plot_axes
-    
-    print(f"Found {len(plot_axes)} axes to plot on")
+            return sum(u_matrix[r, c] for r, c in path)
 
-    print("Projecting embeddings onto existing PaCMAP space")
-    projected_embeddings = reducer.transform(embeddings)
-    projected_predictions = reducer.transform(predicted_embeddings)
+    def create_path(start, goal, rows, cols, wrap_vertical=False, wrap_horizontal=False):
+        path = []
+        r1, c1 = start
+        r2, c2 = goal
 
-    context_projected = projected_embeddings[:predicted_start_idx]
-    ground_truth_projected = projected_embeddings[predicted_start_idx:]
+        row_vec = np.arange(0, rows)
+        col_vec = np.arange(0, cols)
 
-    num_context = len(context_projected)
-    num_ground_truth = len(ground_truth_projected)
-    num_predicted = len(projected_predictions)
-
-    # Define a custom brown colormap
-    brown_cmap_data = {
-        'red':   [(0.0, 0.8, 0.8), (1.0, 0.4, 0.4)],
-        'green': [(0.0, 0.6, 0.6), (1.0, 0.3, 0.3)],
-        'blue':  [(0.0, 0.4, 0.4), (1.0, 0.2, 0.2)]
-    }
-    cmap_brown = LinearSegmentedColormap('custom_brown', brown_cmap_data.copy())
-
-    # Calculate plot limits if needed
-    if not xy_lims or len(xy_lims) != 2 or len(xy_lims[0]) != 2 or len(xy_lims[1]) != 2:
-        if projected_embeddings.size > 0 and projected_predictions.size > 0:
-            all_projected = np.vstack([projected_embeddings, projected_predictions])
-            x_min, x_max = np.min(all_projected[:, 0]), np.max(all_projected[:, 0])
-            y_min, y_max = np.min(all_projected[:, 1]), np.max(all_projected[:, 1])
-            x_range = x_max - x_min
-            y_range = y_max - y_min
-            xy_lims = [(x_min - 0.1 * x_range, x_max + 0.1 * x_range), 
-                      (y_min - 0.1 * y_range, y_max + 0.1 * y_range)]
-        elif projected_embeddings.size > 0:
-            x_min, x_max = np.min(projected_embeddings[:, 0]), np.max(projected_embeddings[:, 0])
-            y_min, y_max = np.min(projected_embeddings[:, 1]), np.max(projected_embeddings[:, 1])
-            x_range = x_max - x_min
-            y_range = y_max - y_min
-            xy_lims = [(x_min - 0.1 * x_range, x_max + 0.1 * x_range), 
-                      (y_min - 0.1 * y_range, y_max + 0.1 * y_range)]
-        elif projected_predictions.size > 0:
-            x_min, x_max = np.min(projected_predictions[:, 0]), np.max(projected_predictions[:, 0])
-            y_min, y_max = np.min(projected_predictions[:, 1]), np.max(projected_predictions[:, 1])
-            x_range = x_max - x_min
-            y_range = y_max - y_min
-            xy_lims = [(x_min - 0.1 * x_range, x_max + 0.1 * x_range), 
-                      (y_min - 0.1 * y_range, y_max + 0.1 * y_range)]
+        # --- Determine vertical move direction and steps ---
+        if wrap_vertical:
+            # Wrap vertical distance
+            # This checks both directions to wrap properly based on whether r1 > r2
+            if r1 > r2:
+                row_steps = (r2 - r1) % rows  # Moving down
+                vert_dir = 1  # Move down (positive direction)
+            else:
+                row_steps = (r1 - r2) % rows  # Moving up
+                vert_dir = -1  # Move up (negative direction)
         else:
-            xy_lims = [(-1, 1), (-1, 1)]
+            # No wrapping for vertical movement
+            row_steps = abs(r2 - r1)
+            vert_dir = 1 if r2 > r1 else -1
 
-    # --- Plotting on all axes ---
-    print(f"Plotting embeddings, predictions, and ground truth on {len(plot_axes)} axes")
+        # --- Determine horizontal move direction and steps ---
+        if wrap_horizontal:
+            # Wrap horizontal distance
+            # This checks both directions to wrap properly based on whether c1 > c2
+            if c1 > c2:
+                col_steps = (c2 - c1) % cols  # Moving right
+                horz_dir = 1  # Move right (positive direction)
+            else:
+                col_steps = (c1 - c2) % cols  # Moving left
+                horz_dir = -1  # Move left (negative direction)
+        else:
+            # No wrapping for horizontal movement
+            col_steps = abs(c2 - c1)
+            horz_dir = 1 if c2 > c1 else -1
 
-    for ax_idx, plot_axis in enumerate(plot_axes):
-        # Store the original x and y limits before we add new content
-        original_xlim = plot_axis.get_xlim()
-        original_ylim = plot_axis.get_ylim()
-        original_xlabel = plot_axis.get_xlabel()
-        original_ylabel = plot_axis.get_ylabel()
-        original_title = plot_axis.get_title()
-        
-        # Plot context
-        if num_context > 1:
-            context_colors = [cmap_brown(min(1.0, i / (num_context - 1) * 0.7)) for i in range(num_context)]
-            for i in range(num_context - 1):
-                plot_axis.plot(context_projected[i:i+2, 0], context_projected[i:i+2, 1], c=context_colors[i], linewidth=1, alpha=0.7, zorder=10)
-            plot_axis.scatter(context_projected[:, 0], context_projected[:, 1], c=context_colors, s=20, label='_nolegend_', zorder=11)
-            plot_axis.scatter(context_projected[-1, 0], context_projected[-1, 1], color=context_colors[-1], marker='*', s=100, edgecolor='black', linewidth=0.5, zorder=12)
-        elif num_context == 1:
-            context_color = cmap_brown(0.7)
-            plot_axis.scatter(context_projected[:, 0], context_projected[:, 1], c=context_color, s=20, label='_nolegend_', zorder=11)
-            plot_axis.scatter(context_projected[-1, 0], context_projected[-1, 1], color=context_color, marker='*', s=100, edgecolor='black', linewidth=0.5, zorder=12)
+        # --- Gradual stepping rates ---
+        total_steps = max(row_steps, col_steps)
+        row_step_every = total_steps / row_steps if row_steps != 0 else float('inf')
+        col_step_every = total_steps / col_steps if col_steps != 0 else float('inf')
 
-        # Plot ground truth
-        if num_ground_truth > 0 and num_context > 0:
-            ground_truth_cmap = pl.cm.Blues
-            ground_truth_colors = [ground_truth_cmap(0.5 * (1 - i / (num_ground_truth - 1)) + 0.5) for i in range(num_ground_truth)]
-            plot_axis.plot([context_projected[-1, 0], ground_truth_projected[0, 0]], [context_projected[-1, 1], ground_truth_projected[0, 1]], c=ground_truth_colors[0], linewidth=1, linestyle='--', alpha=0.7, zorder=10)
-            for i in range(num_ground_truth - 1):
-                plot_axis.plot(ground_truth_projected[i:i+2, 0], ground_truth_projected[i:i+2, 1], c=ground_truth_colors[i], linewidth=1, linestyle='--', alpha=0.7, label='_nolegend_', zorder=10)
-            plot_axis.scatter(ground_truth_projected[:, 0], ground_truth_projected[:, 1], c=ground_truth_colors, s=20, marker='o', label='_nolegend_', zorder=11)
-            plot_axis.scatter(ground_truth_projected[-1, 0], ground_truth_projected[-1, 1], color=ground_truth_colors[-1], marker='*', s=100, edgecolor='black', linewidth=0.5, zorder=12)
-        elif num_ground_truth > 0 and num_context == 0:
-            ground_truth_cmap = pl.cm.Blues
-            ground_truth_colors = [ground_truth_cmap(0.5 * (1 - i / (num_ground_truth - 1)) + 0.5) for i in range(num_ground_truth)]
-            for i in range(num_ground_truth - 1):
-                plot_axis.plot(ground_truth_projected[i:i+2, 0], ground_truth_projected[i:i+2, 1], c=ground_truth_colors[i], linewidth=1, linestyle='--', alpha=0.7, label='_nolegend_', zorder=10)
-            plot_axis.scatter(ground_truth_projected[:, 0], ground_truth_projected[:, 1], c=ground_truth_colors, s=20, marker='o', label='Ground Truth' if ax_idx == 1 else '_nolegend_', zorder=11)
-            plot_axis.scatter(ground_truth_projected[-1, 0], ground_truth_projected[-1, 1], color=ground_truth_colors[-1], marker='*', s=100, edgecolor='black', linewidth=0.5, zorder=12)
+        # --- Counters ---
+        row_counter = 0
+        col_counter = 0
 
-        # Plot predictions
-        if num_predicted > 0 and num_context > 0:
-            predicted_cmap = pl.cm.Greens
-            predicted_colors = [predicted_cmap(0.5 * (1 - i / (num_predicted - 1)) + 0.5) for i in range(num_predicted)]
-            plot_axis.plot([context_projected[-1, 0], projected_predictions[0, 0]], [context_projected[-1, 1], projected_predictions[0, 1]], c=predicted_colors[0], linewidth=1, linestyle='--', alpha=0.7, zorder=10)
-            for i in range(num_predicted - 1):
-                plot_axis.plot(projected_predictions[i:i+2, 0], projected_predictions[i:i+2, 1], c=predicted_colors[i], linewidth=1, linestyle='--', alpha=0.7, label='_nolegend_', zorder=10)
-            plot_axis.scatter(projected_predictions[:, 0], projected_predictions[:, 1], c=predicted_colors, s=20, marker='x', label='_nolegend_', zorder=11)
-            plot_axis.scatter(projected_predictions[-1, 0], projected_predictions[-1, 1], color=predicted_colors[-1], marker='*', s=100, edgecolor='black', linewidth=0.5, zorder=12)
-        elif num_predicted > 0 and num_context == 0:
-            predicted_cmap = pl.cm.Greens
-            predicted_colors = [predicted_cmap(0.5 * (1 - i / (num_predicted - 1)) + 0.5) for i in range(num_predicted)]
-            for i in range(num_predicted - 1):
-                plot_axis.plot(projected_predictions[i:i+2, 0], projected_predictions[i:i+2, 1], c=predicted_colors[i], linewidth=1, linestyle='--', alpha=0.7, label='_nolegend_', zorder=10)
-            plot_axis.scatter(projected_predictions[:, 0], projected_predictions[:, 1], c=predicted_colors, s=20, marker='x', label='Prediction' if ax_idx == 1 else '_nolegend_', zorder=11)
-            plot_axis.scatter(projected_predictions[-1, 0], projected_predictions[-1, 1], color=predicted_colors[-1], marker='*', s=100, edgecolor='black', linewidth=0.5, zorder=12)
+        for _ in range(int(total_steps)):
+            # Move row if necessary
+            if row_counter >= row_step_every:
+                r1 = (r1 + vert_dir) % rows
+                row_counter -= row_step_every
 
-        # Add legend only to specific axes
-        if ax_idx == 1:  # Always add legend to the second plot
-            legend_lines = [mlines.Line2D([], [], color='saddlebrown', linestyle='-', marker='o', markersize=5, label='Context'),
-                          mlines.Line2D([], [], color='blue', linestyle='--', marker='o', markersize=5, label='Ground Truth'),
-                          mlines.Line2D([], [], color='green', linestyle='--', marker='x', markersize=5, label='Prediction')]
-            plot_axis.legend(handles=legend_lines, loc='best')
+            # Move column if necessary
+            if col_counter >= col_step_every:
+                c1 = (c1 + horz_dir) % cols
+                col_counter -= col_step_every
 
-        # Restore original axis properties but keep the added data
-        # We generally don't want to reset the limits since we added new data
-        # But we want to keep the original labels and titles
-        plot_axis.set_xlabel(original_xlabel)
-        plot_axis.set_ylabel(original_ylabel)
-        plot_axis.set_title(original_title)
+            path.append((r1, c1))
 
-    # Save the figures for selected axes
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+            row_counter += 1
+            col_counter += 1
+
+        # Add last point to path
+        path.append(goal)
+
+        return path
     
-    saved_files = []
-    for ax_idx in save_axes:
-        if ax_idx < len(plot_axes):
-            fig = plot_axes[ax_idx].figure
-            savename_jpg = os.path.join(save_dir, f"pacmap_prediction_overlay_{ax_idx}.jpg")
-            fig.savefig(savename_jpg, dpi=300)
-            saved_files.append(savename_jpg)
-            print(f"Prediction plot {ax_idx} saved to: {savename_jpg}")
+    # Step 1: Generate the direct, vertical toroidal, horizontal toroidal, and double-wrapping paths
+    direct_path = create_path(start, goal, rows, cols, wrap_vertical=False, wrap_horizontal=False)
+    vertical_toroidal_path = create_path(start, goal, rows, cols, wrap_vertical=True, wrap_horizontal=False)
+    horizontal_toroidal_path = create_path(start, goal, rows, cols, wrap_vertical=False, wrap_horizontal=True)
+    double_wrapping_path = create_path(start, goal, rows, cols, wrap_vertical=True, wrap_horizontal=True)
+
+    # Step 2: Evaluate all variations and select the lowest-cost path
+    paths = [direct_path, vertical_toroidal_path, horizontal_toroidal_path, double_wrapping_path]
+    costs = [compute_path_cost(path, u_matrix, undo_log) for path in paths]
+    min_cost_index = np.argmin(costs)
+
+    # Switch back to row/col 
+    best_path = paths[min_cost_index]
+    best_path = [(x[1], x[0]) for x in best_path]
     
-    # Save a combined figure with all selected axes if there's more than one
-    if len(save_axes) > 1:
-        # We'll save the combined figure by creating a new figure with subplots
-        # and copying the contents from the selected axes
-        fig, axes = plt.subplots(1, len(save_axes), figsize=(6*len(save_axes), 5))
-        if len(save_axes) == 1:
-            axes = [axes]  # Make iterable when there's only one subplot
-            
-        for i, ax_idx in enumerate(save_axes):
-            if ax_idx < len(plot_axes):
-                original_ax = plot_axes[ax_idx]
-                new_ax = axes[i]
-                
-                # Copy all artists from the original axis to the new one
-                for artist in original_ax.get_children():
-                    try:
-                        if hasattr(artist, 'get_data'):  # Lines
-                            x, y = artist.get_data()
-                            new_line = new_ax.plot(x, y, 
-                                               color=artist.get_color(),
-                                               linestyle=artist.get_linestyle(),
-                                               linewidth=artist.get_linewidth(),
-                                               marker=artist.get_marker(),
-                                               markersize=artist.get_markersize() 
-                                                        if hasattr(artist, 'get_markersize') else None,
-                                               alpha=artist.get_alpha(),
-                                               zorder=artist.get_zorder())
-                        elif hasattr(artist, 'get_offsets'):  # Scatter
-                            offsets = artist.get_offsets()
-                            if len(offsets) > 0:
-                                colors = artist.get_facecolor()
-                                if len(colors) == 1:
-                                    colors = colors[0]
-                                new_ax.scatter(offsets[:, 0], offsets[:, 1],
-                                           c=colors,
-                                           s=artist.get_sizes()[0] if len(artist.get_sizes()) > 0 else 20,
-                                           marker=artist.get_marker(),
-                                           alpha=artist.get_alpha(),
-                                           zorder=artist.get_zorder())
-                    except:
-                        pass  # Skip artists that can't be copied easily
-                
-                # Copy labels and titles
-                new_ax.set_xlim(original_ax.get_xlim())
-                new_ax.set_ylim(original_ax.get_ylim())
-                new_ax.set_title(original_ax.get_title())
-                new_ax.set_xlabel(original_ax.get_xlabel())
-                new_ax.set_ylabel(original_ax.get_ylabel())
-                
-                # Copy legend if it exists
-                if original_ax.get_legend():
-                    handles, labels = original_ax.get_legend_handles_labels()
-                    new_ax.legend(handles, labels, loc='best')
-        
-        savename_combined = os.path.join(save_dir, "pacmap_prediction_overlay_combined.jpg")
-        fig.tight_layout()
-        fig.savefig(savename_combined, dpi=300)
-        saved_files.append(savename_combined)
-        print(f"Combined prediction plot saved to: {savename_combined}")
-        plt.close(fig)
-    
-    # Return the appropriate result based on what was passed in
-    if single_axis_passed and len(plot_axes) == 1:
-        return plot_axes[0]  # Return a single axis if that's what was passed
+    best_cost = costs[min_cost_index]
+
+    return best_path, best_cost
+
+def create_colored_line(ax, points, color_start, color_end, label, u_matrix, undo_log):
+    """Creates a line plot following the lowest-cost U-matrix paths."""
+    if len(points) < 2:
+        return  # Nothing to draw
+
+    rows, cols = u_matrix.shape
+
+    # Calculate path based on u_matrix
+    full_path = []
+    for i in range(len(points) - 1):
+        path_segment, lowest_cost = find_toroidal_low_cost_path(u_matrix, points[i], points[i+1], undo_log)
+        full_path.extend(path_segment[:-1])  # omit last point to prevent duplication
+    if full_path != []:
+        if (full_path[-1][0] != points[-1][0]) or ((full_path[-1][1] != points[-1][1])):
+            full_path.append(tuple(points[-1]))  # add the very last point if different from end of build path
     else:
-        return plot_axes  # Return the list of axes
+        full_path = tuple(points[-1])
+
+    points = np.array(full_path).reshape(-1, 2)
+
+    # --- Detect jumps and split segments ---
+    segments = []
+    for i in range(len(points) - 1):
+        p1 = points[i]
+        p2 = points[i + 1]
+
+        dr = abs(p1[0] - p2[0])
+        dc = abs(p1[1] - p2[1])
+
+        # Handle wrap detection: if jump is larger than half the grid, assume wrapping
+        if dr > rows // 2 or dc > cols // 2:
+            continue  # skip connecting this segment
+        # segments.append([p1, p2])
+        segments.append([hex_grid_position(p1[1], p1[0]), hex_grid_position(p2[1], p2[0])]) #NOTE: reverse row/col!
+
+    segments = np.array(segments)
+
+    # --- Create color gradient ---
+    n_points = len(points)
+    rgb_start = np.array(mcolors.to_rgb(color_start))
+    rgb_end = np.array(mcolors.to_rgb(color_end))
+
+    colors = []
+    for i in range(len(segments)):
+        # color according to the first point's position along the full path
+        alpha = i / (n_points - 1) if n_points > 1 else 0
+        rgb = rgb_start + (rgb_end - rgb_start) * alpha
+        colors.append((*rgb, 1.0))
+
+    lc = LineCollection(segments, colors=colors, linewidth=2)
+    ax.add_collection(lc)
+
+    # Manually compute halfway color
+    halfway_rgb = (rgb_start + rgb_end) / 2
+    halfway_color = (*halfway_rgb, 1.0)
+
+    # Plot final star with halfway color
+    final_point = points[-1]
+    ax.plot(hex_grid_position(final_point[1],final_point[0]),  
+            marker='*', color=halfway_color,
+            markersize=10,
+            markeredgecolor=None, markeredgewidth=0.5,
+            label=label)
+
+def hex_grid_position(row, col, radius=1.0):
+    """Returns (x, y) position in the hexagonal grid."""
+    width = 1.5 * radius
+    height = np.sqrt(3) * radius
+    x = col * width
+    y = row * height + (col % 2) * (height / 2)
+    return x, y
+
+def plot_trajectory_on_umatrix(ax, context, ground_truth, predictions, som_nodes, u_matrix, undo_log):
+    """
+    Plots the trajectory of points on an existing U-matrix plot, following the lowest-cost toroidal paths.
+
+    Args:
+        ax (matplotlib.axes.Axes): The matplotlib axes object of the existing U-matrix plot.
+        context (list): List of node indices representing the context trajectory.
+        ground_truth (list): List of node indices representing the ground truth trajectory.
+        predictions (list): List of node indices representing the predicted trajectory.
+        som_nodes (np.ndarray): Array of SOM node coordinates (n_nodes x 2).
+        u_matrix (np.ndarray): 2D array of U-Matrix values (for calculating lowest-cost paths).
+    """
+
+    def get_node_coordinates(node_indices, som_nodes):
+        """Retrieves (x, y) coordinates from som_nodes based on node indices."""
+        return [som_nodes[i[1] + i[0] * int(np.sqrt(len(som_nodes)))] for i in node_indices]
+
+    # Map trajectories to (x, y) coordinates
+    context_points = get_node_coordinates(context, som_nodes)
+    ground_truth_points = get_node_coordinates(ground_truth, som_nodes)
+    prediction_points = get_node_coordinates(predictions, som_nodes)
+
+    # Define color gradients and plot
+    create_colored_line(ax, context_points, '#5C4033', 'darkred', label='Context', u_matrix=u_matrix, undo_log=undo_log)  # Poop brown
+    create_colored_line(ax, ground_truth_points, 'darkgreen', 'lightgreen', label='Ground Truth', u_matrix=u_matrix, undo_log=undo_log)
+    create_colored_line(ax, prediction_points, 'darkblue', 'lightblue', label='Prediction', u_matrix=u_matrix, undo_log=undo_log)
+
+    ax.legend()
+    ax.set_xlabel('SOM Node X')
+    ax.set_ylabel('SOM Node Y')
+    ax.set_title('Predicted Trajectory: U-Matrix with Pre-Ictal Overlay')
+
+
+
+def get_som_rowcol(data, som):
+    """Helper to run a batch of data through the SOM and get (row, col) coordinates."""
+    som_rowcol = np.zeros((data.shape[0], 2), dtype=np.int32)
+    for i in range(0, len(data), som.batch_size):
+        batch = data[i:i + som.batch_size]
+        batch = torch.tensor(batch, dtype=torch.float32, device=som.device)
+        bmu_rows, bmu_cols = som.find_bmu(batch)
+        bmu_rows, bmu_cols = bmu_rows.cpu().numpy(), bmu_cols.cpu().numpy()
+        som_rowcol[i:i + som.batch_size, 0] = bmu_rows
+        som_rowcol[i:i + som.batch_size, 1] = bmu_cols
+    return som_rowcol
+
+
+def plot_kohonen_prediction(save_dir, som, plot_data_path, context, ground_truth_future, predictions, undo_log, overlay_thresh=0.25):
+    """Plots Kohonen/SOM predictions on top of a U-Matrix + Pre-Ictal overlay."""
+    # Process context, ground truth, and predictions separately
+    context_rowcol = get_som_rowcol(context, som)
+    gt_rowcol = get_som_rowcol(ground_truth_future, som)
+    pred_rowcol = get_som_rowcol(predictions, som)
+
+    # Load underlay plotting data
+    with open(plot_data_path, "rb") as f:
+        file_data = pickle.load(f)
+    grid_size = som.grid_size
+    u_matrix_hex = file_data['u_matrix_hex']
+    overlay_preictal = file_data['rescale_preictal_smoothed']
+
+    # Create figure
+    fig_overlay, ax_overlay = pl.subplots(figsize=(10, 10))
+
+    # Plot U-Matrix background
+    plot_hex_grid(ax_overlay, u_matrix_hex, "Predicted Trajectory: U-Matrix with Pre-Ictal Overlay",
+                  cmap_str='bone_r', vmin=0,
+                  vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
+
+    # Overlay Pre-Ictal density
+    rows, cols = overlay_preictal.shape
+    radius = 1.0
+    height = np.sqrt(3) * radius
+    cmap_overlay = cm.get_cmap('flare')
+    norm_overlay = pl.Normalize(vmin=0.0, vmax=1.0)
+
+    for i in range(rows):
+        for j in range(cols):
+            x = j * 1.5 * radius
+            y = i * height + (j % 2) * (height / 2)
+            face_color = cmap_overlay(norm_overlay(overlay_preictal[i, j]))
+            hexagon = patches.RegularPolygon((x, y), numVertices=6, radius=radius,
+                                              orientation=np.radians(30),
+                                              facecolor=face_color, alpha=0.7,
+                                              edgecolor=None, linewidth=0)
+            if overlay_preictal[i, j] >= overlay_thresh:
+                ax_overlay.add_patch(hexagon)
+
+    # Colorbar for overlay
+    sm_overlay = pl.cm.ScalarMappable(cmap=cmap_overlay, norm=norm_overlay)
+    sm_overlay.set_array([])
+    pl.colorbar(sm_overlay, ax=ax_overlay, label="Pre-Ictal Density (Clipped & Smoothed)")
+
+    # SOM nodes: (x, y) coordinates
+    som_nodes = np.array([(j, i) for i in range(grid_size[0]) for j in range(grid_size[1])])
+
+    # Plot trajectories
+    plot_trajectory_on_umatrix(ax_overlay, 
+        context_rowcol.tolist(), 
+        gt_rowcol.tolist(), 
+        pred_rowcol.tolist(), 
+        som_nodes,
+        u_matrix=u_matrix_hex,
+        undo_log=undo_log
+    )
+
+    # Save figure
+    savename_overlay = save_dir + f"/kohonen_predictions.jpg"
+    pl.savefig(savename_overlay, dpi=600)
+    pl.close(fig_overlay)
+
+# def plot_kohonen_prediction(save_dir, som, plot_data_path, context, ground_truth_future, fake_predictions, overlay_thresh=0.25):
+    
+#     # Run data through Kohonen/SOM
+#     # SOM Inference on all data in batches
+#     # NOTE: Do not use for large inference because moves every batch to CPU
+#     som_rowcol = np.zeros((context.shape[0], 2), dtype=np.int32)
+#     for i in range(0, len(context), som.batch_size):
+#         batch = context[i:i + som.batch_size]
+#         batch = torch.tensor(batch, dtype=torch.float32, device=som.device)
+#         bmu_rows, bmu_cols = som.find_bmu(batch)
+#         bmu_rows, bmu_cols = bmu_rows.cpu().numpy(), bmu_cols.cpu().numpy()
+#         som_rowcol[i:i + som.batch_size, 0] = bmu_rows
+#         som_rowcol[i:i + som.batch_size, 1] = bmu_cols
+
+    
+#     # Load underlay plotting data
+#     with open(plot_data_path, "rb") as f: file_data = pickle.load(f)
+#     grid_size = som.grid_size
+#     u_matrix_hex = file_data['u_matrix_hex']
+#     overlay_preictal = file_data['rescale_preictal_smoothed']
+    
+#     # 2D OVERLAY: U-Matrix + Pre-Ictal
+    
+#     # Create new figure for U-Matrix + Pre-Ictal Density Overlay
+#     fig_overlay, ax_overlay = pl.subplots(figsize=(10, 10))
+
+#     # Plot U-Matrix base
+#     plot_hex_grid(ax_overlay, u_matrix_hex, "Predicted Trajectory: U-Matrix with Pre-Ictal Overlay", cmap_str='bone_r', vmin=0, vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
+
+#     # Overlay Pre-Ictal density 
+#     rows, cols = overlay_preictal.shape
+#     radius = 1.0
+#     height = np.sqrt(3) * radius
+#     cmap_overlay = cm.get_cmap('flare')
+#     norm_overlay = pl.Normalize(vmin=0.0, vmax=1.0)
+
+#     for i in range(rows):
+#         for j in range(cols):
+#             x = j * 1.5 * radius
+#             y = i * height + (j % 2) * (height / 2)
+#             face_color = cmap_overlay(norm_overlay(overlay_preictal[i, j]))
+#             hexagon = patches.RegularPolygon((x, y), numVertices=6, radius=radius,
+#                                             orientation=np.radians(30),
+#                                             facecolor=face_color, alpha=0.7,
+#                                             edgecolor=None, linewidth=0)
+#             if overlay_preictal[i, j] >= overlay_thresh:
+#                 ax_overlay.add_patch(hexagon)
+
+#     # Optional: add a colorbar for the overlay
+#     sm_overlay = pl.cm.ScalarMappable(cmap=cmap_overlay, norm=norm_overlay)
+#     sm_overlay.set_array([])
+#     pl.colorbar(sm_overlay, ax=ax_overlay, label="Pre-Ictal Density (Clipped & Smoothed)")
+
+
+#     # Add trajectories
+
+
+
+
+
+#     # Save overlay figure
+#     savename_overlay = save_dir + f"/kohonen_predictions.jpg"
+#     pl.savefig(savename_overlay, dpi=600)
+#     # pl.savefig(savename_overlay.replace('.jpg', '.svg'))
 
 def get_dataset_hours(win_sec, stride_sec, latent_means_windowed):
     """
@@ -584,6 +463,74 @@ def format_large_number(n):
     else:
         return f"{n:.1f}"
 
+def load_kohonen(som_precomputed_path, som_device):
+    print(f"Loading Toroidal SOM pretrained weights from FILE: {som_precomputed_path}")
+    checkpoint = torch.load(som_precomputed_path, map_location=torch.device(som_device))
+
+    # Retrieve hyperparameters
+    grid_size = som_gridsize = checkpoint['grid_size']
+    input_dim = checkpoint['input_dim']
+    lr = checkpoint['lr']
+    sigma = checkpoint['sigma']
+    lr_epoch_decay = checkpoint['lr_epoch_decay']
+    sigma_epoch_decay = checkpoint['sigma_epoch_decay']
+    sigma_min = checkpoint['sigma_min']
+    epoch = checkpoint['epoch']
+    batch_size = checkpoint['batch_size']
+
+    # Create Toroidal SOM instance with same parameters
+    som = ToroidalSOM(grid_size=(grid_size, grid_size), input_dim=input_dim, batch_size=batch_size,
+                        lr=lr, lr_epoch_decay=lr_epoch_decay, sigma=sigma,
+                        sigma_epoch_decay=sigma_epoch_decay, sigma_min=sigma_min, device=som_device)
+
+    # Load weights
+    som.load_state_dict(checkpoint['model_state_dict'])
+    som.weights = checkpoint['weights']
+    som.reset_device(som_device)
+
+    print(f"Toroidal SOM model loaded from {som_precomputed_path}")
+
+    return som, checkpoint
+
+def plot_hex_grid(ax, data, title, cmap_str='viridis', vmin=None, vmax=None):
+    ax.set_aspect('equal', adjustable='box')
+    ax.axis('off')  # Remove axes
+
+    cmap = cm.get_cmap(cmap_str)
+    norm = pl.Normalize(vmin=vmin if vmin is not None else np.min(data), vmax=vmax if vmax is not None else np.max(data))
+
+    # Hexagon geometry
+    radius = 1.0  # circumradius
+    width = 2 * radius  # not used directly but good to note
+    height = np.sqrt(3) * radius  # vertical distance from flat to flat
+
+    rows, cols = data.shape
+
+    for i in range(rows):
+        for j in range(cols):
+            x = j * 1.5 * radius
+            y = i * height + (j % 2) * (height / 2)
+
+            # Scale the raw data to the range [0, 1] based on vmin and vmax
+            face_color = cmap(norm(data[i, j]))
+
+            hexagon = patches.RegularPolygon((x, y), numVertices=6, radius=radius,
+                                            orientation=np.radians(30),
+                                            facecolor=face_color, alpha=0.7,
+                                            edgecolor=face_color, linewidth=0.1)
+            ax.add_patch(hexagon)
+
+    x_extent = cols * 1.5 * radius
+    y_extent = rows * height
+    ax.set_xlim(-radius, x_extent + radius)
+    ax.set_ylim(-radius, y_extent + height)
+    ax.set_title(title)
+
+    norm = pl.Normalize(vmin=vmin, vmax=vmax)  # Use vmin and vmax directly
+    sm = pl.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    pl.colorbar(sm, ax=ax, label=title) # Add a label to the colorbar for clarity
+
 def toroidal_kohonen_subfunction_pytorch(
     atd_file,
     pat_ids_list,
@@ -613,18 +560,11 @@ def toroidal_kohonen_subfunction_pytorch(
     sigma_plot=1,
     hits_log_view=True,
     umat_log_view=True,
-    preictal_log_view=True,
+    overlay_thresh = 0.25,
     **kwargs):
     """
     Toroidal SOM with hexagonal grid for latent space analysis.
     """
-    import os
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from matplotlib import cm
-    import datetime
-    from scipy.ndimage import gaussian_filter
-    import matplotlib.patches as patches
 
     if not os.path.exists(savedir): os.makedirs(savedir)
 
@@ -815,14 +755,10 @@ def toroidal_kohonen_subfunction_pytorch(
     if np.max(rescale_preictal_smoothed) > 0:
         rescale_preictal_smoothed = rescale_preictal_smoothed / np.max(rescale_preictal_smoothed)
 
-    if preictal_log_view:
-        epsilon = np.finfo(float).eps
-        preictal_sums = np.log(preictal_sums + epsilon)   
-
 
     # PLOTTING (2D Hexagonal Plots)
 
-    fig_2d, axes_2d = plt.subplots(2, 4, figsize=(28, 12))
+    fig_2d, axes_2d = pl.subplots(2, 4, figsize=(28, 12))
     ax_hit = axes_2d[0, 1]
     ax_preictal = axes_2d[0, 2]
     ax_patient = axes_2d[1, 1]
@@ -831,45 +767,6 @@ def toroidal_kohonen_subfunction_pytorch(
     ax_rescaled_smooth = axes_2d[1, 3]
     ax_umatrix = axes_2d[0, 0]
     ax_comp = axes_2d[1, 0]
-
-    def plot_hex_grid(ax, data, title, cmap_str='viridis', vmin=None, vmax=None):
-        ax.set_aspect('equal', adjustable='box')
-        ax.axis('off')  # Remove axes
-
-        cmap = cm.get_cmap(cmap_str)
-        norm = plt.Normalize(vmin=vmin if vmin is not None else np.min(data), vmax=vmax if vmax is not None else np.max(data))
-
-        # Hexagon geometry
-        radius = 1.0  # circumradius
-        width = 2 * radius  # not used directly but good to note
-        height = np.sqrt(3) * radius  # vertical distance from flat to flat
-
-        rows, cols = data.shape
-
-        for i in range(rows):
-            for j in range(cols):
-                x = j * 1.5 * radius
-                y = i * height + (j % 2) * (height / 2)
-
-                # Scale the raw data to the range [0, 1] based on vmin and vmax
-                face_color = cmap(norm(data[i, j]))
-
-                hexagon = patches.RegularPolygon((x, y), numVertices=6, radius=radius,
-                                                orientation=np.radians(30),
-                                                facecolor=face_color, alpha=0.7,
-                                                edgecolor=face_color, linewidth=0.1)
-                ax.add_patch(hexagon)
-
-        x_extent = cols * 1.5 * radius
-        y_extent = rows * height
-        ax.set_xlim(-radius, x_extent + radius)
-        ax.set_ylim(-radius, y_extent + height)
-        ax.set_title(title)
-
-        norm = plt.Normalize(vmin=vmin, vmax=vmax)  # Use vmin and vmax directly
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        sm.set_array([])
-        plt.colorbar(sm, ax=ax, label=title) # Add a label to the colorbar for clarity
 
     # 1. U-Matrix (Hexagonal, Toroidal)
     plot_hex_grid(ax_umatrix, u_matrix_hex, "U-Matrix (Toroidal, Hexagonal)" + 
@@ -912,16 +809,18 @@ def toroidal_kohonen_subfunction_pytorch(
     # Export 2D figure
     print("Exporting Toroidal SOM 2D visualizations to JPG")
     savename_jpg_2d = savedir + f"/GPU{som_device}_2DPlots_ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.6f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_2D.jpg"
-    plt.savefig(savename_jpg_2d, dpi=600)
+    pl.savefig(savename_jpg_2d, dpi=600)
+    pl.savefig(savename_jpg_2d.replace('.jpg', '.svg'))
 
 
     # 2D OVERLAY: U-Matrix + Pre-Ictal
     
     # Create new figure for U-Matrix + Pre-Ictal Density Overlay
-    fig_overlay, ax_overlay = plt.subplots(figsize=(10, 10))
+    fig_overlay, ax_overlay = pl.subplots(figsize=(10, 10))
 
     # Clip preictal_sums_smoothed at lower threshold 0.5
-    overlay_preictal = np.clip(preictal_sums_smoothed, 0.0, 1.0)
+    # overlay_preictal = np.clip(preictal_sums_smoothed, 0.0, 1.0)
+    overlay_preictal = np.clip(rescale_preictal_smoothed, 0.0, 1.0)
     # overlay_preictal = np.clip(preictal_sums, 0.0, 1.0)
 
     # Plot U-Matrix base
@@ -931,10 +830,9 @@ def toroidal_kohonen_subfunction_pytorch(
     # We'll replot on top with a semi-transparent flare colormap
     rows, cols = overlay_preictal.shape
     radius = 1.0
-    overlay_thresh = 0.0
     height = np.sqrt(3) * radius
     cmap_overlay = cm.get_cmap('flare')
-    norm_overlay = plt.Normalize(vmin=0.0, vmax=1.0)
+    norm_overlay = pl.Normalize(vmin=0.0, vmax=1.0)
 
     for i in range(rows):
         for j in range(cols):
@@ -943,25 +841,38 @@ def toroidal_kohonen_subfunction_pytorch(
             face_color = cmap_overlay(norm_overlay(overlay_preictal[i, j]))
             hexagon = patches.RegularPolygon((x, y), numVertices=6, radius=radius,
                                             orientation=np.radians(30),
-                                            facecolor=face_color, alpha=0.3,
+                                            facecolor=face_color, alpha=0.7,
                                             edgecolor=None, linewidth=0)
             if overlay_preictal[i, j] >= overlay_thresh:
                 ax_overlay.add_patch(hexagon)
 
     # Optional: add a colorbar for the overlay
-    sm_overlay = plt.cm.ScalarMappable(cmap=cmap_overlay, norm=norm_overlay)
+    sm_overlay = pl.cm.ScalarMappable(cmap=cmap_overlay, norm=norm_overlay)
     sm_overlay.set_array([])
-    plt.colorbar(sm_overlay, ax=ax_overlay, label="Pre-Ictal Density (Clipped & Smoothed)")
+    pl.colorbar(sm_overlay, ax=ax_overlay, label="Pre-Ictal Density (Clipped & Smoothed)")
 
     # Save overlay figure
     savename_overlay = savedir + f"/GPU{som_device}_UMatrix_PreIctalOverlay__ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.6f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_2D.jpg"
-    plt.savefig(savename_overlay, dpi=600)
-
-
+    pl.savefig(savename_overlay, dpi=600)
+    pl.savefig(savename_overlay.replace('.jpg', '.svg'))
+    
+    pickle_path = savedir + "/overlay_figure_object.pkl"
+    output_obj = open(pickle_path, 'wb')
+    pickle.dump({
+        'fig':fig_overlay, 
+        'ax': ax_overlay,
+        'u_matrix_hex': u_matrix_hex,
+        'preictal_sums': preictal_sums,
+        'preictal_sums_smoothed': preictal_sums_smoothed,
+        'rescale_preictal_smoothed': rescale_preictal_smoothed
+        }, 
+        output_obj)
+    output_obj.close()
+    print("Saved overlay figure objects for later use")
 
     # PLOTTING (All Plots in 3D - Representing Toroidal as a Flat Grid)
 
-    fig_3d = plt.figure(figsize=(28, 24))
+    fig_3d = pl.figure(figsize=(28, 24))
 
     # Function to create a 3D plot of the 2D grid
     def plot_3d_grid(fig, ax, data, title, cmap_str='viridis', vmin=None, vmax=None):
@@ -972,7 +883,7 @@ def toroidal_kohonen_subfunction_pytorch(
         Z = data  # Use the data directly as the Z-height
 
         cmap = cm.get_cmap(cmap_str)
-        norm = plt.Normalize(vmin=vmin if vmin is not None else np.min(data), vmax=vmax if vmax is not None else np.max(data))
+        norm = pl.Normalize(vmin=vmin if vmin is not None else np.min(data), vmax=vmax if vmax is not None else np.max(data))
         colors = cmap(norm(Z))
 
         ax.plot_surface(X, Y, Z, facecolors=colors, rstride=1, cstride=1, alpha=0.7)
@@ -981,7 +892,7 @@ def toroidal_kohonen_subfunction_pytorch(
         ax.set_zlabel("Value")
         ax.set_title(title)
 
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm = pl.cm.ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
         fig.colorbar(sm, ax=ax, label=title, shrink=0.6)
 
@@ -1025,12 +936,13 @@ def toroidal_kohonen_subfunction_pytorch(
     # Export 3D figure
     print("Exporting Toroidal SOM 3D visualizations to JPG")
     savename_jpg_3d = savedir + f"/GPU{som_device}_3DPlots_smoothsec{win_sec}_Stride{stride_sec}_subsampFile{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.4f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
-    plt.savefig(savename_jpg_3d, dpi=600)
+    pl.savefig(savename_jpg_3d, dpi=600)
+    pl.savefig(savename_jpg_3d.replace('.jpg', '.svg'))
 
 
     # PLOTTING (All Plots in 3D - Projected onto a Toroid)
 
-    fig_toroid = plt.figure(figsize=(28, 24))
+    fig_toroid = pl.figure(figsize=(28, 24))
 
     def plot_3d_on_toroid(fig, ax, data, title, cmap_str='viridis', vmin=None, vmax=None):
         rows, cols = data.shape
@@ -1042,7 +954,7 @@ def toroidal_kohonen_subfunction_pytorch(
         z = r * np.sin(v)
 
         cmap = cm.get_cmap(cmap_str)
-        norm = plt.Normalize(vmin=vmin if vmin is not None else np.min(data), vmax=vmax if vmax is not None else np.max(data))
+        norm = pl.Normalize(vmin=vmin if vmin is not None else np.min(data), vmax=vmax if vmax is not None else np.max(data))
         colors = cmap(norm(data.T)) # Transpose data to match u,v grid
 
         ax.plot_surface(x, y, z, facecolors=colors, rstride=1, cstride=1, alpha=0.7)
@@ -1056,7 +968,7 @@ def toroidal_kohonen_subfunction_pytorch(
         
         ax.set_axis_off()
 
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm = pl.cm.ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
         fig.colorbar(sm, ax=ax, label=title, shrink=0.6)
 
@@ -1098,9 +1010,9 @@ def toroidal_kohonen_subfunction_pytorch(
     # Export Toroid figure
     print("Exporting Toroidal SOM visualizations projected onto a Toroid to JPG")
     savename_jpg_toroid = savedir + f"/GPU{som_device}_ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampFile{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.4f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
-    plt.savefig(savename_jpg_toroid, dpi=600)
+    pl.savefig(savename_jpg_toroid, dpi=600)
+    pl.savefig(savename_jpg_toroid.replace('.jpg', '.svg'))
             
-
 def compute_histograms(data, min_val, max_val, B):
     """
     Compute histogram bin counts for each dimension of a 2D array.
