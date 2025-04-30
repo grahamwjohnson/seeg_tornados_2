@@ -54,7 +54,7 @@ transformer_dim: kwargs['transformer_dim'] = kwargs['crattn_embed_dim'] * kwargs
 transformer_seq_length: 64
 max_seq_len: kwargs['max_seq_len'] = kwargs['transformer_seq_length']
 max_batch_size: kwargs['max_batch_size'] = kwargs['random_pulls_in_batch'] * kwargs['inference_batch_mult']
-n_layers: 4
+n_layers: 1
 n_heads: 64
 multiple_of: 256 
 ffn_dim_multiplier: 0.4 # Default is 1 to make FF layers account for ~2/3 of total parameter count

@@ -46,6 +46,7 @@ import math
 import pacmap
 import phate
 from scipy.stats import norm
+from sklearn.metrics import confusion_matrix
 import matplotlib.colors as colors
 import auraloss
 from tkinter import filedialog
@@ -584,41 +585,150 @@ def hash_to_vector(input_string, num_channels, latent_dim, modifier, hash_output
 
 # PLOTTING
 
-def print_latent_realtime(mu, logvar, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
+
+def plot_barycenter(barycenter, prior, observed, savedir, epoch, random_barycenter_numplots, bins=200, alpha=0.2, **kwargs):
+    
+    N,D = barycenter.shape
+    
+    # Across SAMPLES - Sort along dim before
+    sorted1_barycenter = np.sort(barycenter, axis=1, kind='quicksort', order=None)
+    sorted1_prior = np.sort(prior, axis=1, kind='quicksort', order=None)
+    sorted1_observed = np.sort(observed, axis=1, kind='quicksort', order=None)
+    
+    barycenter_meanSample = np.mean(sorted1_barycenter, axis=0)
+    prior_meanSample = np.mean(sorted1_prior, axis=0)
+    observed_meanSample = np.mean(sorted1_observed, axis=0)
+    
+    # barycenter_stdSample = np.std(sorted1_barycenter, axis=0)
+    # prior_stdSample = np.std(sorted1_prior, axis=0)
+    # observed_stdSample = np.std(sorted1_observed, axis=0)
+    
+    # Across DIMENSIONS - Sort along samples before
+    sorted0_barycenter = np.sort(barycenter, axis=0, kind='quicksort', order=None)
+    sorted0_prior = np.sort(prior, axis=0, kind='quicksort', order=None)
+    sorted0_observed = np.sort(observed, axis=0, kind='quicksort', order=None)
+    
+    barycenter_meanDim = np.mean(sorted0_barycenter, axis=1)
+    prior_meanDim = np.mean(sorted0_prior, axis=1)
+    observed_meanDim = np.mean(sorted0_observed, axis=1)
+
+    # barycenter_stdDim = np.std(sorted0_barycenter, axis=1)
+    # prior_stdDim = np.std(sorted0_prior, axis=1)
+    # observed_stdDim = np.std(sorted0_observed, axis=1)
+
+    gs = gridspec.GridSpec(2, random_barycenter_numplots)
+    fig = pl.figure(figsize=(24, 12))
+
+    # Plot MEAN of samples (i.e. shows dims)
+    ax0 = fig.add_subplot(gs[0, :int(random_barycenter_numplots/2)])
+    sns.histplot(barycenter_meanSample, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax0)
+    sns.histplot(prior_meanSample, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax0)
+    sns.histplot(observed_meanSample, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax0)
+    ax0.set_title(f"MEAN Across Samples [{N}]")
+    pl.legend()
+
+    # Plot MEAN of dims (i.e. shows samples)
+    ax1 = fig.add_subplot(gs[0, int(random_barycenter_numplots/2):])
+    sns.histplot(barycenter_meanDim, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax1)
+    sns.histplot(prior_meanDim, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax1)
+    sns.histplot(observed_meanDim, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax1)
+    ax1.set_title(f"MEAN Across Dimensions [{D}]")
+    pl.legend()
+
+    # # Plot STD of samples (i.e. shows dims)
+    # ax2 = fig.add_subplot(gs[1, :int(random_barycenter_numplots/2)])
+    # sns.histplot(barycenter_stdSample, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax2)
+    # sns.histplot(prior_stdSample, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax2)
+    # sns.histplot(observed_stdSample, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax2)
+    # ax2.set_title(f"STD Across Samples")
+    # pl.legend()
+
+    # # Plot STD of dims (i.e. shows samples)
+    # ax3 = fig.add_subplot(gs[1, int(random_barycenter_numplots/2):])
+    # sns.histplot(barycenter_stdDim, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax3)
+    # sns.histplot(prior_stdDim, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax3)
+    # sns.histplot(observed_stdDim, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax3)
+    # ax3.set_title(f"STD Across Dimensions")
+    # pl.legend()
+
+    # Add random dimensions in to plot 
+    for i in range(random_barycenter_numplots):
+        ax_curr = fig.add_subplot(gs[1, i])
+        
+        # Random dim
+        np.random.seed(seed=None) # should replace with Generator for newer code
+        dim_idx = np.random.randint(0, D)
+        data_curr_barycenter = barycenter[:, dim_idx]
+        data_curr_prior = prior[:, dim_idx]
+        data_curr_observed = observed[:, dim_idx]
+        sns.histplot(data_curr_barycenter, bins=bins, color="purple", edgecolor=None, alpha=alpha, label="Barycenter", kde=True, ax=ax_curr)
+        sns.histplot(data_curr_prior, bins=bins, color="red", edgecolor=None, alpha=alpha, label="Prior", kde=True, ax=ax_curr)
+        sns.histplot(data_curr_observed, bins=bins, color="blue", edgecolor=None, alpha=alpha, label="Observed", kde=True, ax=ax_curr)
+        ax_curr.set_title(f"Dim {dim_idx}")
+        pl.legend()
+
+    if not os.path.exists(savedir): os.makedirs(savedir)
+    savename_jpg = f"{savedir}/Barycenter_epoch{epoch}.jpg"
+    pl.savefig(savename_jpg)
+    pl.close(fig)    
+
+    pl.close('all') 
+ 
+    print("Barycenter Plotted")
+
+def print_latent_realtime(latent, barycenter, savedir, epoch, iter_curr, file_name, num_realtime_dims, **kwargs):
 
     dims_to_plot = np.arange(0,num_realtime_dims)
-
-    batchsize = mu.shape[0]
-
-    for b in range(0, batchsize):
         
-        # Make new grid/fig
-        gs = gridspec.GridSpec(1, 2)
-        fig = pl.figure(figsize=(20, 14))
+    latent_plot = latent[:, 0:len(dims_to_plot)]
+    barycenter_plot = barycenter[:, 0:len(dims_to_plot)]
 
-        # Only print for one batch index at a time
-        mu_plot = mu[b, :, 0:len(dims_to_plot)]
-        logvar_plot = logvar[b, :, 0:len(dims_to_plot)]
+    df = pd.DataFrame({
+        'dimension': np.tile(dims_to_plot, latent_plot.shape[0]),
+        'latent': latent_plot.flatten(),
+        'barycenter': barycenter_plot.flatten(),
+        # 'pat_labels': np.tile(pat_labels, num_realtime_dims)
+    })
 
-        df = pd.DataFrame({
-            'dimension': np.tile(dims_to_plot, mu_plot.shape[0]),
-            'mu': mu_plot.flatten(),
-            'logvar': logvar_plot.flatten() 
-        })
+    # COLOR BY DIM
+    gs = gridspec.GridSpec(1, 2)
+    fig = pl.figure(figsize=(20, 14))
 
-        sns.jointplot(data=df, x="mu", y="logvar", hue="dimension")
-        fig.suptitle(f"{file_name[b]}, epoch: {epoch}, iter: {iter_curr}")
+    g1 = sns.jointplot(data=df, x="latent", y="barycenter", hue="dimension")
+    xlim = g1.ax_joint.get_xlim()
+    ylim = g1.ax_joint.get_ylim()
+    fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
 
-        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-        # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-        savename_jpg = f"{savedir}/JPEGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch{b}.jpg"
-        # savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch_{b}.svg"
-        pl.savefig(savename_jpg)
-        # pl.savefig(savename_svg)
-        pl.close(fig)    
+    if not os.path.exists(savedir): os.makedirs(savedir)
+    savename_jpg = f"{savedir}/RealtimeLatent_epoch{epoch}_iter{iter_curr}_colorbyDIM.jpg"
+    pl.savefig(savename_jpg)
+    pl.close(fig)    
 
-        pl.close('all') 
-    
+    pl.close('all') 
+
+
+    # # COLOR BY PAT
+    # num_pats_sampled = len(set(pat_labels))
+    # cmap_raw = plt.get_cmap('cubehelix')
+    # samp_vec = np.linspace(0.1, 0.8, num_pats_sampled)  # Sample 10 colors for the palette
+    # cmap_list = [mpl.colors.rgb2hex(cmap_raw(i)) for i in samp_vec]  # Convert to hex
+
+    # gs = gridspec.GridSpec(1, 2)
+    # fig = pl.figure(figsize=(20, 14))
+
+    # g2 = sns.jointplot(data=df, x="latent", y="prior", hue="pat_labels", kind="kde", palette=cmap_list)
+    # g2.ax_joint.set_xlim(xlim)
+    # g2.ax_joint.set_ylim(ylim)
+    # g2.ax_joint.get_legend().remove()
+    # fig.suptitle(f"epoch: {epoch}, iter: {iter_curr}")
+
+    # if not os.path.exists(savedir): os.makedirs(savedir)
+    # savename_jpg = f"{savedir}/RealtimeLatent_epoch{epoch}_iter{iter_curr}_colorbyPAT.jpg"
+    # pl.savefig(savename_jpg)
+    # pl.close(fig)    
+
+    pl.close('all') 
+
 def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_realtime_channels_recon, num_recon_samples, **kwargs):
 
     x_hat = x_hat.detach().cpu().numpy()
@@ -641,39 +751,61 @@ def print_recon_realtime(x, x_hat, savedir, epoch, iter_curr, file_name, num_rea
     random_ch_idxs = r[0:num_realtime_channels_recon]
 
     # Make new grid/fig
-    gs = gridspec.GridSpec(batchsize, num_realtime_channels_recon * 2) # *2 because beginning and end of transformer sequence
-    fig = pl.figure(figsize=(20, 16))
+    if x_fused.shape[2] > num_recon_samples:
+        gs = gridspec.GridSpec(batchsize, num_realtime_channels_recon * 2) # *2 because beginning and end of transformer sequence
+    else:
+        sqrt_num = int(np.ceil(np.sqrt(batchsize * num_realtime_channels_recon)))
+        gs = gridspec.GridSpec(sqrt_num, sqrt_num) 
+        subplot_iter = 0
+
+    fig = pl.figure(figsize=(24, 24))
     palette = sns.cubehelix_palette(n_colors=2, start=3, rot=1) 
     for b in range(0, batchsize):
         for c in range(0,len(random_ch_idxs)):
-            for seq in range(0,2):
-                if seq == 0:
-                    x_decode_plot = x_fused[b, random_ch_idxs[c], :num_recon_samples]
-                    x_hat_plot = x_hat_fused[b, random_ch_idxs[c], :num_recon_samples]
-                    title_str = 'StartOfTransSeq'
-                else:
-                    x_decode_plot = x_fused[b, random_ch_idxs[c], -num_recon_samples:]
-                    x_hat_plot = x_hat_fused[b, random_ch_idxs[c], -num_recon_samples:]   
-                    title_str = 'EndOfTransSeq'             
+            if x_fused.shape[2] > num_recon_samples: # If length of recon is bigger than desire visualized length, then plot only start and end of transformer tokens (may be overlap)
+                for seq in range(0,2):
+                    if seq == 0:
+                        x_decode_plot = x_fused[b, random_ch_idxs[c], :num_recon_samples]
+                        x_hat_plot = x_hat_fused[b, random_ch_idxs[c], :num_recon_samples]
+                        title_str = 'StartOfTransSeq'
+                    else:
+                        x_decode_plot = x_fused[b, random_ch_idxs[c], -num_recon_samples:]
+                        x_hat_plot = x_hat_fused[b, random_ch_idxs[c], -num_recon_samples:]   
+                        title_str = 'EndOfTransSeq'             
+
+                    df = pd.DataFrame({
+                        "Target": x_decode_plot,
+                        "Prediction": x_hat_plot
+                    })
+
+                    ax = fig.add_subplot(gs[b, c*2 + seq]) 
+                    sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
+                    ax.set_title(f"Ch:{random_ch_idxs[c]}\n{file_name[b]}, {title_str}", fontdict={'fontsize': 12, 'fontweight': 'medium'})
+
+                    pl.ylim(-1, 1) # Set y-axis limit -1 to 1
+
+            else: # Can fit entire seuqence into desired raw signal visualization length
+                x_decode_plot = x_fused[b, random_ch_idxs[c], :]
+                x_hat_plot = x_hat_fused[b, random_ch_idxs[c], :]
 
                 df = pd.DataFrame({
                     "Target": x_decode_plot,
                     "Prediction": x_hat_plot
                 })
 
-                ax = fig.add_subplot(gs[b, c*2 + seq]) 
+                row = int(subplot_iter/sqrt_num)
+                col = subplot_iter - (row * sqrt_num)
+                ax = fig.add_subplot(gs[row, col]) 
                 sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
-                ax.set_title(f"Ch:{random_ch_idxs[c]}\n{file_name[b]}, {title_str}", fontdict={'fontsize': 12, 'fontweight': 'medium'})
+                ax.set_title(f"{file_name[b]}", fontdict={'fontsize': 8, 'fontweight': 'medium'})
 
                 pl.ylim(-1, 1) # Set y-axis limit -1 to 1
+                subplot_iter = subplot_iter + 1
             
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
-    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-    # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-    savename_jpg = f"{savedir}/JPEGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_allbatch.jpg"
-    # savename_svg = f"{savedir}/SVGs/RealtimeRecon_epoch{epoch}_iter{iter_curr}_{pat_id}_allbatch.svg"
+    if not os.path.exists(savedir): os.makedirs(savedir)
+    savename_jpg = f"{savedir}/RealtimeRecon_epoch{epoch}_iter{iter_curr}_allbatch.jpg"
     pl.savefig(savename_jpg)
-    # pl.savefig(savename_svg)
     pl.close(fig)   
 
     pl.close('all') 
@@ -686,10 +818,6 @@ def print_classprobs_realtime(class_probs, class_labels, savedir, epoch, iter_cu
 
     for b in range(0, batchsize):
         
-        # Make new grid/fig
-        gs = gridspec.GridSpec(1, 2)
-        fig = pl.figure(figsize=(20, 14))
-
         # Only print for one batch index at a time
         # class_probs_plot = class_probs_cpu[b, :, :]
         class_probs_plot = class_probs_cpu[b, :]
@@ -709,7 +837,7 @@ def print_classprobs_realtime(class_probs, class_labels, savedir, epoch, iter_cu
             })  # Confidence intervals
 
         # Plot using Seaborn
-        pl.figure(figsize=(12, 6))
+        fig = pl.figure(figsize=(12, 6))
         # sns.barplot(x='Class', y='Mean Probability', data=data, yerr=data['CI'], capsize=0.1, color='skyblue')
         bar_plot = sns.barplot(x='Class', y='Mean Probability', data=data, capsize=0.1, color='skyblue')
 
@@ -726,15 +854,38 @@ def print_classprobs_realtime(class_probs, class_labels, savedir, epoch, iter_cu
         pl.tight_layout()
         pl.ylim(0, 1) # Set y-axis limit to 1
 
-        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-        # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-        savename_jpg = f"{savedir}/JPEGs/RealtimeClassProb_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch{b}.jpg"
-        # savename_svg = f"{savedir}/SVGs/RealtimeLatent_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch_{b}.svg"
+        if not os.path.exists(savedir): os.makedirs(savedir)
+        savename_jpg = f"{savedir}/RealtimeClassProb_epoch{epoch}_iter{iter_curr}_{file_name[b]}_batch{b}.jpg"
         pl.savefig(savename_jpg)
-        # pl.savefig(savename_svg)
         pl.close(fig)    
 
         pl.close('all') 
+
+def print_confusion_realtime(class_probs, class_labels, savedir, epoch, iter_curr, classifier_num_pats, **kwargs):
+    batchsize = class_probs.shape[0]
+
+    class_probs_cpu = class_probs.detach().cpu().numpy()
+    true_labels = class_labels.detach().cpu().numpy()
+    predicted_labels = np.argmax(class_probs_cpu, axis=1)
+    
+    cm = confusion_matrix(true_labels, predicted_labels)
+
+    # Create a mask for the diagonal
+    mask = np.eye(cm.shape[0], dtype=bool)
+    
+    fig = pl.figure(figsize=(12, 12))  # Square figure
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", mask=mask, cbar=False)
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Oranges", mask=~mask, cbar=False)
+    pl.xlabel("Predicted Labels")
+    pl.ylabel("True Labels")
+    pl.title("Confusion Matrix")
+    
+    if not os.path.exists(savedir): os.makedirs(savedir)
+    savename_jpg = f"{savedir}/RealtimeConfusion_epoch{epoch}_iter{iter_curr}.jpg"
+    pl.savefig(savename_jpg)
+    pl.close(fig)    
+
+    pl.close('all') 
 
 def print_autoreg_raw_predictions(gpu_id, epoch, pat_id, rand_file_count, raw_context, raw_pred, raw_target, autoreg_channels, savedir, num_realtime_dims, **kwargs):
 
@@ -774,48 +925,50 @@ def print_autoreg_raw_predictions(gpu_id, epoch, pat_id, rand_file_count, raw_co
             
         fig.suptitle(f"Ch:{random_ch_idxs}")
         if gpu_id == 0: time.sleep(0.1)
-        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-        if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-        savename_jpg = f"{savedir}/JPEGs/AutoregressiveRecon_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.jpg"
-        savename_svg = f"{savedir}/SVGs/AutoregressiveRecon_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.svg"
+        if not os.path.exists(savedir): os.makedirs(savedir)
+        savename_jpg = f"{savedir}/AutoregressiveRecon_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.jpg"
         pl.savefig(savename_jpg)
-        pl.savefig(savename_svg)
         pl.close(fig)   
 
     pl.close('all') 
 
-def print_autoreg_AttentionScores_AlongSeq(gpu_id, epoch, pat_id, rand_file_count, scores_allSeq_firstLayer_meanHeads_lastRow, savedir, **kwargs):
+def print_attention_realtime(epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, **kwargs):
 
-    scores_allSeq_firstLayer_meanHeads_lastRow = scores_allSeq_firstLayer_meanHeads_lastRow.detach().cpu().numpy()
+    scores_byLayer_meanHeads = scores_byLayer_meanHeads.detach().cpu().numpy()
 
-    batchsize = scores_allSeq_firstLayer_meanHeads_lastRow.shape[0]
+    batchsize, n_layers, rows, cols = scores_byLayer_meanHeads.shape
 
     # Make new grid/fig for every batch
     for b in range(0, batchsize):
-        gs = gridspec.GridSpec(1, 1) 
+        gs = gridspec.GridSpec(1, 2) 
         fig = pl.figure(figsize=(20, 14))
 
-        scores_row_plot = scores_allSeq_firstLayer_meanHeads_lastRow[b, :, :].swapaxes(0,1)
-            
-        # df = pd.DataFrame({
-        #     "scores_row": scores_row_plot,
-        #     "scores_col": scores_col_plot
-        # }, columns=np.arange(0, scores_row_plot.shape[0]))
+        # Only plotting First and Last layer
+        for l in range(n_layers):
 
-        ax1 = fig.add_subplot(gs[0]) 
-        sns.heatmap(scores_row_plot, cmap=sns.cubehelix_palette(as_cmap=True))
-        ax1.set_title(f"Score Rows, First Transformer Layer - Average of Heads, Batch:{b}")
-        ax1.set_xlabel("Autoregression Step")
-        ax1.set_ylabel("Attention Weight by Current Past Index")
-            
-        fig.suptitle(f"Attention Weights")
-        if gpu_id == 0: time.sleep(0.1)
-        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-        if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-        savename_jpg = f"{savedir}/JPEGs/AutoregressiveAttention_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.jpg"
-        savename_svg = f"{savedir}/SVGs/AutoregressiveAttention_epoch{epoch}_{pat_id}_batch{b}_gpu{gpu_id}.svg"
+            ax_curr = fig.add_subplot(gs[0, l]) 
+            plot_data = scores_byLayer_meanHeads[b, l, :, :] # Add small amount to avoid log error when scaling
+
+            # Replace diagonal with NaN
+
+            mask = np.eye(plot_data.shape[0], dtype=bool)
+            assert np.where(~mask, 0, plot_data).sum() == 0  # Make sure diaganal sums to 0, or masking was not done correctly
+            plot_data = np.where(mask, np.nan, plot_data)   
+
+            # # Multiply each row of the data by its row index
+            # for i in range(plot_data.shape[0]):
+            #     plot_data[i, :] *= (i + 1)  # Multiply by row index (1-based)
+
+            # Plot the heatmap
+            sns.heatmap(plot_data, cmap=sns.cubehelix_palette(as_cmap=True), ax=ax_curr, cbar_kws={'label': 'Row-Weighted Attention', 'orientation': 'horizontal'}) 
+            if l == 0: ax_curr.set_title(f"First Layer - Mean of Heads")
+            else: ax_curr.set_title(f"Last Layer - Mean of Heads")
+            ax_curr.set_aspect('equal', adjustable='box')
+
+        fig.suptitle(f"Attention Weights - Batch:{b}")
+        if not os.path.exists(savedir): os.makedirs(savedir)
+        savename_jpg = f"{savedir}/ByLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_patidx{pat_idxs[b].cpu().numpy()}.jpg"
         pl.savefig(savename_jpg)
-        pl.savefig(savename_svg)
         pl.close(fig)   
 
     pl.close('all') 
@@ -847,12 +1000,9 @@ def plot_MeanStd(plot_mean, plot_std, plot_dict, file_name, epoch, savedir, gpu_
     # Pull out toaken start times because it's plotting whole batch at once
     fig.suptitle(file_name + create_metadata_subtitle(plot_dict))
 
-    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-    if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-    savename_jpg = savedir + f"/JPEGs/MeanLogvarWeights_batch{str(plot_mean.shape[0])}_" + "epoch" + str(epoch) + "_iter" + str(iter) + "_" + pat_id + "_gpu" + str(gpu_id) + ".jpg"
-    savename_svg = savedir + f"/SVGs/MeanLogvarWeights_batch{str(plot_mean.shape[0])}_" + "epoch" + str(epoch) + "_iter" + str(iter) + "_" + pat_id + "_gpu" + str(gpu_id) + ".svg"
+    if not os.path.exists(savedir): os.makedirs(savedir)
+    savename_jpg = savedir + f"/MeanLogvarWeights_batch{str(plot_mean.shape[0])}_" + "epoch" + str(epoch) + "_iter" + str(iter) + "_" + pat_id + "_gpu" + str(gpu_id) + ".jpg"
     pl.savefig(savename_jpg)
-    pl.savefig(savename_svg)
     pl.close(fig)    
 
     mean_of_mean_mean = np.mean(np.abs(mean_mean))
@@ -905,1159 +1055,238 @@ def plot_recon(x, x_hat, plot_dict, batch_file_names, epoch, savedir, gpu_id, pa
         plot_dict['stop_dt'] = all_stops[batch_idx]
         fig.suptitle(batch_file_names[batch_idx] + create_metadata_subtitle(plot_dict))
 
-        if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-        if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-        savename_jpg = savedir + f"/JPEGs/Recon_epoch{str(epoch)}_iter_{str(iter)}_{pat_id}_batchIdx{str(batch_idx)}_chIdx{str(ch_idx)}_duration{str(recon_sec)}sec_startIdx{str(start_idx)}_gpu{str(gpu_id)}.jpg"
-        savename_svg = savedir + f"/SVGs/Recon_epoch{str(epoch)}_iter_{str(iter)}_{pat_id}_batchIdx{str(batch_idx)}_chIdx{str(ch_idx)}_duration{str(recon_sec)}sec_startIdx{str(start_idx)}_gpu{str(gpu_id)}.svg"
+        if not os.path.exists(savedir): os.makedirs(savedir)
+        savename_jpg = savedir + f"/Recon_epoch{str(epoch)}_iter_{str(iter)}_{pat_id}_batchIdx{str(batch_idx)}_chIdx{str(ch_idx)}_duration{str(recon_sec)}sec_startIdx{str(start_idx)}_gpu{str(gpu_id)}.jpg"
         pl.savefig(savename_jpg)
-        pl.savefig(savename_svg)
         pl.close(fig) 
 
-def inter_patient_knn_annoy(data, phate_annoy_tree_size, patient_ids, k, n_trees=20, metric='angular'):
-    n_samples, n_features = data.shape
+def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir, atd_file, pre_ictal_taper_sec=120, post_ictal_taper_sec=120, **kwargs):
 
-    tree = AnnoyIndex(n_features, metric=metric)
-    # if _RANDOM_STATE is not None:
-    #     tree.set_seed(_RANDOM_STATE)
-    for i in range(n_samples):
-        tree.add_item(i, data[i, :])
-    tree.build(phate_annoy_tree_size)
+    # Get the end of the path (i.e. filename)
+    potential_fnames = [x.split("/")[-1] for x in curr_fpaths]
+    train_fnames = [x.split("/")[-1] for x in curr_file_list]
+    val_fnames = []
+    test_fnames = []
 
-    knn_indices = np.zeros((n_samples, k), dtype=int)
-    knn_distances = np.zeros((n_samples, k))
-    for i in range(n_samples):
+    # Convert the filenames to datetime objects
+    all_datetimes = filename_to_datetimes(potential_fnames)
+    first_starttime = all_datetimes[0][0]
 
-        if i % 100 == 0:
-            sys.stdout.write(f"\r{i}/{n_samples}")
-            sys.stdout.flush() 
+    train_datetimes = filename_to_datetimes(train_fnames)
+    val_datetimes = filename_to_datetimes(val_fnames)
+    test_datetimes = filename_to_datetimes(test_fnames)
 
-        search_done = False
-        iter_buffer = 50
-        while not search_done:
-            nbrs_ = tree.get_nns_by_item(i, k + 1 + iter_buffer)
+    # Convert the datetimes to seconds from first file (files SHOULD be in order, but check along the way)
+    all_start_seconds = [int((x - first_starttime).total_seconds()) for x in all_datetimes[0]]
+    all_end_seconds = [int((x - first_starttime).total_seconds()) for x in all_datetimes[1]]
+    file_seconds = all_end_seconds[0] - all_start_seconds[0]
+    file_seconds_nonoverlap = all_start_seconds[1] - all_start_seconds[0]
+    # file_seconds_check = [all_start_seconds[i-1] - all_start_seconds[i] for i in range(1, len(all_start_seconds))]
+    # if file_seconds_nonoverlap != file_seconds_check: raise Exception("Error: nonoverlap seconds miscalculated, probably due to skipped time periods when making data epochs")
+    all_middle_seconds = [int((all_start_seconds[i] + file_seconds_nonoverlap/2)) for i in range(len(all_start_seconds))]
+    all_delta_seconds = [all_middle_seconds[i+1]- all_middle_seconds[i] for i in range(0, len(all_middle_seconds)-1)]
+    most_common_delta = np.argmax(np.bincount(all_delta_seconds))
+    break_idxs = np.append(np.append(0, np.where(all_delta_seconds[:]%most_common_delta != 0)[0] + 1), len(all_middle_seconds)-1)
 
-            # Find and exclude self
-            self_idx = patient_ids[i]
-            ids = [patient_ids[ii] for ii in nbrs_]
-            self_idxs_bool = [x == self_idx for x in ids]
-            nbrs_pruned = [nbrs_[i] for i, value in enumerate(self_idxs_bool) if not value]
+    # Convert the dataset to seconds
+    train_middle_seconds = [int((x - first_starttime).total_seconds() + file_seconds_nonoverlap/2) for x in train_datetimes[0]]
+    val_middle_seconds = [int((x - first_starttime).total_seconds() + file_seconds_nonoverlap/2) for x in val_datetimes[0]]
+    test_middle_seconds = [int((x - first_starttime).total_seconds() + file_seconds_nonoverlap/2) for x in test_datetimes[0]]
 
-            if len(nbrs_pruned) >= k: 
-                knn_indices[i, :] = nbrs_pruned[:k]
-                search_done = True
+    # Get the seizure seconds from file start
+    seiz_start_dt, seiz_stop_dt, seiz_types = get_pat_seiz_datetimes(pat_id, atd_file=atd_file, **kwargs)
+    seiz_start_seconds = [(x - first_starttime).total_seconds() for x in seiz_start_dt]
+    seiz_stop_seconds = [(x - first_starttime).total_seconds() for x in seiz_stop_dt]
+
+    # Calculate the file time and get all the possible time indexes for graph
+    # Construct the x_vals carefully to accomodate shifts in timing due to RAW EDF file splits
+    x_vals = np.zeros(0, dtype=int)
+    for i in range(len(break_idxs)-1):
+        x_vals = np.append(x_vals, np.arange(all_middle_seconds[break_idxs[i]], all_middle_seconds[break_idxs[i+1]], int(file_seconds_nonoverlap), dtype=int))
+    # Add the last value in manually
+    x_vals = np.append(x_vals, all_middle_seconds[-1])
+
+    # Iterate through all of the possible x_vals and fill with periictal info
+    interictal_perc = np.zeros(len(x_vals))
+    preictal_perc = np.zeros(len(x_vals))
+    ictal_perc = np.zeros(len(x_vals))
+    postictal_perc = np.zeros(len(x_vals))
+    trainset = np.zeros(len(x_vals))
+    valset = np.zeros(len(x_vals))
+    testset = np.zeros(len(x_vals))
+    for i in range(0, len(x_vals)):
+        x_val_curr = x_vals[i]
+        if x_val_curr in all_middle_seconds:
+            if x_val_curr in train_middle_seconds:
+                if trainset[i] != 0: print("WARNING: file in more than one dataset")
+                trainset[i] = [v == x_val_curr for v in train_middle_seconds].count(True) * 10
+            
+            if x_val_curr in val_middle_seconds:
+                if trainset[i] != 0: print("WARNING: file in more than one dataset")
+                valset[i] = [v == x_val_curr for v in val_middle_seconds].count(True) * 10
+
+            if x_val_curr in test_middle_seconds:
+                if trainset[i] != 0: print("WARNING: file in more than one dataset")
+                testset[i] =  [v == x_val_curr for v in test_middle_seconds].count(True) * 10
+
+            # Iterate through seizures and determine periictal percentages that this file spans
+            for j in range(0, len(seiz_start_seconds)):
+                seiz_start = seiz_start_seconds[j]
+                seiz_stop = seiz_stop_seconds[j]
+                buffered_seiz_start = seiz_start - pre_ictal_taper_sec
+                buffered_seiz_stop = seiz_stop + post_ictal_taper_sec
+
+                file_nonoverlap_start = x_val_curr - file_seconds_nonoverlap/2
+                file_nonoverlap_stop = x_val_curr + file_seconds_nonoverlap/2
+
+                # No part of buffered seizure within file
+                if buffered_seiz_start > file_nonoverlap_stop: continue
+                elif buffered_seiz_stop < file_nonoverlap_start: continue
+
+                # Check if ictal totally within
+                if (seiz_start > file_nonoverlap_start) & (seiz_stop < file_nonoverlap_stop):
+                    # Buffered totally within
+                    if (buffered_seiz_start > file_nonoverlap_start) & (buffered_seiz_stop < file_nonoverlap_stop):
+                        preictal_perc[i] = preictal_perc[i] + ((seiz_start - buffered_seiz_start)/file_seconds_nonoverlap) * 100
+                        postictal_perc[i] = postictal_perc[i] + ((buffered_seiz_stop - seiz_stop)/file_seconds_nonoverlap) * 100
+                        ictal_perc[i] = ictal_perc[i] + ((seiz_stop - seiz_start)/file_seconds_nonoverlap) * 100
+                        continue
+
+                    # Buffered start begins before file AND buffered stop ends after file
+                    elif (buffered_seiz_start < file_nonoverlap_start) & (buffered_seiz_stop > file_nonoverlap_stop):
+                        preictal_perc[i] = preictal_perc[i] + ((seiz_start - file_nonoverlap_start)/file_seconds_nonoverlap) * 100
+                        postictal_perc[i] = postictal_perc[i] + ((file_nonoverlap_stop - seiz_stop)/file_seconds_nonoverlap) * 100
+                        ictal_perc[i] = ictal_perc[i] + ((seiz_stop - seiz_start)/file_seconds_nonoverlap) * 100
+                        continue
+
+                    # Thus, not all within and not all over
+                    # Buffered ends before file end
+                    elif buffered_seiz_stop < file_nonoverlap_stop:
+                        preictal_perc[i] = preictal_perc[i] + ((seiz_start - file_nonoverlap_start)/file_seconds_nonoverlap) * 100
+                        postictal_perc[i] = postictal_perc[i] + ((buffered_seiz_stop - seiz_stop)/file_seconds_nonoverlap) * 100
+                        ictal_perc[i] = ictal_perc[i] + ((seiz_stop - seiz_start)/file_seconds_nonoverlap) * 100    
+                        continue     
+
+                    # Buffered start begins after file start
+                    elif buffered_seiz_start > file_nonoverlap_start:
+                        preictal_perc[i] = preictal_perc[i] + ((seiz_start - buffered_seiz_start)/file_seconds_nonoverlap) * 100
+                        postictal_perc[i] = postictal_perc[i] + ((file_nonoverlap_stop - seiz_stop)/file_seconds_nonoverlap) * 100
+                        ictal_perc[i] = ictal_perc[i] + ((seiz_stop - seiz_start)/file_seconds_nonoverlap) * 100
+                        continue
+
+                    else: raise Exception("Error: Should not be able to get here, A")       
+
+                # Only preictal in file
+                elif seiz_start > file_nonoverlap_stop:
+                    preictal_perc[i] = preictal_perc[i] + ((file_nonoverlap_stop - buffered_seiz_start)/file_seconds_nonoverlap) * 100
+                    continue
+                # Only postictal in file
+                elif seiz_stop < file_nonoverlap_start:
+                    postictal_perc[i] = postictal_perc[i] + ((buffered_seiz_stop - file_nonoverlap_start)/file_seconds_nonoverlap) * 100
+                    continue
+
+                # Now only the end OR only the start of seiz should be within
+                # End only within
+                elif seiz_stop < file_nonoverlap_stop:
+                        if buffered_seiz_stop > file_nonoverlap_stop:
+                            postictal_perc[i] = postictal_perc[i] + ((file_nonoverlap_stop - seiz_stop)/file_seconds_nonoverlap) * 100
+                            ictal_perc[i] = ictal_perc[i] + ((seiz_stop - file_nonoverlap_start)/file_seconds_nonoverlap) * 100
+                            continue
+                        else:
+                            postictal_perc[i] = postictal_perc[i] + ((buffered_seiz_stop - seiz_stop)/file_seconds_nonoverlap) * 100
+                            ictal_perc[i] = ictal_perc[i] + ((seiz_stop - file_nonoverlap_start)/file_seconds_nonoverlap) * 100
+
+                # Beginning of seizure only within
+                elif seiz_start > file_nonoverlap_start:
+                        if buffered_seiz_start > file_nonoverlap_start:
+                            preictal_perc[i] = preictal_perc[i] + ((seiz_start - buffered_seiz_start)/file_seconds_nonoverlap) * 100
+                            ictal_perc[i] = ictal_perc[i] + ((file_nonoverlap_stop - seiz_start)/file_seconds_nonoverlap) * 100
+                            continue
+                        else:
+                            preictal_perc[i] = preictal_perc[i] + ((seiz_start - file_nonoverlap_start)/file_seconds_nonoverlap) * 100
+                            ictal_perc[i] = ictal_perc[i] + ((file_nonoverlap_stop - seiz_start)/file_seconds_nonoverlap) * 100
+                            continue
+                
+                # else: raise Exception("Error: Should not be able to get here, B") 
+                else:
+                    # Entire file must be seizure...
+                    print("WARNING: Entire file is labeled as ictal")
+                    ictal_perc[i] = 1 * 100
+                    
+            # Calculate the interictal percentage
+            buffered_perc = preictal_perc[i] + ictal_perc[i] + postictal_perc[i]
+            # Not very scientific, but shrink the percents if they add up to over 100 due to back tio back seizures overlapping thee buffer periods
+            if buffered_perc > 100:
+                preictal_perc[i] = (preictal_perc[i] / buffered_perc) * 100
+                ictal_perc[i] = (ictal_perc[i] / buffered_perc) * 100
+                postictal_perc[i] = (postictal_perc[i] / buffered_perc) * 100
             else:
-                iter_buffer = iter_buffer * 2
-
-        for j in range(k):
-            knn_distances[i, j] = tree.get_distance(i, knn_indices[i, j])
-
-    return knn_indices, knn_distances
-
-def phate_subfunction(  
-    atd_file,
-    pat_ids_list,
-    latent_data_windowed, 
-    start_datetimes_epoch,  
-    stop_datetimes_epoch,
-    epoch, 
-    FS, 
-    win_sec, 
-    stride_sec, 
-    savedir,
-    HDBSCAN_min_cluster_size,
-    HDBSCAN_min_samples,
-    plot_preictal_color_sec,
-    plot_postictal_color_sec,
-    interictal_contour=False,
-    verbose=True,
-    knn=5,
-    decay=15,  
-    phate_metric='cosine',
-    phate_solver='smacof',
-    apply_pca_phate=True,
-    pca_comp_phate = 100,
-    xy_lims = [],
-    custom_nn_bool = False,
-    phate_annoy_tree_size = 20,
-    knn_indices = [],
-    knn_distances = [],
-    premade_PHATE = [],
-    premade_HDBSCAN = [],
-    plot_pat_ids = [],
-    store_nn = True,
-    **kwargs):
-
-    '''
-    Goal of function:
-    Run PHATE and plot
-
-    '''
-
-    # Metadata
-    latent_dim = latent_data_windowed[0].shape[1]
-    num_timepoints_in_windowed_file = latent_data_windowed[0].shape[0]
-    modified_FS = 1 / stride_sec
-
-    # Check for NaNs in files
-    delete_file_idxs = []
-    for i in range(len(latent_data_windowed)):
-        if np.sum(np.isnan(latent_data_windowed[i])) > 0:
-            delete_file_idxs = delete_file_idxs + [i]
-            print(f"WARNING: Deleted file {start_datetimes_epoch[i]} that had NaNs")
-
-    # Delete entries/files in lists where there is NaN in latent space for that file
-    latent_data_windowed = [item for i, item in enumerate(latent_data_windowed) if i not in delete_file_idxs]
-    start_datetimes_epoch = [item for i, item in enumerate(start_datetimes_epoch) if i not in delete_file_idxs]  
-    stop_datetimes_epoch = [item for i, item in enumerate(stop_datetimes_epoch) if i not in delete_file_idxs]
-    pat_ids_list = [item for i, item in enumerate(pat_ids_list) if i not in delete_file_idxs]
-
-    # Generate numerical IDs for each unique patient, and give each datapoint an ID
-    unique_ids = list(set(pat_ids_list))
-    id_to_index = {id: idx for idx, id in enumerate(unique_ids)}  # Create mapping dictionary
-    pat_idxs = [id_to_index[id] for id in pat_ids_list]
-    pat_idxs_expanded = [item for item in pat_idxs for _ in range(latent_data_windowed[0].shape[0])]
-
-    
-    ### PHATE ###
-
-    # Flatten data into [miniepoch, dim] to feed into PHATE, original data is [file, seq_miniepoch_in_file, latent_dim]
-    latent_PHATE_input = np.concatenate(latent_data_windowed, axis=0)
-
-    # No PHATE object passed in, make new one
-    if premade_PHATE == []:
-
-        # Custom NN search
-        if custom_nn_bool:
-            print("*** Custom *** PHATE NN Search")
-
-            # Custom NN to exclude intra-patient points
-            # Compute inter-patient k-NN graph using Annoy
-            if len(knn_indices) == 0 or len(knn_distances) == 0: # if either is epmty, then need to compute
-                print("Computing new NN, no precomputed values given")
-
-                # PCA
-                if apply_pca_phate:
-                    print(f"Applying PCA, new dimension of data is {pca_comp_phate}")
-                    pca = PCA(n_components=pca_comp_phate, svd_solver='full') # Different than PCA used for PaCMAP
-                    latent_PHATE_input = pca.fit_transform(latent_PHATE_input) # Overwrite the data with PCA version
-
-                # Now find NN indices and distances 
-                knn_indices, knn_distances = inter_patient_knn_annoy(latent_PHATE_input, phate_annoy_tree_size, pat_idxs_expanded, knn, metric=phate_metric)
-
-                # Save the NN indices and dists  
-                if store_nn:
-                    if not os.path.exists(savedir + '/nn_pickles'): os.makedirs(savedir + '/nn_pickles')
-                    savename_root = savedir + f"/nn_pickles/Window{win_sec}_Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}"
-                    savename_ind = savename_root + "_KNN_INDICES.pkl"
-                    with open(savename_ind, 'wb') as handle: pickle.dump(knn_indices, handle)
-                    savename_dist = savename_root + "_KNN_DISTANCES.pkl"
-                    with open(savename_dist, 'wb') as handle: pickle.dump(knn_distances, handle)
-                    print("\nSaved ANNOY outputs")
-
-            else: print("Using precomputed NN")
-
-            # Create a sparse matrix for the KNN distances (only store nearest neighbors)
-            # Convert the KNN distances to a sparse CSR matrix (Compressed Sparse Row format)
-            rows = np.repeat(np.arange(latent_PHATE_input.shape[0]), knn)
-            cols = knn_indices.flatten()
-            values = knn_distances.flatten()
-            sparse_knn_distances = csr_matrix((values, (rows, cols)), shape=(latent_PHATE_input.shape[0], latent_PHATE_input.shape[0]))
-
-            # Build and fit PHATE object
-            phate_op = phate.PHATE(
-                # pat_idxs=pat_idxs_expanded, # must now match input data
-                knn_dist='precomputed_distance', # override the default method of detecting 
-                knn=knn,
-                decay=decay,
-                mds_solver=phate_solver,
-                n_jobs= -2
-            )
-
-            # Fit and transform the data using distance matrix
-            phate_output = phate_op.fit_transform(sparse_knn_distances) # pass distance matrix
-
-        # Default PHATE NN search
-        else:
-            print("DEFAULT PHATE NN Search")
-            # Build and fit default PHATE object
-            phate_op = phate.PHATE(
-                knn=knn,
-                decay=decay,
-                mds_solver=phate_solver,
-                n_jobs= -2)
-            phate_output = phate_op.fit_transform(latent_PHATE_input) # Pass raw data
-
-    # Premade PHATE object has been passed in 
-    else:
-        phate_op = premade_PHATE
-        phate_output = phate_op.transform(latent_PHATE_input)
-
-    # Split reduced output back into files
-    latent_postPHATE_perfile = np.stack(np.split(phate_output, len(latent_data_windowed), axis=0),axis=0)
-
-
-    ### HDBSCAN ###
-    # If training, create new cluster model, otherwise "approximate_predict()" if running on val data
-    if premade_HDBSCAN == []:
-        # Now do the clustering with HDBSCAN
-        print("Building new HDBSCAN model")
-        hdb = hdbscan.HDBSCAN(
-            min_cluster_size=HDBSCAN_min_cluster_size,
-            min_samples=HDBSCAN_min_samples,
-            max_cluster_size=0,
-            metric='euclidean',  # cosine, manhattan
-            # memory=Memory(None, verbose=1)
-            algorithm='best',
-            cluster_selection_method='eom',
-            prediction_data=True
-            )
-        
-        hdb.fit(latent_postPHATE_perfile.reshape(latent_postPHATE_perfile.shape[0]*latent_postPHATE_perfile.shape[1], latent_postPHATE_perfile.shape[2]))  # []
-
-         #TODO Look into soft clustering
-        # soft_cluster_vecs = np.array(hdbscan.all_points_membership_vectors(hdb))
-        # soft_clusters = np.array([np.argmax(x) for x in soft_cluster_vecs], dtype=int)
-        # hdb_color_palette = sns.color_palette('Paired', int(np.max(soft_clusters) + 3))
-
-        hdb_labels_flat = hdb.labels_
-        # hdb_labels_flat = soft_clusters
-        hdb_probabilities_flat = hdb.probabilities_
-        # hdb_probabilities_flat = np.array([np.max(x) for x in soft_cluster_vecs])
+                interictal_perc[i] = 100 - buffered_perc
+            
                 
-    # If HDBSCAN is already made/provided, then predict cluster with built in HDBSCAN method
-    else:
-        print("Using pre-built HDBSCAN model")
-        hdb = premade_HDBSCAN
-        
-    #TODO Destaurate according to probability of being in cluster
+    # Now that the Train/Val/Test and periictal designations are made, it's time to plot
+            
+    df = pd.DataFrame({
+        'inter': interictal_perc,
+        'pre': preictal_perc,
+        'ictal': ictal_perc,
+        'post': postictal_perc,
+        'train': trainset,
+        'val': valset,
+        'infer': testset
+        },
+        index=x_vals
+        )        
 
-    # Per patient, Run data through model & Reshape the labels and probabilities for plotting
-    hdb_labels_flat_perfile = [-1] * latent_postPHATE_perfile.shape[0]
-    hdb_probabilities_flat_perfile = [-1] * latent_postPHATE_perfile.shape[0]
-    for i in range(len(latent_postPHATE_perfile)):
-        hdb_labels_flat_perfile[i], hdb_probabilities_flat_perfile[i] = hdbscan.prediction.approximate_predict(hdb, latent_postPHATE_perfile[i, :, :])
-
-
-    ###### START OF PLOTTING #####
-
-    # Get all of the seizure times and types
-    seiz_start_dt_perfile = [-1] * len(pat_ids_list)
-    seiz_stop_dt_perfile = [-1] * len(pat_ids_list)
-    seiz_types_perfile = [-1] * len(pat_ids_list)
-    for i in range(len(pat_ids_list)):
-        seiz_start_dt_perfile[i], seiz_stop_dt_perfile[i], seiz_types_perfile[i] = get_pat_seiz_datetimes(pat_ids_list[i], atd_file=atd_file)
-
-    # Intialize master figure 
-    fig_height = 15 + 5 * len(plot_pat_ids)
-    fig = pl.figure(figsize=(40, fig_height))
-    gs = gridspec.GridSpec(1 + len(plot_pat_ids), 5, figure=fig)
-
-    # **** PHATE PLOTTING ****
-
-    print(f"PHATE Plotting")
-    ax00 = fig.add_subplot(gs[0, 0]) 
-    ax01 = fig.add_subplot(gs[0, 1]) 
-    ax02 = fig.add_subplot(gs[0, 2]) 
-    ax03 = fig.add_subplot(gs[0, 3]) 
-    ax04 = fig.add_subplot(gs[0, 4]) 
-    ax00, ax01, ax02, ax03, ax04, xy_lims = plot_latent(
-        ax=ax00, 
-        interCont_ax=ax01,
-        seiztype_ax=ax02,
-        time_ax=ax03,
-        cluster_ax=ax04,
-        latent_data=latent_postPHATE_perfile.swapaxes(1,2), # [epoch, 2, timesample]
-        modified_samp_freq=modified_FS,  # accounts for windowing/stride
-        start_datetimes=start_datetimes_epoch, 
-        stop_datetimes=stop_datetimes_epoch, 
-        win_sec=win_sec,
-        stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt_perfile, 
-        seiz_stop_dt=seiz_stop_dt_perfile, 
-        seiz_types=seiz_types_perfile,
-        preictal_dur=plot_preictal_color_sec,
-        postictal_dur=plot_postictal_color_sec,
-        plot_ictal=True,
-        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
-        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
-        hdb=hdb,
-        xy_lims=xy_lims,
-        **kwargs)        
-
-    ax00.title.set_text('PHATE Latent Space: ' + 
-        'Window mean, dur/str=' + str(win_sec) + 
-        '/' + str(stride_sec) +' seconds' )
+    # create stacked bar chart 
+    ax = df.plot(kind='bar', stacked=True, width=1, color=['silver', 'indianred', 'midnightblue', 'cornflowerblue', 'mediumturquoise', 'orchid', 'orange'], figsize=(14,3))
+    ax.legend(bbox_to_anchor=(1.005, 1), loc='upper left', ncol=1)
+    ax.get_xaxis().set_ticks([])
     
-    if interictal_contour:
-        ax01.title.set_text('Interictal Contour (no peri-ictal data)')
-
-
-    #### Plot the individual patient IDs defined in 'plot_pat_ids'
-    for i in range(len(plot_pat_ids)):
-        print(f"Patient Specific PHATE Plotting")
-        pat_id_curr = plot_pat_ids[i]
-        
-        # Subindex the patient's data
-        found_file_ids = [index for index, value in enumerate(pat_ids_list) if value == pat_id_curr]
-        pat_data = latent_postPHATE_perfile[found_file_ids] 
-        pat_start_datetimes_epoch = [start_datetimes_epoch[x] for x in found_file_ids]
-        pat_stop_datetimes_epoch = [stop_datetimes_epoch[x] for x in found_file_ids]
-        pat_seiz_start_dt_perfile = [seiz_start_dt_perfile[x] for x in found_file_ids]
-        pat_seiz_stop_dt_perfile = [seiz_stop_dt_perfile[x] for x in found_file_ids]
-        pat_seiz_types_perfile = [seiz_types_perfile[x] for x in found_file_ids]
-        pat_hdb_labels_flat_perfile = [hdb_labels_flat_perfile[x] for x in found_file_ids]
-        pat_hdb_probabilities_flat_perfile = [hdb_probabilities_flat_perfile[x] for x in found_file_ids]
-
-        # Make the patient's subplots
-        axi0 = fig.add_subplot(gs[1 + i, 0]) 
-        axi1 = fig.add_subplot(gs[1 + i, 1]) 
-        axi2 = fig.add_subplot(gs[1 + i, 2]) 
-        axi3 = fig.add_subplot(gs[1 + i, 3]) 
-        axi4 = fig.add_subplot(gs[1 + i, 4]) 
-
-        plot_latent(
-            ax=axi0, 
-            interCont_ax=axi1,
-            seiztype_ax=axi2,
-            time_ax=axi3,
-            cluster_ax=axi4,
-            latent_data=pat_data.swapaxes(1,2), # [epoch, 2, timesample]
-            modified_samp_freq=modified_FS,  # accounts for windowing/stride
-            start_datetimes=pat_start_datetimes_epoch, 
-            stop_datetimes=pat_stop_datetimes_epoch, 
-            win_sec=win_sec,
-            stride_sec=stride_sec, 
-            seiz_start_dt=pat_seiz_start_dt_perfile, 
-            seiz_stop_dt=pat_seiz_stop_dt_perfile, 
-            seiz_types=pat_seiz_types_perfile,
-            preictal_dur=plot_preictal_color_sec,
-            postictal_dur=plot_postictal_color_sec,
-            plot_ictal=True,
-            hdb_labels=np.expand_dims(np.stack(pat_hdb_labels_flat_perfile, axis=0),axis=1),
-            hdb_probabilities=np.expand_dims(np.stack(pat_hdb_probabilities_flat_perfile, axis=0),axis=1),
-            hdb=hdb,
-            xy_lims=xy_lims, # passed from above
-            **kwargs)     
-
-        axi0.title.set_text(f"Only {pat_id_curr}")
-
-
-    # **** Save entire figure *****
-    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-    if not os.path.exists(savedir + '/PDFs'): os.makedirs(savedir + '/PDFs')
-    savename_jpg = savedir + f"/JPEGs/PHATE_latent_smoothsec{win_sec}Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}_decay{decay}.jpg"
-    savename_pdf = savedir + f"/PDFs/PHATE_latent_smoothsec{win_sec}Stride{stride_sec}_epoch{epoch}_{phate_metric}_knn{knn}_decay{decay}.pdf"
-    pl.savefig(savename_jpg, dpi=600)
-    pl.savefig(savename_pdf, dpi=600)
-
-    # TODO Upload to WandB
-
-    pl.close(fig)
-
-    # Bundle the save metrics together
-    # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
-    return ax00, phate_op, hdb, xy_lims # save_tuple
-
-def pacmap_subfunction(  
-    atd_file,
-    pat_ids_list,
-    latent_data_windowed, 
-    start_datetimes_epoch,  
-    stop_datetimes_epoch,
-    epoch, 
-    FS, 
-    win_sec, 
-    stride_sec, 
-    perplexity,
-    savedir,
-    HDBSCAN_min_cluster_size,
-    HDBSCAN_min_samples,
-    plot_preictal_color_sec,
-    plot_postictal_color_sec,
-    apply_pca=True,
-    pca_comp=100,
-    exclude_self_pat=False,
-    interictal_contour=False,
-    verbose=True,
-    xy_lims = [],
-    premade_UMAP = [],
-    premade_HDBSCAN = [],
-    **kwargs):
-
-    '''
-    Goal of function:
-
-    '''
-
-    # Metadata
-    latent_dim = latent_data_windowed[0].shape[1]
-    num_timepoints_in_windowed_file = latent_data_windowed[0].shape[0]
-    modified_FS = 1 / stride_sec
-
-    # Check for NaNs in files
-    delete_file_idxs = []
-    for i in range(len(latent_data_windowed)):
-        if np.sum(np.isnan(latent_data_windowed[i])) > 0:
-            delete_file_idxs = delete_file_idxs + [i]
-            print(f"WARNING: Deleted file {start_datetimes_epoch[i]} that had NaNs")
-
-    # Delete entries/files in lists where there is NaN in latent space for that file
-    latent_data_windowed = [item for i, item in enumerate(latent_data_windowed) if i not in delete_file_idxs]
-    start_datetimes_epoch = [item for i, item in enumerate(start_datetimes_epoch) if i not in delete_file_idxs]  
-    stop_datetimes_epoch = [item for i, item in enumerate(stop_datetimes_epoch) if i not in delete_file_idxs]
-    pat_ids_list = [item for i, item in enumerate(pat_ids_list) if i not in delete_file_idxs]
-
-    # Flatten data into [miniepoch, dim] to feed into PaCMAP, original data is [file, seq_miniepoch_in_file, latent_dim]
-    latent_PaCMAP_input = np.concatenate(latent_data_windowed, axis=0)
-
-    # Generate numerical IDs for each unique patient, and give each datapoint an ID
-    unique_ids = list(set(pat_ids_list))
-    id_to_index = {id: idx for idx, id in enumerate(unique_ids)}  # Create mapping dictionary
-    pat_idxs = [id_to_index[id] for id in pat_ids_list]
-    pat_idxs_expanded = [item for item in pat_idxs for _ in range(latent_data_windowed[0].shape[0])]
-
-    ### PaCMAP 2-Dim ###
-
-    # Make new PaCMAP
-    if premade_PaCMAP == []:
-        print("Making new 2-dim PaCMAP to use for visualization")
-        # initializing the pacmap instance
-        # Setting n_neighbors to "None" leads to a default choice shown below in "parameter" section
-        reducer = pacmap.PaCMAP(
-            exclude_self_pat=exclude_self_pat, 
-            pat_idxs=pat_idxs_expanded,
-            distance='angular',
-            lr=pacmap_LR,
-            num_iters=pacmap_NumIters, # will default ~27 if left as None
-            n_components=2, 
-            n_neighbors=pacmap_NN, # default None, 
-            MN_ratio=pacmap_MN_ratio, # default 0.5, 
-            FP_ratio=pacmap_FP_ratio, # default 2.0,
-            save_tree=True, # Save tree to enable 'transform" method
-            apply_pca=apply_pca, 
-            pca_comp=pca_comp,
-            verbose=verbose) 
-
-        # fit the data (The index of transformed data corresponds to the index of the original data)
-        reducer.fit(latent_PaCMAP_input, init='pca')
-
-    # Use premade PaCMAP
-    else: 
-        print("Using existing 2-dim PaCMAP for visualization")
-        reducer = premade_PaCMAP
-
-    # Project data through reducer (i.e. PaCMAP) and split back into files
-    latent_postPaCMAP_perfile = reducer.transform(latent_PaCMAP_input)
-    latent_postPaCMAP_perfile = np.stack(np.split(latent_postPaCMAP_perfile, len(latent_data_windowed), axis=0),axis=0)
-
-    # **** PaCMAP (MedDim)--> HDBSCAN ***** 
-    # i.e. NOTE This is the pacmap used for clustering
-
-    if premade_PaCMAP_MedDim == []: 
-        # Make new PaCMAP
-        print(f"\nMaking new {pacmap_MedDim_numdims}-dim PaCMAP to use for HDBSCAN clustering")
-        
-        # initializing the pacmap instance
-        # Setting n_neighbors to "None" leads to a default choice shown below in "parameter" section
-        reducer_MedDim = pacmap.PaCMAP(
-            exclude_self_pat=True, 
-            pat_idxs=pat_idxs_expanded,
-            tree=reducer.tree,
-            pair_neighbors=reducer.pair_neighbors, # Can use same pairs from 2D pacmap
-            pair_MN=reducer.pair_MN, # Can use same pairs from 2D pacmap
-            pair_FP=reducer.pair_FP, # Can use same pairs from 2D pacmap
-            distance='angular',
-            lr=pacmap_LR,
-            num_iters=pacmap_NumIters, # will default ~27 if left as None
-            n_components=pacmap_MedDim_numdims, 
-            n_neighbors=pacmap_NN, # default None, 
-            MN_ratio=pacmap_MN_ratio, # default 0.5, 
-            FP_ratio=pacmap_FP_ratio, # default 2.0,
-            save_tree=True, 
-            apply_pca=apply_pca, 
-            pca_comp=pca_comp,
-            verbose=verbose) # Save tree to enable 'transform" method?
-
-        # fit the data (The index of transformed data corresponds to the index of the original data)
-        reducer_MedDim.fit(latent_PaCMAP_input, init='pca')
-
-    # Use premade PaCMAP
-    else: 
-        print("Using existing medium dim PaCMAP to use for HDBSCAN clustering")
-        reducer_MedDim = premade_PaCMAP_MedDim
-
-    # Project data through reducer (i.e. PaCMAP) 
-    latent_postPaCMAP_perfile_MEDdim = reducer_MedDim.transform(latent_PaCMAP_input)
-    latent_postPaCMAP_perfile_MEDdim = np.stack(np.split(latent_postPaCMAP_perfile_MEDdim, len(latent_data_windowed), axis=0),axis=0)
-
-    ### HDBSCAN ###
-    # If training, create new cluster model, otherwise "approximate_predict()" if running on val data
-    if premade_HDBSCAN == []:
-        # Now do the clustering with HDBSCAN
-        print("Building new HDBSCAN model")
-        hdb = hdbscan.HDBSCAN(
-            min_cluster_size=HDBSCAN_min_cluster_size,
-            min_samples=HDBSCAN_min_samples,
-            max_cluster_size=0,
-            metric='euclidean',  # cosine, manhattan
-            # memory=Memory(None, verbose=1)
-            algorithm='best',
-            cluster_selection_method='eom',
-            prediction_data=True
-            )
-        
-        hdb.fit(latent_postPaCMAP_perfile_MEDdim.reshape(latent_postPaCMAP_perfile_MEDdim.shape[0]*latent_postPaCMAP_perfile_MEDdim.shape[1], latent_postPaCMAP_perfile_MEDdim.shape[2]))  # []
-
-         #TODO Look into soft clustering
-        # soft_cluster_vecs = np.array(hdbscan.all_points_membership_vectors(hdb))
-        # soft_clusters = np.array([np.argmax(x) for x in soft_cluster_vecs], dtype=int)
-        # hdb_color_palette = sns.color_palette('Paired', int(np.max(soft_clusters) + 3))
-
-        hdb_labels_flat = hdb.labels_
-        # hdb_labels_flat = soft_clusters
-        hdb_probabilities_flat = hdb.probabilities_
-        # hdb_probabilities_flat = np.array([np.max(x) for x in soft_cluster_vecs])
-                
-    # If HDBSCAN is already made/provided, then predict cluster with built in HDBSCAN method
-    else:
-        print("Using pre-built HDBSCAN model")
-        hdb = premade_HDBSCAN
-        
-
-    #TODO Destaurate according to probability of being in cluster
-
-    # Per patient, Run data through model & Reshape the labels and probabilities for plotting
-    hdb_labels_flat_perfile = [-1] * latent_postPaCMAP_perfile_MEDdim.shape[0]
-    hdb_probabilities_flat_perfile = [-1] * latent_postPaCMAP_perfile_MEDdim.shape[0]
-    for i in range(len(latent_postPaCMAP_perfile_MEDdim)):
-        hdb_labels_flat_perfile[i], hdb_probabilities_flat_perfile[i] = hdbscan.prediction.approximate_predict(hdb, latent_postPaCMAP_perfile_MEDdim[i, :, :])
-
-
-    ###### START OF PLOTTING #####
-
-    # Get all of the seizure times and types
-    seiz_start_dt_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
-    seiz_stop_dt_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
-    seiz_types_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
-    for i in range(len(latent_postPaCMAP_perfile_MEDdim)):
-        seiz_start_dt_perfile[i], seiz_stop_dt_perfile[i], seiz_types_perfile[i] = get_pat_seiz_datetimes(pat_ids_list[i], atd_file=atd_file)
-
-    # Intialize master figure 
-    fig = pl.figure(figsize=(40, 25))
-    gs = gridspec.GridSpec(3, 5, figure=fig)
-
-
-    # **** PACMAP PLOTTING ****
-
-    print(f"PaCMAP Plotting")
-    ax20 = fig.add_subplot(gs[2, 0]) 
-    ax21 = fig.add_subplot(gs[2, 1]) 
-    ax22 = fig.add_subplot(gs[2, 2]) 
-    ax23 = fig.add_subplot(gs[2, 3]) 
-    ax24 = fig.add_subplot(gs[2, 4]) 
-    ax20, ax21, ax22, ax23, ax24, xy_lims = plot_latent(
-        ax=ax20, 
-        interCont_ax=ax21,
-        seiztype_ax=ax22,
-        time_ax=ax23,
-        cluster_ax=ax24,
-        latent_data=latent_postPaCMAP_perfile.swapaxes(1,2), # [epoch, 2, timesample]
-        modified_samp_freq=modified_FS,  # accounts for windowing/stride
-        start_datetimes=start_datetimes_epoch, 
-        stop_datetimes=stop_datetimes_epoch, 
-        win_sec=win_sec,
-        stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt_perfile, 
-        seiz_stop_dt=seiz_stop_dt_perfile, 
-        seiz_types=seiz_types_perfile,
-        preictal_dur=plot_preictal_color_sec,
-        postictal_dur=plot_postictal_color_sec,
-        plot_ictal=True,
-        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
-        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
-        hdb=hdb,
-        xy_lims=xy_lims,
-        **kwargs)        
-
-    ax20.title.set_text('PaCMAP Latent Space: ' + 
-        'Window mean, dur/str=' + str(win_sec) + 
-        '/' + str(stride_sec) +' seconds,' + 
-        f'\nLR: {str(pacmap_LR)}, ' +
-        f'NumIters: {str(pacmap_NumIters)}, ' +
-        f'NN: {pacmap_NN}, MN_ratio: {str(pacmap_MN_ratio)}, FP_ratio: {str(pacmap_FP_ratio)}'
-        )
+    # labels for x & y axis
+    pl.xlabel('Files')
+    pl.ylabel('Percent of File')
     
-    if interictal_contour:
-        ax21.title.set_text('Interictal Contour (no peri-ictal data)')
-
-
-    # ***** PCA PLOTTING *****
-        
-    if premade_PCA == []:
-        print("Calculating new PCA")
-        pca = PCA(n_components=2, svd_solver='full') # Different than PCA used for PaCMAP
-        latent_PCA_flat_transformed = pca.fit_transform(latent_PaCMAP_input)
-
-    else:
-        print("Using existing PCA")
-        pca = premade_PCA
-        
-    # Project data through PCA and split into files
-    print("Projecting data through built PCA")
-    latent_PCA_flat_transformed_perfile = pca.transform(latent_PaCMAP_input)
-    latent_PCA_flat_transformed_perfile = np.stack(np.split(latent_PCA_flat_transformed_perfile, len(latent_data_windowed), axis=0),axis=0)
-
-    print(f"PCA Plotting")
-    ax10 = fig.add_subplot(gs[1, 0]) 
-    ax11 = fig.add_subplot(gs[1, 1]) 
-    ax12 = fig.add_subplot(gs[1, 2]) 
-    ax13 = fig.add_subplot(gs[1, 3]) 
-    ax14 = fig.add_subplot(gs[1, 4]) 
-    ax10, ax11, ax12, ax13, ax14, xy_lims_PCA = plot_latent(
-        ax=ax10, 
-        interCont_ax=ax11,
-        seiztype_ax=ax12,
-        time_ax=ax13,
-        cluster_ax=ax14,
-        latent_data=latent_PCA_flat_transformed_perfile.swapaxes(1,2),   # [epoch, 2, timesample]
-        modified_samp_freq=modified_FS,
-        start_datetimes=start_datetimes_epoch, 
-        stop_datetimes=stop_datetimes_epoch, 
-        win_sec=win_sec,
-        stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt_perfile, 
-        seiz_stop_dt=seiz_stop_dt_perfile, 
-        seiz_types=seiz_types_perfile,
-        preictal_dur=plot_preictal_color_sec,
-        postictal_dur=plot_postictal_color_sec,
-        plot_ictal=True,
-        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
-        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
-        hdb=hdb,
-        xy_lims=xy_lims_PCA,
-        **kwargs)        
-
-    ax10.title.set_text("PCA Components 1,2")
-    ax11.title.set_text('Interictal Contour (no peri-ictal data)')
-
-
-    # **** INFO RAW DIM PLOTTING *****
-
-    raw_dims_to_plot = [0,1]
-
-    # Pull out the raw dims of interest and stack the data by file
-    latent_flat_RawDim_perfile = [latent_data_windowed[i][:, raw_dims_to_plot] for i in range(len(latent_data_windowed))]
-
-    print(f"Raw Dims Plotting")
-    ax00 = fig.add_subplot(gs[0, 0]) 
-    ax01 = fig.add_subplot(gs[0, 1]) 
-    ax02 = fig.add_subplot(gs[0, 2]) 
-    ax03 = fig.add_subplot(gs[0, 3]) 
-    ax04 = fig.add_subplot(gs[0, 4])
-    ax00, ax01, ax02, ax03, ax04, xy_lims_RAW_DIMS = plot_latent(
-        ax=ax00, 
-        interCont_ax=ax01,
-        seiztype_ax=ax02,
-        time_ax=ax03,
-        cluster_ax=ax04,
-        latent_data=np.stack(latent_flat_RawDim_perfile,axis=0).swapaxes(1,2), # [epoch, 2, timesample]
-        modified_samp_freq=modified_FS,
-        start_datetimes=start_datetimes_epoch, 
-        stop_datetimes=stop_datetimes_epoch, 
-        win_sec=win_sec,
-        stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt_perfile, 
-        seiz_stop_dt=seiz_stop_dt_perfile, 
-        seiz_types=seiz_types_perfile,
-        preictal_dur=plot_preictal_color_sec,
-        postictal_dur=plot_postictal_color_sec,
-        plot_ictal=True,
-        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
-        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
-        hdb=hdb,
-        xy_lims=xy_lims_RAW_DIMS,
-        **kwargs)        
-
-    ax00.title.set_text(f'Dims [{raw_dims_to_plot[0]},{raw_dims_to_plot[1]}], Window mean, dur/str=' + str(win_sec) + '/' + str(stride_sec) +' seconds,' )
-    ax01.title.set_text('Interictal Contour (no peri-ictal data)')
-
-    # **** Save entire figure *****
-    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-    # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-    savename_jpg = savedir + f"/JPEGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + f"PCA{apply_pca}Ncomp{pca_comp}.jpg"
-    # savename_svg = savedir + f"/SVGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + ".svg"
-    pl.savefig(savename_jpg, dpi=600)
-    # pl.savefig(savename_svg)
-
-    # TODO Upload to WandB
-
-    pl.close(fig)
-
-    # Bundle the save metrics together
-    # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
-    return ax20, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS # save_tuple
-
-
-def pacmap_subfunction(  
-    atd_file,
-    pat_ids_list,
-    latent_data_windowed, 
-    start_datetimes_epoch,  
-    stop_datetimes_epoch,
-    epoch, 
-    FS, 
-    win_sec, 
-    stride_sec, 
-    savedir,
-    pacmap_MedDim_numdims,
-    pacmap_LR,
-    pacmap_NumIters,
-    pacmap_NN,
-    pacmap_MN_ratio,
-    pacmap_FP_ratio,
-    HDBSCAN_min_cluster_size,
-    HDBSCAN_min_samples,
-    plot_preictal_color_sec,
-    plot_postictal_color_sec,
-    apply_pca=True,
-    pca_comp=100,
-    exclude_self_pat=False,
-    interictal_contour=False,
-    verbose=True,
-    xy_lims = [],
-    xy_lims_RAW_DIMS = [],
-    xy_lims_PCA = [],
-    premade_PaCMAP = [],
-    premade_PaCMAP_MedDim = [],
-    premade_PCA = [],
-    premade_HDBSCAN = [],
-    **kwargs):
-
-    '''
-    Goal of function:
-    Make 2D PaCMAP, make 10D PaCMAP, HDBSCAN cluster on 10D, visualize clusters on 2D
-
-    '''
-
-    # Metadata
-    latent_dim = latent_data_windowed[0].shape[1]
-    num_timepoints_in_windowed_file = latent_data_windowed[0].shape[0]
-    modified_FS = 1 / stride_sec
-
-    # Check for NaNs in files
-    delete_file_idxs = []
-    for i in range(len(latent_data_windowed)):
-        if np.sum(np.isnan(latent_data_windowed[i])) > 0:
-            delete_file_idxs = delete_file_idxs + [i]
-            print(f"WARNING: Deleted file {start_datetimes_epoch[i]} that had NaNs")
-
-    # Delete entries/files in lists where there is NaN in latent space for that file
-    latent_data_windowed = [item for i, item in enumerate(latent_data_windowed) if i not in delete_file_idxs]
-    start_datetimes_epoch = [item for i, item in enumerate(start_datetimes_epoch) if i not in delete_file_idxs]  
-    stop_datetimes_epoch = [item for i, item in enumerate(stop_datetimes_epoch) if i not in delete_file_idxs]
-    pat_ids_list = [item for i, item in enumerate(pat_ids_list) if i not in delete_file_idxs]
-
-    # Flatten data into [miniepoch, dim] to feed into PaCMAP, original data is [file, seq_miniepoch_in_file, latent_dim]
-    latent_PaCMAP_input = np.concatenate(latent_data_windowed, axis=0)
-
-    # Generate numerical IDs for each unique patient, and give each datapoint an ID
-    unique_ids = list(set(pat_ids_list))
-    id_to_index = {id: idx for idx, id in enumerate(unique_ids)}  # Create mapping dictionary
-    pat_idxs = [id_to_index[id] for id in pat_ids_list]
-    pat_idxs_expanded = [item for item in pat_idxs for _ in range(latent_data_windowed[0].shape[0])]
-
-    ### PaCMAP 2-Dim ###
-
-    # Make new PaCMAP
-    if premade_PaCMAP == []:
-        print("Making new 2-dim PaCMAP to use for visualization")
-        # initializing the pacmap instance
-        # Setting n_neighbors to "None" leads to a default choice shown below in "parameter" section
-        reducer = pacmap.PaCMAP(
-            exclude_self_pat=exclude_self_pat, 
-            pat_idxs=pat_idxs_expanded,
-            distance='angular',
-            lr=pacmap_LR,
-            num_iters=pacmap_NumIters, # will default ~27 if left as None
-            n_components=2, 
-            n_neighbors=pacmap_NN, # default None, 
-            MN_ratio=pacmap_MN_ratio, # default 0.5, 
-            FP_ratio=pacmap_FP_ratio, # default 2.0,
-            save_tree=True, # Save tree to enable 'transform" method
-            apply_pca=apply_pca, 
-            pca_comp=pca_comp,
-            verbose=verbose) 
-
-        # fit the data (The index of transformed data corresponds to the index of the original data)
-        reducer.fit(latent_PaCMAP_input, init='pca')
-
-    # Use premade PaCMAP
-    else: 
-        print("Using existing 2-dim PaCMAP for visualization")
-        reducer = premade_PaCMAP
-
-    # Project data through reducer (i.e. PaCMAP) and split back into files
-    latent_postPaCMAP_perfile = reducer.transform(latent_PaCMAP_input)
-    latent_postPaCMAP_perfile = np.stack(np.split(latent_postPaCMAP_perfile, len(latent_data_windowed), axis=0),axis=0)
-
-    # **** PaCMAP (MedDim)--> HDBSCAN ***** 
-    # i.e. NOTE This is the pacmap used for clustering
-
-    if premade_PaCMAP_MedDim == []: 
-        # Make new PaCMAP
-        print(f"\nMaking new {pacmap_MedDim_numdims}-dim PaCMAP to use for HDBSCAN clustering")
-        
-        # initializing the pacmap instance
-        # Setting n_neighbors to "None" leads to a default choice shown below in "parameter" section
-        reducer_MedDim = pacmap.PaCMAP(
-            exclude_self_pat=True, 
-            pat_idxs=pat_idxs_expanded,
-            tree=reducer.tree,
-            pair_neighbors=reducer.pair_neighbors, # Can use same pairs from 2D pacmap
-            pair_MN=reducer.pair_MN, # Can use same pairs from 2D pacmap
-            pair_FP=reducer.pair_FP, # Can use same pairs from 2D pacmap
-            distance='angular',
-            lr=pacmap_LR,
-            num_iters=pacmap_NumIters, # will default ~27 if left as None
-            n_components=pacmap_MedDim_numdims, 
-            n_neighbors=pacmap_NN, # default None, 
-            MN_ratio=pacmap_MN_ratio, # default 0.5, 
-            FP_ratio=pacmap_FP_ratio, # default 2.0,
-            save_tree=True, 
-            apply_pca=apply_pca, 
-            pca_comp=pca_comp,
-            verbose=verbose) # Save tree to enable 'transform" method?
-
-        # fit the data (The index of transformed data corresponds to the index of the original data)
-        reducer_MedDim.fit(latent_PaCMAP_input, init='pca')
-
-    # Use premade PaCMAP
-    else: 
-        print("Using existing medium dim PaCMAP to use for HDBSCAN clustering")
-        reducer_MedDim = premade_PaCMAP_MedDim
-
-    # Project data through reducer (i.e. PaCMAP) 
-    latent_postPaCMAP_perfile_MEDdim = reducer_MedDim.transform(latent_PaCMAP_input)
-    latent_postPaCMAP_perfile_MEDdim = np.stack(np.split(latent_postPaCMAP_perfile_MEDdim, len(latent_data_windowed), axis=0),axis=0)
-
-    ### HDBSCAN ###
-    # If training, create new cluster model, otherwise "approximate_predict()" if running on val data
-    if premade_HDBSCAN == []:
-        # Now do the clustering with HDBSCAN
-        print("Building new HDBSCAN model")
-        hdb = hdbscan.HDBSCAN(
-            min_cluster_size=HDBSCAN_min_cluster_size,
-            min_samples=HDBSCAN_min_samples,
-            max_cluster_size=0,
-            metric='euclidean',  # cosine, manhattan
-            # memory=Memory(None, verbose=1)
-            algorithm='best',
-            cluster_selection_method='eom',
-            prediction_data=True
-            )
-        
-        hdb.fit(latent_postPaCMAP_perfile_MEDdim.reshape(latent_postPaCMAP_perfile_MEDdim.shape[0]*latent_postPaCMAP_perfile_MEDdim.shape[1], latent_postPaCMAP_perfile_MEDdim.shape[2]))  # []
-
-         #TODO Look into soft clustering
-        # soft_cluster_vecs = np.array(hdbscan.all_points_membership_vectors(hdb))
-        # soft_clusters = np.array([np.argmax(x) for x in soft_cluster_vecs], dtype=int)
-        # hdb_color_palette = sns.color_palette('Paired', int(np.max(soft_clusters) + 3))
-
-        hdb_labels_flat = hdb.labels_
-        # hdb_labels_flat = soft_clusters
-        hdb_probabilities_flat = hdb.probabilities_
-        # hdb_probabilities_flat = np.array([np.max(x) for x in soft_cluster_vecs])
-                
-    # If HDBSCAN is already made/provided, then predict cluster with built in HDBSCAN method
-    else:
-        print("Using pre-built HDBSCAN model")
-        hdb = premade_HDBSCAN
-        
-
-    #TODO Destaurate according to probability of being in cluster
-
-    # Per patient, Run data through model & Reshape the labels and probabilities for plotting
-    hdb_labels_flat_perfile = [-1] * latent_postPaCMAP_perfile_MEDdim.shape[0]
-    hdb_probabilities_flat_perfile = [-1] * latent_postPaCMAP_perfile_MEDdim.shape[0]
-    for i in range(len(latent_postPaCMAP_perfile_MEDdim)):
-        hdb_labels_flat_perfile[i], hdb_probabilities_flat_perfile[i] = hdbscan.prediction.approximate_predict(hdb, latent_postPaCMAP_perfile_MEDdim[i, :, :])
-
-
-    ###### START OF PLOTTING #####
-
-    # Get all of the seizure times and types
-    seiz_start_dt_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
-    seiz_stop_dt_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
-    seiz_types_perfile = [-1] * len(latent_postPaCMAP_perfile_MEDdim)
-    for i in range(len(latent_postPaCMAP_perfile_MEDdim)):
-        seiz_start_dt_perfile[i], seiz_stop_dt_perfile[i], seiz_types_perfile[i] = get_pat_seiz_datetimes(pat_ids_list[i], atd_file=atd_file)
-
-    # Intialize master figure 
-    fig = pl.figure(figsize=(40, 25))
-    gs = gridspec.GridSpec(3, 5, figure=fig)
-
-
-    # **** PACMAP PLOTTING ****
-
-    print(f"PaCMAP Plotting")
-    ax20 = fig.add_subplot(gs[2, 0]) 
-    ax21 = fig.add_subplot(gs[2, 1]) 
-    ax22 = fig.add_subplot(gs[2, 2]) 
-    ax23 = fig.add_subplot(gs[2, 3]) 
-    ax24 = fig.add_subplot(gs[2, 4]) 
-    ax20, ax21, ax22, ax23, ax24, xy_lims = plot_latent(
-        ax=ax20, 
-        interCont_ax=ax21,
-        seiztype_ax=ax22,
-        time_ax=ax23,
-        cluster_ax=ax24,
-        latent_data=latent_postPaCMAP_perfile.swapaxes(1,2), # [epoch, 2, timesample]
-        modified_samp_freq=modified_FS,  # accounts for windowing/stride
-        start_datetimes=start_datetimes_epoch, 
-        stop_datetimes=stop_datetimes_epoch, 
-        win_sec=win_sec,
-        stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt_perfile, 
-        seiz_stop_dt=seiz_stop_dt_perfile, 
-        seiz_types=seiz_types_perfile,
-        preictal_dur=plot_preictal_color_sec,
-        postictal_dur=plot_postictal_color_sec,
-        plot_ictal=True,
-        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
-        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
-        hdb=hdb,
-        xy_lims=xy_lims,
-        **kwargs)        
-
-    ax20.title.set_text('PaCMAP Latent Space: ' + 
-        'Window mean, dur/str=' + str(win_sec) + 
-        '/' + str(stride_sec) +' seconds,' + 
-        f'\nLR: {str(pacmap_LR)}, ' +
-        f'NumIters: {str(pacmap_NumIters)}, ' +
-        f'NN: {pacmap_NN}, MN_ratio: {str(pacmap_MN_ratio)}, FP_ratio: {str(pacmap_FP_ratio)}'
-        )
-    
-    if interictal_contour:
-        ax21.title.set_text('Interictal Contour (no peri-ictal data)')
-
-
-    # ***** PCA PLOTTING *****
-        
-    if premade_PCA == []:
-        print("Calculating new PCA")
-        pca = PCA(n_components=2, svd_solver='full') # Different than PCA used for PaCMAP
-        latent_PCA_flat_transformed = pca.fit_transform(latent_PaCMAP_input)
-
-    else:
-        print("Using existing PCA")
-        pca = premade_PCA
-        
-    # Project data through PCA and split into files
-    print("Projecting data through built PCA")
-    latent_PCA_flat_transformed_perfile = pca.transform(latent_PaCMAP_input)
-    latent_PCA_flat_transformed_perfile = np.stack(np.split(latent_PCA_flat_transformed_perfile, len(latent_data_windowed), axis=0),axis=0)
-
-    print(f"PCA Plotting")
-    ax10 = fig.add_subplot(gs[1, 0]) 
-    ax11 = fig.add_subplot(gs[1, 1]) 
-    ax12 = fig.add_subplot(gs[1, 2]) 
-    ax13 = fig.add_subplot(gs[1, 3]) 
-    ax14 = fig.add_subplot(gs[1, 4]) 
-    ax10, ax11, ax12, ax13, ax14, xy_lims_PCA = plot_latent(
-        ax=ax10, 
-        interCont_ax=ax11,
-        seiztype_ax=ax12,
-        time_ax=ax13,
-        cluster_ax=ax14,
-        latent_data=latent_PCA_flat_transformed_perfile.swapaxes(1,2),   # [epoch, 2, timesample]
-        modified_samp_freq=modified_FS,
-        start_datetimes=start_datetimes_epoch, 
-        stop_datetimes=stop_datetimes_epoch, 
-        win_sec=win_sec,
-        stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt_perfile, 
-        seiz_stop_dt=seiz_stop_dt_perfile, 
-        seiz_types=seiz_types_perfile,
-        preictal_dur=plot_preictal_color_sec,
-        postictal_dur=plot_postictal_color_sec,
-        plot_ictal=True,
-        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
-        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
-        hdb=hdb,
-        xy_lims=xy_lims_PCA,
-        **kwargs)        
-
-    ax10.title.set_text("PCA Components 1,2")
-    ax11.title.set_text('Interictal Contour (no peri-ictal data)')
-
-
-    # **** INFO RAW DIM PLOTTING *****
-
-    raw_dims_to_plot = [0,1]
-
-    # Pull out the raw dims of interest and stack the data by file
-    latent_flat_RawDim_perfile = [latent_data_windowed[i][:, raw_dims_to_plot] for i in range(len(latent_data_windowed))]
-
-    print(f"Raw Dims Plotting")
-    ax00 = fig.add_subplot(gs[0, 0]) 
-    ax01 = fig.add_subplot(gs[0, 1]) 
-    ax02 = fig.add_subplot(gs[0, 2]) 
-    ax03 = fig.add_subplot(gs[0, 3]) 
-    ax04 = fig.add_subplot(gs[0, 4])
-    ax00, ax01, ax02, ax03, ax04, xy_lims_RAW_DIMS = plot_latent(
-        ax=ax00, 
-        interCont_ax=ax01,
-        seiztype_ax=ax02,
-        time_ax=ax03,
-        cluster_ax=ax04,
-        latent_data=np.stack(latent_flat_RawDim_perfile,axis=0).swapaxes(1,2), # [epoch, 2, timesample]
-        modified_samp_freq=modified_FS,
-        start_datetimes=start_datetimes_epoch, 
-        stop_datetimes=stop_datetimes_epoch, 
-        win_sec=win_sec,
-        stride_sec=stride_sec, 
-        seiz_start_dt=seiz_start_dt_perfile, 
-        seiz_stop_dt=seiz_stop_dt_perfile, 
-        seiz_types=seiz_types_perfile,
-        preictal_dur=plot_preictal_color_sec,
-        postictal_dur=plot_postictal_color_sec,
-        plot_ictal=True,
-        hdb_labels=np.expand_dims(np.stack(hdb_labels_flat_perfile, axis=0),axis=1),
-        hdb_probabilities=np.expand_dims(np.stack(hdb_probabilities_flat_perfile, axis=0),axis=1),
-        hdb=hdb,
-        xy_lims=xy_lims_RAW_DIMS,
-        **kwargs)        
-
-    ax00.title.set_text(f'Dims [{raw_dims_to_plot[0]},{raw_dims_to_plot[1]}], Window mean, dur/str=' + str(win_sec) + '/' + str(stride_sec) +' seconds,' )
-    ax01.title.set_text('Interictal Contour (no peri-ictal data)')
-
-    # **** Save entire figure *****
-    if not os.path.exists(savedir + '/JPEGs'): os.makedirs(savedir + '/JPEGs')
-    # if not os.path.exists(savedir + '/SVGs'): os.makedirs(savedir + '/SVGs')
-    savename_jpg = savedir + f"/JPEGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + f"PCA{apply_pca}Ncomp{pca_comp}.jpg"
-    # savename_svg = savedir + f"/SVGs/pacmap_latent_smoothsec" + str(win_sec) + "Stride" + str(stride_sec) + "_epoch" + str(epoch) + "_LR" + str(pacmap_LR) + "_NumIters" + str(pacmap_NumIters) + ".svg"
-    pl.savefig(savename_jpg, dpi=600)
-    # pl.savefig(savename_svg)
-
-    # TODO Upload to WandB
-
-    pl.close(fig)
-
-    # Bundle the save metrics together
-    # save_tuple = (latent_data_windowed.swapaxes(1,2), latent_PCA_allFiles, latent_topPaCMAP_allFiles, latent_topPaCMAP_MedDim_allFiles, hdb_labels_allFiles, hdb_probabilities_allFiles)
-    return ax20, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS # save_tuple
-
-def run_pacmap(atd_file, epoch, win_sec, stride_sec, model_dir, latent_subdir, pacmap_build_strs, pacmap_eval_strs, apply_pca, delete_latent_files=False, **kwargs):
-    
-    print(f"Running PaCMAP: {win_sec}SecondWindow_{stride_sec}SecondStride")
-
-    # Create paths and create pacmap directory for saving pacmap models and outputs
-    latent_dir = f"{model_dir}/{latent_subdir}/{win_sec}SecondWindow_{stride_sec}SecondStride" 
-    pacmap_dir = f"{model_dir}/pacmap/Epoch{epoch}/{win_sec}SecondWindow_{stride_sec}SecondStride"
-    if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir)
-
-
-    ### PACMAP GENERATION ###
-
-    # Collect pacmap build files - i.e. what data is being used to construct data manifold approximator
-    build_filepaths = []
-    for i in range(len(pacmap_build_strs)):
-        dir_curr = f"{latent_dir}/{pacmap_build_strs[i]}"
-        build_filepaths = build_filepaths + glob.glob(dir_curr + '/*.pkl')
-
-    # Double check window and stride are correct based on file naming [HARDCODED]
-    assert (build_filepaths[0].split("/")[-1].split("_")[-1] == f"{stride_sec}secStride.pkl") & (build_filepaths[0].split("/")[-1].split("_")[-2] == f"{win_sec}secWindow")
-
-    # Get start/stop datetimes
-    build_start_datetimes, build_stop_datetimes = filename_to_datetimes([s.split("/")[-1] for s in build_filepaths])
-
-    # Get the build pat_ids
-    build_pat_ids_list = [s.split("/")[-1].split("_")[0] for s in build_filepaths]
-
-    # Load all of the data into system RAM - list of [window, latent_dim]
-    print("Loading all BUILD latent data from files")
-    latent_data_windowed = [''] * len(build_filepaths)
-    for i in range(len(build_filepaths)):
-        with open(build_filepaths[i], "rb") as f: 
-            latent_data_windowed[i] = pickle.load(f)
-         
-    # Call the subfunction to create/use pacmap and plot
-    axis, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS = pacmap_subfunction(
-        atd_file=atd_file,
-        pat_ids_list=build_pat_ids_list,
-        latent_data_windowed=latent_data_windowed, 
-        start_datetimes_epoch=build_start_datetimes,  
-        stop_datetimes_epoch=build_stop_datetimes,
-        epoch=epoch, 
-        win_sec=win_sec, 
-        stride_sec=stride_sec, 
-        apply_pca=apply_pca,
-        savedir=f"{pacmap_dir}/pacmap_generation",
-        **kwargs)
-
-
-    ### PACMAP EVAL ONLY ###
-
-    # Now run the desired data through the pacmap/hdbscan models
-    # Collect pacmap eval files - i.e. what data is being used to construct data manifold approximator
-    eval_filepaths = []
-    for i in range(len(pacmap_eval_strs)):
-        dir_curr = f"{latent_dir}/{pacmap_eval_strs[i]}"
-        eval_filepaths = eval_filepaths + glob.glob(dir_curr + '/*.pkl')
-
-    # Double check window and stride are correct based on file naming [HARDCODED]
-    assert (eval_filepaths[0].split("/")[-1].split("_")[-1] == f"{stride_sec}secStride.pkl") & (eval_filepaths[0].split("/")[-1].split("_")[-2] == f"{win_sec}secWindow")
-
-    # Get start/stop datetimes
-    eval_start_datetimes, eval_stop_datetimes = filename_to_datetimes([s.split("/")[-1] for s in eval_filepaths])
-
-    # Get the eval pat_ids
-    eval_pat_ids_list = [s.split("/")[-1].split("_")[0] for s in eval_filepaths]
-
-    # Load all of the data into system RAM - list of [window, latent_dim]
-    print("Loading all eval latent data from files")
-    latent_data_windowed = [''] * len(eval_filepaths)
-    for i in range(len(eval_filepaths)):
-        with open(eval_filepaths[i], "rb") as f: 
-            latent_data_windowed[i] = pickle.load(f)
-         
-    # Call the subfunction to create/use pacmap and plot
-    pacmap_subfunction(
-        atd_file=atd_file,
-        pat_ids_list=eval_pat_ids_list,
-        latent_data_windowed=latent_data_windowed, 
-        start_datetimes_epoch=eval_start_datetimes,  
-        stop_datetimes_epoch=eval_stop_datetimes,
-        epoch=epoch, 
-        win_sec=win_sec, 
-        stride_sec=stride_sec, 
-        savedir=f"{pacmap_dir}/pacmap_eval_only",
-        apply_pca=apply_pca,
-        xy_lims = xy_lims,
-        xy_lims_RAW_DIMS = xy_lims_RAW_DIMS,
-        xy_lims_PCA = xy_lims_PCA,
-        premade_PaCMAP = reducer,
-        premade_PaCMAP_MedDim = reducer_MedDim,
-        premade_PCA = pca,
-        premade_HDBSCAN = hdb,
-        **kwargs)
-
-    # SAVE OBJECTS
-    save_pacmap_objects(
-        pacmap_dir=pacmap_dir,
-        epoch=epoch,
-        axis=axis,
-        reducer=reducer, 
-        reducer_MedDim=reducer_MedDim, 
-        hdb=hdb, 
-        pca=pca, 
-        xy_lims=xy_lims, 
-        xy_lims_PCA=xy_lims_PCA, 
-        xy_lims_RAW_DIMS=xy_lims_RAW_DIMS)
-
-    # If desired, delete the latent files after running pacmap
-    if delete_latent_files:
-        shutil.rmtree(latent_dir)
+    # title of plot
+    pl.title(f'Dataset Breakdown')
+
+    if not os.path.exists(dataset_pic_dir): os.makedirs(dataset_pic_dir)
+    savename = dataset_pic_dir + f"/{pat_id}_Dataset_Breakdown.jpg"
+    pl.savefig(savename)
+    pl.close('all')
+
+def rgbtoint32(rgb):
+    rgb = np.array(rgb*256, dtype=int)
+    color = 0
+    for c in rgb[::-1]:
+        color = (color<<8) + c
+        # Do not forget parenthesis.
+        # color<< 8 + c is equivalent of color << (8+c)
+    return color
+
+def int32torgb(color):
+    if color == np.nan: return np.nan
+    rgb = []
+    for i in range(3):
+        rgb.append(color&0xff)
+        color = color >> 8
+    rgb = np.array(float(rgb)/256)
+    return rgb
+
+def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
+    new_cmap = colors.LinearSegmentedColormap.from_list(
+        'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
+        cmap(np.linspace(minval, maxval, n)))
+    return new_cmap
+
+
+def random_filename_string(length=10):
+    characters = string.ascii_letters + string.digits
+    return ''.join(random.choice(characters) for i in range(length))
+
+def random_filename_string(length=10):
+    characters = string.ascii_letters + string.digits
+    return ''.join(random.choice(characters) for i in range(length))
 
 def run_script_from_shell(script_path, *args, py_path='/home/ghassanmakhoul/miniconda3/envs/ripple/bin/python'):
     """
@@ -2087,41 +1316,8 @@ def run_script_from_shell(script_path, *args, py_path='/home/ghassanmakhoul/mini
     except FileNotFoundError:
         return -1, "", "File not found"
 
-def random_filename_string(length=10):
-    characters = string.ascii_letters + string.digits
-    return ''.join(random.choice(characters) for i in range(length))
 
 
-def save_phate_objects(savedir, epoch, axis, phate, hdb, xy_lims):
-    
-    if not os.path.exists(savedir): os.makedirs(savedir) 
-
-    # Save the PHATE model for use in inference
-    phate_path = savedir + "/epoch" +str(epoch) + "_phate.pkl"
-    output_obj = open(phate_path, 'wb')
-    pickle.dump(phate, output_obj)
-    output_obj.close()
-    print("Saved PHATE object")
-
-    hdbscan_path = savedir + "/epoch" +str(epoch) + "_hdbscan.pkl"
-    output_obj = open(hdbscan_path, 'wb')
-    pickle.dump(hdb, output_obj)
-    output_obj.close()
-    print("Saved PHATE HDBSCAN")
-
-    xylim_path = savedir + "/epoch" +str(epoch) + "_xy_lims.pkl"
-    output_obj = open(xylim_path, 'wb')
-    pickle.dump(xy_lims, output_obj)
-    output_obj.close()
-    print("Saved PHATE xy_lims for PaCMAP")
-
-    axis_path = savedir + "/epoch" +str(epoch) + "_plotaxis.pkl"
-    output_obj = open(axis_path, 'wb')
-    pickle.dump(axis, output_obj)
-    output_obj.close()
-    print("Saved PHATE plot axis object")
-
-def save_pacmap_objects(pacmap_dir, epoch, axis, reducer, reducer_MedDim, hdb, pca, xy_lims, xy_lims_PCA, xy_lims_RAW_DIMS):
 
     if not os.path.exists(pacmap_dir): os.makedirs(pacmap_dir) 
 
@@ -2547,9 +1743,10 @@ def filename_to_datetimes(list_file_names):
             stop_datetimes[i] = datetime.datetime(int(bD[4:8]), int(bD[0:2]), int(bD[2:4]), int(bT[0:2]), int(bT[2:4]), int(bT[4:6]), int(int(bT[6:8])*1e4))
         return start_datetimes, stop_datetimes
 
-def delete_old_checkpoints(dir: str, curr_epoch: int, KL_stall_epochs, KL_epochs_AT_max, KL_epochs_TO_max, **kwargs):
 
-    SAVE_KEYWORDS = ["hdbscan", "pacmap"]
+def delete_old_checkpoints(dir: str, curr_epoch: int, Reg_stall_epochs, Reg_epochs_AT_max, Reg_epochs_TO_max, **kwargs):
+
+    # SAVE_KEYWORDS = ["hdbscan", "pacmap"]
 
     all_dir_names = glob.glob(f"{dir}/Epoch*")
 
@@ -2566,10 +1763,10 @@ def delete_old_checkpoints(dir: str, curr_epoch: int, KL_stall_epochs, KL_epochs
     #             save_epochs.append(epoch_nums[i])
     #             break
 
-    # KL Epoch cycle save - save the last epoch in a KL annealing cycle
-    mod_val = KL_stall_epochs + KL_epochs_AT_max + KL_epochs_TO_max - 1
+    # Reg Epoch cycle save - save the last epoch in a Reg annealing cycle
+    mod_val = Reg_stall_epochs + Reg_epochs_AT_max + Reg_epochs_TO_max - 1
     for x in epoch_nums:
-        if x % mod_val == 0:
+        if (x % mod_val == 0) & (curr_epoch > 0):
             save_epochs.append(x)
 
     [shutil.rmtree(all_dir_names[i]) if epoch_nums[i] not in save_epochs else print(f"saved: {all_dir_names[i].split('/')[-1]}") for i in range(len(epoch_nums))]

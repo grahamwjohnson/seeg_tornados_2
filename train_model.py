@@ -1036,7 +1036,7 @@ class Trainer:
                 elif val_unseen: state_str = "VAL UNSEEN"
                 else: state_str = "TRAIN"
                 now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
-                if (self.gpu_id == 1):
+                if (self.gpu_id == 0):
                     sys.stdout.write(
                         f"\r{now_str} [GPU{str(self.gpu_id)}]: {state_str}, EPOCH {self.epoch}, Iter [BatchSize: {x.shape[0]}] {iter_curr}/{total_iters}, " + 
                         f"MeanLoss: {round(loss.detach().item(), 2)}                 ")

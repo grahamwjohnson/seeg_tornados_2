@@ -25,12 +25,12 @@ atd_file = '/home/ghassanmakhoul/Documents/tornadoes_v1/all_time_data_01092023_1
 # Define the patient directory that contains all EDF files
 # All varliable defined here
 # ASSUMPTION: files will be named "<patname>_MMDDYYYY_HHMMSSss" where S = seconds, s = milliseconds
-pat_id = 'Spat114' 
+pat_id = 'Spat115' 
 montage = 'BIPOLE'
 freq_bands = [] # [[1, 12], [12, 59], [61, 179]], [] - LEave
 if freq_bands == []: freq_bands_str = 'wholeband'
 else: freq_bands_str = f"{freq_bands}".replace("], [", "Hz_").replace(", ", "to").replace("[[","").replace("]]","Hz")
-num_channels = 167  # BIPOLAR! - for Spat 113, remember that we got rid of channels for micro-recordings on this Spat
+num_channels = 183  # BIPOLAR! - for Spat 113, remember that we got rid of channels for micro-recordings on this Spat
 if freq_bands != []: num_channels = num_channels * len(freq_bands)
 bipole_or_monopole = 'Bipole_datasets'
 resamp_freq = 512
