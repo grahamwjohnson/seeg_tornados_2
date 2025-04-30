@@ -29,6 +29,7 @@ from matplotlib.colors import colorConverter
 from matplotlib import colors as mcolors
 import heapq
 import random
+from scipy.interpolate import splprep, splev
 
 '''
 @author: grahamwjohnson
@@ -157,69 +158,102 @@ def find_toroidal_low_cost_path(u_matrix, start, goal, undo_log):
 
     return best_path, best_cost
 
-def create_colored_line(ax, points, color_start, color_end, label, u_matrix, undo_log):
-    """Creates a line plot following the lowest-cost U-matrix paths."""
+def split_on_wraps(points, rows, cols):
+    """Split points into segments wherever a toroidal wrap occurs."""
+    segments = []
+    current = [points[0]]
+    for i in range(1, len(points)):
+        r1, c1 = points[i - 1]
+        r2, c2 = points[i]
+        dr = abs(r1 - r2)
+        dc = abs(c1 - c2)
+        if dr > rows // 2 or dc > cols // 2:
+            segments.append(np.array(current))
+            current = [points[i]]
+        else:
+            current.append(points[i])
+    if current:
+        segments.append(np.array(current))
+    return segments
+
+def smooth_hex_segment(hex_points, smoothing_factor):
+    """Apply spline smoothing to a sequence of (x, y) points."""
+    if len(hex_points) < 4:
+        return hex_points  # not enough points to smooth
+    x, y = hex_points[:, 0], hex_points[:, 1]
+    try:
+        tck, _ = splprep([x, y], s=smoothing_factor)
+        u_fine = np.linspace(0, 1, len(x) * 10)
+        x_smooth, y_smooth = splev(u_fine, tck)
+        return np.vstack([x_smooth, y_smooth]).T
+    except:
+        return hex_points  # fallback if spline fails
+
+def create_colored_line(ax, points, color_start, color_end, label, u_matrix, undo_log, smoothing_factor, ball_at_start=False):
+    """Draw smoothed, wrap-aware hex lines with a color gradient and a final star."""
     if len(points) < 2:
-        return  # Nothing to draw
+        return
 
     rows, cols = u_matrix.shape
 
-    # Calculate path based on u_matrix
+    # Reconstruct full toroidal path
     full_path = []
     for i in range(len(points) - 1):
-        path_segment, lowest_cost = find_toroidal_low_cost_path(u_matrix, points[i], points[i+1], undo_log)
-        full_path.extend(path_segment[:-1])  # omit last point to prevent duplication
-    if full_path != []:
-        if (full_path[-1][0] != points[-1][0]) or ((full_path[-1][1] != points[-1][1])):
-            full_path.append(tuple(points[-1]))  # add the very last point if different from end of build path
-    else:
-        full_path = tuple(points[-1])
+        path_segment, _ = find_toroidal_low_cost_path(u_matrix, points[i], points[i + 1], undo_log)
+        full_path.extend(path_segment[:-1])
+    if full_path == []:
+        full_path = [points[-1]]
+    elif tuple(full_path[-1]) != tuple(points[-1]):
+        full_path.append(points[-1])
+    full_path = np.array(full_path)
 
-    points = np.array(full_path).reshape(-1, 2)
+    # Split by toroidal wraps
+    path_segments = split_on_wraps(full_path, rows, cols)
 
-    # --- Detect jumps and split segments ---
-    segments = []
-    for i in range(len(points) - 1):
-        p1 = points[i]
-        p2 = points[i + 1]
+    # Convert to hex coords, smooth each segment
+    smooth_segments = []
+    for seg in path_segments:
+        hex_seg = np.array([hex_grid_position(p[1], p[0]) for p in seg])  # col, row -> x, y
+        smooth_seg = smooth_hex_segment(hex_seg, smoothing_factor)
+        smooth_segments.append(smooth_seg)
 
-        dr = abs(p1[0] - p2[0])
-        dc = abs(p1[1] - p2[1])
-
-        # Handle wrap detection: if jump is larger than half the grid, assume wrapping
-        if dr > rows // 2 or dc > cols // 2:
-            continue  # skip connecting this segment
-        # segments.append([p1, p2])
-        segments.append([hex_grid_position(p1[1], p1[0]), hex_grid_position(p2[1], p2[0])]) #NOTE: reverse row/col!
-
-    segments = np.array(segments)
-
-    # --- Create color gradient ---
-    n_points = len(points)
+    # Generate color gradient across total path
+    total_len = sum(len(seg) for seg in smooth_segments)
     rgb_start = np.array(mcolors.to_rgb(color_start))
     rgb_end = np.array(mcolors.to_rgb(color_end))
 
+    colored_segments = []
     colors = []
-    for i in range(len(segments)):
-        # color according to the first point's position along the full path
-        alpha = i / (n_points - 1) if n_points > 1 else 0
-        rgb = rgb_start + (rgb_end - rgb_start) * alpha
-        colors.append((*rgb, 1.0))
+    idx = 0
+    for seg in smooth_segments:
+        for i in range(len(seg) - 1):
+            alpha = idx / (total_len - 1) if total_len > 1 else 0
+            rgb = rgb_start + (rgb_end - rgb_start) * alpha
+            colored_segments.append([seg[i], seg[i + 1]])
+            colors.append((*rgb, 1.0))
+            idx += 1
 
-    lc = LineCollection(segments, colors=colors, linewidth=2)
+    lc = LineCollection(colored_segments, colors=colors, linewidth=2)
     ax.add_collection(lc)
 
-    # Manually compute halfway color
-    halfway_rgb = (rgb_start + rgb_end) / 2
-    halfway_color = (*halfway_rgb, 1.0)
-
-    # Plot final star with halfway color
-    final_point = points[-1]
-    ax.plot(hex_grid_position(final_point[1],final_point[0]),  
-            marker='*', color=halfway_color,
-            markersize=10,
-            markeredgecolor=None, markeredgewidth=0.5,
+    # Plot final star at end point
+    final_point = full_path[-1]
+    x, y = hex_grid_position(final_point[1], final_point[0])
+    ax.plot(x, y,
+            marker='*', color=color_end,
+            markersize=12,
+            markeredgecolor=None, markeredgewidth=0.4,
             label=label)
+    
+    # Place a ball at start of segment if desired
+    if ball_at_start:
+        start_point = full_path[0]
+        x, y = hex_grid_position(start_point[1], start_point[0])
+        ax.plot(x, y,
+                marker='.', color=color_start,
+                markersize=12,
+                markeredgecolor=None, markeredgewidth=0.4,
+                label=label)
 
 def hex_grid_position(row, col, radius=1.0):
     """Returns (x, y) position in the hexagonal grid."""
@@ -229,7 +263,7 @@ def hex_grid_position(row, col, radius=1.0):
     y = row * height + (col % 2) * (height / 2)
     return x, y
 
-def plot_trajectory_on_umatrix(ax, context, ground_truth, predictions, som_nodes, u_matrix, undo_log):
+def plot_trajectory_on_umatrix(ax, context, ground_truth, predictions, som_nodes, u_matrix, undo_log, smoothing_factor):
     """
     Plots the trajectory of points on an existing U-matrix plot, following the lowest-cost toroidal paths.
 
@@ -252,16 +286,14 @@ def plot_trajectory_on_umatrix(ax, context, ground_truth, predictions, som_nodes
     prediction_points = get_node_coordinates(predictions, som_nodes)
 
     # Define color gradients and plot
-    create_colored_line(ax, context_points, '#5C4033', 'darkred', label='Context', u_matrix=u_matrix, undo_log=undo_log)  # Poop brown
-    create_colored_line(ax, ground_truth_points, 'darkgreen', 'lightgreen', label='Ground Truth', u_matrix=u_matrix, undo_log=undo_log)
-    create_colored_line(ax, prediction_points, 'darkblue', 'lightblue', label='Prediction', u_matrix=u_matrix, undo_log=undo_log)
+    create_colored_line(ax, context_points, '#959ca3', '#49464d', label='Context', u_matrix=u_matrix, undo_log=undo_log, smoothing_factor=smoothing_factor, ball_at_start=True)  # Gray
+    create_colored_line(ax, ground_truth_points, '#21473a', '#7cbf98', label='Ground Truth', u_matrix=u_matrix, undo_log=undo_log, smoothing_factor=smoothing_factor) # Blue
+    create_colored_line(ax, prediction_points, '#164370', '#4a91d9', label='Prediction', u_matrix=u_matrix, undo_log=undo_log, smoothing_factor=smoothing_factor) # Green
 
-    ax.legend()
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), ncol=3)
     ax.set_xlabel('SOM Node X')
     ax.set_ylabel('SOM Node Y')
     ax.set_title('Predicted Trajectory: U-Matrix with Pre-Ictal Overlay')
-
-
 
 def get_som_rowcol(data, som):
     """Helper to run a batch of data through the SOM and get (row, col) coordinates."""
@@ -275,8 +307,7 @@ def get_som_rowcol(data, som):
         som_rowcol[i:i + som.batch_size, 1] = bmu_cols
     return som_rowcol
 
-
-def plot_kohonen_prediction(save_dir, som, plot_data_path, context, ground_truth_future, predictions, undo_log, overlay_thresh=0.25):
+def plot_kohonen_prediction(save_dir, som, plot_data_path, context, ground_truth_future, predictions, undo_log, smoothing_factor, overlay_thresh=0.25):
     """Plots Kohonen/SOM predictions on top of a U-Matrix + Pre-Ictal overlay."""
     # Process context, ground truth, and predictions separately
     context_rowcol = get_som_rowcol(context, som)
@@ -295,7 +326,8 @@ def plot_kohonen_prediction(save_dir, som, plot_data_path, context, ground_truth
 
     # Plot U-Matrix background
     plot_hex_grid(ax_overlay, u_matrix_hex, "Predicted Trajectory: U-Matrix with Pre-Ictal Overlay",
-                  cmap_str='bone_r', vmin=0,
+                  cmap_str='bone_r', 
+                  vmin=np.min(u_matrix_hex),
                   vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
 
     # Overlay Pre-Ictal density
@@ -332,78 +364,13 @@ def plot_kohonen_prediction(save_dir, som, plot_data_path, context, ground_truth
         pred_rowcol.tolist(), 
         som_nodes,
         u_matrix=u_matrix_hex,
-        undo_log=undo_log
-    )
+        undo_log=undo_log,
+        smoothing_factor=smoothing_factor)
 
     # Save figure
     savename_overlay = save_dir + f"/kohonen_predictions.jpg"
     pl.savefig(savename_overlay, dpi=600)
     pl.close(fig_overlay)
-
-# def plot_kohonen_prediction(save_dir, som, plot_data_path, context, ground_truth_future, fake_predictions, overlay_thresh=0.25):
-    
-#     # Run data through Kohonen/SOM
-#     # SOM Inference on all data in batches
-#     # NOTE: Do not use for large inference because moves every batch to CPU
-#     som_rowcol = np.zeros((context.shape[0], 2), dtype=np.int32)
-#     for i in range(0, len(context), som.batch_size):
-#         batch = context[i:i + som.batch_size]
-#         batch = torch.tensor(batch, dtype=torch.float32, device=som.device)
-#         bmu_rows, bmu_cols = som.find_bmu(batch)
-#         bmu_rows, bmu_cols = bmu_rows.cpu().numpy(), bmu_cols.cpu().numpy()
-#         som_rowcol[i:i + som.batch_size, 0] = bmu_rows
-#         som_rowcol[i:i + som.batch_size, 1] = bmu_cols
-
-    
-#     # Load underlay plotting data
-#     with open(plot_data_path, "rb") as f: file_data = pickle.load(f)
-#     grid_size = som.grid_size
-#     u_matrix_hex = file_data['u_matrix_hex']
-#     overlay_preictal = file_data['rescale_preictal_smoothed']
-    
-#     # 2D OVERLAY: U-Matrix + Pre-Ictal
-    
-#     # Create new figure for U-Matrix + Pre-Ictal Density Overlay
-#     fig_overlay, ax_overlay = pl.subplots(figsize=(10, 10))
-
-#     # Plot U-Matrix base
-#     plot_hex_grid(ax_overlay, u_matrix_hex, "Predicted Trajectory: U-Matrix with Pre-Ictal Overlay", cmap_str='bone_r', vmin=0, vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
-
-#     # Overlay Pre-Ictal density 
-#     rows, cols = overlay_preictal.shape
-#     radius = 1.0
-#     height = np.sqrt(3) * radius
-#     cmap_overlay = cm.get_cmap('flare')
-#     norm_overlay = pl.Normalize(vmin=0.0, vmax=1.0)
-
-#     for i in range(rows):
-#         for j in range(cols):
-#             x = j * 1.5 * radius
-#             y = i * height + (j % 2) * (height / 2)
-#             face_color = cmap_overlay(norm_overlay(overlay_preictal[i, j]))
-#             hexagon = patches.RegularPolygon((x, y), numVertices=6, radius=radius,
-#                                             orientation=np.radians(30),
-#                                             facecolor=face_color, alpha=0.7,
-#                                             edgecolor=None, linewidth=0)
-#             if overlay_preictal[i, j] >= overlay_thresh:
-#                 ax_overlay.add_patch(hexagon)
-
-#     # Optional: add a colorbar for the overlay
-#     sm_overlay = pl.cm.ScalarMappable(cmap=cmap_overlay, norm=norm_overlay)
-#     sm_overlay.set_array([])
-#     pl.colorbar(sm_overlay, ax=ax_overlay, label="Pre-Ictal Density (Clipped & Smoothed)")
-
-
-#     # Add trajectories
-
-
-
-
-
-#     # Save overlay figure
-#     savename_overlay = save_dir + f"/kohonen_predictions.jpg"
-#     pl.savefig(savename_overlay, dpi=600)
-#     # pl.savefig(savename_overlay.replace('.jpg', '.svg'))
 
 def get_dataset_hours(win_sec, stride_sec, latent_means_windowed):
     """
@@ -662,7 +629,7 @@ def toroidal_kohonen_subfunction_pytorch(
     # PLOT PREPARATION
 
     # Get preictal weights for each data point
-    preictal_float_input = preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
+    preictal_float_input, ictal_float_input = preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
 
     # Get model weights and coordinates
     weights = som.get_weights()
@@ -672,6 +639,7 @@ def toroidal_kohonen_subfunction_pytorch(
 
     # Initialize maps
     preictal_sums = np.zeros(grid_size)
+    ictal_sums = np.zeros(grid_size)
     hit_map = np.zeros(grid_size)
     neuron_patient_dict = {}
 
@@ -679,7 +647,8 @@ def toroidal_kohonen_subfunction_pytorch(
     for i in range(0, len(latent_means_input), som_batch_size):
         batch = latent_means_input[i:i + som_batch_size]
         batch_patients = pat_ids_input[i:i + som_batch_size]
-        batch_labels = preictal_float_input[i:i + som_batch_size]
+        batch_preictal_labels = preictal_float_input[i:i + som_batch_size]
+        batch_ictal_labels = ictal_float_input[i:i + som_batch_size]
 
         batch = torch.tensor(batch, dtype=torch.float32, device=som_device)
         bmu_rows, bmu_cols = som.find_bmu(batch)
@@ -690,7 +659,8 @@ def toroidal_kohonen_subfunction_pytorch(
 
         # Accumulate preictal scores
         for j, (bmu_row, bmu_col) in enumerate(zip(bmu_rows, bmu_cols)):
-            preictal_sums[bmu_row, bmu_col] += batch_labels[j]
+            preictal_sums[bmu_row, bmu_col] += batch_preictal_labels[j]
+            ictal_sums[bmu_row, bmu_col] += batch_ictal_labels[j]
 
         # Track unique patients per node
         for j, (bmu_row, bmu_col) in enumerate(zip(bmu_rows, bmu_cols)):
@@ -703,9 +673,12 @@ def toroidal_kohonen_subfunction_pytorch(
         epsilon = np.finfo(float).eps
         hit_map = np.log(hit_map + epsilon)
 
-    # Normalize preictal sums
+    # Normalize preictal & ictal sums
     if np.max(preictal_sums) > np.min(preictal_sums):
         preictal_sums = (preictal_sums - np.min(preictal_sums)) / (np.max(preictal_sums) - np.min(preictal_sums))
+
+    if np.max(ictal_sums) > np.min(ictal_sums):
+        ictal_sums = (ictal_sums - np.min(ictal_sums)) / (np.max(ictal_sums) - np.min(ictal_sums))
 
     # Create patient diversity map
     patient_map = np.zeros(grid_size)
@@ -750,10 +723,15 @@ def toroidal_kohonen_subfunction_pytorch(
     if np.max(rescale_preictal) > 0:
         rescale_preictal = rescale_preictal / np.max(rescale_preictal)
 
-    # Smooth the rescaled map
+    # Smooth the rescaled PRE-ICTAL map
     rescale_preictal_smoothed = gaussian_filter(rescale_preictal, sigma=1.0)
     if np.max(rescale_preictal_smoothed) > 0:
         rescale_preictal_smoothed = rescale_preictal_smoothed / np.max(rescale_preictal_smoothed)
+
+    # Smooth the ICTAL map
+    ictal_smoothed = gaussian_filter(ictal_sums, sigma=1.0)
+    if np.max(ictal_smoothed) > 0:
+        ictal_smoothed = ictal_smoothed / np.max(ictal_smoothed)
 
 
     # PLOTTING (2D Hexagonal Plots)
@@ -770,7 +748,7 @@ def toroidal_kohonen_subfunction_pytorch(
 
     # 1. U-Matrix (Hexagonal, Toroidal)
     plot_hex_grid(ax_umatrix, u_matrix_hex, "U-Matrix (Toroidal, Hexagonal)" + 
-                  f"\nTotal Embeddings: {format_large_number(total_num_embeddings)}", cmap_str='bone_r', vmin=0, vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
+                  f"\nTotal Embeddings: {format_large_number(total_num_embeddings)}", cmap_str='bone_r', vmin=np.min(u_matrix_hex), vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
 
     # 2. Hit Map (Hexagonal, Toroidal)
     plot_hex_grid(ax_hit, hit_map, "Hit Map (Hexagonal, Toroidal)", cmap_str='Blues', vmin=0, vmax=np.max(hit_map) if np.max(hit_map) > 0 else 1)
@@ -781,8 +759,7 @@ def toroidal_kohonen_subfunction_pytorch(
     plot_hex_grid(ax_comp, weights_feature_0, "Component Plane (Feature 0, Hexagonal, Toroidal)", cmap_str='coolwarm', vmin=-abs_max, vmax=abs_max)
 
     # 4. Patient Diversity Map (Hexagonal, Toroidal)
-    plot_hex_grid(ax_patient, patient_map, "Patient Diversity Map (1.0 = Most Blended, Hexagonal, Toroidal)",
-                cmap_str='viridis', vmin=0, vmax=1)
+    plot_hex_grid(ax_patient, patient_map, "Patient Diversity Map (1.0 = Most Blended, Hexagonal, Toroidal)", cmap_str='viridis', vmin=0, vmax=1)
 
     # 5. Pre-Ictal Density (Hexagonal, Toroidal)
     num_wins_preictal = np.count_nonzero(np.array(preictal_float_input) != 0.0)
@@ -824,7 +801,7 @@ def toroidal_kohonen_subfunction_pytorch(
     # overlay_preictal = np.clip(preictal_sums, 0.0, 1.0)
 
     # Plot U-Matrix base
-    plot_hex_grid(ax_overlay, u_matrix_hex, "U-Matrix with Pre-Ictal Overlay", cmap_str='bone_r', vmin=0, vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
+    plot_hex_grid(ax_overlay, u_matrix_hex, "U-Matrix with Pre-Ictal Overlay", cmap_str='bone_r', vmin=np.min(u_matrix_hex), vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
 
     # Overlay Pre-Ictal smoothed density (alpha=0.6)
     # We'll replot on top with a semi-transparent flare colormap
@@ -870,6 +847,50 @@ def toroidal_kohonen_subfunction_pytorch(
     output_obj.close()
     print("Saved overlay figure objects for later use")
 
+
+    # 2D OVERLAY: U-Matrix + ICTAL
+    
+    # Create new figure for U-Matrix + Pre-Ictal Density Overlay
+    fig_overlay, ax_overlay = pl.subplots(figsize=(10, 10))
+
+    # Pull ictal data
+    # overlay_ictal = np.clip(ictal_sums, 0.0, 1.0)
+    overlay_ictal = np.clip(ictal_smoothed, 0.0, 1.0)
+
+    # Plot U-Matrix base
+    plot_hex_grid(ax_overlay, u_matrix_hex, "U-Matrix with ICTAL Overlay", cmap_str='bone_r', vmin=np.min(u_matrix_hex), vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
+
+    # Overlay Pre-Ictal smoothed density (alpha=0.6)
+    # We'll replot on top with a semi-transparent flare colormap
+    rows, cols = overlay_ictal.shape
+    radius = 1.0
+    height = np.sqrt(3) * radius
+    cmap_overlay = cm.get_cmap('Purples')
+    norm_overlay = pl.Normalize(vmin=0.0, vmax=1.0)
+
+    for i in range(rows):
+        for j in range(cols):
+            x = j * 1.5 * radius
+            y = i * height + (j % 2) * (height / 2)
+            face_color = cmap_overlay(norm_overlay(overlay_ictal[i, j]))
+            hexagon = patches.RegularPolygon((x, y), numVertices=6, radius=radius,
+                                            orientation=np.radians(30),
+                                            facecolor=face_color, alpha=0.7,
+                                            edgecolor=None, linewidth=0)
+            if overlay_ictal[i, j] >= overlay_thresh:
+                ax_overlay.add_patch(hexagon)
+
+    # Optional: add a colorbar for the overlay
+    sm_overlay = pl.cm.ScalarMappable(cmap=cmap_overlay, norm=norm_overlay)
+    sm_overlay.set_array([])
+    pl.colorbar(sm_overlay, ax=ax_overlay, label="ICTAL Density")
+
+    # Save overlay figure
+    savename_overlay = savedir + f"/GPU{som_device}_UMatrix_ICTAL_Overlay__ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.6f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_2D.jpg"
+    pl.savefig(savename_overlay, dpi=600)
+    pl.savefig(savename_overlay.replace('.jpg', '.svg'))
+
+
     # PLOTTING (All Plots in 3D - Representing Toroidal as a Flat Grid)
 
     fig_3d = pl.figure(figsize=(28, 24))
@@ -898,7 +919,7 @@ def toroidal_kohonen_subfunction_pytorch(
 
     # 1. U-Matrix (3D Grid)
     ax_umatrix_3d = fig_3d.add_subplot(2, 4, 1, projection='3d')
-    plot_3d_grid(fig_3d, ax_umatrix_3d, u_matrix_hex, "U-Matrix (Toroidal)", cmap_str='bone_r', vmin=0, vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
+    plot_3d_grid(fig_3d, ax_umatrix_3d, u_matrix_hex, "U-Matrix (Toroidal)", cmap_str='bone_r', vmin=np.min(u_matrix_hex), vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
 
     # 2. Hit Map (3D Grid)
     ax_hit_3d = fig_3d.add_subplot(2, 4, 2, projection='3d')
@@ -974,7 +995,7 @@ def toroidal_kohonen_subfunction_pytorch(
 
     # 1. U-Matrix (Toroid)
     ax_umatrix_toroid = fig_toroid.add_subplot(2, 4, 1, projection='3d')
-    plot_3d_on_toroid(fig_toroid, ax_umatrix_toroid, u_matrix_hex, "U-Matrix (Toroid)", cmap_str='bone_r', vmin=0, vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
+    plot_3d_on_toroid(fig_toroid, ax_umatrix_toroid, u_matrix_hex, "U-Matrix (Toroid)", cmap_str='bone_r', vmin=np.min(u_matrix_hex), vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
 
     # 2. Hit Map (Toroid)
     ax_hit_toroid = fig_toroid.add_subplot(2, 4, 2, projection='3d')
@@ -1213,6 +1234,7 @@ def preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_date
     '''
 
     data_window_preictal_score = np.zeros_like(pat_ids_input, dtype=float)
+    data_window_ictal_score = np.zeros_like(pat_ids_input, dtype=float)
 
     # Generate numerical IDs for each unique patient, and give each datapoint an ID
     unique_ids = list(set(pat_ids_input))
@@ -1249,13 +1271,15 @@ def preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_date
             # Case where end of the window is in the seizure
             elif data_window_stop > seiz_start and data_window_stop < seiz_stop:
                 data_window_preictal_score[i] = 0 
+                data_window_ictal_score[i] = 1
                 break # Want to exclude seizures
 
             # Case where start of the window overlaps the preictal/ictal buffer, but end is past seizure end
             elif data_window_start > buffered_preictal_start and data_window_start < seiz_stop:
                 data_window_preictal_score[i] = 0
+                data_window_ictal_score[i] = 1
                 break # Want to exclude seizures
 
     # Ensure values remain between 0 and 1
-    return np.clip(data_window_preictal_score, 0, 1)
+    return np.clip(data_window_preictal_score, 0, 1), np.clip(data_window_ictal_score, 0, 1)
 

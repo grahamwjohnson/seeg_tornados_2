@@ -22,8 +22,7 @@ if __name__ == "__main__":
     # parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13' 
     # accumulated_data_pickle = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_32secStride.pkl'
     
-    # som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.8223decay0.010000min_sigma102.4with0.7934decay1.0min_numfeatures1027140_dims1024_batchsize64_epochs20.pt'  
-    som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.8223decay0.010000min_sigma102.4with0.7934decay1.0min_numfeatures1027140_dims1024_batchsize64_epochs20_rolled_v50_h10.pt'
+    som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.8777decay0.010000min_sigma38.4with0.8855decay1.0min_numfeatures1027140_dims1024_batchsize64_epochs30_rolled_v50_h-10.pt'
 
     save_loaded_data = True # If need to collect files, then will save one big pickle after all files collected
 
@@ -77,13 +76,13 @@ if __name__ == "__main__":
     som_pca_init = False
     reduction = 'mean' # Keep at mean because currently using reparam in SOM training
     som_device = 0 # GPU
-    som_epochs = 50
+    som_epochs = 30
     som_batch_size = 64
     som_lr = 0.5
     som_lr_min = 0.01
     som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
     som_gridsize = 128
-    som_sigma = 0.7 * som_gridsize 
+    som_sigma = 0.3 * som_gridsize 
     som_sigma_min = 1.0
     som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
 
@@ -91,7 +90,7 @@ if __name__ == "__main__":
     som_pca_init = False
     reduction = 'mean' # Keep at mean because currently using reparam in SOM training
     som_device = 1 # GPU
-    som_epochs = 50
+    som_epochs = 30
     som_batch_size = 64
     som_lr = 0.5
     som_lr_min = 0.001

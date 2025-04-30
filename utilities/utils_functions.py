@@ -936,7 +936,7 @@ def rewindow_data(
     file_stridesecs: int,
     rewin_windowsecs: int,
     rewin_strideseconds: int,
-    reduction: str = 'sum',  # 'sum', 'mean', 'cat'
+    reduction: str = 'mean',  # 'sum', 'mean', 'cat'
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Rewindows sequential data (means, logvars, mogpreds) from an original

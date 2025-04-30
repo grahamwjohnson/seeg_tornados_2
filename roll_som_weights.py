@@ -59,13 +59,12 @@ def roll_and_save_som(som_path, save_dir, device, roll_vertical=0, roll_horizont
     print(f"Rolled SOM saved successfully to {save_path}")
 
 def main():
-    # Define your parameters here
-    som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.8223decay0.010000min_sigma102.4with0.7934decay1.0min_numfeatures1027140_dims1024_batchsize64_epochs20.pt'  
+    som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.8777decay0.010000min_sigma38.4with0.8855decay1.0min_numfeatures1027140_dims1024_batchsize64_epochs30.pt'  
     save_directory = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/'
     device = "cpu"  # or "cuda"
 
     roll_vertical = 50   # positive = roll down, negative = roll up
-    roll_horizontal = 10  # positive = roll right, negative = roll left
+    roll_horizontal = -10  # positive = roll right, negative = roll left
 
     # Make sure save directory exists
     os.makedirs(save_directory, exist_ok=True)
