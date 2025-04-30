@@ -11,7 +11,7 @@ class ToroidalSOM(nn.Module):
     """
 
     def __init__(self, grid_size, input_dim, batch_size, lr, lr_epoch_decay, sigma,
-                 sigma_epoch_decay, sigma_min, device, init_pca=False, data_for_pca=None):
+                 sigma_epoch_decay, sigma_min, device, init_pca=False, data_for_pca=None, **kwargs):
         super(ToroidalSOM, self).__init__()
         self.grid_size = grid_size
         self.input_dim = input_dim
