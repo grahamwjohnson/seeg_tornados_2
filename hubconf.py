@@ -53,7 +53,7 @@ CONFIGS = {
         'som_lr': 0.5,
         'som_lr_min': 0.01,
         'som_lr_epoch_decay': (0.01 / 0.5)**(1 / 30),
-        'grid_size': (128,128),
+        'som_gridsize': 128,
         'som_sigma': 0.3 * 128,
         'som_sigma_min': 1.0,
         'som_sigma_epoch_decay': (1 / 0.3 * 128)**(1 / 30),
@@ -92,6 +92,7 @@ def _load_models(codename='sheldrake', pretrained=True, load_bse=True, load_som=
 
     if load_bse:
         bse = BSE(**config)
+
         if pretrained and config.get('bse_weight_file') and config.get('release_tag'):
             weight_file = config['bse_weight_file']
             release_tag = config['release_tag']
@@ -107,7 +108,10 @@ def _load_models(codename='sheldrake', pretrained=True, load_bse=True, load_som=
 
     # *** Kohonen/Self-Organizing Map (SOM) ***
     if load_som:
-        som = ToroidalSOM(device=config['som_device'], **config)
+        som = ToroidalSOM(grid_size=(config['som_gridsize'], config['som_gridsize']), input_dim=config['latent_dim'], batch_size=config['som_batch_size'],
+                    lr=config['som_lr'], lr_epoch_decay=config['som_lr_epoch_decay'], sigma=config['som_sigma'],
+                    sigma_epoch_decay=config['som_sigma_epoch_decay'], sigma_min=config['som_sigma_min'], device=config['som_device'])
+        
         if pretrained and config.get('som_dict_file') and config.get('release_tag'):
             weight_file = config['som_dict_file']
             release_tag = config['release_tag']
