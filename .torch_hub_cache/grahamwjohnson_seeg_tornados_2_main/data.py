@@ -238,6 +238,9 @@ class SEEG_Tornado_Dataset(Dataset):
         # Initilaize the lists of lists for data filenames
         self.pat_fnames = [[] for i in range(len(self.pat_ids))]
 
+        # Incase the random generator is never initialized 
+        self.tmp_dir = None
+
         # ### Now determine which files in the data directory shoud be given to the dataset
         # Dataset splits is a tuple of 3 floats for train/val/test and must add up to 1
         # NOTE: the ratio referes to seizures had, no longer is based on time in EMU        
@@ -274,9 +277,10 @@ class SEEG_Tornado_Dataset(Dataset):
         self.rand_generator_process = utils_functions.run_script_from_shell(self.env_python_path, self.random_gen_script_path, self.tmp_dir, 'fnames.csv', f"{self.num_rand_hashes}")
 
     def kill_generator(self):
-        # To kill the generator, just delete the tmp dir path
-        if os.path.exists(self.tmp_dir):
-            shutil.rmtree(self.tmp_dir)
+        if self.tmp_dir != None:
+            # To kill the generator, just delete the tmp dir path
+            if os.path.exists(self.tmp_dir):
+                shutil.rmtree(self.tmp_dir)
 
     def get_script_filename(self):
         return __file__
@@ -297,6 +301,30 @@ class SEEG_Tornado_Dataset(Dataset):
 
     def get_pat_curr(self):
         return self.pat_curr, self.pat_ids[self.pat_curr], self.pat_dirs[self.pat_curr], self.pat_fnames[self.pat_curr]
+
+    def update_pat_inference_status(self, inference_save_dir, inference_window_sec_list, inference_stride_sec_list):
+        if self.single_pat_seq == False: raise Exception("Must be in single pat seq to call this function")
+        first_save_dir = f"{inference_save_dir}/latent_files/{inference_window_sec_list[0]}SecondWindow_{inference_stride_sec_list[0]}SecondStride"
+        pat_completed_files = glob.glob(f'{first_save_dir}/{self.pat_ids[self.pat_curr]}*.pkl')
+        pat_all_files = self.pat_fnames[self.pat_curr]
+
+        pat_completed_roots = ['_'.join(x.split("/")[-1].split("_")[0:6]) for x in pat_completed_files]
+        pat_all_roots = ['_'.join(x.split("/")[-1].split("_")[0:6]) for x in pat_all_files]
+
+        missing_indices = []
+        completed_set = set(pat_completed_roots)
+        for index, root in enumerate(pat_all_roots):
+            if root not in completed_set:
+                missing_indices.append(index)
+
+        # Create a new list containing only the files at the missing indices
+        updated_pat_fnames = [pat_all_files[i] for i in missing_indices]
+
+        # Update self.pat_fnames for the current patient
+        self.pat_fnames[self.pat_curr] = updated_pat_fnames
+
+        # Optional: Print the updated list to verify
+        print(f"[{self.pat_ids[self.pat_curr]}] Updated self.pat_fnames: There are {len(missing_indices)} files left to process out of {len(pat_all_roots)}")
 
     def __len__(self):
 
@@ -362,4 +390,81 @@ class SEEG_Tornado_Dataset(Dataset):
                 else:
                     # print("Random Generator not fast enough")
                     time.sleep(0.5)
+
+class SEEG_BSP_Dataset(Dataset):
+
+    def __init__(
+        self,
+        gpu_id,
+        bsp_source_dir,
+        bsp_window_sec_duration,
+        bsp_window_sec_stride,
+        bsp_transformer_seq_length,
+        bsp_forward_passes_in_epoch,
+        bsp_latent_dim,
+        data_logger_enabled,
+        data_logger_file,
+        **kwargs):
+
+        self.gpu_id = gpu_id
+        self.bsp_source_dir = bsp_source_dir
+        self.bsp_window_sec_duration = bsp_window_sec_duration
+        self.bsp_window_sec_stride = bsp_window_sec_stride
+        self.bsp_transformer_seq_length = bsp_transformer_seq_length
+        self.bsp_forward_passes_in_epoch = bsp_forward_passes_in_epoch
+        self.bsp_latent_dim = bsp_latent_dim
+        self.data_logger_enabled = data_logger_enabled
+        self.data_logger_file = data_logger_file
+        self.kwargs = kwargs
+
+
+        # Get the source window duration and seconds from directory name
+        s = self.bsp_source_dir.split("/")[-1].split("_")
+        self.original_sec_duration = int(s[0].replace("SecondWindow", ''))
+        self.original_sec_stride = int(s[1].replace("SecondStride", ''))
+
+        file_names = glob.glob(f'{bsp_source_dir}/*.pkl')
+        pat_ids_all = [x.split("/")[-1].split("_")[0] for x in file_names]
+        self.pat_ids_unique = list(set(pat_ids_all))
+        self.pat_ids_unique.sort()
+        self.num_pats = len(self.pat_ids_unique)
+        self.files_bypat = [''] * self.num_pats
+        self.numfiles_bypat = [-1] * self.num_pats
+        for i in range(self.num_pats):
+            self.files_bypat[i] = glob.glob(f'{self.bsp_source_dir}/{self.pat_ids_unique[i]}*.pkl')
+            self.numfiles_bypat[i] = len(self.files_bypat[i])
+
+    def __len__(self):
+        return self.bsp_forward_passes_in_epoch
+    
+    def __getitem__(self, idx): 
+        rand_pat_idx = int(random.uniform(0, self.num_pats))
+        rand_file_idx = int(random.uniform(0, self.numfiles_bypat[rand_pat_idx]))
+        rand_filename = self.files_bypat[rand_pat_idx][rand_file_idx]
+
+        # Load the file's pickle
+        with open(rand_filename, 'rb') as file: file_data = pickle.load(file)
+        ww_means = file_data['windowed_weighted_means']
+        ww_logvars = file_data['windowed_weighted_logvars']
+        w_mogpreds = file_data['windowed_mogpreds']
+
+        # Rewindow the data
+        rewin_means, rewin_logvars, rewin_mogpreds = utils_functions.rewindow_data(
+                ww_means, ww_logvars, w_mogpreds, self.original_sec_duration,  self.original_sec_stride, self.bsp_window_sec_duration, self.bsp_window_sec_stride)
+
+        # Now pull out a random sequence
+        num_windows_in_file = rewin_means.shape[0]
+        rand_start = int(random.uniform(0, num_windows_in_file - self.bsp_transformer_seq_length - 1))
+
+        selected_means = rewin_means[rand_start:rand_start + self.bsp_transformer_seq_length, :]
+        selected_logvars = rewin_logvars[rand_start:rand_start + self.bsp_transformer_seq_length, :]
+        selected_mogpreds = rewin_mogpreds[rand_start:rand_start + self.bsp_transformer_seq_length, :]
+
+        # Concatenate the means and logvars together to for the input embeddings for BSP
+        data_np = np.concatenate([selected_means, selected_logvars], axis=1)
+        data_tensor = torch.Tensor(data_np).to(torch.float32)
+
+        return data_tensor, selected_mogpreds, rand_filename
+        
+
 

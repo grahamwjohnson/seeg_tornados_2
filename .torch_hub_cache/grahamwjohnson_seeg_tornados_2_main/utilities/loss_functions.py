@@ -11,7 +11,7 @@ import torch.nn.functional as F
 def recon_loss(x: list[torch.Tensor], x_hat: list[torch.Tensor], mse_weight: float
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Computes MSE, FD1, and FD2 losses on filtered (non-padded) tensors. 
+    Computes MSE losses on filtered (non-padded) tensors. 
     Each patient will have different number of channels, that is why this is a list.
     Padded channels were stripped prior to this function. 
     
@@ -255,3 +255,8 @@ def patient_adversarial_loss_function(probs, labels, classifier_weight):
     return classifier_weight * adversarial_loss
 
 
+# BSP LOSS
+def bsp_loss(x, x_pred, bsp_loss_weight, **kwargs):
+    mse_loss = nn.MSELoss(reduction='mean')
+    loss = mse_loss(x, x_pred)
+    return bsp_loss_weight * loss

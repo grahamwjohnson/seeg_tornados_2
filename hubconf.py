@@ -47,13 +47,13 @@ CONFIGS = {
         # Kohonen/SOM Params
         'som_pca_init': False,
         'reduction': 'mean',
-        'som_device': 0, # GPU
+        'som_device': 'cpu',
         'som_epochs': 30,
         'som_batch_size': 64,
         'som_lr': 0.5,
         'som_lr_min': 0.01,
         'som_lr_epoch_decay': (0.01 / 0.5)**(1 / 30),
-        'som_gridsize': 128,
+        'grid_size': (128,128),
         'som_sigma': 0.3 * 128,
         'som_sigma_min': 1.0,
         'som_sigma_epoch_decay': (1 / 0.3 * 128)**(1 / 30),
@@ -63,7 +63,7 @@ CONFIGS = {
 
         # Weight files
         'bse_weight_file': 'bse_weights.pth',
-        'som_dict': 'som_dict.pth',
+        'som_dict_file': 'som_dict.pth',
         'bsp_weight_file': 'bsp_weights.pth',
         'release_tag': 'v0.8-alpha'
     }
@@ -92,8 +92,6 @@ def _load_models(codename='sheldrake', pretrained=True, load_bse=True, load_som=
 
     if load_bse:
         bse = BSE(**config)
-
-        # BSE: Load pretrained weights if requested
         if pretrained and config.get('bse_weight_file') and config.get('release_tag'):
             weight_file = config['bse_weight_file']
             release_tag = config['release_tag']
@@ -102,14 +100,28 @@ def _load_models(codename='sheldrake', pretrained=True, load_bse=True, load_som=
                 state_dict = torch.hub.load_state_dict_from_url(checkpoint_url, progress=True, map_location='cpu')
                 bse.load_state_dict(state_dict)
             except Exception as e:
-                print(f"Error loading pretrained weights for codename '{codename}': {e}")
-                print("Continuing with randomly initialized model.")
+                print(f"Error loading pretrained BSE weights for codename '{codename}': {e}")
+                print("Continuing with randomly initialized BSE model.")
         elif pretrained:
-            print(f"No weight file or release tag specified for codename '{codename}'. Continuing with randomly initialized model.")
+            print(f"No BSE weight file or release tag specified for codename '{codename}'. Continuing with randomly initialized BSE model.")
 
     # *** Kohonen/Self-Organizing Map (SOM) ***
     if load_som:
-        som = 1
+        som = ToroidalSOM(device=config['som_device'], **config)
+        if pretrained and config.get('som_dict_file') and config.get('release_tag'):
+            weight_file = config['som_dict_file']
+            release_tag = config['release_tag']
+            checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{weight_file}'
+            try:
+                checkpoint = torch.hub.load(checkpoint_url)   
+                som.load_state_dict(checkpoint['model_state_dict'])
+                som.weights = checkpoint['weights']
+                som.reset_device(config['som_device'])
+            except Exception as e:
+                print(f"Error loading pretrained SOM weights for codename '{codename}': {e}")
+                print("Continuing with randomly initialized SOM model.")
+        elif pretrained:
+            print(f"No SOM weight file or release tag specified for codename '{codename}'. Continuing with randomly initialized SOM model.")
 
     else:
         som = None
