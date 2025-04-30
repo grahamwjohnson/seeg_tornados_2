@@ -16,6 +16,7 @@ import wandb
 
 # Local Imports
 from utilities import utils_functions
+from utilities import manifold_utilities
 from utilities import loss_functions
 from data import SEEG_BSP_Dataset
 from models.BSP import BSP
@@ -45,6 +46,7 @@ def load_train_objs(
     bsp_weight_decay, 
     bsp_adamW_beta1,
     bsp_adamW_beta2,
+    som_precomputed_path,
     **kwargs):
 
     # Sequential dataset used to run inference on train data 
@@ -68,7 +70,11 @@ def load_train_objs(
     param_groups = [{"params": bsp.parameters(), "lr":  kwargs['bsp_LR'], "weight_decay": bsp_weight_decay, "betas": (bsp_adamW_beta1, bsp_adamW_beta2)}]
     opt_bsp = torch.optim.AdamW(param_groups)
 
-    return train_dataloader, bsp, opt_bsp
+    ### Kohonen self-organizing map ###
+    som, _ = manifold_utilities.load_kohonen(som_precomputed_path, gpu_id)
+    som.reset_device(gpu_id)
+
+    return train_dataloader, bsp, opt_bsp, som
 
 def main(  
     # Ordered variables
@@ -81,6 +87,7 @@ def main(
     timestamp_id: int,
     start_epoch: int,
     bsp_singlebatch_printing_interval_train: int,
+    bsp_autoregressive_plot_steps: int,
     bsp_state_dict_prev_path = [],
     bsp_opt_state_dict_prev_path = [],
     bsp_epochs_to_train: int = -1,
@@ -104,7 +111,7 @@ def main(
     ddp_setup(gpu_id, world_size)
 
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
-    train_dataloader, bsp, opt_bsp = load_train_objs(gpu_id=gpu_id, **kwargs) 
+    train_dataloader, bsp, opt_bsp, som = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
     # Load the model/opt states if not first epoch & if in training mode
     if (start_epoch > 0):
@@ -123,6 +130,7 @@ def main(
         gpu_id=gpu_id, 
         bsp=bsp, 
         opt_bsp=opt_bsp,
+        som=som,
         start_epoch=start_epoch,
         train_dataloader=train_dataloader,
         wandb_run=wandb_run,
@@ -134,6 +142,7 @@ def main(
         
         # TRAIN
         trainer._set_to_train()
+        trainer.train_dataloader.dataset.set_future_buffer(0)
         trainer._run_train_epoch(
             dataloader_curr = trainer.train_dataloader, 
             dataset_string = "train",
@@ -145,6 +154,17 @@ def main(
         if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, **kwargs)
         print(f"GPU{str(trainer.gpu_id)} at post checkpoint save barrier")
         barrier()
+
+        # AUTOREGRESSIVE PLOT
+        trainer._set_to_eval()
+        trainer.train_dataloader.dataset.set_future_buffer(bsp_autoregressive_plot_steps)
+        with torch.inference_mode():
+            trainer._autoregress_plot(
+                epoch = epoch,
+                dataloader_curr = trainer.train_dataloader, 
+                dataset_string = "train",
+                bsp_autoregressive_plot_steps=bsp_autoregressive_plot_steps,
+                **kwargs)
 
     # Kill the process after training loop completes
     print(f"[GPU{gpu_id}]: End of train loop, killing 'main' subprocess")
@@ -160,11 +180,12 @@ class Trainer:
         start_epoch: int,
         train_dataloader: DataLoader,
         opt_bsp: torch.optim.Optimizer,
+        som,
         wandb_run,
         model_dir: str,
         latent_dim: int,
-        transformer_seq_length: int,
-        transformer_start_pos: int,
+        bsp_transformer_seq_length: int,
+        bsp_transformer_start_pos: int,
         FS: int,
         recent_display_iters: int,
         **kwargs
@@ -175,12 +196,12 @@ class Trainer:
         self.start_epoch = start_epoch
         self.train_dataloader = train_dataloader
         self.opt_bsp = opt_bsp
+        self.som = som
         self.model_dir = model_dir
         self.latent_dim = latent_dim
-        self.transformer_seq_length = transformer_seq_length
-        self.transformer_start_pos = transformer_start_pos
+        self.bsp_transformer_seq_length = bsp_transformer_seq_length
+        self.bsp_transformer_start_pos = bsp_transformer_start_pos
         self.FS = FS
-        self.curr_LR_posterior = -1
         self.recent_display_iters = recent_display_iters
         self.wandb_run = wandb_run
         self.kwargs = kwargs
@@ -196,6 +217,52 @@ class Trainer:
 
     def _set_to_eval(self):
         self.bsp.eval()
+
+    def _autoregress_plot(
+        self,
+        epoch,
+        dataloader_curr, 
+        dataset_string,
+        bsp_autoregressive_plot_steps,
+        som_plot_data_path,
+        num_autoregress_batches = 1,
+        **kwargs):
+        
+        autoregress_batch_idx = 0
+        for x, _, pat_idxs in dataloader_curr: 
+            x = x.to(self.gpu_id)
+            full_output = torch.zeros_like(x)
+            full_output[:, 0:self.bsp_transformer_seq_length, :] = x[:, 0:self.bsp_transformer_seq_length, :] # fill the running vector with initial context
+
+            auto_step = 0
+            for i in range(bsp_autoregressive_plot_steps):
+                context_curr = full_output[:,auto_step:auto_step+self.bsp_transformer_seq_length,:]
+                pred, _ = self.bsp(context_curr)
+                full_output[:,auto_step+self.bsp_transformer_seq_length,:] = pred[:, -1, :]
+                auto_step += 1
+
+            # Plot the autoregressed predictions
+            # Include 1 point overlap in predictions and ground truth for plotting purposes 
+            save_dir = self.model_dir + f"/plots/{dataset_string}/autoregression"
+            if not os.path.exists(save_dir): os.makedirs(save_dir)
+            for b in range(x.shape[0]):
+                pred_plot_axis = manifold_utilities.plot_kohonen_prediction(
+                    save_dir = save_dir, 
+                    som = self.som, 
+                    plot_data_path = som_plot_data_path, 
+                    epoch = epoch,
+                    batch_idx = b,
+                    context = x[b, 0:self.bsp_transformer_seq_length, :], 
+                    ground_truth_future=x[b, self.bsp_transformer_seq_length-1:, :], 
+                    predictions=full_output[b, self.bsp_transformer_seq_length-1:, :], 
+                    undo_log=True, 
+                    smoothing_factor=10)  
+
+            # Kill after desired number of batches
+            if autoregress_batch_idx >= num_autoregress_batches: break
+
+        
+
 
     def _save_checkpoint(self, epoch, delete_old_checkpoints, **kwargs):
 
