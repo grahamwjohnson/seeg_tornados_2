@@ -307,7 +307,7 @@ def get_som_rowcol(data, som):
         som_rowcol[i:i + som.batch_size, 1] = bmu_cols
     return som_rowcol
 
-def plot_kohonen_prediction(save_dir, som, plot_data_path, context, ground_truth_future, predictions, undo_log, smoothing_factor, epoch, batch_idx, overlay_thresh=0.25):
+def plot_kohonen_prediction(gpu_id, save_dir, som, plot_data_path, context, ground_truth_future, predictions, undo_log, smoothing_factor, epoch, batch_idx, overlay_thresh=0.25):
     """Plots Kohonen/SOM predictions on top of a U-Matrix + Pre-Ictal overlay."""
     # Process context, ground truth, and predictions separately
     context_rowcol = get_som_rowcol(context, som)
@@ -368,7 +368,7 @@ def plot_kohonen_prediction(save_dir, som, plot_data_path, context, ground_truth
         smoothing_factor=smoothing_factor)
 
     # Save figure
-    savename_overlay = save_dir + f"/kohonen_predictions_epoch{epoch}_batch{batch_idx}.jpg"
+    savename_overlay = save_dir + f"/kohonen_predictions_epoch{epoch}_batch{batch_idx}_GPU{gpu_id}.jpg"
     pl.savefig(savename_overlay, dpi=600)
     pl.close(fig_overlay)
 

@@ -139,6 +139,7 @@ def main(
     # Main loop through all epochs
     for epoch in range(start_epoch, bsp_epochs_to_train):
         trainer.epoch = epoch
+        barrier()
         
         # TRAIN
         trainer._set_to_train()
@@ -153,11 +154,11 @@ def main(
         # After every train epoch, optionally delete old checkpoints
         if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, **kwargs)
         print(f"GPU{str(trainer.gpu_id)} at post checkpoint save barrier")
-        barrier()
 
         # AUTOREGRESSIVE PLOT
         trainer._set_to_eval()
         trainer.train_dataloader.dataset.set_future_buffer(bsp_autoregressive_plot_steps)
+        print("Running and plotting autoregression for model evaluation")
         with torch.inference_mode():
             trainer._autoregress_plot(
                 epoch = epoch,
@@ -165,6 +166,8 @@ def main(
                 dataset_string = "train",
                 bsp_autoregressive_plot_steps=bsp_autoregressive_plot_steps,
                 **kwargs)
+        print("Autoregression plotting complete")
+        
 
     # Kill the process after training loop completes
     print(f"[GPU{gpu_id}]: End of train loop, killing 'main' subprocess")
@@ -232,13 +235,13 @@ class Trainer:
         for x, _, pat_idxs in dataloader_curr: 
             x = x.to(self.gpu_id)
             full_output = torch.zeros_like(x)
-            full_output[:, 0:self.bsp_transformer_seq_length, :] = x[:, 0:self.bsp_transformer_seq_length, :] # fill the running vector with initial context
+            full_output[:, 0:self.bsp_transformer_seq_length, :] = x[:, 0:self.bsp_transformer_seq_length, :].clone().detach() # fill the running vector with initial context
 
             auto_step = 0
             for i in range(bsp_autoregressive_plot_steps):
-                context_curr = full_output[:,auto_step:auto_step+self.bsp_transformer_seq_length,:]
+                context_curr = full_output[:,auto_step:auto_step+self.bsp_transformer_seq_length,:].clone().detach()
                 pred, _ = self.bsp(context_curr)
-                full_output[:,auto_step+self.bsp_transformer_seq_length,:] = pred[:, -1, :]
+                full_output[:,auto_step+self.bsp_transformer_seq_length,:] = pred[:, -1, :].clone().detach()
                 auto_step += 1
 
             # Plot the autoregressed predictions
@@ -247,6 +250,7 @@ class Trainer:
             if not os.path.exists(save_dir): os.makedirs(save_dir)
             for b in range(x.shape[0]):
                 pred_plot_axis = manifold_utilities.plot_kohonen_prediction(
+                    gpu_id=self.gpu_id,
                     save_dir = save_dir, 
                     som = self.som, 
                     plot_data_path = som_plot_data_path, 
@@ -259,6 +263,7 @@ class Trainer:
                     smoothing_factor=10)  
 
             # Kill after desired number of batches
+            autoregress_batch_idx += 1
             if autoregress_batch_idx >= num_autoregress_batches: break
 
         
