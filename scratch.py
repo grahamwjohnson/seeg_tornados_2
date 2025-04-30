@@ -5,42 +5,42 @@ import glob
 import random
 import pickle
 
-device = 1
-som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.8223decay0.010000min_sigma102.4with0.7934decay1.0min_numfeatures1027140_dims1024_batchsize64_epochs20_rolled_v50_h10.pt'
-plot_data_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/overlay_figure_object.pkl'
-som, checkpoint = manifold_utilities.load_kohonen(som_precomputed_path, device)
-undo_log = True # If U-matrix is log scaled
-smoothing_factor = 10 # Spline smoothing 
+# device = 1
+# som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.8223decay0.010000min_sigma102.4with0.7934decay1.0min_numfeatures1027140_dims1024_batchsize64_epochs20_rolled_v50_h10.pt'
+# plot_data_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/overlay_figure_object.pkl'
+# som, checkpoint = manifold_utilities.load_kohonen(som_precomputed_path, device)
+# undo_log = True # If U-matrix is log scaled
+# smoothing_factor = 10 # Spline smoothing 
 
-save_dir = '/media/glommy1/tornados/tmp_plots'
+# save_dir = '/media/glommy1/tornados/tmp_plots'
 
-file_windowsecs = 1 
-file_stridesecs = 1
-rewin_windowsecs = 64
-rewin_strideseconds = 1
-dummy_dir = f'/media/glommy1/tornados/bse_inference/sheldrake_epoch1138_validation/latent_files/{file_windowsecs}SecondWindow_{file_stridesecs}SecondStride'
-dummy_files = glob.glob(f'{dummy_dir}/*.pkl')
-num_files = len(dummy_files)
-rand_idx = random.randint(0, num_files)
-rand_file = dummy_files[rand_idx]
-with open(rand_file, "rb") as f: latent_data_fromfile = pickle.load(f)
-context = latent_data_fromfile['windowed_weighted_means']
-ww_logvars = latent_data_fromfile['windowed_weighted_logvars']
-w_mogpreds = latent_data_fromfile['windowed_mogpreds']
-print(f"Original shape of context: {context.shape}")
-rewin_context, rewin_logvars, rewin_mogpreds = utils_functions.rewindow_data(
-    context, ww_logvars, w_mogpreds, file_windowsecs, file_stridesecs, rewin_windowsecs, rewin_strideseconds, reduction='mean')
-print(f"Rewindowed shape of rewin_context: {rewin_context.shape}")
+# file_windowsecs = 1 
+# file_stridesecs = 1
+# rewin_windowsecs = 64
+# rewin_strideseconds = 1
+# dummy_dir = f'/media/glommy1/tornados/bse_inference/sheldrake_epoch1138_validation/latent_files/{file_windowsecs}SecondWindow_{file_stridesecs}SecondStride'
+# dummy_files = glob.glob(f'{dummy_dir}/*.pkl')
+# num_files = len(dummy_files)
+# rand_idx = random.randint(0, num_files)
+# rand_file = dummy_files[rand_idx]
+# with open(rand_file, "rb") as f: latent_data_fromfile = pickle.load(f)
+# context = latent_data_fromfile['windowed_weighted_means']
+# ww_logvars = latent_data_fromfile['windowed_weighted_logvars']
+# w_mogpreds = latent_data_fromfile['windowed_mogpreds']
+# print(f"Original shape of context: {context.shape}")
+# rewin_context, rewin_logvars, rewin_mogpreds = utils_functions.rewindow_data(
+#     context, ww_logvars, w_mogpreds, file_windowsecs, file_stridesecs, rewin_windowsecs, rewin_strideseconds, reduction='mean')
+# print(f"Rewindowed shape of rewin_context: {rewin_context.shape}")
 
-# create fake data
-context_length = 64
-predicted_length = 64
-total_plot_length = context_length + predicted_length
-context_start_idx = random.randint(0, rewin_context.shape[0] - total_plot_length)
-plot_context = rewin_context[context_start_idx:context_start_idx + context_length, :]
-ground_truth_future = rewin_context[context_start_idx + context_length - 1: context_start_idx + context_length + predicted_length, :] # Include overlap point for plotting purposes
-fake_predictions = np.concatenate([plot_context[-1:,:], np.random.rand(predicted_length,1024)], axis=0) # Include overlap point for plotting purposes
-pred_plot_axis = manifold_utilities.plot_kohonen_prediction(save_dir, som, plot_data_path, plot_context, ground_truth_future, fake_predictions, undo_log, smoothing_factor)  
+# # create fake data
+# context_length = 64
+# predicted_length = 64
+# total_plot_length = context_length + predicted_length
+# context_start_idx = random.randint(0, rewin_context.shape[0] - total_plot_length)
+# plot_context = rewin_context[context_start_idx:context_start_idx + context_length, :]
+# ground_truth_future = rewin_context[context_start_idx + context_length - 1: context_start_idx + context_length + predicted_length, :] # Include overlap point for plotting purposes
+# fake_predictions = np.concatenate([plot_context[-1:,:], np.random.rand(predicted_length,1024)], axis=0) # Include overlap point for plotting purposes
+# pred_plot_axis = manifold_utilities.plot_kohonen_prediction(save_dir, som, plot_data_path, plot_context, ground_truth_future, fake_predictions, undo_log, smoothing_factor)  
 
 
 
@@ -67,20 +67,20 @@ pred_plot_axis = manifold_utilities.plot_kohonen_prediction(save_dir, som, plot_
 
 
 
-# import torch
+import torch
 
-# torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
-# bse = torch.hub.load(
-#     'grahamwjohnson/seeg_tornados_2',
-#     'load',
-#     codename='sheldrake',
-#     pretrained=True,
-#     load_bse=True, 
-#     load_bsp=False,
-#     trust_repo='check',
-#     force_reload=True
-# )
-# print(bse)
+torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
+bse, som, bsp = torch.hub.load(
+    'grahamwjohnson/seeg_tornados_2',
+    'load',
+    codename='sheldrake',
+    pretrained=True,
+    load_bse=True, 
+    load_bsp=False,
+    trust_repo='check',
+    force_reload=True
+)
+print(bse)
 
 # # rval_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/rapid_val'
 # # rval_files = glob.glob(f"{rval_dir}/*.pkl")

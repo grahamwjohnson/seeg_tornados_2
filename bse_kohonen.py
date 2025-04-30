@@ -86,20 +86,6 @@ if __name__ == "__main__":
     som_sigma_min = 1.0
     som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
 
-    # Kohonen Settings [GPU 1]
-    som_pca_init = False
-    reduction = 'mean' # Keep at mean because currently using reparam in SOM training
-    som_device = 1 # GPU
-    som_epochs = 30
-    som_batch_size = 64
-    som_lr = 0.5
-    som_lr_min = 0.001
-    som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
-    som_gridsize = 128
-    som_sigma = 0.7 * som_gridsize 
-    som_sigma_min = 1.0 
-    som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
-
     # Plotting variables
     kwargs = {}
     kwargs['seiz_type_list'] = ['FBTC', 'FIAS', 'FAS_to_FIAS', 'FAS', 'Focal unknown awareness', 'Unknown', 'Subclinical', 'Non-electrographic'] # Leftward overwites rightward
