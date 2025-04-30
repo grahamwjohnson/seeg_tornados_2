@@ -461,8 +461,6 @@ def bsp_initialize_directories(
 
     if kwargs['continue_existing_training']:
 
-        raise Exception("Need to check this code")
-
         kwargs['model_dir'] = cont_train_model_dir
         kwargs['log_dir'] =  kwargs['model_dir'] + '/data_logs'
 
@@ -2497,6 +2495,10 @@ def print_BSP_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_m
                 raise Exception(f"Error: Masked attention weights sum to {masked_sum:.6f} (expected 0) "
                       f"for batch {b}, layer {l}")
             
+            # Scale by row for visualization
+            for row in range(0, rows):
+                plot_data[row, :] = plot_data[row, :] * row + 1 # Multipy by how many non-masked elements there are
+
             # Apply mask (replace with NaN for plotting)
             plot_data = np.where(mask, np.nan, plot_data)
 

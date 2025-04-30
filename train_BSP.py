@@ -65,7 +65,7 @@ def load_train_objs(
     bsp = bsp.to(gpu_id) 
 
     ### Optimizer ###
-    param_groups = [{"params": bsp.parameters(), "lr":  kwargs['LR_min_posterior'], "weight_decay": bsp_weight_decay, "betas": (bsp_adamW_beta1, bsp_adamW_beta2)}]
+    param_groups = [{"params": bsp.parameters(), "lr":  kwargs['bsp_LR'], "weight_decay": bsp_weight_decay, "betas": (bsp_adamW_beta1, bsp_adamW_beta2)}]
     opt_bsp = torch.optim.AdamW(param_groups)
 
     return train_dataloader, bsp, opt_bsp

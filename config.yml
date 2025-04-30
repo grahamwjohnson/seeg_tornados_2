@@ -209,11 +209,13 @@ num_accumulated_plotting_dims: 5
 recent_display_iters: 5 # How often to print to console when training & how often to log to WandB
 
 
+### ----------------------------------- ###
+
 
 ### Brain-State Predictor (BSP) ###
 
 continue_existing_training: False
-cont_train_model_dir: '' 
+cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/whapuku_sheldrake_Wed_Apr_30_00_13_54_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
 bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/latent_files/1SecondWindow_1SecondStride'
@@ -229,12 +231,12 @@ bsp_singlebatch_printing_interval_train: 128
 bsp_epochs_to_train: 99999
 
 # BSP
-bsp_transformer_seq_length: 256
+bsp_transformer_seq_length: 512
 bsp_window_sec_duration: 1 # Must be multiple of input data
 bsp_window_sec_stride: 1 # Must be multiple of input data
 bsp_latent_dim: 2048 # Concat means and logvars
 bsp_n_heads: 32
-bsp_n_layers: 16
+bsp_n_layers: 12
 bsp_ffn_dim_multiplier: 1.0
 bsp_max_batch_size: kwargs['bsp_max_batch_size'] = kwargs['bsp_batchsize']
 bsp_max_seq_len: kwargs['bsp_max_seq_len'] = kwargs['bsp_transformer_seq_length']
@@ -242,7 +244,8 @@ bsp_transformer_activation: "silu"
 bsp_attention_dropout: 0.0
 
 # BSP Training
+bsp_LR: kwargs['bsp_LR'] = 1e-6
 bsp_loss_weight: 1
 bsp_transformer_start_pos: 0 # hardcode to 0
-bsp_epoch_dataset_size: kwargs['bsp_epoch_dataset_size'] = 1024 * kwargs['bsp_batchsize']
+bsp_epoch_dataset_size: kwargs['bsp_epoch_dataset_size'] = 2048 * kwargs['bsp_batchsize']
 bsp_batchsize: 4
