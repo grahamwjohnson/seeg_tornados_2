@@ -400,7 +400,7 @@ class SEEG_BSP_Dataset(Dataset):
         bsp_window_sec_duration,
         bsp_window_sec_stride,
         bsp_transformer_seq_length,
-        bsp_forward_passes_in_epoch,
+        bsp_epoch_dataset_size,
         bsp_latent_dim,
         data_logger_enabled,
         data_logger_file,
@@ -411,7 +411,7 @@ class SEEG_BSP_Dataset(Dataset):
         self.bsp_window_sec_duration = bsp_window_sec_duration
         self.bsp_window_sec_stride = bsp_window_sec_stride
         self.bsp_transformer_seq_length = bsp_transformer_seq_length
-        self.bsp_forward_passes_in_epoch = bsp_forward_passes_in_epoch
+        self.bsp_epoch_dataset_size = bsp_epoch_dataset_size
         self.bsp_latent_dim = bsp_latent_dim
         self.data_logger_enabled = data_logger_enabled
         self.data_logger_file = data_logger_file
@@ -435,7 +435,7 @@ class SEEG_BSP_Dataset(Dataset):
             self.numfiles_bypat[i] = len(self.files_bypat[i])
 
     def __len__(self):
-        return self.bsp_forward_passes_in_epoch
+        return self.bsp_epoch_dataset_size
     
     def __getitem__(self, idx): 
         rand_pat_idx = int(random.uniform(0, self.num_pats))
@@ -449,8 +449,13 @@ class SEEG_BSP_Dataset(Dataset):
         w_mogpreds = file_data['windowed_mogpreds']
 
         # Rewindow the data
-        rewin_means, rewin_logvars, rewin_mogpreds = utils_functions.rewindow_data(
-                ww_means, ww_logvars, w_mogpreds, self.original_sec_duration,  self.original_sec_stride, self.bsp_window_sec_duration, self.bsp_window_sec_stride)
+        if (self.original_sec_duration !=  self.bsp_window_sec_duration) or (self.original_sec_stride != self.bsp_window_sec_stride):
+            rewin_means, rewin_logvars, rewin_mogpreds = utils_functions.rewindow_data(
+                    ww_means, ww_logvars, w_mogpreds, self.original_sec_duration,  self.original_sec_stride, self.bsp_window_sec_duration, self.bsp_window_sec_stride)
+        else:
+            rewin_means = ww_means
+            rewin_logvars = ww_logvars
+            rewin_mogpreds = w_mogpreds
 
         # Now pull out a random sequence
         num_windows_in_file = rewin_means.shape[0]
@@ -464,7 +469,10 @@ class SEEG_BSP_Dataset(Dataset):
         data_np = np.concatenate([selected_means, selected_logvars], axis=1)
         data_tensor = torch.Tensor(data_np).to(torch.float32)
 
-        return data_tensor, selected_mogpreds, rand_filename
+        # Get pat id
+        pat_id = rand_filename.split("/")[-1].split("_")[0]
+
+        return data_tensor, selected_mogpreds, pat_id
         
 
 

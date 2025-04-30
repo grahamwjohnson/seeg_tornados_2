@@ -81,6 +81,9 @@ bse, som, bsp = torch.hub.load(
     force_reload=True
 )
 print(bse)
+print(som)
+
+
 
 # # rval_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/rapid_val'
 # # rval_files = glob.glob(f"{rval_dir}/*.pkl")

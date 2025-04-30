@@ -186,7 +186,7 @@ class Trainer:
         self.kwargs = kwargs
 
         # Setup DDP
-        self.bse = DDP(bsp, device_ids=[gpu_id]) 
+        self.bsp = DDP(bsp, device_ids=[gpu_id]) 
 
         # Watch with WandB
         wandb.watch(self.bsp)
@@ -231,14 +231,12 @@ class Trainer:
         self, 
         dataloader_curr, 
         dataset_string,
-        bsp_attention_dropout,
-        bsp_singlebatch_latent_printing,
-        bsp_singlebatch_printing_interval_train,
+        singlebatch_printing_interval,
         **kwargs):
 
         iter_curr = 0
         total_iters = len(dataloader_curr)
-        for x, _, _ in dataloader_curr: 
+        for x, _, pat_idxs in dataloader_curr: 
             x = x.to(self.gpu_id)
             x_pred, attW = self.bsp(x[:, :-1, :]) # No end token
             loss = loss_functions.bsp_loss(x[:, 1:, :], x_pred, **kwargs) # Shift forward by 1
@@ -271,6 +269,15 @@ class Trainer:
             
             # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
             iter_curr = iter_curr + 1
+
+            if (iter_curr%singlebatch_printing_interval==0):
+                utils_functions.print_BSP_attention_singlebatch(
+                    epoch = self.epoch, 
+                    iter_curr = iter_curr,
+                    pat_idxs = pat_idxs, 
+                    scores_byLayer_meanHeads = attW, 
+                    savedir = self.model_dir + f"/plots/{dataset_string}/attention", 
+                    **kwargs)
 
 if __name__ == "__main__":
 

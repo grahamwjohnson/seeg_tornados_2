@@ -215,7 +215,8 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 continue_existing_training: False
 cont_train_model_dir: '' 
 
-bsp_source_dir: '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138//latent_files/16SecondWindow_4SecondStride'
+bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
+bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/latent_files/1SecondWindow_1SecondStride'
 bsp_num_dataloader_workers: 0 # observed to be unstable if not set to 0
 
 # BSP Optimizer
@@ -228,12 +229,12 @@ bsp_singlebatch_printing_interval_train: 128
 bsp_epochs_to_train: 99999
 
 # BSP
-bsp_transformer_seq_length: 64
-bsp_window_sec_duration: 64 # Must be multiple of input data
-bsp_window_sec_stride: 4 # Must be multiple of input data
-bsp_latent_dim: 2048
-bsp_n_heads: 16
-bsp_n_layers: 8
+bsp_transformer_seq_length: 256
+bsp_window_sec_duration: 1 # Must be multiple of input data
+bsp_window_sec_stride: 1 # Must be multiple of input data
+bsp_latent_dim: 2048 # Concat means and logvars
+bsp_n_heads: 32
+bsp_n_layers: 16
 bsp_ffn_dim_multiplier: 1.0
 bsp_max_batch_size: kwargs['bsp_max_batch_size'] = kwargs['bsp_batchsize']
 bsp_max_seq_len: kwargs['bsp_max_seq_len'] = kwargs['bsp_transformer_seq_length']
@@ -243,5 +244,5 @@ bsp_attention_dropout: 0.0
 # BSP Training
 bsp_loss_weight: 1
 bsp_transformer_start_pos: 0 # hardcode to 0
-bsp_forward_passes_in_epoch: 1024
+bsp_epoch_dataset_size: kwargs['bsp_epoch_dataset_size'] = 1024 * kwargs['bsp_batchsize']
 bsp_batchsize: 4

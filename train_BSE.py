@@ -1106,7 +1106,7 @@ class Trainer:
                                 iter_curr = iter_curr,
                                 file_name = file_name,
                                 **kwargs)
-                            utils_functions.print_attention_singlebatch(
+                            utils_functions.print_attention_singlebatch( 
                                 epoch = self.epoch, 
                                 iter_curr = iter_curr,
                                 pat_idxs = file_class_label, 

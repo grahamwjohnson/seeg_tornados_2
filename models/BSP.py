@@ -49,7 +49,7 @@ class BSP(nn.Module):
 
     def forward(self, x):
 
-        y, attW = self.transformer(x, start_pos=self.bsp_transformer_start_pos, return_attW = True, causal_mask_bool=True, self_mask=False)
+        y, attW = self.transformer(x, start_pos=self.bsp_transformer_start_pos, return_attW=True, causal_mask_bool=True, self_mask=False)
 
         return y, attW 
 
