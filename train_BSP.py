@@ -256,6 +256,7 @@ class Trainer:
                     plot_data_path = som_plot_data_path, 
                     epoch = epoch,
                     batch_idx = b,
+                    pat_id = pat_idxs[b],
                     context = x[b, 0:self.bsp_transformer_seq_length, :], 
                     ground_truth_future=x[b, self.bsp_transformer_seq_length-1:, :], 
                     predictions=full_output[b, self.bsp_transformer_seq_length-1:, :], 

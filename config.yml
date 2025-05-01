@@ -244,7 +244,7 @@ bsp_transformer_activation: "silu"
 bsp_attention_dropout: 0.0
 
 # BSP Training
-bsp_LR: kwargs['bsp_LR'] = 1e-5
+bsp_LR: kwargs['bsp_LR'] = 1e-7
 bsp_loss_weight: 1
 bsp_transformer_start_pos: 0 # hardcode to 0
 bsp_epoch_dataset_size: kwargs['bsp_epoch_dataset_size'] = 2048 * kwargs['bsp_batchsize']

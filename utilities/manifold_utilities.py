@@ -295,19 +295,50 @@ def plot_trajectory_on_umatrix(ax, context, ground_truth, predictions, som_nodes
     ax.set_ylabel('SOM Node Y')
     ax.set_title('Predicted Trajectory: U-Matrix with Pre-Ictal Overlay')
 
+# def get_som_rowcol(data, som):
+#     """Helper to run a batch of data through the SOM and get (row, col) coordinates."""
+#     som_rowcol = np.zeros((data.shape[0], 2), dtype=np.int32)
+#     for i in range(0, len(data), som.batch_size):
+#         batch = data[i:i + som.batch_size]
+#         batch = torch.tensor(batch, dtype=torch.float32, device=som.device)
+#         bmu_rows, bmu_cols = som.find_bmu(batch)
+#         bmu_rows, bmu_cols = bmu_rows.cpu().numpy(), bmu_cols.cpu().numpy()
+#         som_rowcol[i:i + som.batch_size, 0] = bmu_rows
+#         som_rowcol[i:i + som.batch_size, 1] = bmu_cols
+#     return som_rowcol
+
 def get_som_rowcol(data, som):
-    """Helper to run a batch of data through the SOM and get (row, col) coordinates."""
+    """Helper to run a batch of data through the SOM and get (row, col) coordinates.
+
+    Args:
+        data (np.ndarray or torch.Tensor): The input data.
+        som (torch_som.SelfOrganizingMap): The Self-Organizing Map object.
+
+    Returns:
+        np.ndarray: An array of shape (data.shape[0], 2) containing the (row, col)
+                    coordinates of the best matching unit for each data point.
+    """
     som_rowcol = np.zeros((data.shape[0], 2), dtype=np.int32)
-    for i in range(0, len(data), som.batch_size):
-        batch = data[i:i + som.batch_size]
-        batch = torch.tensor(batch, dtype=torch.float32, device=som.device)
-        bmu_rows, bmu_cols = som.find_bmu(batch)
-        bmu_rows, bmu_cols = bmu_rows.cpu().numpy(), bmu_cols.cpu().numpy()
-        som_rowcol[i:i + som.batch_size, 0] = bmu_rows
-        som_rowcol[i:i + som.batch_size, 1] = bmu_cols
+    num_samples = data.shape[0]
+    batch_size = som.batch_size
+    device = som.device
+
+    for i in range(0, num_samples, batch_size):
+        batch = data[i:i + batch_size]
+        if isinstance(batch, np.ndarray):
+            batch_tensor = torch.tensor(batch, dtype=torch.float32, device=device)
+        elif isinstance(batch, torch.Tensor):
+            batch_tensor = batch.float().to(device)
+        else:
+            raise TypeError(f"Input 'data' must be a numpy array or a torch tensor, but got {type(data)}.")
+
+        bmu_rows, bmu_cols = som.find_bmu(batch_tensor)
+        bmu_rows_np, bmu_cols_np = bmu_rows.cpu().numpy(), bmu_cols.cpu().numpy()
+        som_rowcol[i:i + batch_size, 0] = bmu_rows_np
+        som_rowcol[i:i + batch_size, 1] = bmu_cols_np
     return som_rowcol
 
-def plot_kohonen_prediction(gpu_id, save_dir, som, plot_data_path, context, ground_truth_future, predictions, undo_log, smoothing_factor, epoch, batch_idx, overlay_thresh=0.25):
+def plot_kohonen_prediction(gpu_id, save_dir, som, plot_data_path, context, ground_truth_future, predictions, undo_log, smoothing_factor, epoch, batch_idx, pat_id, overlay_thresh=0.25):
     """Plots Kohonen/SOM predictions on top of a U-Matrix + Pre-Ictal overlay."""
     # Process context, ground truth, and predictions separately
     context_rowcol = get_som_rowcol(context, som)
@@ -368,7 +399,7 @@ def plot_kohonen_prediction(gpu_id, save_dir, som, plot_data_path, context, grou
         smoothing_factor=smoothing_factor)
 
     # Save figure
-    savename_overlay = save_dir + f"/kohonen_predictions_epoch{epoch}_batch{batch_idx}_GPU{gpu_id}.jpg"
+    savename_overlay = save_dir + f"/kohonen_predictions_epoch{epoch}_batch{batch_idx}_{pat_id}_GPU{gpu_id}.jpg"
     pl.savefig(savename_overlay, dpi=600)
     pl.close(fig_overlay)
 
