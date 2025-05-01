@@ -400,7 +400,7 @@ class SEEG_BSP_Dataset(Dataset):
         bsp_window_sec_duration,
         bsp_window_sec_stride,
         bsp_transformer_seq_length,
-        bsp_forward_passes_in_epoch,
+        bsp_epoch_dataset_size,
         bsp_latent_dim,
         data_logger_enabled,
         data_logger_file,
@@ -411,12 +411,13 @@ class SEEG_BSP_Dataset(Dataset):
         self.bsp_window_sec_duration = bsp_window_sec_duration
         self.bsp_window_sec_stride = bsp_window_sec_stride
         self.bsp_transformer_seq_length = bsp_transformer_seq_length
-        self.bsp_forward_passes_in_epoch = bsp_forward_passes_in_epoch
+        self.bsp_epoch_dataset_size = bsp_epoch_dataset_size
         self.bsp_latent_dim = bsp_latent_dim
         self.data_logger_enabled = data_logger_enabled
         self.data_logger_file = data_logger_file
         self.kwargs = kwargs
 
+        self.future_buffer = 0 # Needed for ground truth of autoregression steps, initialize to 0 when not doing autoregression
 
         # Get the source window duration and seconds from directory name
         s = self.bsp_source_dir.split("/")[-1].split("_")
@@ -434,8 +435,11 @@ class SEEG_BSP_Dataset(Dataset):
             self.files_bypat[i] = glob.glob(f'{self.bsp_source_dir}/{self.pat_ids_unique[i]}*.pkl')
             self.numfiles_bypat[i] = len(self.files_bypat[i])
 
+    def set_future_buffer(self, val):
+        self.future_buffer = val
+
     def __len__(self):
-        return self.bsp_forward_passes_in_epoch
+        return self.bsp_epoch_dataset_size
     
     def __getitem__(self, idx): 
         rand_pat_idx = int(random.uniform(0, self.num_pats))
@@ -449,22 +453,35 @@ class SEEG_BSP_Dataset(Dataset):
         w_mogpreds = file_data['windowed_mogpreds']
 
         # Rewindow the data
-        rewin_means, rewin_logvars, rewin_mogpreds = utils_functions.rewindow_data(
-                ww_means, ww_logvars, w_mogpreds, self.original_sec_duration,  self.original_sec_stride, self.bsp_window_sec_duration, self.bsp_window_sec_stride)
+        if (self.original_sec_duration !=  self.bsp_window_sec_duration) or (self.original_sec_stride != self.bsp_window_sec_stride):
+            rewin_means, rewin_logvars, rewin_mogpreds = utils_functions.rewindow_data(
+                    ww_means, ww_logvars, w_mogpreds, self.original_sec_duration,  self.original_sec_stride, self.bsp_window_sec_duration, self.bsp_window_sec_stride)
+        else:
+            rewin_means = ww_means
+            rewin_logvars = ww_logvars
+            rewin_mogpreds = w_mogpreds
 
         # Now pull out a random sequence
         num_windows_in_file = rewin_means.shape[0]
-        rand_start = int(random.uniform(0, num_windows_in_file - self.bsp_transformer_seq_length - 1))
+        rand_start = int(random.uniform(0, num_windows_in_file - self.bsp_transformer_seq_length - self.future_buffer - 1))
 
-        selected_means = rewin_means[rand_start:rand_start + self.bsp_transformer_seq_length, :]
-        selected_logvars = rewin_logvars[rand_start:rand_start + self.bsp_transformer_seq_length, :]
-        selected_mogpreds = rewin_mogpreds[rand_start:rand_start + self.bsp_transformer_seq_length, :]
+        selected_means = rewin_means[rand_start:rand_start + self.bsp_transformer_seq_length + self.future_buffer, :]
+        selected_logvars = rewin_logvars[rand_start:rand_start + self.bsp_transformer_seq_length + self.future_buffer, :]
+        selected_mogpreds = rewin_mogpreds[rand_start:rand_start + self.bsp_transformer_seq_length + self.future_buffer, :]
 
-        # Concatenate the means and logvars together to for the input embeddings for BSP
-        data_np = np.concatenate([selected_means, selected_logvars], axis=1)
-        data_tensor = torch.Tensor(data_np).to(torch.float32)
+        # # Concatenate the means and logvars together to for the input embeddings for BSP
+        # data_np = np.concatenate([selected_means, selected_logvars], axis=1)
+        # data_tensor = torch.Tensor(data_np).to(torch.float32)
 
-        return data_tensor, selected_mogpreds, rand_filename
+        # Perform reparametrization
+        std = torch.exp(0.5 * torch.Tensor(selected_logvars).to(torch.float32))  # Standard deviation
+        eps = torch.randn_like(std)     # Sample from a standard normal distribution
+        z = torch.Tensor(selected_means).to(torch.float32) + eps * std  # Reparameterized sample
+
+        # Get pat id
+        pat_id = rand_filename.split("/")[-1].split("_")[0]
+
+        return z, selected_mogpreds, pat_id
         
 
 

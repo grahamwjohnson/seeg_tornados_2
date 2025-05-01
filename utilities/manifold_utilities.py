@@ -400,8 +400,8 @@ def plot_kohonen_prediction(gpu_id, save_dir, som, plot_data_path, context, grou
 
     # Save figure
     savename_overlay = save_dir + f"/kohonen_predictions_epoch{epoch}_batch{batch_idx}_{pat_id}_GPU{gpu_id}.jpg"
-    pl.savefig(savename_overlay, dpi=600)
-    pl.close(fig_overlay)
+    pl.savefig(savename_overlay, dpi=300)
+    pl.close('all')
 
 def get_dataset_hours(win_sec, stride_sec, latent_means_windowed):
     """

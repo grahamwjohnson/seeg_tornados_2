@@ -249,26 +249,26 @@ class Trainer:
             save_dir = self.model_dir + f"/plots/{dataset_string}/autoregression"
             if not os.path.exists(save_dir): os.makedirs(save_dir)
             for b in range(x.shape[0]):
-                pred_plot_axis = manifold_utilities.plot_kohonen_prediction(
-                    gpu_id=self.gpu_id,
-                    save_dir = save_dir, 
-                    som = self.som, 
-                    plot_data_path = som_plot_data_path, 
-                    epoch = epoch,
-                    batch_idx = b,
-                    pat_id = pat_idxs[b],
-                    context = x[b, 0:self.bsp_transformer_seq_length, :], 
-                    ground_truth_future=x[b, self.bsp_transformer_seq_length-1:, :], 
-                    predictions=full_output[b, self.bsp_transformer_seq_length-1:, :], 
-                    undo_log=True, 
-                    smoothing_factor=10)  
+                try:
+                    pred_plot_axis = manifold_utilities.plot_kohonen_prediction(
+                        gpu_id=self.gpu_id,
+                        save_dir = save_dir, 
+                        som = self.som, 
+                        plot_data_path = som_plot_data_path, 
+                        epoch = epoch,
+                        batch_idx = b,
+                        pat_id = pat_idxs[b],
+                        context = x[b, 0:self.bsp_transformer_seq_length, :], 
+                        ground_truth_future=x[b, self.bsp_transformer_seq_length-1:, :], 
+                        predictions=full_output[b, self.bsp_transformer_seq_length-1:, :], 
+                        undo_log=True, 
+                        smoothing_factor=10)  
+                except:
+                    print(f"Plotting batch {b} failed")
 
             # Kill after desired number of batches
             autoregress_batch_idx += 1
             if autoregress_batch_idx >= num_autoregress_batches: break
-
-        
-
 
     def _save_checkpoint(self, epoch, delete_old_checkpoints, **kwargs):
 
@@ -344,13 +344,16 @@ class Trainer:
             iter_curr = iter_curr + 1
 
             if (iter_curr%singlebatch_printing_interval==0):
-                utils_functions.print_BSP_attention_singlebatch(
-                    epoch = self.epoch, 
-                    iter_curr = iter_curr,
-                    pat_idxs = pat_idxs, 
-                    scores_byLayer_meanHeads = attW, 
-                    savedir = self.model_dir + f"/plots/{dataset_string}/attention", 
-                    **kwargs)
+                try:
+                    utils_functions.print_BSP_attention_singlebatch(
+                        epoch = self.epoch, 
+                        iter_curr = iter_curr,
+                        pat_idxs = pat_idxs, 
+                        scores_byLayer_meanHeads = attW, 
+                        savedir = self.model_dir + f"/plots/{dataset_string}/attention", 
+                        **kwargs)
+                except:
+                    print(f"Attention plotting failed")
 
 if __name__ == "__main__":
 

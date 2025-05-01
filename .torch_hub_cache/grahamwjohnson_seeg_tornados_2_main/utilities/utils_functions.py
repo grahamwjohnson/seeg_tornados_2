@@ -461,8 +461,6 @@ def bsp_initialize_directories(
 
     if kwargs['continue_existing_training']:
 
-        raise Exception("Need to check this code")
-
         kwargs['model_dir'] = cont_train_model_dir
         kwargs['log_dir'] =  kwargs['model_dir'] + '/data_logs'
 
@@ -562,13 +560,13 @@ def bsp_run_setup(**kwargs):
     world_size = torch.cuda.device_count()
         
     # Random animal name
-    run_notes = random_animal(**kwargs) 
+    run_notes = f"{random_animal(**kwargs)}_{kwargs['bsp_bse_codename']}"
 
     # Call the initialization script to start new run or continue existing run
     kwargs = bsp_initialize_directories(run_notes=run_notes, **kwargs)
 
     # Print the model forward pass sizes
-    fake_data = torch.rand(1)                            # TODO
+    fake_data = torch.rand(kwargs['bsp_batchsize'], kwargs['bsp_transformer_seq_length'], kwargs['bsp_latent_dim'])                           
     bsp_print_models_flow(x=fake_data, **kwargs)
 
     # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)
@@ -1660,7 +1658,7 @@ def hash_to_vector(input_string, num_channels, padded_channels, latent_dim, modi
     return hashed_vector_tensor, padded_vector
  
 
-# PLOTTING
+# BSE PLOTTING
 
 def plot_prior(prior_means, prior_logvars, prior_weights, savedir, epoch, **kwargs):
     """
@@ -2465,4 +2463,65 @@ def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir
     pl.savefig(savename, dpi=200)
     pl.close('all')
 
+
+# BSP PLOTTING
+
+def print_BSP_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, **kwargs):
+    """
+    Plot attention weights with CAUSAL masking.
+    """
+
+    scores_byLayer_meanHeads = scores_byLayer_meanHeads.detach().cpu().numpy()
+    batchsize, n_layers, rows, cols = scores_byLayer_meanHeads.shape
+
+    # Make new grid/fig for every batch
+    for b in range(batchsize):
+        gs = gridspec.GridSpec(1, 2) 
+        fig = pl.figure(figsize=(20, 14))
+
+        # Only plotting First and Last layer
+        for l in range(n_layers):
+            ax_curr = fig.add_subplot(gs[0, l]) 
+            plot_data = scores_byLayer_meanHeads[b, l, :, :]
+            
+            # Create mask for diagonal buffer zone
+            mask = np.zeros_like(plot_data, dtype=bool)
+            for i in range(rows):
+                mask[i, i+1:] = True
+                
+            # Verify masked area sums to 0 (if not, raise Exception)
+            masked_sum = np.where(mask, plot_data, 0).sum()
+            if not np.isclose(masked_sum, 0, atol=1e-6):
+                raise Exception(f"Error: Masked attention weights sum to {masked_sum:.6f} (expected 0) "
+                      f"for batch {b}, layer {l}")
+            
+            # Scale by row for visualization
+            for row in range(0, rows):
+                plot_data[row, :] = plot_data[row, :] * row + 1 # Multipy by how many non-masked elements there are
+
+            # Apply mask (replace with NaN for plotting)
+            plot_data = np.where(mask, np.nan, plot_data)
+
+            # Plot the heatmap
+            sns.heatmap(
+                plot_data, 
+                cmap=sns.cubehelix_palette(as_cmap=True), 
+                ax=ax_curr, 
+                cbar_kws={
+                    'label': 'Attention Weights', 
+                    'orientation': 'horizontal'
+                }
+            )
+            
+            title = "First Layer - Mean of Heads" if l == 0 else "Last Layer - Mean of Heads"
+            ax_curr.set_title(title)
+            ax_curr.set_aspect('equal', adjustable='box')
+
+        fig.suptitle(f"Attention Weights - Batch:{b}")
+        os.makedirs(savedir, exist_ok=True)
+        savename_jpg = f"{savedir}/ByLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_{pat_idxs[b]}.jpg"
+        pl.savefig(savename_jpg, dpi=200)
+        pl.close(fig)   
+
+    pl.close('all')
 

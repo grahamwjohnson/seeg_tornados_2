@@ -152,7 +152,7 @@ def _load_models(codename='sheldrake', pretrained=True, load_bse=True, load_som=
     return bse, som, bsp
 
 
-def load(codename='sheldrake', pretrained=True, load_bse=True, load_som=True, load_bsp=True, **kwargs):
+def load_lbm(codename='sheldrake', pretrained=True, load_bse=True, load_som=True, load_bsp=True, **kwargs):
     """
     Loads the BSE, Kohonen, & BSP models with a specific training run's configuration
     and optionally pretrained weights.
