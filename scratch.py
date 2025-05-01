@@ -72,7 +72,7 @@ import torch
 torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
 bse, som, bsp = torch.hub.load(
     'grahamwjohnson/seeg_tornados_2',
-    'load',
+    'load_lbm',
     codename='sheldrake',
     pretrained=True,
     load_bse=True, 

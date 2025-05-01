@@ -117,7 +117,7 @@ def _load_models(codename='sheldrake', pretrained=True, load_bse=True, load_som=
             release_tag = config['release_tag']
             checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{weight_file}'
             try:
-                checkpoint = torch.hub.load(checkpoint_url)   
+                checkpoint = torch.hub.load_state_dict_from_url(checkpoint_url)   
                 som.load_state_dict(checkpoint['model_state_dict'])
                 som.weights = checkpoint['weights']
                 som.reset_device(config['som_device'])
