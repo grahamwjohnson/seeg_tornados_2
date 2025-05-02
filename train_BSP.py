@@ -122,6 +122,7 @@ def main(
         bsp.load_state_dict(bsp_state_dict_prev)
         bsp_opt_state_dict_prev = torch.load(bsp_opt_state_dict_prev_path, map_location=map_location)
         opt_bsp.load_state_dict(bsp_opt_state_dict_prev)
+        opt_bsp.param_groups[0]['lr'] =  kwargs['bsp_LR']
         print(f"[GPU{gpu_id}] GM-VAE Model and Opt weights loaded from checkpoints")
     
     # Create the training object
@@ -139,7 +140,6 @@ def main(
     # Main loop through all epochs
     for epoch in range(start_epoch, bsp_epochs_to_train):
         trainer.epoch = epoch
-        barrier()
         
         # TRAIN
         trainer._set_to_train()
@@ -153,20 +153,23 @@ def main(
         # CHECKPOINT
         # After every train epoch, optionally delete old checkpoints
         if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, **kwargs)
-        print(f"GPU{str(trainer.gpu_id)} at post checkpoint save barrier")
+        print(f"GPU{str(trainer.gpu_id)} at post checkpoint save")
 
-        # AUTOREGRESSIVE PLOT
-        trainer._set_to_eval()
-        trainer.train_dataloader.dataset.set_future_buffer(bsp_autoregressive_plot_steps)
-        print("Running and plotting autoregression for model evaluation")
-        with torch.inference_mode():
-            trainer._autoregress_plot(
-                epoch = epoch,
-                dataloader_curr = trainer.train_dataloader, 
-                dataset_string = "train",
-                bsp_autoregressive_plot_steps=bsp_autoregressive_plot_steps,
-                **kwargs)
-        print("Autoregression plotting complete")
+        # # AUTOREGRESSIVE PLOT
+        # if gpu_id == 0:
+        #     trainer._set_to_eval()
+        #     trainer.train_dataloader.dataset.set_future_buffer(bsp_autoregressive_plot_steps)
+        #     print("Running and plotting autoregression for model evaluation")
+        #     with torch.inference_mode():
+        #         trainer._autoregress_plot(
+        #             epoch = epoch,
+        #             dataloader_curr = trainer.train_dataloader, 
+        #             dataset_string = "train",
+        #             bsp_autoregressive_plot_steps=bsp_autoregressive_plot_steps,
+        #             **kwargs)
+        #     print(f"[GPU{gpu_id}] at post-autoregression plotting barrier")
+
+        barrier()
         
 
     # Kill the process after training loop completes
@@ -228,6 +231,7 @@ class Trainer:
         dataset_string,
         bsp_autoregressive_plot_steps,
         som_plot_data_path,
+        bsp_autogressive_subbatch_to_plot,
         num_autoregress_batches = 1,
         **kwargs):
         
@@ -244,11 +248,14 @@ class Trainer:
                 full_output[:,auto_step+self.bsp_transformer_seq_length,:] = pred[:, -1, :].clone().detach()
                 auto_step += 1
 
+            # How many from batch to plot?
+            num_to_plot = min(bsp_autogressive_subbatch_to_plot, x.shape[0])
+
             # Plot the autoregressed predictions
             # Include 1 point overlap in predictions and ground truth for plotting purposes 
             save_dir = self.model_dir + f"/plots/{dataset_string}/autoregression"
             if not os.path.exists(save_dir): os.makedirs(save_dir)
-            for b in range(x.shape[0]):
+            for b in range(num_to_plot):
                 try:
                     pred_plot_axis = manifold_utilities.plot_kohonen_prediction(
                         gpu_id=self.gpu_id,
@@ -343,9 +350,10 @@ class Trainer:
             # Advance the iteration counter (one iter per complete patient loop - i.e. one backward pass)
             iter_curr = iter_curr + 1
 
-            if (iter_curr%singlebatch_printing_interval==0):
+            if (self.gpu_id == 0) and (iter_curr%singlebatch_printing_interval==0):
                 try:
                     utils_functions.print_BSP_attention_singlebatch(
+                        gpu_id=self.gpu_id,
                         epoch = self.epoch, 
                         iter_curr = iter_curr,
                         pat_idxs = pat_idxs, 

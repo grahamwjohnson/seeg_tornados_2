@@ -2466,7 +2466,7 @@ def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir
 
 # BSP PLOTTING
 
-def print_BSP_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, **kwargs):
+def print_BSP_attention_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, **kwargs):
     """
     Plot attention weights with CAUSAL masking.
     """
@@ -2519,7 +2519,7 @@ def print_BSP_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_m
 
         fig.suptitle(f"Attention Weights - Batch:{b}")
         os.makedirs(savedir, exist_ok=True)
-        savename_jpg = f"{savedir}/ByLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_{pat_idxs[b]}.jpg"
+        savename_jpg = f"{savedir}/ByLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_{pat_idxs[b]}_GPU{gpu_id}.jpg"
         pl.savefig(savename_jpg, dpi=200)
         pl.close(fig)   
 

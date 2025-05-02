@@ -295,18 +295,6 @@ def plot_trajectory_on_umatrix(ax, context, ground_truth, predictions, som_nodes
     ax.set_ylabel('SOM Node Y')
     ax.set_title('Predicted Trajectory: U-Matrix with Pre-Ictal Overlay')
 
-# def get_som_rowcol(data, som):
-#     """Helper to run a batch of data through the SOM and get (row, col) coordinates."""
-#     som_rowcol = np.zeros((data.shape[0], 2), dtype=np.int32)
-#     for i in range(0, len(data), som.batch_size):
-#         batch = data[i:i + som.batch_size]
-#         batch = torch.tensor(batch, dtype=torch.float32, device=som.device)
-#         bmu_rows, bmu_cols = som.find_bmu(batch)
-#         bmu_rows, bmu_cols = bmu_rows.cpu().numpy(), bmu_cols.cpu().numpy()
-#         som_rowcol[i:i + som.batch_size, 0] = bmu_rows
-#         som_rowcol[i:i + som.batch_size, 1] = bmu_cols
-#     return som_rowcol
-
 def get_som_rowcol(data, som):
     """Helper to run a batch of data through the SOM and get (row, col) coordinates.
 
@@ -531,6 +519,7 @@ def plot_hex_grid(ax, data, title, cmap_str='viridis', vmin=None, vmax=None):
 
 def toroidal_kohonen_subfunction_pytorch(
     atd_file,
+    sleep_file,
     pat_ids_list,
     latent_means_windowed,
     latent_logvars_windowed,
@@ -661,6 +650,9 @@ def toroidal_kohonen_subfunction_pytorch(
 
     # Get preictal weights for each data point
     preictal_float_input, ictal_float_input = preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
+
+    # Get sleep stages for each data point
+    sleep_label = sleep_stage(sleep_file, pat_ids_input, start_datetimes_input, stop_datetimes_input)
 
     # Get model weights and coordinates
     weights = som.get_weights()
@@ -1314,3 +1306,5 @@ def preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_date
     # Ensure values remain between 0 and 1
     return np.clip(data_window_preictal_score, 0, 1), np.clip(data_window_ictal_score, 0, 1)
 
+def sleep_stage(sleep_file, pat_ids_input, start_datetimes_input, stop_datetimes_input):
+    print("here")

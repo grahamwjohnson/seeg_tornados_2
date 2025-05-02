@@ -215,7 +215,7 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 ### Brain-State Predictor (BSP) ###
 
 continue_existing_training: True
-cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/hedgehog_sheldrake_Wed_Apr_30_16_10_02_2025' 
+cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/foxterrier_sheldrake_Thu_May__1_12_40_48_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
 bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/latent_files/1SecondWindow_1SecondStride'
@@ -227,7 +227,7 @@ bsp_adamW_beta1: 0.9
 bsp_adamW_beta2: 0.95 
 
 bsp_singlebatch_latent_printing: True
-bsp_singlebatch_printing_interval_train: 128
+bsp_singlebatch_printing_interval_train: 512
 bsp_epochs_to_train: 99999
 
 # BSP
@@ -244,12 +244,13 @@ bsp_transformer_activation: "silu"
 bsp_attention_dropout: 0.0
 
 # BSP Training
-bsp_LR: kwargs['bsp_LR'] = 1e-6
+bsp_LR: kwargs['bsp_LR'] = 1e-8
 bsp_loss_weight: 1
 bsp_transformer_start_pos: 0 # hardcode to 0
-bsp_epoch_dataset_size: kwargs['bsp_epoch_dataset_size'] = 2048 * kwargs['bsp_batchsize']
-bsp_batchsize: 4
+bsp_epoch_dataset_size: kwargs['bsp_epoch_dataset_size'] = 1024 * kwargs['bsp_batchsize']
+bsp_batchsize: 16
 bsp_autoregressive_plot_steps: 64
+bsp_autogressive_subbatch_to_plot: 4 # How many of the batch index should be plotted? Slow if too many
 
 # SOM for autoregression plotting
 som_precomputed_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.8777decay0.010000min_sigma38.4with0.8855decay1.0min_numfeatures1027140_dims1024_batchsize64_epochs30_rolled_v50_h-10.pt'
