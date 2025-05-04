@@ -7,6 +7,7 @@ Developed between 2023-2025
 import chardet, codecs, datetime, gc, glob, hashlib, json
 import multiprocessing as mp, os, pandas as pd, pickle, pyedflib, random
 import shutil, string, subprocess, sys, time
+import scipy.stats as st
 
 import matplotlib as mpl
 import matplotlib.gridspec as gridspec
@@ -2071,7 +2072,9 @@ def print_latent_singlebatch(mean, logvar, mogpreds, prior_means, prior_logvars,
     plt.savefig(f"{savedir}/RealtimeLatents_epoch{epoch}_iter{iter_curr}.jpg", dpi=200)
     plt.close(fig)
 
-def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_singlebatch_channels_recon, num_recon_samples, **kwargs):
+def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_singlebatch_channels_recon, num_recon_samples, save_svg=False, **kwargs):
+
+    gpu_id = x.device
 
     x_hat = x_hat.detach().cpu().numpy()
     x = x.detach().cpu().numpy()
@@ -2096,8 +2099,9 @@ def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_
     if x_fused.shape[2] > num_recon_samples:
         gs = gridspec.GridSpec(batchsize, num_singlebatch_channels_recon * 2) # *2 because beginning and end of transformer sequence
     else:
-        sqrt_num = int(np.ceil(np.sqrt(batchsize * num_singlebatch_channels_recon)))
-        gs = gridspec.GridSpec(sqrt_num, sqrt_num) 
+        # sqrt_num = int(np.ceil(np.sqrt(batchsize * num_singlebatch_channels_recon)))
+        # gs = gridspec.GridSpec(sqrt_num, sqrt_num) 
+        gs = gridspec.GridSpec(batchsize, num_singlebatch_channels_recon)
         subplot_iter = 0
 
     fig = pl.figure(figsize=(24, 24))
@@ -2135,8 +2139,10 @@ def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_
                     "Prediction": x_hat_plot
                 })
 
-                row = int(subplot_iter/sqrt_num)
-                col = subplot_iter - (row * sqrt_num)
+                # row = int(subplot_iter/sqrt_num)
+                # col = subplot_iter - (row * sqrt_num)
+                row = subplot_iter
+                col = 0
                 ax = fig.add_subplot(gs[row, col]) 
                 sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
                 ax.set_title(f"{file_name[b]}", fontdict={'fontsize': 8, 'fontweight': 'medium'})
@@ -2146,8 +2152,10 @@ def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_
             
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
     if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = f"{savedir}/RealtimeRecon_epoch{epoch}_iter{iter_curr}_allbatch.jpg"
+    savename_jpg = f"{savedir}/RealtimeRecon_epoch{epoch}_iter{iter_curr}_allbatch_{gpu_id}.jpg"
+    savename_svg = f"{savedir}/RealtimeRecon_epoch{epoch}_iter{iter_curr}_allbatch_{gpu_id}.svg"
     pl.savefig(savename_jpg, dpi=200)
+    if save_svg: pl.savefig(savename_svg)
     pl.close(fig)   
 
     pl.close('all') 
@@ -2525,3 +2533,59 @@ def print_BSP_attention_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, scores_b
 
     pl.close('all')
 
+# POST-HOC PROCESSING
+
+def get_loss_statistics(loss_dir):
+    """
+    Calculates the mean loss and 95% confidence interval for losses across patients.
+
+    This function calculates the mean loss per patient from loss files within a specified directory,
+    and then computes the overall mean loss and 95% confidence interval across all patients
+    using the t-distribution.
+
+    Args:
+        loss_dir (str): Path to the directory containing patient subdirectories.
+                          Each patient subdirectory should contain .pkl files,
+                          where each .pkl file contains a dictionary with
+                          a 'files_recon_batchloss' key holding an array of loss values.
+
+    Returns:
+        tuple: A tuple containing:
+            - mean (float): The mean loss across all patients.
+            - lower_bound (float): The lower bound of the 95% confidence interval.
+            - upper_bound (float): The upper bound of the 95% confidence interval.
+    """
+    pat_dirs = [name for name in os.listdir(loss_dir) if os.path.isdir(os.path.join(loss_dir, name))]
+
+    pat_losses = np.ones(len(pat_dirs))
+
+    for i in range(len(pat_dirs)):
+        dir_curr = f"{loss_dir}/{pat_dirs[i]}"
+        loss_files = glob.glob(f"{dir_curr}/*.pkl")
+        cum_loss = 0
+        for j in range(len(loss_files)):
+            with open(loss_files[j], "rb") as f:
+                file_data = pickle.load(f)
+            cum_loss += np.mean(file_data['files_recon_batchloss'])
+
+        pat_losses[i] = cum_loss / (len(loss_files))
+
+    def confidence_interval_t(data, confidence=0.95):
+        """Calculates the confidence interval using the t-distribution.
+
+        Args:
+            data (array-like): Sample data.
+            confidence (float, optional): Confidence level between 0 and 1. Defaults to 0.95.
+
+        Returns:
+            tuple: A tuple containing the lower and upper bounds of the confidence interval.
+        """
+        a = 1.0 * np.array(data)
+        n = len(a)
+        mean, sem, h = np.mean(a), st.sem(a), st.t.ppf((1 + confidence) / 2., n - 1) * st.sem(a)
+        return mean - h, mean + h
+
+    mean = np.mean(pat_losses)
+    lower_bound, upper_bound = confidence_interval_t(pat_losses, confidence=0.95)
+
+    return mean, lower_bound, upper_bound, len(pat_losses)

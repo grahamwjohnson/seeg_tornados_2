@@ -1,9 +1,20 @@
-# from utilities import manifold_utilities
-# from utilities import utils_functions
+
+
+from utilities import manifold_utilities
+from utilities import utils_functions
 # import numpy as np
 # import glob
 # import random
 # import pickle
+
+
+loss_dir = '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138_train45_wDecode/recon/loss'
+
+mean, lower_bound, upper_bound, num_pats = utils_functions.get_loss_statistics(loss_dir)
+
+print(f"Num Subjects: {num_pats}")
+print(f"Mean loss across pats: {mean:0.3f}")
+print(f"95% Confidence Interval (t-distribution): ({lower_bound:.3f}, {upper_bound:.3f})")
 
 # device = 1
 # som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.8223decay0.010000min_sigma102.4with0.7934decay1.0min_numfeatures1027140_dims1024_batchsize64_epochs20_rolled_v50_h10.pt'
@@ -67,21 +78,21 @@
 
 
 
-import torch
+# import torch
 
-torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
-bse, som, bsp = torch.hub.load(
-    'grahamwjohnson/seeg_tornados_2',
-    'load_lbm',
-    codename='sheldrake',
-    pretrained=True,
-    load_bse=True, 
-    load_bsp=False,
-    trust_repo='check',
-    force_reload=True
-)
-print(bse)
-print(som)
+# torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
+# bse, som, bsp = torch.hub.load(
+#     'grahamwjohnson/seeg_tornados_2',
+#     'load_lbm',
+#     codename='sheldrake',
+#     pretrained=True,
+#     load_bse=True, 
+#     load_bsp=False,
+#     trust_repo='check',
+#     force_reload=True
+# )
+# print(bse)
+# print(som)
 
 
 

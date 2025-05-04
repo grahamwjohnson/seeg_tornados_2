@@ -20,6 +20,7 @@ import yaml, sys, os, pickle, numpy as np, datetime, glob, random
 # Local imports
 from utilities import utils_functions
 from data import SEEG_Tornado_Dataset
+from utilities import loss_functions
 
 def ddp_setup(gpu_id, world_size):
     """
@@ -74,18 +75,41 @@ def get_bse(bse_codename, **kwargs):
     torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
 
     # Load the BSE model with pretrained weights from GitHub
-    bse = torch.hub.load(
+    bse, _, _ = torch.hub.load(
         'grahamwjohnson/seeg_tornados_2',
-        'load',
+        'load_lbm',
         codename=bse_codename,
         pretrained=True,
         load_bse=True, 
+        load_som=False, 
         load_bsp=False,
         trust_repo='check',
         # force_reload=True
     )
 
     return bse
+
+def remove_padded_channels_samePat(x: torch.Tensor, hash_channel_order):
+    """
+    Removes padded channels (-1) from x for each sample in the batch.
+    
+    Args:
+        x: Input tensor of shape [batch, tokens, max_channels, seq_len].
+        hash_channel_order: List of lists where -1 indicates padded channels.
+    
+    Returns:
+        List of tensors with padded channels removed (one per batch sample).
+    """
+    # Convert hash_channel_order to a tensor
+    channel_order_tensor = torch.tensor(hash_channel_order, dtype=torch.long).to(x)  # [max_channels]
+    valid_mask = (channel_order_tensor != -1)  # [batch, max_channels]
+
+    # Filter out padded channels per sample
+    x_nopad = []
+    for i in range(x.shape[0]):  # Loop over batch
+        x_nopad.append(x[i, :, valid_mask, :])  # [tokens, valid_channels, seq_len]
+
+    return x_nopad
 
 def bse_export_embeddings(
     world_size,
@@ -105,6 +129,10 @@ def bse_export_embeddings(
     inference_window_sec_list,
     inference_stride_sec_list,
     inference_save_dir,
+    inference_decode,
+    singlebatch_printing_interval_inference,
+    inference_save_svg,
+    inference_batch_perpat_override,
     FS,
     **kwargs):
 
@@ -175,6 +203,7 @@ def bse_export_embeddings(
 
         # Go through every file in dataset
         file_count = 0
+        batch_count = 0
         for data_tensor, file_name, _ in dataloader_curr: # Hash done outside data.py for single pat inference
 
             file_count = file_count + len(file_name)
@@ -192,6 +221,10 @@ def bse_export_embeddings(
             files_means = torch.zeros([data_tensor.shape[0], num_windows_in_file, latent_dim]).to(gpu_id)
             files_logvars = torch.zeros([data_tensor.shape[0], num_windows_in_file, latent_dim]).to(gpu_id)
             files_mogpreds = torch.zeros([data_tensor.shape[0], num_windows_in_file, prior_mog_components]).to(gpu_id)
+
+            # Prep the recon loss if decoding
+            if inference_decode:
+                files_recon_batchloss = torch.zeros([num_windows_in_file]).to(gpu_id)
 
             # Put whole file on GPU now for speed of iterating over all windows
             data_tensor = data_tensor.to(gpu_id)
@@ -227,7 +260,7 @@ def bse_export_embeddings(
                 ### BSE ENCODER
                 # Forward pass in stacked batch through BSE encoder
                 # latent, _, _ = self.bse(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
-                _, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, _ = bse(x, reverse=False) # No shift if not causal masking
+                z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, _ = bse(x, reverse=False) # No shift if not causal masking
                 
                 # Theoretical levels of detail to save (Token or Token-Meaned level):
                 # 1) Save mogpreds [CURRENTLY SAVED at Token-Mean level]
@@ -266,7 +299,41 @@ def bse_export_embeddings(
                 files_logvars[:, w, :] = logvar_tokenmeaned
                 files_mogpreds[:, w, :] = torch.mean(mogpreds, dim=1)  # Save the mean mogpreds across tokens
 
-            # After file complete, pacmap_window/stride the file and save each file from batch seperately
+
+                # DECODER (Optional)
+                if inference_decode:
+                
+                    # Reshape variables back to token level 
+                    z_token = z_pseudobatch.split(transformer_seq_length, dim=0)
+                    z_token = torch.stack(z_token, dim=0)
+
+                    # BSE DECODER - at Token Level
+                    x_hat = bse(z_token, reverse=True)  
+
+                    # REMOVE PADDING - otherwise would reward recon loss for patients with fewer channels
+                    x_nopad_list = remove_padded_channels_samePat(x, hash_channel_order) 
+                    x_hat_nopad_list = remove_padded_channels_samePat(x_hat, hash_channel_order) 
+
+                    # LOSSES
+                    files_recon_batchloss[w] = loss_functions.recon_loss(
+                        x=x_nopad_list, 
+                        x_hat=x_hat_nopad_list,
+                        mse_weight=1)
+                    
+                    if (gpu_id == 0) and ((w + 1) % singlebatch_printing_interval_inference == 0):
+                        save_dir = f"{inference_save_dir}/recon/plots/{pat_id_curr}"
+                        if not os.path.exists(save_dir): os.makedirs(save_dir)
+                        utils_functions.print_recon_singlebatch(
+                            x=x, 
+                            x_hat=x_hat, 
+                            savedir = save_dir,
+                            epoch = 0,
+                            iter_curr = w,
+                            file_name = file_name,
+                            save_svg = inference_save_svg,
+                            **kwargs)
+
+            # After file complete, window/stride the file and save each file from batch seperately
             # Seperate directory for each win/stride combination
             # First pull off GPU and convert to numpy
             files_means = files_means.cpu().numpy()
@@ -311,6 +378,22 @@ def bse_export_embeddings(
                         'windowed_mogpreds': windowed_file_mogpreds[b, :, :]}
                     pickle.dump(save_dict, output_obj)
                     output_obj.close()
+
+            # Save recon loss if decoding
+            if inference_decode:  
+                save_dir = f"{inference_save_dir}/recon/loss/{pat_id_curr}"
+                if not os.path.exists(save_dir): os.makedirs(save_dir) 
+                output_obj = open(f"{save_dir}/batch{batch_count}_recon_batchloss_GPU{gpu_id}.pkl", 'wb')
+                save_dict = {
+                    'files_recon_batchloss': files_recon_batchloss.cpu().numpy()}
+                pickle.dump(save_dict, output_obj)
+                output_obj.close()
+
+            batch_count += 1
+
+            # Batch per patient override: use with caution because will stop inference for this subject
+            if (inference_batch_perpat_override > 0) & (batch_count >= inference_batch_perpat_override):
+                break
 
 def main(
     gpu_id,

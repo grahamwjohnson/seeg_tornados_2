@@ -326,7 +326,7 @@ def get_som_rowcol(data, som):
         som_rowcol[i:i + batch_size, 1] = bmu_cols_np
     return som_rowcol
 
-def plot_kohonen_prediction(gpu_id, save_dir, som, plot_data_path, context, ground_truth_future, predictions, undo_log, smoothing_factor, epoch, batch_idx, pat_id, overlay_thresh=0.25):
+def plot_kohonen_prediction(gpu_id, save_dir, som, plot_data_path, context, ground_truth_future, predictions, undo_log, smoothing_factor, epoch, batch_idx, pat_id, preictal_overlay_thresh=0.25):
     """Plots Kohonen/SOM predictions on top of a U-Matrix + Pre-Ictal overlay."""
     # Process context, ground truth, and predictions separately
     context_rowcol = get_som_rowcol(context, som)
@@ -365,7 +365,7 @@ def plot_kohonen_prediction(gpu_id, save_dir, som, plot_data_path, context, grou
                                               orientation=np.radians(30),
                                               facecolor=face_color, alpha=0.7,
                                               edgecolor=None, linewidth=0)
-            if overlay_preictal[i, j] >= overlay_thresh:
+            if overlay_preictal[i, j] >= preictal_overlay_thresh:
                 ax_overlay.add_patch(hexagon)
 
     # Colorbar for overlay
@@ -520,6 +520,7 @@ def plot_hex_grid(ax, data, title, cmap_str='viridis', vmin=None, vmax=None):
 def toroidal_kohonen_subfunction_pytorch(
     atd_file,
     sleep_file,
+    skip_sleep,
     pat_ids_list,
     latent_means_windowed,
     latent_logvars_windowed,
@@ -547,7 +548,8 @@ def toroidal_kohonen_subfunction_pytorch(
     sigma_plot=1,
     hits_log_view=True,
     umat_log_view=True,
-    overlay_thresh = 0.25,
+    preictal_overlay_thresh = 0.25,
+    sleep_overlay_thresh = 0.5,
     **kwargs):
     """
     Toroidal SOM with hexagonal grid for latent space analysis.
@@ -648,11 +650,14 @@ def toroidal_kohonen_subfunction_pytorch(
 
     # PLOT PREPARATION
 
-    # Get preictal weights for each data point
-    preictal_float_input, ictal_float_input = preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
+    # Get preictal weights and sleep stage for each data point
+    # Pre-Ictal: 0 = interictal, 0.99999 = immediately before seizure (NOTE: ictal is labeled 0)
+    # Sleep: -1 = unlabeled, 0 = wake, 1 = N1, 2 = N2, 3 = N3, 4 = REM
+    preictal_float_input, ictal_float_input, sleep_int = preictal_sleep_label(atd_file, sleep_file, skip_sleep, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input)
+    print("\nFinished gathering pre-ictal and sleep labels on all data windows")
 
-    # Get sleep stages for each data point
-    sleep_label = sleep_stage(sleep_file, pat_ids_input, start_datetimes_input, stop_datetimes_input)
+    # One-hot the sleep data [NA, Wake, N1, N2, N3, REM]
+    onehot_sleep = one_hot_encode_with_negatives(sleep_int, -1, 4)
 
     # Get model weights and coordinates
     weights = som.get_weights()
@@ -665,13 +670,23 @@ def toroidal_kohonen_subfunction_pytorch(
     ictal_sums = np.zeros(grid_size)
     hit_map = np.zeros(grid_size)
     neuron_patient_dict = {}
+    unlabaled_sleep_sums = np.zeros(grid_size)
+    wake_sums = np.zeros(grid_size)
+    n1_sums = np.zeros(grid_size)
+    n2_sums = np.zeros(grid_size)
+    n3_sums = np.zeros(grid_size)
+    rem_sums = np.zeros(grid_size)
 
     # SOM Inference on all data in batches
     for i in range(0, len(latent_means_input), som_batch_size):
+
+        print(f"Running all data windows through trained Kohonen Map: {i}/{int(len(latent_means_input))}                  ", end='\r')
+
         batch = latent_means_input[i:i + som_batch_size]
         batch_patients = pat_ids_input[i:i + som_batch_size]
         batch_preictal_labels = preictal_float_input[i:i + som_batch_size]
         batch_ictal_labels = ictal_float_input[i:i + som_batch_size]
+        batch_onhot_sleep_labels = onehot_sleep[i:i + som_batch_size, :]
 
         batch = torch.tensor(batch, dtype=torch.float32, device=som_device)
         bmu_rows, bmu_cols = som.find_bmu(batch)
@@ -680,16 +695,27 @@ def toroidal_kohonen_subfunction_pytorch(
         # Update hit map
         np.add.at(hit_map, (bmu_rows, bmu_cols), 1)
 
-        # Accumulate preictal scores
+        # Process pre-ictal and sleep data
         for j, (bmu_row, bmu_col) in enumerate(zip(bmu_rows, bmu_cols)):
+            # Accumulate preictal scores
             preictal_sums[bmu_row, bmu_col] += batch_preictal_labels[j]
             ictal_sums[bmu_row, bmu_col] += batch_ictal_labels[j]
+
+            # Accumulate sleep labels
+            unlabaled_sleep_sums[bmu_row, bmu_col] = batch_onhot_sleep_labels[j, 0]
+            wake_sums[bmu_row, bmu_col] += batch_onhot_sleep_labels[j, 1]
+            n1_sums[bmu_row, bmu_col] += batch_onhot_sleep_labels[j, 2]
+            n2_sums[bmu_row, bmu_col] += batch_onhot_sleep_labels[j, 3]
+            n3_sums[bmu_row, bmu_col] += batch_onhot_sleep_labels[j, 4]
+            rem_sums[bmu_row, bmu_col] += batch_onhot_sleep_labels[j, 5]
 
         # Track unique patients per node
         for j, (bmu_row, bmu_col) in enumerate(zip(bmu_rows, bmu_cols)):
             if (bmu_row, bmu_col) not in neuron_patient_dict:
                 neuron_patient_dict[(bmu_row, bmu_col)] = set()
             neuron_patient_dict[(bmu_row, bmu_col)].add(batch_patients[j])
+
+    print("\nFinished Kohonen inference on all data")
 
     # If hits want to be viewed logarithmically
     if hits_log_view:
@@ -702,6 +728,23 @@ def toroidal_kohonen_subfunction_pytorch(
 
     if np.max(ictal_sums) > np.min(ictal_sums):
         ictal_sums = (ictal_sums - np.min(ictal_sums)) / (np.max(ictal_sums) - np.min(ictal_sums))
+
+    # Normalize Sleep Sums & Smooth
+    if np.max(wake_sums) > np.min(wake_sums):
+        wake_sums = gaussian_filter(wake_sums, sigma=1.0)
+        wake_sums = (wake_sums - np.min(wake_sums)) / (np.max(wake_sums) - np.min(wake_sums))  
+    if np.max(n1_sums) > np.min(n1_sums):
+        n1_sums = gaussian_filter(n1_sums, sigma=1.0)
+        n1_sums = (n1_sums - np.min(n1_sums)) / (np.max(n1_sums) - np.min(n1_sums))  
+    if np.max(n2_sums) > np.min(n2_sums):
+        n2_sums = gaussian_filter(n2_sums, sigma=1.0)
+        n2_sums = (n2_sums - np.min(n2_sums)) / (np.max(n2_sums) - np.min(n2_sums))  
+    if np.max(n3_sums) > np.min(n3_sums):
+        n3_sums = gaussian_filter(n3_sums, sigma=1.0)
+        n3_sums = (n3_sums - np.min(n3_sums)) / (np.max(n3_sums) - np.min(n3_sums))  
+    if np.max(rem_sums) > np.min(rem_sums):
+        rem_sums = gaussian_filter(rem_sums, sigma=1.0)
+        rem_sums = (rem_sums - np.min(rem_sums)) / (np.max(rem_sums) - np.min(rem_sums))  
 
     # Create patient diversity map
     patient_map = np.zeros(grid_size)
@@ -759,6 +802,8 @@ def toroidal_kohonen_subfunction_pytorch(
 
     # PLOTTING (2D Hexagonal Plots)
 
+    print("2D Plotting")
+
     fig_2d, axes_2d = pl.subplots(2, 4, figsize=(28, 12))
     ax_hit = axes_2d[0, 1]
     ax_preictal = axes_2d[0, 2]
@@ -810,7 +855,7 @@ def toroidal_kohonen_subfunction_pytorch(
     print("Exporting Toroidal SOM 2D visualizations to JPG")
     savename_jpg_2d = savedir + f"/GPU{som_device}_2DPlots_ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.6f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_2D.jpg"
     pl.savefig(savename_jpg_2d, dpi=600)
-    pl.savefig(savename_jpg_2d.replace('.jpg', '.svg'))
+    # pl.savefig(savename_jpg_2d.replace('.jpg', '.svg'))
 
 
     # 2D OVERLAY: U-Matrix + Pre-Ictal
@@ -843,7 +888,7 @@ def toroidal_kohonen_subfunction_pytorch(
                                             orientation=np.radians(30),
                                             facecolor=face_color, alpha=0.7,
                                             edgecolor=None, linewidth=0)
-            if overlay_preictal[i, j] >= overlay_thresh:
+            if overlay_preictal[i, j] >= preictal_overlay_thresh:
                 ax_overlay.add_patch(hexagon)
 
     # Optional: add a colorbar for the overlay
@@ -854,7 +899,7 @@ def toroidal_kohonen_subfunction_pytorch(
     # Save overlay figure
     savename_overlay = savedir + f"/GPU{som_device}_UMatrix_PreIctalOverlay__ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.6f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_2D.jpg"
     pl.savefig(savename_overlay, dpi=600)
-    pl.savefig(savename_overlay.replace('.jpg', '.svg'))
+    # pl.savefig(savename_overlay.replace('.jpg', '.svg'))
     
     pickle_path = savedir + "/overlay_figure_object.pkl"
     output_obj = open(pickle_path, 'wb')
@@ -900,7 +945,7 @@ def toroidal_kohonen_subfunction_pytorch(
                                             orientation=np.radians(30),
                                             facecolor=face_color, alpha=0.7,
                                             edgecolor=None, linewidth=0)
-            if overlay_ictal[i, j] >= overlay_thresh:
+            if overlay_ictal[i, j] >= preictal_overlay_thresh:
                 ax_overlay.add_patch(hexagon)
 
     # Optional: add a colorbar for the overlay
@@ -911,7 +956,108 @@ def toroidal_kohonen_subfunction_pytorch(
     # Save overlay figure
     savename_overlay = savedir + f"/GPU{som_device}_UMatrix_ICTAL_Overlay__ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.6f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_2D.jpg"
     pl.savefig(savename_overlay, dpi=600)
-    pl.savefig(savename_overlay.replace('.jpg', '.svg'))
+    # pl.savefig(savename_overlay.replace('.jpg', '.svg'))
+
+
+    # 2D OVERLAY: U-Matrix + SLEEP single plots 
+    if not skip_sleep:
+        print("Plotting Sleep Data: Single Plots")
+        sleep_strings = ['Wake', 'N1', 'N2', 'N3', 'REM']
+        sleep_color_strings = ['Purples','Purples','Purples','Purples','Purples']
+        sleep_concat = [wake_sums, n1_sums, n2_sums, n3_sums, rem_sums]
+        for s_idx in range(0,5): # Wake, N1, N2, N3, REM
+            # Create new figure for U-Matrix + Pre-Ictal Density Overlay
+            fig_overlay, ax_overlay = pl.subplots(figsize=(10, 10))
+
+            # Pull ictal data
+            # overlay_ictal = np.clip(ictal_sums, 0.0, 1.0)
+            color_str = sleep_color_strings[s_idx]
+            sleep_string_curr = sleep_strings[s_idx]
+            overlay_data = np.clip(sleep_concat[s_idx], 0.0, 1.0)
+
+            # Plot U-Matrix base
+            plot_hex_grid(ax_overlay, u_matrix_hex, f"U-Matrix with {sleep_string_curr} Overlay", cmap_str='bone_r', vmin=np.min(u_matrix_hex), vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1)
+
+            # Overlay Pre-Ictal smoothed density (alpha=0.6)
+            # We'll replot on top with a semi-transparent flare colormap
+            rows, cols = overlay_data.shape
+            radius = 1.0
+            height = np.sqrt(3) * radius
+            cmap_overlay = cm.get_cmap(color_str)
+            norm_overlay = pl.Normalize(vmin=0.0, vmax=1.0)
+
+            for i in range(rows):
+                for j in range(cols):
+                    x = j * 1.5 * radius
+                    y = i * height + (j % 2) * (height / 2)
+                    face_color = cmap_overlay(norm_overlay(overlay_data[i, j]))
+                    hexagon = patches.RegularPolygon((x, y), numVertices=6, radius=radius,
+                                                    orientation=np.radians(30),
+                                                    facecolor=face_color, alpha=0.7,
+                                                    edgecolor=None, linewidth=0)
+                    if overlay_data[i, j] >= sleep_overlay_thresh:
+                        ax_overlay.add_patch(hexagon)
+
+            # Optional: add a colorbar for the overlay
+            sm_overlay = pl.cm.ScalarMappable(cmap=cmap_overlay, norm=norm_overlay)
+            sm_overlay.set_array([])
+            pl.colorbar(sm_overlay, ax=ax_overlay, label=f"{sleep_string_curr} Density")
+
+            # Save overlay figure
+            savename_overlay = savedir + f"/GPU{som_device}_UMatrix_{sleep_string_curr}_Overlay__ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.6f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_2D.jpg"
+            pl.savefig(savename_overlay, dpi=600)
+            # pl.savefig(savename_overlay.replace('.jpg', '.svg'))
+
+    # 2D OVERLAY: U-Matrix + All Sleep Stages On One
+    if not skip_sleep:
+        print("Plotting Sleep Data: Combined Plot")
+        # sleep_strings = ['Wake', 'N1', 'N2', 'N3', 'REM']
+        # sleep_colors = ['Purples', 'Blues', 'Greens', 'Oranges', 'Reds']
+        # sleep_concat = [wake_sums, n1_sums, n2_sums, n3_sums, rem_sums]
+        sleep_strings = ['N2', 'N3', 'REM']
+        sleep_colors = ['Blues', 'Purples', 'Greens']
+        sleep_concat = [n2_sums, n3_sums, rem_sums]
+
+        # Create a single figure for U-Matrix + All Sleep Stages Overlay
+        fig_overlay, ax_overlay = pl.subplots(figsize=(10, 10))
+
+        # Plot U-Matrix base
+        plot_hex_grid(
+            ax_overlay, u_matrix_hex,
+            "U-Matrix with All Sleep Stages Overlay",
+            cmap_str='bone_r',
+            vmin=np.min(u_matrix_hex),
+            vmax=np.max(u_matrix_hex) if np.max(u_matrix_hex) > 0 else 1
+        )
+
+        rows, cols = u_matrix_hex.shape
+        radius = 1.0
+        height = np.sqrt(3) * radius
+
+        for s_idx in range(len(sleep_strings)):  
+            overlay_data = np.clip(sleep_concat[s_idx], 0.0, 1.0)
+            cmap_overlay = cm.get_cmap(sleep_colors[s_idx])
+            norm_overlay = pl.Normalize(vmin=0.0, vmax=1.0)
+
+            for i in range(rows):
+                for j in range(cols):
+                    x = j * 1.5 * radius
+                    y = i * height + (j % 2) * (height / 2)
+                    value = overlay_data[i, j]
+                    if value >= sleep_overlay_thresh:
+                        face_color = cmap_overlay(norm_overlay(value))
+                        hexagon = patches.RegularPolygon(
+                            (x, y), numVertices=6, radius=radius,
+                            orientation=np.radians(30),
+                            facecolor=face_color, alpha=0.5,
+                            edgecolor=None, linewidth=0
+                        )
+                        ax_overlay.add_patch(hexagon)
+
+        # Save overlay figure
+        savename_overlay = savedir + f"/GPU{som_device}_UMatrix_AllSleepStages_Overlay__ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampleFileFactor{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.6f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}_HEXAGONAL_2D.jpg"
+        pl.savefig(savename_overlay, dpi=600)
+
 
 
     # PLOTTING (All Plots in 3D - Representing Toroidal as a Flat Grid)
@@ -981,7 +1127,7 @@ def toroidal_kohonen_subfunction_pytorch(
     print("Exporting Toroidal SOM 3D visualizations to JPG")
     savename_jpg_3d = savedir + f"/GPU{som_device}_3DPlots_smoothsec{win_sec}_Stride{stride_sec}_subsampFile{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.4f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
     pl.savefig(savename_jpg_3d, dpi=600)
-    pl.savefig(savename_jpg_3d.replace('.jpg', '.svg'))
+    # pl.savefig(savename_jpg_3d.replace('.jpg', '.svg'))
 
 
     # PLOTTING (All Plots in 3D - Projected onto a Toroid)
@@ -1055,7 +1201,7 @@ def toroidal_kohonen_subfunction_pytorch(
     print("Exporting Toroidal SOM visualizations projected onto a Toroid to JPG")
     savename_jpg_toroid = savedir + f"/GPU{som_device}_ToroidalSOM_latent_smoothsec{win_sec}_Stride{stride_sec}_subsampFile{subsample_file_factor}_preictalSec{plot_preictal_color_sec}_gridsize{som_gridsize}_lr{som_lr}with{som_lr_epoch_decay:.4f}decay{lr_min:0.4f}min_sigma{som_sigma}with{som_sigma_epoch_decay:.4f}decay{som_sigma_min}min_numfeatures{latent_means_input.shape[0]}_dims{latent_means_input.shape[1]}_batchsize{som_batch_size}_epochs{som_epochs}.jpg"
     pl.savefig(savename_jpg_toroid, dpi=600)
-    pl.savefig(savename_jpg_toroid.replace('.jpg', '.svg'))
+    # pl.savefig(savename_jpg_toroid.replace('.jpg', '.svg'))
             
 def compute_histograms(data, min_val, max_val, B):
     """
@@ -1180,10 +1326,6 @@ def get_pat_seiz_datetimes(
     **kwargs
     ):
 
-    # # Debugging
-    # print(pat_id)
-
-    # Original ATD file from Derek was tab seperated
     atd_df = pd.read_csv(atd_file, sep=',', header='infer')
     pat_seizure_bool = (atd_df['Pat ID'] == pat_id) & (atd_df['Type'] == "Seizure")
     pat_seizurebool_AND_desiredTypes = pat_seizure_bool
@@ -1249,31 +1391,95 @@ def get_pat_seiz_datetimes(
 
     return pat_seiz_start_datetimes, pat_seiz_stop_datetimes, pat_seiz_types_str
 
-def preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input):
+def get_pat_sleep_datetimes(
+    pat_id,
+    sleep_file,
+    wake_bool = True,
+    n1_bool = True,
+    n2_bool = True,
+    rem_bool = True):
+
+    sleep_df = pd.read_csv(sleep_file, sep='\t', header='infer', on_bad_lines='warn')
+    pat_bool = (sleep_df['PatID'] == pat_id) & (sleep_df['Type'] == "Sleep")
+    keep_bool = pat_bool
+
+    # Look for each skeep type individually & delete if not desired
+    sleep_type_list = ['W', 'N1', 'N2', 'R'] # Must match csv strings
+    sleep_type_bool_list = [wake_bool, n1_bool, n2_bool, rem_bool]
+    for i in range(0,len(sleep_type_list)):
+        if sleep_type_bool_list[i]==False:
+            find_str = sleep_type_list[i]
+            curr_bool = pat_bool & (sleep_df.loc[:,'SleepCat'] == find_str)
+            keep_bool[curr_bool] = False
+
+    df_subset = sleep_df.loc[keep_bool, ['Type','SleepCat', 'OnsetDatetime', 'OffsetDatetime']]
+    
+    pat_sleep_start_datetime_str = df_subset.loc[:,'OnsetDatetime'].astype(str).values.tolist()
+    pat_sleep_stop_datetime_str = df_subset.loc[:,'OffsetDatetime'].astype(str).values.tolist()
+    pat_sleep_types_str = df_subset.loc[:,'SleepCat'].astype(str).values.tolist()
+
+    # Convert to datetime objects
+    pat_sleep_start_datetimes = [datetime.datetime.strptime(x, "%Y-%m-%d %H:%M:%S") for x in pat_sleep_start_datetime_str]
+    pat_sleep_stop_datetimes = [datetime.datetime.strptime(x, "%Y-%m-%d %H:%M:%S") for x in pat_sleep_stop_datetime_str]
+
+    return pat_sleep_start_datetimes, pat_sleep_stop_datetimes, pat_sleep_types_str    
+
+def preictal_sleep_label(atd_file, sleep_file, skip_sleep, plot_preictal_color_sec, pat_ids_input, start_datetimes_input, stop_datetimes_input):
     
     '''
-    Ictal is given 0 label - Not the focus of the BSE/SOM training, too rare, likely to give erroneous BSE embeddings/SOM mappings
+    PRE_ICTAL:
+    
+    Ictal data point is currently labeled as weight of 0
+
+    SLEEP:
+
+    -1 unlabeled
+    0 Wake
+    1 N1
+    2 N2
+    3 N3
+    4 REM
 
     '''
-
     data_window_preictal_score = np.zeros_like(pat_ids_input, dtype=float)
     data_window_ictal_score = np.zeros_like(pat_ids_input, dtype=float)
+
+    data_window_sleep_score = np.ones_like(pat_ids_input, dtype=float) * -1
+    sleep_stage_strings = ['W', 'N1', 'N2', 'N3', 'R']
+    sleep_stage_to_numeric = {stage: index for index, stage in enumerate(sleep_stage_strings)}
+    sleep_epochs_found = 0
 
     # Generate numerical IDs for each unique patient, and give each datapoint an ID
     unique_ids = list(set(pat_ids_input))
     id_to_index = {id: idx for idx, id in enumerate(unique_ids)}  # Create mapping dictionary
     pat_idxs = [id_to_index[id] for id in pat_ids_input]
 
-    pat_seiz_start_datetimes, pat_seiz_stop_datetimes, pat_seiz_types_str = [-1] * len(unique_ids), [-1] * len(unique_ids), [-1] * len(unique_ids)
+    # Initialzie all patient pre-ictal and sleep labels
+    num_ids = len(unique_ids)
+    pat_seiz_start_datetimes = [-1] * num_ids
+    pat_seiz_stop_datetimes = [-1] * num_ids
+    pat_seiz_types_str = [-1] * num_ids
+    sleep_start_datetimes = [-1] * num_ids
+    sleep_stop_datetimes = [-1] * num_ids
+    sleep_types = [-1] * num_ids
+
+    # Iterate through unique pats and get all seizure info and sleep info
     for i in range(len(unique_ids)):
         id_curr = unique_ids[i]
         idx_curr = id_to_index[id_curr]
         pat_seiz_start_datetimes[i], pat_seiz_stop_datetimes[i], pat_seiz_types_str[i] = get_pat_seiz_datetimes(id_curr, atd_file) 
+        sleep_start_datetimes[i], sleep_stop_datetimes[i], sleep_types[i] = get_pat_sleep_datetimes(id_curr, sleep_file)
 
+    # Iterate through every data window and get pre-ictal and sleep labels
     for i in range(len(pat_idxs)):
+
+        print(f"Getting Pre-Ictal and Sleep Weighting for Data Windows: {i}/{len(pat_idxs)}     ", end='\r')
+
         data_window_start = start_datetimes_input[i]
         data_window_stop = stop_datetimes_input[i]
         
+        # PRE-ICTAL LABELING
+
         seiz_starts_curr, seiz_stops_curr, seiz_types_curr = pat_seiz_start_datetimes[pat_idxs[i]], pat_seiz_stop_datetimes[pat_idxs[i]], pat_seiz_types_str[pat_idxs[i]]
 
         for j in range(len(seiz_starts_curr)):
@@ -1303,8 +1509,53 @@ def preictal_weight(atd_file, plot_preictal_color_sec, pat_ids_input, start_date
                 data_window_ictal_score[i] = 1
                 break # Want to exclude seizures
 
-    # Ensure values remain between 0 and 1
-    return np.clip(data_window_preictal_score, 0, 1), np.clip(data_window_ictal_score, 0, 1)
 
-def sleep_stage(sleep_file, pat_ids_input, start_datetimes_input, stop_datetimes_input):
-    print("here")
+        # SLEEP STAGE LABELING
+
+        if not skip_sleep:
+
+            sleep_starts_curr, sleep_stops_curr, sleep_types_curr = sleep_start_datetimes[pat_idxs[i]], sleep_stop_datetimes[pat_idxs[i]], sleep_types[pat_idxs[i]]
+            sleep_types_NUM_curr = [sleep_stage_to_numeric[stage] for stage in sleep_types_curr]
+
+            # Find which sleep stage, if none found, leave as initialized value of -1
+            for j in range(len(sleep_starts_curr)):
+                sleep_start = sleep_starts_curr[j]
+                sleep_stop = sleep_stops_curr[j]
+
+                if (data_window_start > sleep_start) & (data_window_stop < sleep_stop):
+                    data_window_sleep_score[i] = sleep_types_NUM_curr[j]
+                    sleep_epochs_found += 1
+                    break
+
+    # Ensure values remain between 0 and 1
+    return np.clip(data_window_preictal_score, 0, 1), np.clip(data_window_ictal_score, 0, 1), data_window_sleep_score
+
+def one_hot_encode_with_negatives(data, min_val, max_val):
+    """
+    One-hot encodes a list of integers, handling negative values.
+
+    Args:
+        data: A list of integers.
+        min_val: The minimum integer value in the one-hot range.
+        max_val: The maximum integer value in the one-hot range.
+
+    Returns:
+        A NumPy array representing the one-hot encoded data.
+    """
+    # Calculate the number of possible values (categories)
+    num_classes = max_val - min_val + 1
+
+    # Initialize an empty array to store the one-hot encoded data
+    one_hot_data = np.zeros((len(data), num_classes), dtype=int)
+
+    # Create a mapping from the original values to the one-hot indices
+    # This is crucial for handling negative values correctly
+    value_to_index = {val: val - min_val for val in range(min_val, max_val + 1)}
+
+    # Iterate through the input data and set the corresponding one-hot bit
+    for i, val in enumerate(data):
+        # Use the mapping to get the correct index
+        one_hot_index = value_to_index[val]
+        one_hot_data[i, one_hot_index] = 1
+
+    return one_hot_data
