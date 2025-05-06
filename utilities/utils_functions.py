@@ -2554,6 +2554,7 @@ def get_loss_statistics(loss_dir):
             - mean (float): The mean loss across all patients.
             - lower_bound (float): The lower bound of the 95% confidence interval.
             - upper_bound (float): The upper bound of the 95% confidence interval.
+            - Num subject directories (int)
     """
     pat_dirs = [name for name in os.listdir(loss_dir) if os.path.isdir(os.path.join(loss_dir, name))]
 

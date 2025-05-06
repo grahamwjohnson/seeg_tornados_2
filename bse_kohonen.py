@@ -22,7 +22,7 @@ if __name__ == "__main__":
     # parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13' 
     # accumulated_data_pickle = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_32secStride.pkl'
     
-    som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.8777decay0.010000min_sigma38.4with0.8855decay1.0min_numfeatures1027140_dims1024_batchsize64_epochs30_rolled_v50_h-10.pt'
+    # som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU1_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize32_lr0.5with0.6762decay0.010000min_sigma19.2with0.7442decay1min_numfeatures1027140_dims1024_batchsize1024_epochs10.pt'
 
     save_loaded_data = True # If need to collect files, then will save one big pickle after all files collected
 
@@ -78,15 +78,33 @@ if __name__ == "__main__":
     som_pca_init = False
     reduction = 'mean' # Keep at mean because currently using reparam in SOM training
     som_device = 0 # GPU
-    som_epochs = 30
-    som_batch_size = 64
+    som_epochs = 10
+    som_batch_size = 1024
     som_lr = 0.5
     som_lr_min = 0.01
     som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
-    som_gridsize = 128
-    som_sigma = 0.3 * som_gridsize 
-    som_sigma_min = 1.0
+    som_gridsize = 32
+    som_sigma = 0.8 * som_gridsize 
+    som_sigma_min = 1 
     som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
+    user_cim_kernel_sigma = None # None # if None, will be calculated automatically
+    winner_penalty = 1.0
+
+    # # Kohonen Settings [GPU 1]
+    # som_pca_init = False
+    # reduction = 'mean' # Keep at mean because currently using reparam in SOM training
+    # som_device = 1 # GPU
+    # som_epochs = 100
+    # som_batch_size = 1024
+    # som_lr = 0.5
+    # som_lr_min = 0.01
+    # som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
+    # som_gridsize = 32
+    # som_sigma = 0.8 * som_gridsize 
+    # som_sigma_min = 1 
+    # som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
+    # user_cim_kernel_sigma = None # None # if None, will be calculated automatically
+    # winner_penalty = 1.0
 
     # Plotting variables
     kwargs = {}
@@ -230,7 +248,7 @@ if __name__ == "__main__":
           f"Logvars: Min {np.min(ww_logvars_allfiles):.2f}"
           )
 
-    manifold_utilities.toroidal_kohonen_subfunction_pytorch(
+    manifold_utilities.toroidal_CIM_kohonen_subfunction_pytorch(
         atd_file = atd_file,
         sleep_file = sleep_file,
         skip_sleep = skip_sleep,
@@ -249,8 +267,10 @@ if __name__ == "__main__":
         som_batch_size=som_batch_size,
         som_lr=som_lr,
         som_epochs=som_epochs,
+        winner_penalty=winner_penalty,
         som_gridsize=som_gridsize,
         som_lr_epoch_decay=som_lr_epoch_decay,
+        user_cim_kernel_sigma=user_cim_kernel_sigma,
         som_sigma=som_sigma,
         som_sigma_epoch_decay=som_sigma_epoch_decay,
         som_sigma_min=som_sigma_min,
