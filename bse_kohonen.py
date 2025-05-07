@@ -16,13 +16,14 @@ if __name__ == "__main__":
 
     # TRAIN DATA 
     parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45'
-    accumulated_data_pickle = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_32secStride.pkl'
-    
+    # accumulated_data_pickle = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_32secStride.pkl'
+    accumulated_data_pickle = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/Epat27_Epat28_Epat30_Epat31_Epat33_Epat34_Epat35/allDataGathered_subsampleFileFactor1_64secWindow_32secStride.pkl'
+
     # VAL DATA
     # parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13' 
     # accumulated_data_pickle = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_32secStride.pkl'
     
-    # som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU1_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize32_lr0.5with0.6762decay0.010000min_sigma19.2with0.7442decay1min_numfeatures1027140_dims1024_batchsize1024_epochs10.pt'
+    # som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_SOMDict_smoothsec64_Stride32_ssFileFactor1_preictalSec3600_gridsize64_lr0.5with0.9616decay0.010000min_sigma51.2with0.9614decay1min_winPen1_numfeat1027140_dims1024_bs256_epochs100.pt'
 
     save_loaded_data = True # If need to collect files, then will save one big pickle after all files collected
 
@@ -34,7 +35,7 @@ if __name__ == "__main__":
     skip_sleep = False
     
     # Which patients to plot
-    single_pats = [] # ['Spat18'] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats 
+    single_pats = ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35'] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35'] # ['Spat18'] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats 
         
     # SOURCE DATA
     if (subset_override_dir != None) and (accumulated_data_pickle != None):
@@ -84,27 +85,24 @@ if __name__ == "__main__":
     som_lr_min = 0.01
     som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
     som_gridsize = 32
-    som_sigma = 0.8 * som_gridsize 
-    som_sigma_min = 1 
+    som_sigma = 0.5 * som_gridsize 
+    som_sigma_min = 1
     som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
-    user_cim_kernel_sigma = None # None # if None, will be calculated automatically
-    winner_penalty = 1.0
 
-    # # Kohonen Settings [GPU 1]
+    # Kohonen Settings [GPU 1]
     # som_pca_init = False
     # reduction = 'mean' # Keep at mean because currently using reparam in SOM training
     # som_device = 1 # GPU
     # som_epochs = 100
     # som_batch_size = 1024
     # som_lr = 0.5
-    # som_lr_min = 0.01
+    # som_lr_min = 0.001
     # som_lr_epoch_decay = (som_lr_min / som_lr)**(1 / som_epochs) 
     # som_gridsize = 32
-    # som_sigma = 0.8 * som_gridsize 
-    # som_sigma_min = 1 
+    # som_sigma = 0.7 * som_gridsize 
+    # som_sigma_min = 1
     # som_sigma_epoch_decay = (som_sigma_min / som_sigma)**(1 / som_epochs) 
-    # user_cim_kernel_sigma = None # None # if None, will be calculated automatically
-    # winner_penalty = 1.0
+
 
     # Plotting variables
     kwargs = {}
@@ -248,7 +246,42 @@ if __name__ == "__main__":
           f"Logvars: Min {np.min(ww_logvars_allfiles):.2f}"
           )
 
-    manifold_utilities.toroidal_CIM_kohonen_subfunction_pytorch(
+    # manifold_utilities.toroidal_CIM_kohonen_subfunction_pytorch(
+    #     atd_file = atd_file,
+    #     sleep_file = sleep_file,
+    #     skip_sleep = skip_sleep,
+    #     pat_ids_list=build_pat_ids_list,
+    #     latent_means_windowed=ww_means_allfiles,
+    #     latent_logvars_windowed=ww_logvars_allfiles,
+    #     start_datetimes_epoch=build_start_datetimes,  
+    #     stop_datetimes_epoch=build_stop_datetimes,
+    #     win_sec=rewin_windowseconds, 
+    #     stride_sec=rewin_strideseconds, 
+    #     savedir=kohonen_savedir,
+    #     subsample_file_factor=subsample_file_factor,
+    #     som_pca_init=som_pca_init,
+    #     som_precomputed_path=som_precomputed_path,
+    #     som_device=som_device,
+    #     som_batch_size=som_batch_size,
+    #     som_lr=som_lr,
+    #     som_epochs=som_epochs,
+    #     entropy_penalty=entropy_penalty,
+    #     winner_penalty=winner_penalty,
+    #     bmu_count_decay=bmu_count_decay,
+    #     som_temperature=som_temperature,
+    #     som_temperature_decay=som_temperature_decay,
+    #     som_gridsize=som_gridsize,
+    #     som_lr_epoch_decay=som_lr_epoch_decay,
+    #     user_cim_kernel_sigma=user_cim_kernel_sigma,
+    #     som_sigma=som_sigma,
+    #     som_sigma_epoch_decay=som_sigma_epoch_decay,
+    #     som_sigma_min=som_sigma_min,
+    #     FS = FS,
+    #     plot_preictal_color_sec = plot_preictal_color_sec,
+    #     plot_postictal_color_sec = plot_postictal_color_sec,
+    #     **kwargs)
+
+    manifold_utilities.toroidal_kohonen_subfunction_pytorch(
         atd_file = atd_file,
         sleep_file = sleep_file,
         skip_sleep = skip_sleep,
@@ -267,10 +300,8 @@ if __name__ == "__main__":
         som_batch_size=som_batch_size,
         som_lr=som_lr,
         som_epochs=som_epochs,
-        winner_penalty=winner_penalty,
         som_gridsize=som_gridsize,
         som_lr_epoch_decay=som_lr_epoch_decay,
-        user_cim_kernel_sigma=user_cim_kernel_sigma,
         som_sigma=som_sigma,
         som_sigma_epoch_decay=som_sigma_epoch_decay,
         som_sigma_min=som_sigma_min,
@@ -278,3 +309,32 @@ if __name__ == "__main__":
         plot_preictal_color_sec = plot_preictal_color_sec,
         plot_postictal_color_sec = plot_postictal_color_sec,
         **kwargs)
+    
+    # manifold_utilities.involuted_toroidal_kohonen_subfunction_pytorch(
+    #     atd_file = atd_file,
+    #     sleep_file = sleep_file,
+    #     skip_sleep = skip_sleep,
+    #     pat_ids_list=build_pat_ids_list,
+    #     latent_means_windowed=ww_means_allfiles,
+    #     latent_logvars_windowed=ww_logvars_allfiles,
+    #     start_datetimes_epoch=build_start_datetimes,  
+    #     stop_datetimes_epoch=build_stop_datetimes,
+    #     win_sec=rewin_windowseconds, 
+    #     stride_sec=rewin_strideseconds, 
+    #     savedir=kohonen_savedir,
+    #     subsample_file_factor=subsample_file_factor,
+    #     som_pca_init=som_pca_init,
+    #     som_precomputed_path=som_precomputed_path,
+    #     som_device=som_device,
+    #     som_batch_size=som_batch_size,
+    #     som_lr=som_lr,
+    #     som_epochs=som_epochs,
+    #     som_gridsize=som_gridsize,
+    #     som_lr_epoch_decay=som_lr_epoch_decay,
+    #     som_sigma=som_sigma,
+    #     som_sigma_epoch_decay=som_sigma_epoch_decay,
+    #     som_sigma_min=som_sigma_min,
+    #     FS = FS,
+    #     plot_preictal_color_sec = plot_preictal_color_sec,
+    #     plot_postictal_color_sec = plot_postictal_color_sec,
+    #     **kwargs)

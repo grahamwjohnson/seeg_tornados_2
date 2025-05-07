@@ -1,17 +1,15 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
-import math, os
+import math
+
 import matplotlib.pyplot as plt
 from sklearn.metrics import pairwise_distances
 from scipy.stats import entropy
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 import random
-
 
 def select_cim_sigma(data, subsample=1000, scale=1.0, 
                      scales_to_test=None, bins=100, 
@@ -95,15 +93,16 @@ def select_cim_sigma(data, subsample=1000, scale=1.0,
 
     return best_sigma, best_scale, best_score, results
 
-class ToroidalSOM_CIM(nn.Module):
+
+class ToroidalSOM_2(nn.Module):
     """
     Optimized Toroidal Self-Organizing Map (SOM) with hexagonal geometry in PyTorch.
     Optimized for GPU performance.
     """
 
-    def __init__(self, grid_size, input_dim, batch_size, lr, lr_epoch_decay, cim_kernel_sigma, sigma,
-                 sigma_epoch_decay, sigma_min, device, entropy_penalty, winner_penalty, bmu_count_decay, temperature, init_pca=False, data_for_init=None, **kwargs):
-        super(ToroidalSOM_CIM, self).__init__()
+    def __init__(self, grid_size, input_dim, batch_size, lr, lr_epoch_decay, cim_kernel_sigma, 
+                 sigma, sigma_epoch_decay, sigma_min, data_for_init, device, pca, **kwargs):
+        super(ToroidalSOM_2, self).__init__()
         self.grid_size = grid_size
         self.input_dim = input_dim
         self.batch_size = batch_size
@@ -113,16 +112,15 @@ class ToroidalSOM_CIM(nn.Module):
         self.sigma = sigma
         self.sigma_epoch_decay = sigma_epoch_decay
         self.sigma_min = sigma_min
-        self.entropy_penalty = entropy_penalty
-        self.winner_penalty = winner_penalty
-        self.bmu_count_decay = bmu_count_decay
-        self.temperature = temperature
         self.device = device
-        self.init_pca = init_pca
+        self.pca = pca
         self.data_for_init = data_for_init
 
-        # To track long-term node usage
-        self.bmu_counts = torch.zeros(self.grid_size[0], self.grid_size[1], device=self.device)
+        # Move PCA components to GPU if PCA passed in
+        if (pca is not None): 
+            self.pca_components = torch.tensor(pca.components_, dtype=torch.float32).to(device)  # shape (n_components, input_dim)
+        else: 
+            self.pca_components = None
 
         # Create the hexagonal coordinates and weights
         self.hex_coords = self._create_hex_grid()
@@ -143,33 +141,29 @@ class ToroidalSOM_CIM(nn.Module):
                 hex_coords[i, j, 1] = y
         return hex_coords
 
+    def _apply_pca_projection(self, data_gpu):
+        """
+        Projects GPU-resident data using precomputed PCA components.
+        Args:
+            data_gpu (torch.Tensor): (N, D) input data on GPU
+            self.pca_components_gpu (torch.Tensor): (n_components, D) PCA basis on GPU
+        Returns:
+            projected: (N, n_components) projection result
+        """
+        if self.pca_components is None: 
+            return data_gpu
+        else: 
+            return data_gpu @ self.pca_components.T
+            
+
     def _initialize_weights(self):
-        """Initialize weights, optionally using PCA, with tensors on the specified device."""
-        if self.init_pca and self.data_for_init is not None:
-            print("Initializing weights using PCA...")
-            pca = PCA(n_components=self.input_dim)
-            pca.fit(self.data_for_init)
-            components = torch.tensor(pca.components_, dtype=torch.float32).to(self.device)
+        """Initialize weights from random data points."""
+        print("Initializing weights with random selection of input data...")
+        unique_random_integers = np.random.choice(range(self.data_for_init.shape[0]), size=self.grid_size[0]*self.grid_size[1], replace=True)
+        rand_data_selection = self.data_for_init[unique_random_integers].reshape(self.grid_size[0],self.grid_size[1],-1)
 
-            # Initialize weights by projecting hexagonal coordinates onto principal components
-            # and adding small noise
-            rows, cols = self.grid_size
-            normalized_hex_coords = self.hex_coords.clone()
-            normalized_hex_coords[:, :, 0] /= (cols + 0.5)
-            normalized_hex_coords[:, :, 1] /= (rows * 0.866)
-            normalized_hex_coords = normalized_hex_coords.view(-1, 2)
-
-            projection = torch.matmul(normalized_hex_coords, components[:2, :].T) # Use first 2 PCs
-            weights = projection.view(rows, cols, self.input_dim) + torch.randn(rows, cols, self.input_dim, device=self.device) * 0.01
-            print("PCA initialization complete.")
-            return weights
-        else:
-            print("Initializing weights with random selection of input data...")
-            unique_random_integers = np.random.choice(range(self.data_for_init.shape[0]), size=self.grid_size[0]*self.grid_size[1], replace=True)
-            rand_data_selection = self.data_for_init[unique_random_integers].reshape(self.grid_size[0],self.grid_size[1],-1)
-
-            # return torch.randn(self.grid_size[0], self.grid_size[1], self.input_dim, device=self.device)
-            return torch.tensor(rand_data_selection, dtype=torch.float32, device=self.device)
+        # return torch.randn(self.grid_size[0], self.grid_size[1], self.input_dim, device=self.device)
+        return torch.tensor(rand_data_selection, dtype=torch.float32, device=self.device)
 
     def reset_device(self, device):
         """Move all tensors to the specified device."""
@@ -192,44 +186,14 @@ class ToroidalSOM_CIM(nn.Module):
 
         return cim
 
-    def find_bmu(self, x, winner_penalty=0.0, entropy_penalty=0.0, temperature=1e-8):
-        """
-        Find the Best Matching Units (BMUs) for each sample in x.
-
-        Args:
-            x (torch.Tensor): Input tensor of shape (B, D).
-            winner_penalty (float): Penalty on frequently winning neurons.
-            entropy_penalty (float): Encourages usage of underutilized neurons.
-            temperature (float): Softmax temperature for sampling BMUs.
-
-        Returns:
-            (bmu_rows, bmu_cols): Tensors of shape (B,) with BMU coordinates.
-        """
-        distances = self.forward(x)  # (B, rows, cols)
-
-        if winner_penalty > 0.0 or entropy_penalty > 0.0:
-            usage = self.bmu_counts / (self.bmu_counts.sum() + 1e-8)  # (rows, cols)
-
-            penalty = torch.zeros_like(usage)
-
-            if winner_penalty > 0.0:
-                penalty += winner_penalty * (usage ** 2)
-
-            if entropy_penalty > 0.0:
-                scale_factor = 1
-                entropy_bonus = torch.exp(-usage * scale_factor)  # e.g., scale_factor = 10.0
-                penalty += entropy_penalty * entropy_bonus
-
-            distances = distances + penalty[None, :, :]  # Broadcast over batch
-
+    def find_bmu(self, x):
+        """Find Best Matching Units (BMUs) for each input vector."""
+        distances = self.forward(x)  # Shape: (batch_size, grid_size[0], grid_size[1])
         flat_distances = distances.view(x.size(0), -1)
-        soft_probs = torch.softmax(-flat_distances / temperature, dim=1)
-        sampled_indices = torch.multinomial(soft_probs, 1).squeeze(1)
-        bmu_rows = sampled_indices // self.grid_size[1]
-        bmu_cols = sampled_indices % self.grid_size[1]
-
+        bmu_flat_indices = torch.argmin(flat_distances, dim=1)
+        bmu_rows = bmu_flat_indices // self.grid_size[1]
+        bmu_cols = bmu_flat_indices % self.grid_size[1]
         return bmu_rows, bmu_cols
-
 
     def _get_neighbors_toroidal(self, bmu_rows, bmu_cols, sigma):
         """Efficiently get toroidal neighbors within a given radius (sigma)."""
@@ -255,68 +219,48 @@ class ToroidalSOM_CIM(nn.Module):
 
         return neighborhood_mask, row_diff, col_diff
 
-    def update_weights(self, x, bmu_rows, bmu_cols, winner_penalty=0.0, entropy_penalty=0.0):
-        """Update SOM weights using toroidal distances, normalized neighborhoods, and penalties."""
+    def update_weights(self, x, bmu_rows, bmu_cols):
+        """Update SOM weights using toroidal distances and vectorized operations."""
         batch_size = bmu_rows.size(0)
         rows, cols = self.grid_size
-        H, W = rows, cols
 
-        # Get toroidal neighborhood and distances
         neighborhood_mask, row_diff, col_diff = self._get_neighbors_toroidal(bmu_rows, bmu_cols, self.sigma)
 
-        # Hexagonal Gaussian distances
+        # Gaussian neighborhood function based on toroidal distance
         dist_sq = (col_diff + 0.5 * (row_diff % 2))**2 + (row_diff * 0.866)**2
-        logits = -dist_sq / (2 * self.sigma**2)
+        neighborhood = torch.exp(-dist_sq / (2 * self.sigma**2)) * neighborhood_mask
 
-        # Apply neighborhood mask and Gaussian kernel
-        neighborhood = torch.exp(logits) * neighborhood_mask  # (B, H, W)
+        # Expand dimensions for weight update
+        x_expanded = x[:, None, None, :]
+        neighborhood_expanded = neighborhood.unsqueeze(-1)
 
-        # ----- Penalty scaling -----
-        usage = self.bmu_counts / (self.bmu_counts.sum() + 1e-8)
+        # Expand weights to (B, rows, cols, D) to match batch-wise updates
+        weights_expanded = self.weights.unsqueeze(0).expand(batch_size, -1, -1, -1)  # (B, rows, cols, D)
 
-        penalty_scale = torch.ones_like(usage, dtype=torch.float32)  # (H, W)
+        # Compute delta per sample
+        delta = self.lr * neighborhood_expanded * (x_expanded - weights_expanded)  # (B, rows, cols, D)
 
-        if winner_penalty > 0.0:
-            winner_p = (usage ** 2)
-            penalty_scale /= (1.0 + winner_penalty * winner_p)
+        # Aggregate across batch
+        weight_update = torch.sum(delta, dim=0) / batch_size  # (rows, cols, D)
 
-        if entropy_penalty > 0.0:
-            entropy_bonus = 1.0 / (usage + 1e-6)
-            entropy_bonus = entropy_bonus / entropy_bonus.max()
-            penalty_scale *= (1.0 + entropy_penalty * entropy_bonus)
-
-        penalty_scale = penalty_scale.unsqueeze(0).unsqueeze(-1)  # (1, H, W, 1)
-
-        # ----- Compute update -----
-        x_expanded = x[:, None, None, :]                     # (B, 1, 1, D)
-        weights = self.weights.unsqueeze(0)                  # (1, H, W, D)
-        neighborhood_expanded = neighborhood.unsqueeze(-1)   # (B, H, W, 1)
-
-        delta = self.lr * neighborhood_expanded * penalty_scale * (x_expanded - weights)
-
-        # Average over batch
-        weight_update = torch.sum(delta, dim=0) / batch_size
+        # Update weights
         self.weights += weight_update
+
 
     def sample_posterior(self, batch_means, batch_logvars):
         # Add noise equivelant to magnitude of logvar to estimate uncertainty
         std = torch.exp(0.5 * batch_logvars)  # Standard deviation
         eps = torch.randn_like(std)     # Sample from a standard normal distribution
         z = batch_means + eps * std            # Reparameterized sample
-        return z
 
-    def train(self, means_in, logvars_in, num_epochs, savedir):
+        return self._apply_pca_projection(z) # will just return z if no PCA is used
+
+    def train(self, means_in, logvars_in, num_epochs):
         """Train the SOM on the input data."""
         means_tensor = torch.tensor(means_in, dtype=torch.float32, device=self.device)
         logvars_tensor = torch.tensor(logvars_in, dtype=torch.float32, device=self.device)
         num_samples = means_tensor.shape[0]
         indices = torch.arange(num_samples, device=self.device)
-
-        # logger = SOMLogger(self, savedir=savedir, gpu_id=self.device)
-
-        if self.init_pca and self.data_for_init is None:
-            self.data_for_init = means_in
-            self.weights = self._initialize_weights()
 
         for epoch in range(num_epochs):
             # Shuffle data indices
@@ -330,14 +274,10 @@ class ToroidalSOM_CIM(nn.Module):
                 batch_sampled = self.sample_posterior(batch_means, batch_logvars)
 
                 # Find BMUs
-                bmu_rows, bmu_cols = self.find_bmu(batch_sampled, self.winner_penalty, self.entropy_penalty, self.temperature)
-
-                # Update winner counts 
-                for r, c in zip(bmu_rows, bmu_cols):
-                    self.bmu_counts[r, c] += 1
+                bmu_rows, bmu_cols = self.find_bmu(batch_sampled)
 
                 # Update weights
-                self.update_weights(batch_sampled, bmu_rows, bmu_cols, self.winner_penalty)
+                self.update_weights(batch_sampled, bmu_rows, bmu_cols)
 
                 # Progress tracking
                 batch_num = batch_start // self.batch_size
@@ -349,7 +289,6 @@ class ToroidalSOM_CIM(nn.Module):
 
             # Decay learning rate and sigma
             self.lr *= self.lr_epoch_decay
-            self.bmu_counts *= self.bmu_count_decay
             self.sigma = max(self.sigma * self.sigma_epoch_decay, self.sigma_min)
 
     def get_weights(self):
@@ -365,6 +304,3 @@ class ToroidalSOM_CIM(nn.Module):
         data = torch.tensor(data, dtype=torch.float32, device=self.device)
         bmu_rows, bmu_cols = self.find_bmu(data)
         return bmu_rows.cpu().numpy(), bmu_cols.cpu().numpy()
-
-
-
