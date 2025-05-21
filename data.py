@@ -406,6 +406,7 @@ class SEEG_BSP_Dataset(Dataset):
         # BSE Info (needed tp pull proper data sizes for feeding through pretrained BSE)
         transformer_seq_length, # for BSE
         encode_token_samples,
+        padded_channels,
 
         **kwargs):
 
@@ -420,6 +421,7 @@ class SEEG_BSP_Dataset(Dataset):
 
         # BSE info
         self.bse_samples = transformer_seq_length * encode_token_samples
+        self.padded_channels = padded_channels
 
         file_names = glob.glob(f'{bsp_source_dir}/*.pkl')
         pat_ids_all = [x.split("/")[-1].split("_")[0] for x in file_names]
@@ -443,19 +445,69 @@ class SEEG_BSP_Dataset(Dataset):
         rand_filename = self.files_bypat[rand_pat_idx][rand_file_idx]
 
         # Load the file's pickle
-        with open(rand_filename, 'rb') as file: file_data = pickle.load(file)
+        with open(rand_filename, 'rb') as file: 
+            file_data = pickle.load(file)  # shape: [channels, time]
 
-        # Pull a random sequence of 
         samples_in_file = file_data.shape[1]
         samples_needed = self.bsp_transformer_seq_length * self.bse_samples
-        rand_start_idx = int(random.uniform(0, samples_in_file - samples_needed -1))
-        x = file_data[:, rand_start_idx:rand_start_idx+samples_needed]
+        rand_start_idx = int(random.uniform(0, samples_in_file - samples_needed - 1))
+        x = file_data[:, rand_start_idx:rand_start_idx + samples_needed]
         x = torch.tensor(x, dtype=torch.float32)
-        x = x.view(
-            x.shape[0],  # channels
-            self.bsp_transformer_seq_length,  # sequence steps
-            self.bse_samples)  # samples per step
+
+        # Reshape into [channels, seq_len, samples_per_step]
+        x = x.view(x.shape[0], self.bsp_transformer_seq_length, self.bse_samples)
+
+        actual_channels = x.shape[0]
+        assert actual_channels <= self.padded_channels, "More channels than padded_channels!"
+
+        # Prepare output tensor [sequence, padded_channels, latent_dim]
+        padded = torch.zeros(self.bsp_transformer_seq_length, self.padded_channels, self.bse_samples, dtype=torch.float32)
+
+        # Randomize channel mapping for each time step independently
+        for t in range(self.bsp_transformer_seq_length):
+            shuffled_channel_indices = torch.randperm(actual_channels)
+            padded_positions = torch.randperm(self.padded_channels)[:actual_channels]
+
+            for src_idx, dst_pos in zip(shuffled_channel_indices, padded_positions):
+                padded[t, dst_pos, :] = x[src_idx, t, :]  # use the corresponding time step
+
+
+        # Unsqueeze a dimension and transpose to be ready for BSE
+        # [seq, padded_channels, FS] --> [seq, FS, padded_channel, 1]
+        out = padded.permute(0, 2, 1).unsqueeze(3)
+
+        return out, rand_filename
+
+
+
+
+
+
+
+
+
+
+    # def __getitem__(self, idx): 
+    #     rand_pat_idx = int(random.uniform(0, self.num_pats))
+    #     rand_file_idx = int(random.uniform(0, self.numfiles_bypat[rand_pat_idx]))
+    #     rand_filename = self.files_bypat[rand_pat_idx][rand_file_idx]
+
+    #     # Load the file's pickle
+    #     with open(rand_filename, 'rb') as file: file_data = pickle.load(file)
+
+    #     # Pull a random sequence of 
+    #     samples_in_file = file_data.shape[1]
+    #     samples_needed = self.bsp_transformer_seq_length * self.bse_samples
+    #     rand_start_idx = int(random.uniform(0, samples_in_file - samples_needed -1))
+    #     x = file_data[:, rand_start_idx:rand_start_idx+samples_needed]
+    #     x = torch.tensor(x, dtype=torch.float32)
+    #     x = x.view(
+    #         x.shape[0],  # channels
+    #         self.bsp_transformer_seq_length,  # sequence steps
+    #         self.bse_samples)  # samples per step
         
-        return x, rand_filename
+
+        
+    #     return x, rand_filename
 
 

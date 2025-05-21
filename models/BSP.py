@@ -9,6 +9,58 @@ import yaml
 # Local imports
 from .Transformer import ModelArgs, Transformer, RMSNorm
 
+# class BSV(nn.Module):
+#     def __init__(self, gpu_id, bsv_dims, **kwargs): 
+#         super().__init__()
+#         self.gpu_id = gpu_id
+#         self.dims = bsv_dims
+
+#         self.encoder_weights = nn.ParameterList()
+#         self.encoder_biases = nn.ParameterList()
+#         self.encoder_norms = nn.ModuleList()
+#         self.decoder_norms = nn.ModuleList()
+
+#         for i, (in_dim, out_dim) in enumerate(zip(self.dims[:-1], self.dims[1:])):
+#             weight = nn.Parameter(torch.empty(out_dim, in_dim))
+#             nn.init.kaiming_uniform_(weight, a=math.sqrt(5))
+#             self.encoder_weights.append(weight)
+
+#             bias = nn.Parameter(torch.zeros(out_dim))
+#             self.encoder_biases.append(bias)
+
+#             self.encoder_norms.append(RMSNorm(out_dim))
+
+#         # Create decoder norms based on reversed dims
+#         reversed_dims = list(reversed(self.dims))
+#         for i in range(len(reversed_dims) - 1):
+#             self.decoder_norms.append(RMSNorm(reversed_dims[i + 1]))
+
+#     def encode(self, x):
+#         num_layers = len(self.encoder_weights)
+#         for i, (W, b, norm) in enumerate(zip(self.encoder_weights, self.encoder_biases, self.encoder_norms)):
+#             x = F.linear(x, W, b)
+#             if i < num_layers - 1:
+#                 x = F.silu(x)
+#                 x = norm(x)
+#         return x
+
+#     def decode(self, x):
+#         reversed_weights = list(reversed(self.encoder_weights))
+#         num_layers = len(reversed_weights)
+
+#         for i in range(num_layers):
+#             W = reversed_weights[i]
+#             x = F.linear(x, W.t())
+#             if i < num_layers - 1:
+#                 x = F.silu(x)
+#                 x = self.decoder_norms[i](x)  # Only apply norm if not last layer
+#         return x
+
+#     def forward(self, x):
+#         encoded = self.encode(x)
+#         decoded = self.decode(encoded)
+#         return encoded, decoded
+
 class BSV(nn.Module):
     def __init__(self, gpu_id, bsv_dims, **kwargs): 
         super().__init__()
@@ -20,6 +72,8 @@ class BSV(nn.Module):
         self.encoder_norms = nn.ModuleList()
         self.decoder_norms = nn.ModuleList()
 
+        num_encoder_layers = len(self.dims) - 1
+
         for i, (in_dim, out_dim) in enumerate(zip(self.dims[:-1], self.dims[1:])):
             weight = nn.Parameter(torch.empty(out_dim, in_dim))
             nn.init.kaiming_uniform_(weight, a=math.sqrt(5))
@@ -28,32 +82,33 @@ class BSV(nn.Module):
             bias = nn.Parameter(torch.zeros(out_dim))
             self.encoder_biases.append(bias)
 
-            self.encoder_norms.append(RMSNorm(out_dim))
+            if i < num_encoder_layers - 1:  # skip last encoder norm
+                self.encoder_norms.append(RMSNorm(out_dim))
 
-        # Create decoder norms based on reversed dims
+        # Decoder norms — skip last layer
         reversed_dims = list(reversed(self.dims))
-        for i in range(len(reversed_dims) - 1):
+        num_decoder_layers = len(reversed_dims) - 1
+        for i in range(num_decoder_layers - 1):  # skip last decoder norm
             self.decoder_norms.append(RMSNorm(reversed_dims[i + 1]))
 
     def encode(self, x):
         num_layers = len(self.encoder_weights)
-        for i, (W, b, norm) in enumerate(zip(self.encoder_weights, self.encoder_biases, self.encoder_norms)):
+        for i, (W, b) in enumerate(zip(self.encoder_weights, self.encoder_biases)):
             x = F.linear(x, W, b)
             if i < num_layers - 1:
                 x = F.silu(x)
-                x = norm(x)
+                x = self.encoder_norms[i](x)
         return x
 
     def decode(self, x):
         reversed_weights = list(reversed(self.encoder_weights))
         num_layers = len(reversed_weights)
-
         for i in range(num_layers):
             W = reversed_weights[i]
             x = F.linear(x, W.t())
             if i < num_layers - 1:
                 x = F.silu(x)
-                x = self.decoder_norms[i](x)  # Only apply norm if not last layer
+                x = self.decoder_norms[i](x)
         return x
 
     def forward(self, x):

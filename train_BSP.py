@@ -63,7 +63,7 @@ def load_train_objs(
     train_dataloader, _ = utils_functions.prepare_ddp_dataloader(train_dataset, batch_size=bsp_batchsize, num_workers=num_dataloader_workers)
 
     # Load the pretrained Brain-State Embedder (BSE) from GitHub and put on GPU, and initialize DDP
-    bse = get_bse(**kwargs)
+    bse = get_bse(bsp_batchsize=bsp_batchsize, **kwargs)
     bse = bse.to(gpu_id) 
     bse.gpu_id = gpu_id
     bse.transformer_encoder.freqs_cis = bse.transformer_encoder.freqs_cis.to(gpu_id)
@@ -80,7 +80,7 @@ def load_train_objs(
 
     return train_dataloader, bse, bsp, bsv, opt_bsp, opt_bsv 
 
-def get_bse(bse_codename, **kwargs):
+def get_bse(bse_codename, bsp_transformer_seq_length, bsp_batchsize, **kwargs):
     torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
 
     # Load the BSE model with pretrained weights from GitHub
@@ -93,6 +93,7 @@ def get_bse(bse_codename, **kwargs):
         load_som=False, 
         load_bsp=False,
         trust_repo='check',
+        max_batch_size=bsp_transformer_seq_length*bsp_batchsize # update for pseudobatching
         # force_reload=True
     )
 
@@ -205,9 +206,11 @@ class Trainer:
         train_dataloader: DataLoader,
         wandb_run,
         model_dir: str,
+        transformer_seq_length: int, # BSE
         bsp_transformer_seq_length: int,
         transformer_start_pos: int,
         atd_file: str,
+        bsp_recent_display_iters: int,
         **kwargs
     ) -> None:
         self.world_size = world_size
@@ -217,9 +220,11 @@ class Trainer:
         self.train_dataloader = train_dataloader
         self.wandb_run = wandb_run
         self.model_dir = model_dir
+        self.bse_transformer_seq_length = transformer_seq_length
         self.bsp_transformer_seq_length = bsp_transformer_seq_length
         self.transformer_start_pos = transformer_start_pos
         self.atd_file = atd_file
+        self.recent_display_iters = bsp_recent_display_iters
         self.kwargs = kwargs
 
         # Set up bsp & bsv with DDP
@@ -251,7 +256,64 @@ class Trainer:
         iter_curr = 0
         total_iters = len(dataloader_curr)
         for x, _ in dataloader_curr: 
-            print("here")
+
+            # BSE
+            with torch.inference_mode():
+                x_pseudobatch = x.reshape(x.shape[0]*x.shape[1], x.shape[2], x.shape[3], x.shape[4])
+                x_pseudobatch = x_pseudobatch.to(self.gpu_id)
+                z_pseudopseudobatch, _, _, _, _ = self.bse(x_pseudobatch, reverse=False) 
+
+                # Reshape variables back to token level 
+                z_pseudo = z_pseudopseudobatch.split(self.bse_transformer_seq_length, dim=0)
+                z_pseudo = torch.stack(z_pseudo, dim=0)
+                z = z_pseudo.split(self.bsp_transformer_seq_length, dim=0)
+                z = torch.stack(z, dim=0)
+
+            # BSP
+            post_bse2p, post_bsp, bsp_attW, post_bsp2e = self.bsp(z[:,:-1,:,:]) # 1-shifted
+
+            # BSV
+            bsv_enc, bsv_dec = self.bsv(post_bse2p.detach())
+
+            # Loss
+            bsp_loss = loss_functions.cosine_loss(z[:,1:,:,:], post_bsp2e) # Opoosite 1-shifted
+            bsv_loss = loss_functions.cosine_loss(post_bse2p.detach(), bsv_dec)
+
+            # Step optimizers
+            self.opt_bsp.zero_grad()
+            self.opt_bsv.zero_grad()
+            bsp_loss.backward()  
+            bsv_loss.backward()  
+            torch.nn.utils.clip_grad_norm_(self.bsp.module.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(self.bsv.module.parameters(), max_norm=1.0)
+            self.opt_bsp.step()
+            self.opt_bsv.step()
+
+            # Realtime terminal info and WandB 
+            if (iter_curr%self.recent_display_iters==0):
+                now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
+                if (self.gpu_id == 0):
+                    sys.stdout.write(
+                        f"\r{now_str} [GPU{str(self.gpu_id)}]: {dataset_string}, EPOCH {self.epoch}, Iter [BatchSize: {x.shape[0]}] {iter_curr}/{total_iters}, " + 
+                        f"MeanBSPLoss: {round(bsp_loss.detach().item(), 2)}, MeanBSVLoss: {round(bsv_loss.detach().item(), 2)}                 ")
+                    sys.stdout.flush() 
+
+                # Log to WandB
+                wandb.define_metric('Steps')
+                wandb.define_metric("*", step_metric="Steps")
+                train_step = self.epoch * int(total_iters) + iter_curr
+                metrics = dict(
+                    train_bsp_loss=bsp_loss,
+                    train_bsv_loss=bsv_loss,
+                    train_LR_bsp=self.opt_bsp.param_groups[0]['lr'], 
+                    train_LR_bsv=self.opt_bsv.param_groups[0]['lr'], 
+                    train_epoch=self.epoch)
+            try:
+                wandb.log({**metrics, 'Steps': train_step})
+            except Exception as e:
+                print(f"An error occurred during WandB logging': {e}")
+
+            iter_curr = iter_curr + 1
 
     def _save_checkpoint(self, epoch, delete_old_checkpoints, **kwargs):
 
@@ -289,7 +351,6 @@ class Trainer:
             utils_functions.delete_old_checkpoints(dir = base_checkpoint_dir_BSP, curr_epoch = epoch, **kwargs)
             print("Deleted old checkpoints, except epochs at end of reguaization annealing period")
     
-
 if __name__ == "__main__":
 
     # Set the hash seed 

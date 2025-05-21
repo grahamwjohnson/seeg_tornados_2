@@ -221,8 +221,8 @@ inference_batch_perpat_override: 1 # Set to -1 for no override. Use with caution
 
 ### Brain-State Embedder to Brain-State Predictor (BSE2P) ###
 
-bsp2e_growingtransformer_dims: [1024, 2048]
-bse2p_attention_layers_per_stage: 2
+bsp2e_growingtransformer_dims: [1024]
+bse2p_attention_layers_per_stage: 8
 bse2p_num_heads: 32
 
 
@@ -248,7 +248,7 @@ bsp_singlebatch_printing_interval_train: 512
 bsp_epochs_to_train: 99999
 
 # BSP
-bsp_transformer_seq_length: 8
+bsp_transformer_seq_length: 64
 bsp_latent_dim: kwargs['bsp_latent_dim'] = kwargs['bsp2e_growingtransformer_dims'][-1]
 bsp_n_heads: 64
 bsp_n_layers: 16
@@ -266,6 +266,7 @@ bsp_epoch_dataset_size: kwargs['bsp_epoch_dataset_size'] = 1024 * kwargs['bsp_ba
 bsp_batchsize: 2
 bsp_autoregressive_plot_steps: 64
 bsp_autogressive_subbatch_to_plot: 4 # How many of the batch index should be plotted? Slow if too many
+bsp_recent_display_iters: 5
 
 ### ----------------------------------- ###
 

@@ -255,8 +255,34 @@ def patient_adversarial_loss_function(probs, labels, classifier_weight):
     return classifier_weight * adversarial_loss
 
 
-# BSP LOSS
-def bsp_loss(x, x_pred, bsp_loss_weight, **kwargs):
-    mse_loss = nn.MSELoss(reduction='mean')
-    loss = mse_loss(x, x_pred)
-    return bsp_loss_weight * loss
+# BSP & BSV LOSS
+def cosine_loss(a: torch.Tensor, b: torch.Tensor, reduction='mean') -> torch.Tensor:
+    """
+    Compute cosine loss between two embeddings of shape 
+    [batch, big_seq, fine_seq, latent_dim].
+
+    Args:
+        a (torch.Tensor): First embedding tensor.
+        b (torch.Tensor): Second embedding tensor.
+        reduction (str): 'mean', 'sum', or 'none'.
+
+    Returns:
+        torch.Tensor: Scalar loss if reduced, else tensor of per-element losses.
+    """
+    # Flatten all but the last dimension using reshape for non-contiguous tensors
+    a_flat = a.reshape(-1, a.size(-1))
+    b_flat = b.reshape(-1, b.size(-1))
+
+    # Compute cosine similarity and convert to loss
+    cosine_sim = F.cosine_similarity(a_flat, b_flat, dim=-1)
+    loss = 1 - cosine_sim  # cosine loss = 1 - cosine similarity
+
+    # Apply reduction
+    if reduction == 'mean':
+        return loss.mean()
+    elif reduction == 'sum':
+        return loss.sum()
+    elif reduction == 'none':
+        return loss.reshape(*a.shape[:-1])
+    else:
+        raise ValueError(f"Invalid reduction type: {reduction}")
