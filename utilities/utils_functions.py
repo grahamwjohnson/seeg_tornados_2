@@ -370,7 +370,29 @@ def run_script_from_shell(env_python_path, script_path, *args):
     except FileNotFoundError:
         return -1, "", "File not found"
 
-def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_workers=0):
+def prepare_ddp_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_workers=0):
+
+    if num_workers > 0:
+        persistent_workers=True
+        print("WARNING: num workers >0, have experienced odd errors...")
+
+    else:
+        persistent_workers=False
+
+    sampler = DistributedSampler(dataset, shuffle=True)
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,    
+        pin_memory=True,
+        shuffle=False,
+        sampler=sampler,
+        drop_last=droplast,
+        persistent_workers=persistent_workers
+    ), sampler
+
+def prepare_NonDdp_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_workers=0):
 
     if num_workers > 0:
         persistent_workers=True
@@ -384,8 +406,7 @@ def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_wo
         batch_size=batch_size,
         num_workers=num_workers,    
         pin_memory=True,
-        shuffle=False,
-        sampler=DistributedSampler(dataset),
+        shuffle=True,
         drop_last=droplast,
         persistent_workers=persistent_workers
     )
@@ -475,8 +496,10 @@ def bsp_initialize_directories(
         print(f"Resuming training after saved epoch: {str(max_epoch)}")
         
         # Construct the proper file names to get CORE state dicts
-        kwargs['bsp_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/bsp_checkpoints/checkpoint_epoch{str(max_epoch)}_bsp.pt'
-        kwargs['bsp_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/bsp_checkpoints/checkpoint_epoch{str(max_epoch)}_bsp_opt.pt'
+        kwargs['bsp_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_bsp.pt'
+        kwargs['bsp_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_bsp_opt.pt'
+        kwargs['bsv_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_bsv.pt'
+        kwargs['bsv_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_bsv_opt.pt'
 
         # Set the start epoch 1 greater than max trained
         kwargs['start_epoch'] = (max_epoch + 1) 
@@ -567,7 +590,7 @@ def bsp_run_setup(**kwargs):
     kwargs = bsp_initialize_directories(run_notes=run_notes, **kwargs)
 
     # Print the model forward pass sizes
-    fake_data = torch.rand(kwargs['bsp_batchsize'], kwargs['bsp_transformer_seq_length'], kwargs['bsp_latent_dim'])                           
+    fake_data = torch.rand(kwargs['bsp_batchsize'], kwargs['bsp_transformer_seq_length'], kwargs['FS'], kwargs['latent_dim'])                           
     bsp_print_models_flow(x=fake_data, **kwargs)
 
     # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)

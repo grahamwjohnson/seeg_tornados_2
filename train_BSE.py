@@ -155,10 +155,10 @@ def load_train_objs(
 
         # Random Dataloaders for Validation #
         valfinetune_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
-        valfinetune_dataloader = utils_functions.prepare_dataloader(valfinetune_dataset, batch_size=None, num_workers=num_dataloader_workers)
+        valfinetune_dataloader, _ = utils_functions.prepare_ddp_dataloader(valfinetune_dataset, batch_size=None, num_workers=num_dataloader_workers)
 
         valunseen_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
-        valunseen_dataloader = utils_functions.prepare_dataloader(valunseen_dataset, batch_size=None, num_workers=num_dataloader_workers)
+        valunseen_dataloader, _ = utils_functions.prepare_ddp_dataloader(valunseen_dataset, batch_size=None, num_workers=num_dataloader_workers)
 
     else: # If no val, just make a train dataset
         train_pats_dirs = all_pats_dirs
@@ -185,7 +185,7 @@ def load_train_objs(
 
     ### Random DataLoaders ###
     train_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
-    train_dataloader = utils_functions.prepare_dataloader(train_dataset, batch_size=None, num_workers=num_dataloader_workers)
+    train_dataloader, _ = utils_functions.prepare_ddp_dataloader(train_dataset, batch_size=None, num_workers=num_dataloader_workers)
          
     ### BSE ###
     bse = BSE(gpu_id=gpu_id, **kwargs) 

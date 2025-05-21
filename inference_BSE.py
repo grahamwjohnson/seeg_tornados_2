@@ -134,6 +134,8 @@ def bse_export_embeddings(
     inference_save_svg,
     inference_batch_perpat_override,
     FS,
+    return_random_file_embeddings = False,
+    return_random_file_embeddings_win_size = None,
     **kwargs):
 
     """
@@ -192,16 +194,21 @@ def bse_export_embeddings(
 
     print(f"[GPU{gpu_id}] INFERENCE")
 
-    # Go through every subject in this dataset
-    for pat_idx in range(0,len(dataset_curr.pat_ids)):
+    if return_random_file_embeddings: # Random pat idx
+        rand_idx = np.random.randint(0, len(dataset_curr.pat_ids))
+        pat_list = range(rand_idx, rand_idx + 1)
+    else: pat_list = range(0,len(dataset_curr.pat_ids)) # Go through every subject in this dataset
+    for pat_idx in pat_list:
         dataset_curr.set_pat_curr(pat_idx)
         _, pat_id_curr, _, _ = dataset_curr.get_pat_curr()
 
         # Check which files have already been processed and update file list accordingly before building dataloader
-        dataset_curr.update_pat_inference_status(inference_save_dir, inference_window_sec_list, inference_stride_sec_list)
-        dataloader_curr =  utils_functions.prepare_dataloader(dataset_curr, batch_size=max_batch_size, num_workers=num_dataloader_workers)
+        if not return_random_file_embeddings: 
+            dataset_curr.update_pat_inference_status(inference_save_dir, inference_window_sec_list, inference_stride_sec_list)
+            dataloader_curr, _ =  utils_functions.prepare_ddp_dataloader(dataset_curr, batch_size=max_batch_size, num_workers=num_dataloader_workers)
+        else: 
+            dataloader_curr =  utils_functions.prepare_NonDdp_dataloader(dataset_curr, batch_size=1, num_workers=num_dataloader_workers)
 
-        # Go through every file in dataset
         file_count = 0
         batch_count = 0
         for data_tensor, file_name, _ in dataloader_curr: # Hash done outside data.py for single pat inference
@@ -218,9 +225,15 @@ def bse_export_embeddings(
             num_samples_in_forward = int(num_samples_in_forward)
 
             # Prep the output tensor and put on GPU
-            files_means = torch.zeros([data_tensor.shape[0], num_windows_in_file, latent_dim]).to(gpu_id)
-            files_logvars = torch.zeros([data_tensor.shape[0], num_windows_in_file, latent_dim]).to(gpu_id)
-            files_mogpreds = torch.zeros([data_tensor.shape[0], num_windows_in_file, prior_mog_components]).to(gpu_id)
+            if return_random_file_embeddings:
+                files_means_full = torch.zeros([data_tensor.shape[0], return_random_file_embeddings_win_size, transformer_seq_length, prior_mog_components, latent_dim], dtype=torch.float32).to(gpu_id)
+                files_logvars_full = torch.zeros([data_tensor.shape[0], return_random_file_embeddings_win_size, transformer_seq_length, prior_mog_components, latent_dim], dtype=torch.float32).to(gpu_id)
+                files_mogpreds_full = torch.zeros([data_tensor.shape[0], return_random_file_embeddings_win_size, transformer_seq_length, prior_mog_components], dtype=torch.float32).to(gpu_id)       
+                files_z_full = torch.zeros([data_tensor.shape[0], return_random_file_embeddings_win_size, transformer_seq_length, latent_dim], dtype=torch.float32).to(gpu_id)
+            else:
+                files_means = torch.zeros([data_tensor.shape[0], num_windows_in_file, latent_dim]).to(gpu_id)
+                files_logvars = torch.zeros([data_tensor.shape[0], num_windows_in_file, latent_dim]).to(gpu_id)
+                files_mogpreds = torch.zeros([data_tensor.shape[0], num_windows_in_file, prior_mog_components]).to(gpu_id)
 
             # Prep the recon loss if decoding
             if inference_decode:
@@ -275,40 +288,48 @@ def bse_export_embeddings(
                 mean = torch.stack(mean, dim=0)
                 logvar = logvar_pseudobatch.split(transformer_seq_length, dim=0)
                 logvar = torch.stack(logvar, dim=0)
+                z = z_pseudobatch.split(transformer_seq_length, dim=0)
+                z = torch.stack(z, dim=0)
 
-                # Weight the means using mogpreds
-                # mogpreds shape: [batch_size, seq_length, num_components]
-                # mean shape: [batch_size, seq_length, num_components, latent_dim]
-                # Expand mogpreds to match the latent_dim for broadcasting
-                mogpreds_expanded = mogpreds.unsqueeze(-1)  # Shape: [batch_size, seq_length, num_components, 1]
+                if return_random_file_embeddings: # Save entiriety of BSE output
+                    files_means_full[:, w, :, :, :] = mean
+                    files_logvars_full[:, w, :, :, :] = logvar
+                    files_mogpreds_full[:, w, :, :] = mogpreds
+                    files_z_full[:, w, :, :] = z
 
-                # Weight the means & logvars
-                weighted_means = mean * mogpreds_expanded  # Shape: [batch_size, seq_length, num_components, latent_dim]
-                weighted_logvars = logvar * mogpreds_expanded 
+                    if w >= return_random_file_embeddings_win_size - 1: # return the desired subet of data
+                        return files_means_full, files_logvars_full, files_mogpreds_full, files_z_full  
 
-                # Sum over the components to get the final weighted mean for each token
-                weighted_means_summed = torch.sum(weighted_means, dim=2)  # Shape: [batch_size, seq_length, latent_dim]
-                weighted_logvars_summed = torch.sum(weighted_logvars, dim=2)  # Shape: [batch_size, seq_length, latent_dim]
+                else: 
+                    # Weight the means using mogpreds
+                    # mogpreds shape: [batch_size, seq_length, num_components]
+                    # mean shape: [batch_size, seq_length, num_components, latent_dim]
+                    # Expand mogpreds to match the latent_dim for broadcasting
+                    mogpreds_expanded = mogpreds.unsqueeze(-1)  # Shape: [batch_size, seq_length, num_components, 1]
 
-                # Take the mean across the token dimension (optional, if you want to reduce further)
-                mean_tokenmeaned = torch.mean(weighted_means_summed, dim=1)  # Shape: [batch_size, latent_dim]
-                logvar_tokenmeaned = torch.mean(weighted_logvars_summed, dim=1)  # Shape: [batch_size, latent_dim]
+                    # Weight the means & logvars
+                    weighted_means = mean * mogpreds_expanded  # Shape: [batch_size, seq_length, num_components, latent_dim]
+                    weighted_logvars = logvar * mogpreds_expanded 
 
-                # Save the results
-                files_means[:, w, :] = mean_tokenmeaned
-                files_logvars[:, w, :] = logvar_tokenmeaned
-                files_mogpreds[:, w, :] = torch.mean(mogpreds, dim=1)  # Save the mean mogpreds across tokens
+                    # Sum over the components to get the final weighted mean for each token
+                    weighted_means_summed = torch.sum(weighted_means, dim=2)  # Shape: [batch_size, seq_length, latent_dim]
+                    weighted_logvars_summed = torch.sum(weighted_logvars, dim=2)  # Shape: [batch_size, seq_length, latent_dim]
+
+                    # Take the mean across the token dimension (optional, if you want to reduce further)
+                    mean_tokenmeaned = torch.mean(weighted_means_summed, dim=1)  # Shape: [batch_size, latent_dim]
+                    logvar_tokenmeaned = torch.mean(weighted_logvars_summed, dim=1)  # Shape: [batch_size, latent_dim]
+
+                    # Save the results
+                    files_means[:, w, :] = mean_tokenmeaned
+                    files_logvars[:, w, :] = logvar_tokenmeaned
+                    files_mogpreds[:, w, :] = torch.mean(mogpreds, dim=1)  # Save the mean mogpreds across tokens
 
 
                 # DECODER (Optional)
-                if inference_decode:
+                if inference_decode & (not return_random_file_embeddings):
                 
-                    # Reshape variables back to token level 
-                    z_token = z_pseudobatch.split(transformer_seq_length, dim=0)
-                    z_token = torch.stack(z_token, dim=0)
-
                     # BSE DECODER - at Token Level
-                    x_hat = bse(z_token, reverse=True)  
+                    x_hat = bse(z, reverse=True)  
 
                     # REMOVE PADDING - otherwise would reward recon loss for patients with fewer channels
                     x_nopad_list = remove_padded_channels_samePat(x, hash_channel_order) 
@@ -332,7 +353,7 @@ def bse_export_embeddings(
                             file_name = file_name,
                             save_svg = inference_save_svg,
                             **kwargs)
-
+            
             # After file complete, window/stride the file and save each file from batch seperately
             # Seperate directory for each win/stride combination
             # First pull off GPU and convert to numpy

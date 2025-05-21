@@ -1232,6 +1232,268 @@ def toroidal_kohonen_subfunction_pytorch(
     pl.savefig(savename_jpg_toroid, dpi=600)
     pl.savefig(savename_jpg_toroid.replace('.jpg', '.svg'))
 
+def plot_mog_histograms(
+    savedir, means_full, mogpreds_full,
+    ax_lims, max_tier1_chunks,
+    batch_idx=0, big_window_indices=None,
+    num_dims=3,
+    window_size=None, stride=None
+    
+):
+    """
+    Plot MoG component-wise histograms (tier0) and abstracted average histograms (tier1) over time.
+
+    Parameters:
+        savedir: str, directory to save plots
+        means_full: np.ndarray, shape (B, W, S, K, D)
+        mogpreds_full: np.ndarray, shape (B, W, S, K)
+        batch_idx: int
+        big_window_indices: list of int, which big_window indices to include
+        ax_lims: tuple, (xmin, xmax) for x-axis scaling on histograms
+        num_dims: int, number of latent dimensions to plot
+        window_size: int or None, how many windows to average over for tier1
+        stride: int or None, stride for moving window in tier1
+    """
+    import numpy as np
+    import matplotlib.pyplot as pl
+    from matplotlib import cm
+    from matplotlib.colors import Normalize
+
+    if big_window_indices is None:
+        big_window_indices = [0]
+
+    num_windows = len(big_window_indices)
+    num_components = means_full.shape[3]
+    max_dims = means_full.shape[-1]
+    num_dims = min(num_dims, max_dims)
+
+    # -- TIER 0A PLOTS (Show All BSE encode_samples) -- #
+    base_cmap = cm.get_cmap('bone')
+    clip_upper = 0.85
+    norm = Normalize(vmin=min(big_window_indices), vmax=max(big_window_indices))
+    window_colors = [base_cmap(clip_upper * norm(idx)) for idx in big_window_indices]
+
+    fig, axes = pl.subplots(nrows=num_components, ncols=1 + num_dims, figsize=(4 * (1 + num_dims), 3 * num_components))
+    fig2, weighted_axes = pl.subplots(nrows=1, ncols=num_dims, figsize=(4 * num_dims, 3))
+
+    if num_components == 1:
+        axes = np.expand_dims(axes, axis=0)
+
+    for comp in range(num_components):
+        # COLUMN 0: Mean MoG weights
+        ax0 = axes[comp, 0]
+        means = [mogpreds_full[batch_idx, win, :, comp].mean() for win in big_window_indices]
+        ax0.bar(range(num_windows), means, color=window_colors, width=0.8)
+        ax0.set_ylim([0, 1])
+        ax0.set_xticks(range(num_windows))
+        ax0.set_xticklabels([f"W{i}" for i in big_window_indices])
+        ax0.set_title(f'Mean Pred C{comp}')
+        ax0.set_ylabel('Mean Weight')
+
+        # Columns 1+ : per-dim histograms
+        for dim in range(num_dims):
+            ax = axes[comp, dim + 1]
+            for i, win_idx in enumerate(big_window_indices):
+                data = means_full[batch_idx, win_idx, :, comp, dim]
+                ax.hist(data, bins=20, alpha=0.5, label=f"W{win_idx}", color=window_colors[i])
+            ax.set_xlim(ax_lims)
+            ax.set_title(f'Latent {dim}')
+            # ax.grid(True)
+            # if comp == 0 and dim == num_dims - 1:
+            #     ax.legend(loc='upper right', fontsize='small')
+
+    for dim in range(num_dims):
+        ax = weighted_axes[dim]
+        for i, win_idx in enumerate(big_window_indices):
+            weighted_vals = (
+                mogpreds_full[batch_idx, win_idx, :, :, np.newaxis] *
+                means_full[batch_idx, win_idx, :, :, dim:dim+1]
+            ).sum(axis=1).flatten()
+            ax.hist(weighted_vals, bins=20, alpha=0.6, label=f"W{win_idx}", color=window_colors[i])
+        ax.set_xlim(ax_lims)
+        ax.set_title(f'Weighted Mean (Dim {dim})')
+        # ax.grid(True)
+        # if dim == num_dims - 1:
+        #     ax.legend(loc='upper right', fontsize='small')
+
+    fig.savefig(f"{savedir}/tier0A_components.jpg")
+    fig2.savefig(f"{savedir}/tier0A_weighted_means.jpg")
+
+
+    # -- TIER 0B PLOTS (Averaged across BSE encode_samples) -- #
+    base_cmap = cm.get_cmap('bone')
+    clip_upper = 0.85
+    norm = Normalize(vmin=min(big_window_indices), vmax=max(big_window_indices))
+    window_colors = [base_cmap(clip_upper * norm(idx)) for idx in big_window_indices]
+
+    fig, axes = pl.subplots(nrows=num_components, ncols=1 + num_dims, figsize=(4 * (1 + num_dims), 3 * num_components))
+    fig2, weighted_axes = pl.subplots(nrows=1, ncols=num_dims, figsize=(4 * num_dims, 3))
+
+    if num_components == 1:
+        axes = np.expand_dims(axes, axis=0)
+
+    for comp in range(num_components):
+        # COLUMN 0: Mean MoG weights
+        ax0 = axes[comp, 0]
+        means = [mogpreds_full[batch_idx, win, :, comp].mean() for win in big_window_indices]
+        ax0.bar(range(num_windows), means, color=window_colors, width=0.8)
+        ax0.set_ylim([0, 1])
+        ax0.set_xticks(range(num_windows))
+        ax0.set_xticklabels([f"W{i}" for i in big_window_indices])
+        ax0.set_title(f'Mean Pred C{comp}')
+        ax0.set_ylabel('Mean Weight')
+
+        # Columns 1+ : per-dim histograms
+        for dim in range(num_dims):
+            ax = axes[comp, dim + 1]
+            for i, win_idx in enumerate(big_window_indices):
+                data = np.mean(means_full[batch_idx, win_idx, :, comp, dim])
+                ax.hist(data, bins=20, alpha=0.5, label=f"W{win_idx}", color=window_colors[i])
+            ax.set_xlim(ax_lims)
+            ax.set_title(f'Latent {dim}')
+            # ax.grid(True)
+            # if comp == 0 and dim == num_dims - 1:
+            #     ax.legend(loc='upper right', fontsize='small')
+
+    for dim in range(num_dims):
+        ax = weighted_axes[dim]
+        for i, win_idx in enumerate(big_window_indices):
+            weighted_vals = (
+                mogpreds_full[batch_idx, win_idx, :, :, np.newaxis] *
+                means_full[batch_idx, win_idx, :, :, dim:dim+1]
+            ).sum(axis=1).flatten().mean()
+            ax.hist(weighted_vals, bins=20, alpha=0.6, label=f"W{win_idx}", color=window_colors[i])
+        ax.set_xlim(ax_lims)
+        ax.set_title(f'Weighted Mean (Dim {dim})')
+        # ax.grid(True)
+        # if dim == num_dims - 1:
+        #     ax.legend(loc='upper right', fontsize='small')
+
+    fig.savefig(f"{savedir}/tier0B_components.jpg")
+    fig2.savefig(f"{savedir}/tier0B_weighted_means.jpg")
+
+    # -- TIER 1A PLOTS (Temporal Abstraction, but show all BSE encode_samples ) -- #
+    if window_size is not None and stride is not None:
+        tier1_chunks = []
+        chunk_labels = []
+        idx_array = np.arange(means_full.shape[1])
+        for i in range(0, len(idx_array) - window_size + 1, stride):
+            if max_tier1_chunks is not None and len(tier1_chunks) >= max_tier1_chunks:
+                break
+            chunk = idx_array[i:i + window_size]
+            tier1_chunks.append(chunk)
+            chunk_labels.append(f"{chunk[0]}-{chunk[-1]}")
+
+        n_chunks = len(tier1_chunks)
+        tier1_colors = [base_cmap(clip_upper * i / max(1, n_chunks - 1)) for i in range(n_chunks)]
+
+        fig3, axes3 = pl.subplots(nrows=num_components, ncols=1 + num_dims, figsize=(4 * (1 + num_dims), 3 * num_components))
+        fig4, weighted_axes2 = pl.subplots(nrows=1, ncols=num_dims, figsize=(4 * num_dims, 3))
+        if num_components == 1:
+            axes3 = np.expand_dims(axes3, axis=0)
+
+        for comp in range(num_components):
+            # COLUMN 0: Averaged MoG weights
+            ax0 = axes3[comp, 0]
+            mean_vals = []
+            for chunk in tier1_chunks:
+                vals = mogpreds_full[batch_idx, chunk, :, comp]
+                mean_vals.append(vals.mean())
+            ax0.bar(range(n_chunks), mean_vals, color=tier1_colors, width=0.8)
+            ax0.set_ylim([0, 1])
+            ax0.set_xticks(range(n_chunks))
+            ax0.set_xticklabels(chunk_labels, rotation=45)
+            ax0.set_title(f'Tier1A Mean Pred C{comp}')
+
+            for dim in range(num_dims):
+                ax = axes3[comp, dim + 1]
+                for i, chunk in enumerate(tier1_chunks):
+                    data = means_full[batch_idx, chunk, :, comp, dim].reshape(-1)
+                    ax.hist(data, bins=20, alpha=0.5, label=chunk_labels[i], color=tier1_colors[i])
+                ax.set_xlim(ax_lims)
+                ax.set_title(f'Latent {dim}')
+                # ax.grid(True)
+                # if comp == 0 and dim == num_dims - 1:
+                #     ax.legend(loc='upper right', fontsize='small')
+
+        for dim in range(num_dims):
+            ax = weighted_axes2[dim]
+            for i, chunk in enumerate(tier1_chunks):
+                preds = mogpreds_full[batch_idx, chunk, :, :, np.newaxis]  # (W, S, K, 1)
+                means = means_full[batch_idx, chunk, :, :, dim:dim+1]      # (W, S, K, 1)
+                weighted_vals = (preds * means).sum(axis=2).reshape(-1)    # sum over components, flatten over W and S
+                ax.hist(weighted_vals, bins=20, alpha=0.6, label=chunk_labels[i], color=tier1_colors[i])
+            ax.set_xlim(ax_lims)
+            ax.set_title(f'Tier1A Weighted Mean (Dim {dim})')
+            # ax.grid(True)
+            # if dim == num_dims - 1:
+            #     ax.legend(loc='upper right', fontsize='small')
+
+        fig3.savefig(f"{savedir}/tier1A_components.jpg")
+        fig4.savefig(f"{savedir}/tier1A_weighted_means.jpg")
+
+    # -- TIER 1B PLOTS (Temporal Abstraction, averaged across BSE encode_samples) -- #
+    if window_size is not None and stride is not None:
+        tier1_chunks = []
+        chunk_labels = []
+        idx_array = np.arange(means_full.shape[1])
+        for i in range(0, len(idx_array) - window_size + 1, stride):
+            if max_tier1_chunks is not None and len(tier1_chunks) >= max_tier1_chunks:
+                break
+            chunk = idx_array[i:i + window_size]
+            tier1_chunks.append(chunk)
+            chunk_labels.append(f"{chunk[0]}-{chunk[-1]}")
+
+        n_chunks = len(tier1_chunks)
+        tier1_colors = [base_cmap(clip_upper * i / max(1, n_chunks - 1)) for i in range(n_chunks)]
+
+        fig3, axes3 = pl.subplots(nrows=num_components, ncols=1 + num_dims, figsize=(4 * (1 + num_dims), 3 * num_components))
+        fig4, weighted_axes2 = pl.subplots(nrows=1, ncols=num_dims, figsize=(4 * num_dims, 3))
+        if num_components == 1:
+            axes3 = np.expand_dims(axes3, axis=0)
+
+        for comp in range(num_components):
+            # COLUMN 0: Averaged MoG weights
+            ax0 = axes3[comp, 0]
+            mean_vals = []
+            for chunk in tier1_chunks:
+                vals = mogpreds_full[batch_idx, chunk, :, comp]
+                mean_vals.append(vals.mean())
+            ax0.bar(range(n_chunks), mean_vals, color=tier1_colors, width=0.8)
+            ax0.set_ylim([0, 1])
+            ax0.set_xticks(range(n_chunks))
+            ax0.set_xticklabels(chunk_labels, rotation=45)
+            ax0.set_title(f'Tier1B Mean Pred C{comp}')
+
+            for dim in range(num_dims):
+                ax = axes3[comp, dim + 1]
+                for i, chunk in enumerate(tier1_chunks):
+                    data = means_full[batch_idx, chunk, :, comp, dim].reshape(-1).mean()
+                    ax.hist(data, bins=20, alpha=0.5, label=chunk_labels[i], color=tier1_colors[i])
+                ax.set_xlim(ax_lims)
+                ax.set_title(f'Latent {dim}')
+                # ax.grid(True)
+                # if comp == 0 and dim == num_dims - 1:
+                #     ax.legend(loc='upper right', fontsize='small')
+
+        for dim in range(num_dims):
+            ax = weighted_axes2[dim]
+            for i, chunk in enumerate(tier1_chunks):
+                preds = mogpreds_full[batch_idx, chunk, :, :, np.newaxis]  # (W, S, K, 1)
+                means = means_full[batch_idx, chunk, :, :, dim:dim+1]      # (W, S, K, 1)
+                weighted_vals = (preds * means).sum(axis=2).reshape(-1).mean()    # sum over components, flatten over W and S
+                ax.hist(weighted_vals, bins=20, alpha=0.6, label=chunk_labels[i], color=tier1_colors[i])
+            ax.set_xlim(ax_lims)
+            ax.set_title(f'Tier1B Weighted Mean (Dim {dim})')
+            # ax.grid(True)
+            # if dim == num_dims - 1:
+            #     ax.legend(loc='upper right', fontsize='small')
+
+        fig3.savefig(f"{savedir}/tier1B_components.jpg")
+        fig4.savefig(f"{savedir}/tier1B_weighted_means.jpg")
+
+
+
 def compute_histograms(data, min_val, max_val, B):
     """
     Compute histogram bin counts for each dimension of a 2D array.

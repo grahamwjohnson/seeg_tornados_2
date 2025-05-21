@@ -396,33 +396,30 @@ class SEEG_BSP_Dataset(Dataset):
     def __init__(
         self,
         gpu_id,
+
+        # BSP Info
         bsp_source_dir,
-        bsp_window_sec_duration,
-        bsp_window_sec_stride,
         bsp_transformer_seq_length,
         bsp_epoch_dataset_size,
         bsp_latent_dim,
-        data_logger_enabled,
-        data_logger_file,
+
+        # BSE Info (needed tp pull proper data sizes for feeding through pretrained BSE)
+        transformer_seq_length, # for BSE
+        encode_token_samples,
+
         **kwargs):
 
         self.gpu_id = gpu_id
+
+        # BSP Info
         self.bsp_source_dir = bsp_source_dir
-        self.bsp_window_sec_duration = bsp_window_sec_duration
-        self.bsp_window_sec_stride = bsp_window_sec_stride
         self.bsp_transformer_seq_length = bsp_transformer_seq_length
         self.bsp_epoch_dataset_size = bsp_epoch_dataset_size
         self.bsp_latent_dim = bsp_latent_dim
-        self.data_logger_enabled = data_logger_enabled
-        self.data_logger_file = data_logger_file
         self.kwargs = kwargs
 
-        self.future_buffer = 0 # Needed for ground truth of autoregression steps, initialize to 0 when not doing autoregression
-
-        # Get the source window duration and seconds from directory name
-        s = self.bsp_source_dir.split("/")[-1].split("_")
-        self.original_sec_duration = int(s[0].replace("SecondWindow", ''))
-        self.original_sec_stride = int(s[1].replace("SecondStride", ''))
+        # BSE info
+        self.bse_samples = transformer_seq_length * encode_token_samples
 
         file_names = glob.glob(f'{bsp_source_dir}/*.pkl')
         pat_ids_all = [x.split("/")[-1].split("_")[0] for x in file_names]
@@ -432,11 +429,10 @@ class SEEG_BSP_Dataset(Dataset):
         self.files_bypat = [''] * self.num_pats
         self.numfiles_bypat = [-1] * self.num_pats
         for i in range(self.num_pats):
-            self.files_bypat[i] = glob.glob(f'{self.bsp_source_dir}/{self.pat_ids_unique[i]}*.pkl')
+            self.files_bypat[i] = glob.glob(f'{self.bsp_source_dir.replace('*', self.pat_ids_unique[i])}/*.pkl')
             self.numfiles_bypat[i] = len(self.files_bypat[i])
 
-    def set_future_buffer(self, val):
-        self.future_buffer = val
+        print(f"Num Pats in Dataset: {self.num_pats}, Num Total Little Pickles in Dataset: {sum(self.numfiles_bypat)} (range per pat: {min(self.numfiles_bypat)}-{max(self.numfiles_bypat)})")
 
     def __len__(self):
         return self.bsp_epoch_dataset_size
@@ -448,40 +444,18 @@ class SEEG_BSP_Dataset(Dataset):
 
         # Load the file's pickle
         with open(rand_filename, 'rb') as file: file_data = pickle.load(file)
-        ww_means = file_data['windowed_weighted_means']
-        ww_logvars = file_data['windowed_weighted_logvars']
-        w_mogpreds = file_data['windowed_mogpreds']
 
-        # Rewindow the data
-        if (self.original_sec_duration !=  self.bsp_window_sec_duration) or (self.original_sec_stride != self.bsp_window_sec_stride):
-            rewin_means, rewin_logvars, rewin_mogpreds = utils_functions.rewindow_data(
-                    ww_means, ww_logvars, w_mogpreds, self.original_sec_duration,  self.original_sec_stride, self.bsp_window_sec_duration, self.bsp_window_sec_stride)
-        else:
-            rewin_means = ww_means
-            rewin_logvars = ww_logvars
-            rewin_mogpreds = w_mogpreds
-
-        # Now pull out a random sequence
-        num_windows_in_file = rewin_means.shape[0]
-        rand_start = int(random.uniform(0, num_windows_in_file - self.bsp_transformer_seq_length - self.future_buffer - 1))
-
-        selected_means = rewin_means[rand_start:rand_start + self.bsp_transformer_seq_length + self.future_buffer, :]
-        selected_logvars = rewin_logvars[rand_start:rand_start + self.bsp_transformer_seq_length + self.future_buffer, :]
-        selected_mogpreds = rewin_mogpreds[rand_start:rand_start + self.bsp_transformer_seq_length + self.future_buffer, :]
-
-        # # Concatenate the means and logvars together to for the input embeddings for BSP
-        # data_np = np.concatenate([selected_means, selected_logvars], axis=1)
-        # data_tensor = torch.Tensor(data_np).to(torch.float32)
-
-        # Perform reparametrization
-        std = torch.exp(0.5 * torch.Tensor(selected_logvars).to(torch.float32))  # Standard deviation
-        eps = torch.randn_like(std)     # Sample from a standard normal distribution
-        z = torch.Tensor(selected_means).to(torch.float32) + eps * std  # Reparameterized sample
-
-        # Get pat id
-        pat_id = rand_filename.split("/")[-1].split("_")[0]
-
-        return z, selected_mogpreds, pat_id
+        # Pull a random sequence of 
+        samples_in_file = file_data.shape[1]
+        samples_needed = self.bsp_transformer_seq_length * self.bse_samples
+        rand_start_idx = int(random.uniform(0, samples_in_file - samples_needed -1))
+        x = file_data[:, rand_start_idx:rand_start_idx+samples_needed]
+        x = torch.tensor(x, dtype=torch.float32)
+        x = x.view(
+            x.shape[0],  # channels
+            self.bsp_transformer_seq_length,  # sequence steps
+            self.bse_samples)  # samples per step
         
+        return x, rand_filename
 
 

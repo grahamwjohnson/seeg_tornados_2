@@ -219,14 +219,23 @@ inference_batch_perpat_override: 1 # Set to -1 for no override. Use with caution
 
 ### ----------------------------------- ###
 
+### Brain-State Embedder to Brain-State Predictor (BSE2P) ###
+
+bsp2e_growingtransformer_dims: [1024, 2048]
+bse2p_attention_layers_per_stage: 2
+bse2p_num_heads: 32
+
+
+
+### ----------------------------------- ###
 
 ### Brain-State Predictor (BSP) ###
 
-continue_existing_training: True
+continue_existing_training: False
 cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/foxterrier_sheldrake_Thu_May__1_12_40_48_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
-bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/latent_files/1SecondWindow_1SecondStride'
+bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/train_pats/*/scaled_data_epochs/all_epochs_woSPES'
 bsp_num_dataloader_workers: 0 # observed to be unstable if not set to 0
 
 # BSP Optimizer
@@ -239,12 +248,10 @@ bsp_singlebatch_printing_interval_train: 512
 bsp_epochs_to_train: 99999
 
 # BSP
-bsp_transformer_seq_length: 128
-bsp_window_sec_duration: 64 # Must be multiple of input data
-bsp_window_sec_stride: 1 # Must be multiple of input data
-bsp_latent_dim: 1024 # Reparam means and logvars
-bsp_n_heads: 32
-bsp_n_layers: 32
+bsp_transformer_seq_length: 8
+bsp_latent_dim: kwargs['bsp_latent_dim'] = kwargs['bsp2e_growingtransformer_dims'][-1]
+bsp_n_heads: 64
+bsp_n_layers: 16
 bsp_ffn_dim_multiplier: 1.0
 bsp_max_batch_size: kwargs['bsp_max_batch_size'] = kwargs['bsp_batchsize']
 bsp_max_seq_len: kwargs['bsp_max_seq_len'] = kwargs['bsp_transformer_seq_length']
@@ -252,13 +259,35 @@ bsp_transformer_activation: "silu"
 bsp_attention_dropout: 0.0
 
 # BSP Training
-bsp_LR: kwargs['bsp_LR'] = 1e-8
+bsp_LR: kwargs['bsp_LR'] = 1e-6
 bsp_loss_weight: 1
 bsp_transformer_start_pos: 0 # hardcode to 0
 bsp_epoch_dataset_size: kwargs['bsp_epoch_dataset_size'] = 1024 * kwargs['bsp_batchsize']
-bsp_batchsize: 16
+bsp_batchsize: 2
 bsp_autoregressive_plot_steps: 64
 bsp_autogressive_subbatch_to_plot: 4 # How many of the batch index should be plotted? Slow if too many
+
+### ----------------------------------- ###
+
+# BSP to BSE decoder (BSP2E)
+
+bsp2e_time_dims: [2,4,8,16,32,64,128,256,512]
+bsp2e_full_dims: [2048, 1024]
+
+
+### ----------------------------------- ###
+
+### Brain-State Visualizer (BSV) ###
+
+bsv_dims: [2048, 2048, 1024, 1024, 512, 512, 256, 256, 128, 128, 64, 64, 32, 32, 16, 16, 8, 8, 4, 4, 2, 2]
+
+bsv_LR: kwargs['bsv_LR'] = 1e-6
+
+bsv_weight_decay: 0.1
+bsv_adamW_beta1: 0.9
+bsv_adamW_beta2: 0.95 
+
+### ----------------------------------- ###
 
 # SOM for autoregression plotting
 som_precomputed_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.8777decay0.010000min_sigma38.4with0.8855decay1.0min_numfeatures1027140_dims1024_batchsize64_epochs30_rolled_v50_h-10.pt'
