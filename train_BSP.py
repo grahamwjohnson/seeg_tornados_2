@@ -250,12 +250,17 @@ class Trainer:
         self,
         dataloader_curr,
         dataset_string,
+        bsp_singlebatch_printing_interval_train,
         bsp_autoregressive_plot_steps,
         **kwargs):
 
         iter_curr = 0
         total_iters = len(dataloader_curr)
-        for x, _ in dataloader_curr: 
+
+        # Initialize the BSV emebeddings for the epoch
+        bsv_epoch_embeddings = torch.zeros(total_iters * dataloader_curr.batch_size, self.bsp_transformer_seq_length, 2).to(self.gpu_id)
+        bsv_epoch_filenames = [""] * (total_iters * dataloader_curr.batch_size)
+        for x, filename, pat_idxs in dataloader_curr: 
 
             # BSE
             with torch.inference_mode():
@@ -270,14 +275,16 @@ class Trainer:
                 z = torch.stack(z, dim=0)
 
             # BSP
-            post_bse2p, post_bsp, bsp_attW, post_bsp2e = self.bsp(z[:,:-1,:,:]) # 1-shifted
+            post_bse2p, post_bsp, bsp_attW, post_bsp2e = self.bsp(z) # Not 1-shifted
 
             # BSV
             bsv_enc, bsv_dec = self.bsv(post_bse2p.detach())
 
             # Loss
-            bsp_loss = loss_functions.cosine_loss(z[:,1:,:,:], post_bsp2e) # Opoosite 1-shifted
-            bsv_loss = loss_functions.cosine_loss(post_bse2p.detach(), bsv_dec)
+            bsp_pred_loss = loss_functions.cosine_loss(post_bse2p[:, :-1, :], post_bsp[:, 1:, :]) # Opoosite 1-shifted
+            bsp_recon_loss = loss_functions.cosine_loss(z[:,1:,:,:], post_bsp2e[:,1:,:,:])
+            bsp_loss = bsp_pred_loss + bsp_recon_loss
+            bsv_loss = loss_functions.bsv_mse_loss(post_bse2p.detach(), bsv_dec)
 
             # Step optimizers
             self.opt_bsp.zero_grad()
@@ -288,6 +295,10 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(self.bsv.module.parameters(), max_norm=1.0)
             self.opt_bsp.step()
             self.opt_bsv.step()
+
+            # Store the BSV encodings
+            bsv_epoch_embeddings[iter_curr*dataloader_curr.batch_size:iter_curr*dataloader_curr.batch_size + dataloader_curr.batch_size, :, :] = bsv_enc
+            bsv_epoch_filenames[iter_curr*dataloader_curr.batch_size:iter_curr*dataloader_curr.batch_size + dataloader_curr.batch_size] = filename
 
             # Realtime terminal info and WandB 
             if (iter_curr%self.recent_display_iters==0):
@@ -303,17 +314,43 @@ class Trainer:
                 wandb.define_metric("*", step_metric="Steps")
                 train_step = self.epoch * int(total_iters) + iter_curr
                 metrics = dict(
+                    train_bsp_pred_loss=bsp_pred_loss,
+                    train_bsp_recon_loss=bsp_recon_loss,
                     train_bsp_loss=bsp_loss,
                     train_bsv_loss=bsv_loss,
                     train_LR_bsp=self.opt_bsp.param_groups[0]['lr'], 
                     train_LR_bsv=self.opt_bsv.param_groups[0]['lr'], 
                     train_epoch=self.epoch)
-            try:
-                wandb.log({**metrics, 'Steps': train_step})
-            except Exception as e:
-                print(f"An error occurred during WandB logging': {e}")
+                try:
+                    wandb.log({**metrics, 'Steps': train_step})
+                except Exception as e:
+                    print(f"An error occurred during WandB logging': {e}")
+
+            if (self.gpu_id == 0) & (iter_curr % bsp_singlebatch_printing_interval_train == 0):
+                try:
+                    utils_functions.print_BSP_attention_singlebatch(
+                        gpu_id=self.gpu_id,
+                        epoch = self.epoch, 
+                        iter_curr = iter_curr,
+                        pat_idxs = pat_idxs, 
+                        scores_byLayer_meanHeads = bsp_attW, 
+                        savedir = self.model_dir + f"/plots/{dataset_string}/attention", 
+                        **kwargs)
+                except:
+                    print(f"Attention plotting failed")
 
             iter_curr = iter_curr + 1
+
+        # After epoch completes, plot 2D BSV output
+        print("Plotting BSV 2D outputs for epoch")
+        utils_functions.print_BSV_2D_embeddings(
+            gpu_id=self.gpu_id,
+            embeddings=bsv_epoch_embeddings,
+            filenames=bsv_epoch_filenames,
+            epoch=self.epoch,
+            iter_curr=iter_curr,
+            savedir=self.model_dir + f"/plots/{dataset_string}/bsv_embeddings",
+            **kwargs)
 
     def _save_checkpoint(self, epoch, delete_old_checkpoints, **kwargs):
 

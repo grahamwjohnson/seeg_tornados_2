@@ -476,38 +476,10 @@ class SEEG_BSP_Dataset(Dataset):
         # [seq, padded_channels, FS] --> [seq, FS, padded_channel, 1]
         out = padded.permute(0, 2, 1).unsqueeze(3)
 
-        return out, rand_filename
+        return out, rand_filename, rand_pat_idx
 
 
 
 
-
-
-
-
-
-
-    # def __getitem__(self, idx): 
-    #     rand_pat_idx = int(random.uniform(0, self.num_pats))
-    #     rand_file_idx = int(random.uniform(0, self.numfiles_bypat[rand_pat_idx]))
-    #     rand_filename = self.files_bypat[rand_pat_idx][rand_file_idx]
-
-    #     # Load the file's pickle
-    #     with open(rand_filename, 'rb') as file: file_data = pickle.load(file)
-
-    #     # Pull a random sequence of 
-    #     samples_in_file = file_data.shape[1]
-    #     samples_needed = self.bsp_transformer_seq_length * self.bse_samples
-    #     rand_start_idx = int(random.uniform(0, samples_in_file - samples_needed -1))
-    #     x = file_data[:, rand_start_idx:rand_start_idx+samples_needed]
-    #     x = torch.tensor(x, dtype=torch.float32)
-    #     x = x.view(
-    #         x.shape[0],  # channels
-    #         self.bsp_transformer_seq_length,  # sequence steps
-    #         self.bse_samples)  # samples per step
-        
-
-        
-    #     return x, rand_filename
 
 

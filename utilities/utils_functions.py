@@ -487,7 +487,7 @@ def bsp_initialize_directories(
         kwargs['log_dir'] =  kwargs['model_dir'] + '/data_logs'
 
         # Find the epoch to start training
-        check_dir = kwargs['model_dir'] + "/checkpoints"
+        check_dir = kwargs['model_dir'] + "/bsp_checkpoints"
         epoch_dirs = glob.glob(check_dir + '/Epoch*')
         epoch_nums = [int(f.split("/")[-1].replace("Epoch_","")) for f in epoch_dirs]
 
@@ -2554,6 +2554,31 @@ def print_BSP_attention_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, scores_b
         pl.savefig(savename_jpg, dpi=200)
         pl.close(fig)   
 
+    pl.close('all')
+
+def print_BSV_2D_embeddings(gpu_id, embeddings, filenames, epoch, iter_curr, savedir, **kwargs):
+    print("Plotting 2D embeddings...")
+
+    # Flatten batch and token dimensions if needed
+    embeddings = embeddings.detach().cpu().numpy()
+    embeddings = embeddings.reshape(embeddings.shape[0] * embeddings.shape[1], embeddings.shape[2])
+
+    # Check dimensionality
+    assert embeddings.shape[1] == 2, f"Expected 2D embeddings, got shape {embeddings.shape}"
+
+    # Create scatter plot
+    fig, ax = pl.subplots(figsize=(6, 6))
+    ax.scatter(embeddings[:, 0], embeddings[:, 1], s=5, alpha=0.7)
+    ax.set_title(f"2D Embeddings - Epoch {epoch}, Iter {iter_curr}, GPU {gpu_id}")
+    ax.set_xlabel("Dim 1")
+    ax.set_ylabel("Dim 2")
+    ax.grid(True)
+
+    # Save plot
+    os.makedirs(savedir, exist_ok=True)
+    savename_jpg = f"{savedir}/Embeddings_Epoch{epoch}_iter{iter_curr}_GPU{gpu_id}.jpg"
+    pl.savefig(savename_jpg, dpi=200)
+    pl.close(fig)
     pl.close('all')
 
 # POST-HOC PROCESSING

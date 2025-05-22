@@ -255,7 +255,7 @@ def patient_adversarial_loss_function(probs, labels, classifier_weight):
     return classifier_weight * adversarial_loss
 
 
-# BSP & BSV LOSS
+# BSP LOSS
 def cosine_loss(a: torch.Tensor, b: torch.Tensor, reduction='mean') -> torch.Tensor:
     """
     Compute cosine loss between two embeddings of shape 
@@ -286,3 +286,19 @@ def cosine_loss(a: torch.Tensor, b: torch.Tensor, reduction='mean') -> torch.Ten
         return loss.reshape(*a.shape[:-1])
     else:
         raise ValueError(f"Invalid reduction type: {reduction}")
+
+# BSV Loss
+def bsv_mse_loss(a, b, reduction='mean'):
+    """
+    Computes mean squared error (MSE) between tensors a and b.
+
+    Args:
+        a (Tensor): Predicted tensor.
+        b (Tensor): Target tensor.
+        reduction (str): 'mean', 'sum', or 'none'.
+
+    Returns:
+        Tensor: The computed loss.
+    """
+    loss = F.mse_loss(a, b, reduction=reduction)
+    return loss
