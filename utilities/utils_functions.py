@@ -2583,10 +2583,72 @@ def print_BSV_2D_embeddings(gpu_id, embeddings, filenames, epoch, iter_curr, sav
     pl.close(fig)
     pl.close('all')
 
+def print_BSP_recon_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, z, post_bsp2e, savedir, **kwargs):
+
+    # Convert tensors to numpy
+    z = z.detach().cpu().numpy()  # shape: [B, C, F, D]
+    post_bsp2e = post_bsp2e.detach().cpu().numpy()  # shape: [B, C, F, D]
+
+    batch_size = z.shape[0]
+    first_idx = 0
+    last_idx = z.shape[1] - 1
+
+    os.makedirs(savedir, exist_ok=True)
+
+    for b in range(batch_size):
+        z_first = z[b, first_idx].T  # shape: [D, F]
+        z_last = z[b, last_idx].T
+
+        post_first = post_bsp2e[b, first_idx].T
+        post_last = post_bsp2e[b, last_idx].T
+
+        # Determine shared color scale
+        vmin = min(z_first.min(), z_last.min(), post_first.min(), post_last.min())
+        vmax = max(z_first.max(), z_last.max(), post_first.max(), post_last.max())
+
+        fig, axes = pl.subplots(2, 2, figsize=(10, 8))
+
+        im00 = axes[0, 0].imshow(post_first, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        axes[0, 0].set_title(f'Patient {pat_idxs[b]} - Original (First)')
+        axes[0, 0].set_ylabel('Latent Dim')
+
+        im01 = axes[0, 1].imshow(z_first, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        axes[0, 1].set_title(f'Patient {pat_idxs[b]} - Reconstructed (First)')
+
+        im10 = axes[1, 0].imshow(post_last, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        axes[1, 0].set_title(f'Patient {pat_idxs[b]} - Original (Last)')
+        axes[1, 0].set_ylabel('Latent Dim')
+        axes[1, 0].set_xlabel('Sequence')
+
+        im11 = axes[1, 1].imshow(z_last, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        axes[1, 1].set_title(f'Patient {pat_idxs[b]} - Reconstructed (Last)')
+        axes[1, 1].set_xlabel('Sequence')
+
+        # Add colorbar to the right of the plots
+        fig.tight_layout(rect=[0, 0, 0.95, 1])
+        cbar_ax = fig.add_axes([0.96, 0.15, 0.015, 0.7])
+        fig.colorbar(im11, cax=cbar_ax)
+
+        # Save figure
+        savename_jpg = f"{savedir}/BSP_Recon_Epoch{epoch}_Iter{iter_curr}_GPU{gpu_id}_Batch{b}_Pat{pat_idxs[b]}.jpg"
+        pl.savefig(savename_jpg, dpi=200)
+        pl.close(fig)
+
+    pl.close('all')
+
+
 def print_BSV_recon_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, post_bse2p, bsv_dec, savedir, **kwargs):
+    import numpy as np
+    import os
+    import matplotlib.pyplot as pl
+
     # Flatten batch and token dimensions if needed
     post_bse2p = post_bse2p.detach().cpu().numpy()
     bsv_dec = bsv_dec.detach().cpu().numpy()
+
+    # Transpose for plotting: (latent_dim, sequence) -> (sequence, latent_dim)
+    post_bse2p = post_bse2p.transpose(0, 2, 1)
+    bsv_dec = bsv_dec.transpose(0, 2, 1)
 
     # Determine common vmin and vmax for consistent color scaling
     vmin = min(post_bse2p.min(), bsv_dec.min())
@@ -2607,13 +2669,13 @@ def print_BSV_recon_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, post_bse2p, 
 
         im1 = ax1.imshow(post_bse2p[i], aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
         ax1.set_title(f'Patient {pat_idxs[i]} - Original')
-        ax1.set_xlabel('Latent Dim')
-        ax1.set_ylabel('Sequence')
+        ax1.set_xlabel('Sequence')
+        ax1.set_ylabel('Latent Dim')
 
         im2 = ax2.imshow(bsv_dec[i], aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
         ax2.set_title(f'Patient {pat_idxs[i]} - Reconstructed')
-        ax2.set_xlabel('Latent Dim')
-        ax2.set_ylabel('Sequence')
+        ax2.set_xlabel('Sequence')
+        ax2.set_ylabel('Latent Dim')
 
         img_for_cbar = im2  # Just use the last image for colorbar reference
 
@@ -2629,6 +2691,7 @@ def print_BSV_recon_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, post_bse2p, 
     pl.savefig(savename_jpg, dpi=200)
     pl.close(fig)
     pl.close('all')
+
 
 
 # POST-HOC PROCESSING

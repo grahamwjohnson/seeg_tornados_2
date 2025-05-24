@@ -230,8 +230,8 @@ bse2p_num_heads: 32
 
 ### Brain-State Predictor (BSP) ###
 
-continue_existing_training: False
-cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/africanparadiseflycatcher_sheldrake_Fri_May_23_12_18_29_2025' 
+continue_existing_training: True
+cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/stinkbug_sheldrake_Sat_May_24_00_36_21_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
 bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/train_pats/*/scaled_data_epochs/all_epochs_woSPES'
@@ -282,6 +282,8 @@ bsp2e_full_dims: [1024, 1024]
 bsv_dims: [1024, 1024, 512, 512, 256, 256, 128, 128, 64, 64, 32, 32, 16, 16, 8, 8, 4, 4, 2, 2]
 
 bsv_LR: kwargs['bsv_LR'] = 1e-6
+
+bsv_kld_weight: 100
 
 bsv_weight_decay: 0.1
 bsv_adamW_beta1: 0.9

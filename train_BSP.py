@@ -258,11 +258,11 @@ class Trainer:
 
         # Initialize the BSV emebeddings for the epoch, running over epochs
         if bsv_epoch_mu == []:
-            self.bsv_epoch_mu = torch.rand(len(self.train_dataloader) * self.train_dataloader.batch_size, self.bsp_transformer_seq_length, 2).to(self.gpu_id) * 2 - 1
+            self.bsv_epoch_mu = torch.randn(len(self.train_dataloader) * self.train_dataloader.batch_size, self.bsp_transformer_seq_length, 2).to(self.gpu_id) 
         else: self.bsv_epoch_mu = bsv_epoch_mu.to(gpu_id)
 
         if bsv_epoch_logvar == []:
-            self.bsv_epoch_logvar = torch.rand(len(self.train_dataloader) * self.train_dataloader.batch_size, self.bsp_transformer_seq_length, 2).to(self.gpu_id) * 2 - 1
+            self.bsv_epoch_logvar = torch.randn(len(self.train_dataloader) * self.train_dataloader.batch_size, self.bsp_transformer_seq_length, 2).to(self.gpu_id) 
         else: self.bsv_epoch_logvar = bsv_epoch_logvar.to(gpu_id)
 
         if bsv_epoch_filenames == []:
@@ -329,6 +329,7 @@ class Trainer:
             mu_reshaped = self.bsv_epoch_mu.reshape(self.bsv_epoch_mu.shape[0]*self.bsv_epoch_mu.shape[1], -1)
             logvar_reshaped = self.bsv_epoch_logvar.reshape(self.bsv_epoch_logvar.shape[0]*self.bsv_epoch_logvar.shape[1], -1)
             bsv_kld_loss = loss_functions.bsv_kld_loss(mu_reshaped, logvar_reshaped, **kwargs)
+            # bsv_kld_loss = loss_functions.bsv_kld_loss(mu, logvar, **kwargs)
             bsv_loss = bsv_recon_loss + bsv_kld_loss
 
             # Step optimizers
@@ -377,6 +378,16 @@ class Trainer:
                     pat_idxs = pat_idxs, 
                     scores_byLayer_meanHeads = bsp_attW, 
                     savedir = self.model_dir + f"/plots/{dataset_string}/attention", 
+                    **kwargs)
+
+                utils_functions.print_BSP_recon_singlebatch(
+                    gpu_id=self.gpu_id,
+                    epoch = self.epoch, 
+                    iter_curr = iter_curr,
+                    pat_idxs = pat_idxs, 
+                    z = z[:,1:,:,:], 
+                    post_bsp2e = post_bsp2e[:,1:,:,:],
+                    savedir = self.model_dir + f"/plots/{dataset_string}/bsp_recon", 
                     **kwargs)
                 
                 utils_functions.print_BSV_recon_singlebatch(
