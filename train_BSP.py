@@ -114,6 +114,9 @@ def main(
     bsp_opt_state_dict_prev_path = [],
     bsv_state_dict_prev_path = [],
     bsv_opt_state_dict_prev_path = [],
+    running_bsv_mu_path = [],
+    running_bsv_logvar_path = [],
+    running_bsv_filenames_path = [],
 
     **kwargs):
 
@@ -155,6 +158,20 @@ def main(
         opt_bsv.load_state_dict(bsv_opt_state_dict_prev)
         print(f"[GPU{gpu_id}] BSV Model and Opt weights loaded from checkpoints")
 
+        # Load running embeddings for BSV
+        with open(running_bsv_mu_path, "rb") as f: bsv_epoch_mu = pickle.load(f)
+        with open(running_bsv_logvar_path, "rb") as f: bsv_epoch_logvar = pickle.load(f)
+        print(f"[GPU{gpu_id}] Running Embeddings loaded from checkpoints")
+
+        # Load running filenames for BSV
+        with open(running_bsv_filenames_path, "rb") as f: bsv_epoch_filenames = pickle.load(f)
+        print(f"[GPU{gpu_id}] Running Filenames loaded from checkpoints")
+
+    else:
+        bsv_epoch_mu = []
+        bsv_epoch_logvar = []
+        bsv_epoch_filenames = []
+
     # Create the trainer object
     trainer = Trainer(
         world_size=world_size,
@@ -166,6 +183,9 @@ def main(
         opt_bsv=opt_bsv,
         start_epoch=start_epoch,
         train_dataloader=train_dataloader,
+        bsv_epoch_mu=bsv_epoch_mu,
+        bsv_epoch_logvar=bsv_epoch_logvar,
+        bsv_epoch_filenames=bsv_epoch_filenames,
         wandb_run=wandb_run,
         **kwargs)
 
@@ -204,6 +224,9 @@ class Trainer:
         opt_bsv: torch.optim.Optimizer,
         start_epoch: int,
         train_dataloader: DataLoader,
+        bsv_epoch_mu,
+        bsv_epoch_logvar,
+        bsv_epoch_filenames,
         wandb_run,
         model_dir: str,
         transformer_seq_length: int, # BSE
@@ -233,6 +256,19 @@ class Trainer:
         self.bsv = DDP(bsv, device_ids=[gpu_id])
         self.opt_bsv = opt_bsv
 
+        # Initialize the BSV emebeddings for the epoch, running over epochs
+        if bsv_epoch_mu == []:
+            self.bsv_epoch_mu = torch.rand(len(self.train_dataloader) * self.train_dataloader.batch_size, self.bsp_transformer_seq_length, 2).to(self.gpu_id) * 2 - 1
+        else: self.bsv_epoch_mu = bsv_epoch_mu.to(gpu_id)
+
+        if bsv_epoch_logvar == []:
+            self.bsv_epoch_logvar = torch.rand(len(self.train_dataloader) * self.train_dataloader.batch_size, self.bsp_transformer_seq_length, 2).to(self.gpu_id) * 2 - 1
+        else: self.bsv_epoch_logvar = bsv_epoch_logvar.to(gpu_id)
+
+        if bsv_epoch_filenames == []:
+            self.bsv_epoch_filenames = [""] * (len(self.train_dataloader) * self.train_dataloader.batch_size)
+        else: self.bsv_epoch_filenames = bsv_epoch_filenames
+
         # Watch with WandB
         wandb.watch(self.bsp)
         wandb.watch(self.bsv)
@@ -257,9 +293,6 @@ class Trainer:
         iter_curr = 0
         total_iters = len(dataloader_curr)
 
-        # Initialize the BSV emebeddings for the epoch
-        bsv_epoch_embeddings = torch.zeros(total_iters * dataloader_curr.batch_size, self.bsp_transformer_seq_length, 2).to(self.gpu_id)
-        bsv_epoch_filenames = [""] * (total_iters * dataloader_curr.batch_size)
         for x, filename, pat_idxs in dataloader_curr: 
 
             # BSE
@@ -276,15 +309,27 @@ class Trainer:
 
             # BSP
             post_bse2p, post_bsp, bsp_attW, post_bsp2e = self.bsp(z) # Not 1-shifted
-
+ 
             # BSV
-            bsv_enc, bsv_dec = self.bsv(post_bse2p.detach())
+            bsv_dec, mu, logvar, _ = self.bsv(post_bse2p.detach())
+
+            # Store the BSV encodings
+            self.bsv_epoch_mu = self.bsv_epoch_mu.detach()
+            self.bsv_epoch_logvar = self.bsv_epoch_logvar.detach()
+            self.bsv_epoch_mu[iter_curr*dataloader_curr.batch_size:iter_curr*dataloader_curr.batch_size + dataloader_curr.batch_size, :, :] = mu
+            self.bsv_epoch_logvar[iter_curr*dataloader_curr.batch_size:iter_curr*dataloader_curr.batch_size + dataloader_curr.batch_size, :, :] = logvar
+            self.bsv_epoch_filenames[iter_curr*dataloader_curr.batch_size:iter_curr*dataloader_curr.batch_size + dataloader_curr.batch_size] = filename
 
             # Loss
-            bsp_pred_loss = loss_functions.cosine_loss(post_bse2p[:, :-1, :], post_bsp[:, 1:, :]) # Opoosite 1-shifted
-            bsp_recon_loss = loss_functions.cosine_loss(z[:,1:,:,:], post_bsp2e[:,1:,:,:])
+            bsp_pred_loss = loss_functions.mse_loss(post_bse2p[:, :-1, :], post_bsp[:, 1:, :]) # Opoosite 1-shifted
+            bsp_recon_loss = loss_functions.mse_loss(z[:,1:,:,:].clone().detach().requires_grad_(True), post_bsp2e[:,1:,:,:])
             bsp_loss = bsp_pred_loss + bsp_recon_loss
-            bsv_loss = loss_functions.bsv_mse_loss(post_bse2p.detach(), bsv_dec)
+
+            bsv_recon_loss = loss_functions.mse_loss(post_bse2p.detach(), bsv_dec)
+            mu_reshaped = self.bsv_epoch_mu.reshape(self.bsv_epoch_mu.shape[0]*self.bsv_epoch_mu.shape[1], -1)
+            logvar_reshaped = self.bsv_epoch_logvar.reshape(self.bsv_epoch_logvar.shape[0]*self.bsv_epoch_logvar.shape[1], -1)
+            bsv_kld_loss = loss_functions.bsv_kld_loss(mu_reshaped, logvar_reshaped, **kwargs)
+            bsv_loss = bsv_recon_loss + bsv_kld_loss
 
             # Step optimizers
             self.opt_bsp.zero_grad()
@@ -295,10 +340,6 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(self.bsv.module.parameters(), max_norm=1.0)
             self.opt_bsp.step()
             self.opt_bsv.step()
-
-            # Store the BSV encodings
-            bsv_epoch_embeddings[iter_curr*dataloader_curr.batch_size:iter_curr*dataloader_curr.batch_size + dataloader_curr.batch_size, :, :] = bsv_enc
-            bsv_epoch_filenames[iter_curr*dataloader_curr.batch_size:iter_curr*dataloader_curr.batch_size + dataloader_curr.batch_size] = filename
 
             # Realtime terminal info and WandB 
             if (iter_curr%self.recent_display_iters==0):
@@ -317,6 +358,8 @@ class Trainer:
                     train_bsp_pred_loss=bsp_pred_loss,
                     train_bsp_recon_loss=bsp_recon_loss,
                     train_bsp_loss=bsp_loss,
+                    train_bsv_recon_loss=bsv_recon_loss,
+                    train_bsv_kld_loss=bsv_kld_loss,
                     train_bsv_loss=bsv_loss,
                     train_LR_bsp=self.opt_bsp.param_groups[0]['lr'], 
                     train_LR_bsv=self.opt_bsv.param_groups[0]['lr'], 
@@ -326,18 +369,25 @@ class Trainer:
                 except Exception as e:
                     print(f"An error occurred during WandB logging': {e}")
 
-            if (self.gpu_id == 0) & (iter_curr % bsp_singlebatch_printing_interval_train == 0):
-                try:
-                    utils_functions.print_BSP_attention_singlebatch(
-                        gpu_id=self.gpu_id,
-                        epoch = self.epoch, 
-                        iter_curr = iter_curr,
-                        pat_idxs = pat_idxs, 
-                        scores_byLayer_meanHeads = bsp_attW, 
-                        savedir = self.model_dir + f"/plots/{dataset_string}/attention", 
-                        **kwargs)
-                except:
-                    print(f"Attention plotting failed")
+            if (self.gpu_id == 0) & ((iter_curr + 1) % bsp_singlebatch_printing_interval_train == 0):
+                utils_functions.print_BSP_attention_singlebatch(
+                    gpu_id=self.gpu_id,
+                    epoch = self.epoch, 
+                    iter_curr = iter_curr,
+                    pat_idxs = pat_idxs, 
+                    scores_byLayer_meanHeads = bsp_attW, 
+                    savedir = self.model_dir + f"/plots/{dataset_string}/attention", 
+                    **kwargs)
+                
+                utils_functions.print_BSV_recon_singlebatch(
+                    gpu_id=self.gpu_id,
+                    epoch = self.epoch, 
+                    iter_curr = iter_curr,
+                    pat_idxs = pat_idxs, 
+                    post_bse2p = post_bse2p,
+                    bsv_dec = bsv_dec,
+                    savedir = self.model_dir + f"/plots/{dataset_string}/bsv_recon", 
+                    **kwargs)
 
             iter_curr = iter_curr + 1
 
@@ -345,8 +395,8 @@ class Trainer:
         print("Plotting BSV 2D outputs for epoch")
         utils_functions.print_BSV_2D_embeddings(
             gpu_id=self.gpu_id,
-            embeddings=bsv_epoch_embeddings,
-            filenames=bsv_epoch_filenames,
+            embeddings=self.bsv_epoch_mu,
+            filenames=self.bsv_epoch_filenames,
             epoch=self.epoch,
             iter_curr=iter_curr,
             savedir=self.model_dir + f"/plots/{dataset_string}/bsv_embeddings",
@@ -381,6 +431,24 @@ class Trainer:
         opt_ckp = self.opt_bsv.state_dict()
         opt_path = check_epoch_dir + "/checkpoint_epoch" + str(epoch) + "_bsv_opt.pt"
         torch.save(opt_ckp, opt_path)
+
+        # Save the running BSV embeddings and filenames
+        embeddings_path = check_epoch_dir + "/checkpoint_epoch" +str(epoch) + "_running_bsv_mu.pkl"
+        output_obj = open(embeddings_path, 'wb')
+        pickle.dump(self.bsv_epoch_mu, output_obj)
+        output_obj.close()
+
+        embeddings_path = check_epoch_dir + "/checkpoint_epoch" +str(epoch) + "_running_bsv_logvar.pkl"
+        output_obj = open(embeddings_path, 'wb')
+        pickle.dump(self.bsv_epoch_logvar, output_obj)
+        output_obj.close()
+        print("Saved running embeddings")
+
+        filename_path = check_epoch_dir + "/checkpoint_epoch" +str(epoch) + "_running_bsv_filenames.pkl"
+        output_obj = open(filename_path, 'wb')
+        pickle.dump(self.bsv_epoch_filenames, output_obj)
+        output_obj.close()
+        print("Saved running filenames")
 
         print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
 

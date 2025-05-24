@@ -222,9 +222,8 @@ inference_batch_perpat_override: 1 # Set to -1 for no override. Use with caution
 ### Brain-State Embedder to Brain-State Predictor (BSE2P) ###
 
 bsp2e_growingtransformer_dims: [1024]
-bse2p_attention_layers_per_stage: 2
+bse2p_attention_layers_per_stage: 1
 bse2p_num_heads: 32
-
 
 
 ### ----------------------------------- ###
@@ -232,7 +231,7 @@ bse2p_num_heads: 32
 ### Brain-State Predictor (BSP) ###
 
 continue_existing_training: False
-cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/worm_sheldrake_Wed_May_21_20_18_31_2025' 
+cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/africanparadiseflycatcher_sheldrake_Fri_May_23_12_18_29_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
 bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/train_pats/*/scaled_data_epochs/all_epochs_woSPES'
@@ -244,7 +243,7 @@ bsp_adamW_beta1: 0.9
 bsp_adamW_beta2: 0.95 
 
 bsp_singlebatch_latent_printing: True
-bsp_singlebatch_printing_interval_train: 256
+bsp_singlebatch_printing_interval_train: 128
 bsp_epochs_to_train: 99999
 
 # BSP

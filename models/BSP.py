@@ -67,54 +67,100 @@ class BSV(nn.Module):
         self.gpu_id = gpu_id
         self.dims = bsv_dims
 
-        self.encoder_weights = nn.ParameterList()
-        self.encoder_biases = nn.ParameterList()
+        self.encoder_layers = nn.ModuleList()
         self.encoder_norms = nn.ModuleList()
+
+        for i in range(len(bsv_dims) - 2):
+            self.encoder_layers.append(nn.Linear(bsv_dims[i], bsv_dims[i + 1]))
+            self.encoder_norms.append(RMSNorm(bsv_dims[i + 1]))
+
+        final_enc_dim = bsv_dims[-2]
+        latent_dim = bsv_dims[-1]
+        self.fc_mu = nn.Linear(final_enc_dim, latent_dim)
+        self.fc_logvar = nn.Linear(final_enc_dim, latent_dim)
+
+        self.decoder_layers = nn.ModuleList()
         self.decoder_norms = nn.ModuleList()
+        reversed_dims = list(reversed(bsv_dims))
 
-        num_encoder_layers = len(self.dims) - 1
-
-        for i, (in_dim, out_dim) in enumerate(zip(self.dims[:-1], self.dims[1:])):
-            weight = nn.Parameter(torch.empty(out_dim, in_dim))
-            nn.init.kaiming_uniform_(weight, a=math.sqrt(5))
-            self.encoder_weights.append(weight)
-
-            bias = nn.Parameter(torch.zeros(out_dim))
-            self.encoder_biases.append(bias)
-
-            if i < num_encoder_layers - 1:  # skip last encoder norm
-                self.encoder_norms.append(RMSNorm(out_dim))
-
-        # Decoder norms — skip last layer
-        reversed_dims = list(reversed(self.dims))
-        num_decoder_layers = len(reversed_dims) - 1
-        for i in range(num_decoder_layers - 1):  # skip last decoder norm
-            self.decoder_norms.append(RMSNorm(reversed_dims[i + 1]))
+        for i in range(len(reversed_dims) - 1):
+            self.decoder_layers.append(nn.Linear(reversed_dims[i], reversed_dims[i + 1]))
+            if i < len(reversed_dims) - 2:
+                self.decoder_norms.append(RMSNorm(reversed_dims[i + 1]))
 
     def encode(self, x):
-        num_layers = len(self.encoder_weights)
-        for i, (W, b) in enumerate(zip(self.encoder_weights, self.encoder_biases)):
-            x = F.linear(x, W, b)
-            if i < num_layers - 1:
-                x = F.silu(x)
-                x = self.encoder_norms[i](x)
-        return x
+        for i, layer in enumerate(self.encoder_layers):
+            x = F.silu(layer(x))
+            x = self.encoder_norms[i](x)
+        mu = self.fc_mu(x)
+        logvar = self.fc_logvar(x)
+        return mu, logvar
 
-    def decode(self, x):
-        reversed_weights = list(reversed(self.encoder_weights))
-        num_layers = len(reversed_weights)
-        for i in range(num_layers):
-            W = reversed_weights[i]
-            x = F.linear(x, W.t())
-            if i < num_layers - 1:
-                x = F.silu(x)
-                x = self.decoder_norms[i](x)
-        return x
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def decode(self, z):
+        for i, layer in enumerate(self.decoder_layers):
+            z = layer(z)
+            if i < len(self.decoder_layers) - 1:
+                z = F.silu(z)
+                z = self.decoder_norms[i](z)
+        return z
 
     def forward(self, x):
-        encoded = self.encode(x)
-        decoded = self.decode(encoded)
-        return encoded, decoded
+        mu, logvar = self.encode(x)
+        z = self.reparameterize(mu, logvar)
+        recon = self.decode(z)
+        return recon, mu, logvar, z
+
+# class BSV(nn.Module):
+#     def __init__(self, gpu_id, bsv_dims, **kwargs): 
+#         super().__init__()
+#         self.gpu_id = gpu_id
+#         self.dims = bsv_dims
+
+#         self.encoder_layers = nn.ModuleList()
+#         self.encoder_norms = nn.ModuleList()
+
+#         for i in range(len(bsv_dims) - 1):
+#             self.encoder_layers.append(nn.Linear(bsv_dims[i], bsv_dims[i + 1]))
+#             self.encoder_norms.append(RMSNorm(bsv_dims[i + 1]))
+
+#         self.decoder_layers = nn.ModuleList()
+#         self.decoder_norms = nn.ModuleList()
+#         reversed_dims = list(reversed(bsv_dims))
+
+#         for i in range(len(reversed_dims) - 1):
+#             self.decoder_layers.append(nn.Linear(reversed_dims[i], reversed_dims[i + 1]))
+#             if i < len(reversed_dims) - 2:  # skip last decoder norm
+#                 self.decoder_norms.append(RMSNorm(reversed_dims[i + 1]))
+
+#     def encode(self, x):
+#         for i, layer in enumerate(self.encoder_layers):
+#             x = layer(x)
+#             if i < len(self.encoder_layers) - 1:
+#                 x = F.silu(x)
+#                 x = self.encoder_norms[i](x)
+#             else:
+#                 x = self.encoder_norms[i](x)
+#                 x = torch.tanh(x)
+#         return x
+
+#     def decode(self, x):
+#         for i, layer in enumerate(self.decoder_layers):
+#             x = layer(x)
+#             if i < len(self.decoder_layers) - 1:
+#                 x = F.silu(x)
+#                 x = self.decoder_norms[i](x)
+#         return x
+
+#     def forward(self, x):
+#         encoded = self.encode(x)
+#         decoded = self.decode(encoded)
+#         return encoded, decoded
+
 
 class TransformerBlock(nn.Module):
     def __init__(self, dim, heads, dropout):
@@ -323,10 +369,11 @@ def bsp_print_models_flow(x, **kwargs):
     # Build the BSV
     bsv = BSV(gpu_id='cpu', **kwargs)
 
-    bsv_enc, bsv_dec = bsv(post_bse2p.detach())
+    bsv_dec, mu, logvar, _ = bsv(post_bse2p.detach())
     summary(bsv, input_size=(post_bse2p.shape), depth=999, device="cpu")
     print(
-        f"bsv_enc: {bsv_enc.shape}\n",
+        f"mu: {mu.shape}\n",
+        f"logvar: {logvar.shape}\n"
         f"bsv_dec: {bsv_dec.shape}\n")
     
     del bsp, bsv

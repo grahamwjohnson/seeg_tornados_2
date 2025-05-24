@@ -255,7 +255,7 @@ def patient_adversarial_loss_function(probs, labels, classifier_weight):
     return classifier_weight * adversarial_loss
 
 
-# BSP LOSS
+# Prediction loss for BSP
 def cosine_loss(a: torch.Tensor, b: torch.Tensor, reduction='mean') -> torch.Tensor:
     """
     Compute cosine loss between two embeddings of shape 
@@ -287,8 +287,8 @@ def cosine_loss(a: torch.Tensor, b: torch.Tensor, reduction='mean') -> torch.Ten
     else:
         raise ValueError(f"Invalid reduction type: {reduction}")
 
-# BSV Loss
-def bsv_mse_loss(a, b, reduction='mean'):
+# Recon Losses for BSP & BSV
+def mse_loss(a, b, reduction='mean'):
     """
     Computes mean squared error (MSE) between tensors a and b.
 
@@ -302,3 +302,17 @@ def bsv_mse_loss(a, b, reduction='mean'):
     """
     loss = F.mse_loss(a, b, reduction=reduction)
     return loss
+
+def bsv_kld_loss(mu, logvar, **kwargs):
+    """
+    Compute the KL divergence between N(mu, sigma^2) and N(0, I).
+    
+    Args:
+        mu (Tensor): Mean tensor from the encoder (B, D)
+        logvar (Tensor): Log-variance tensor from the encoder (B, D)
+        
+    Returns:
+        Tensor: Scalar KLD loss
+    """
+    kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
+    return kld.mean()

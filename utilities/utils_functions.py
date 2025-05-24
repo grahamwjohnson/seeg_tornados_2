@@ -500,11 +500,13 @@ def bsp_initialize_directories(
         kwargs['bsp_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_bsp_opt.pt'
         kwargs['bsv_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_bsv.pt'
         kwargs['bsv_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_bsv_opt.pt'
+        kwargs['running_bsv_mu_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_mu.pkl'
+        kwargs['running_bsv_logvar_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_logvar.pkl'
+        kwargs['running_bsv_filenames_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_filenames.pkl'
 
         # Set the start epoch 1 greater than max trained
         kwargs['start_epoch'] = (max_epoch + 1) 
         
-
     # *** NEW RUN initialization ***  
 
     else:
@@ -2580,6 +2582,54 @@ def print_BSV_2D_embeddings(gpu_id, embeddings, filenames, epoch, iter_curr, sav
     pl.savefig(savename_jpg, dpi=200)
     pl.close(fig)
     pl.close('all')
+
+def print_BSV_recon_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, post_bse2p, bsv_dec, savedir, **kwargs):
+    # Flatten batch and token dimensions if needed
+    post_bse2p = post_bse2p.detach().cpu().numpy()
+    bsv_dec = bsv_dec.detach().cpu().numpy()
+
+    # Determine common vmin and vmax for consistent color scaling
+    vmin = min(post_bse2p.min(), bsv_dec.min())
+    vmax = max(post_bse2p.max(), bsv_dec.max())
+
+    # Create figure and axes
+    num_patients = post_bse2p.shape[0]
+    fig, axes = pl.subplots(num_patients, 2, figsize=(10, 4 * num_patients))
+    if num_patients == 1:
+        axes = np.expand_dims(axes, 0)  # Ensure axes is always 2D
+
+    # Track one of the images for colorbar use
+    img_for_cbar = None
+
+    for i in range(num_patients):
+        ax1 = axes[i, 0]
+        ax2 = axes[i, 1]
+
+        im1 = ax1.imshow(post_bse2p[i], aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        ax1.set_title(f'Patient {pat_idxs[i]} - Original')
+        ax1.set_xlabel('Latent Dim')
+        ax1.set_ylabel('Sequence')
+
+        im2 = ax2.imshow(bsv_dec[i], aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        ax2.set_title(f'Patient {pat_idxs[i]} - Reconstructed')
+        ax2.set_xlabel('Latent Dim')
+        ax2.set_ylabel('Sequence')
+
+        img_for_cbar = im2  # Just use the last image for colorbar reference
+
+    fig.tight_layout(rect=[0, 0, 0.95, 1])  # Leave space on right for colorbar
+
+    # Add colorbar
+    cbar_ax = fig.add_axes([0.96, 0.15, 0.015, 0.7])
+    fig.colorbar(img_for_cbar, cax=cbar_ax)
+
+    # Save plot
+    os.makedirs(savedir, exist_ok=True)
+    savename_jpg = f"{savedir}/BSV_Recon_Epoch{epoch}_iter{iter_curr}_GPU{gpu_id}.jpg"
+    pl.savefig(savename_jpg, dpi=200)
+    pl.close(fig)
+    pl.close('all')
+
 
 # POST-HOC PROCESSING
 
