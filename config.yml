@@ -14,6 +14,7 @@ pat_num_channels_LUT: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/da
 num_samples: kwargs['num_samples'] = 1024*512 # Within each data pickle file
 FS: 512             
 atd_file: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/all_time_data_01092023_112957.csv'
+sleep_file: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/all_sleep_stages_06122023.csv'
 data_dir_subfolder: '/scaled_data_epochs'
 intrapatient_dataset_style: 2 # 1 all data (no SPES), 2 all data (with SPES), 3 ONLY SPES
 train_hour_dataset_range: kwargs['train_hour_dataset_range'] = [-1, -1]  # [-1, -1] means all, [X, -1] means from X to end
@@ -222,7 +223,7 @@ inference_batch_perpat_override: 1 # Set to -1 for no override. Use with caution
 ### Brain-State Embedder to Brain-State Predictor (BSE2P) ###
 
 bsp2e_growingtransformer_dims: [1024]
-bse2p_attention_layers_per_stage: 1
+bse2p_attention_layers_per_stage: 2
 bse2p_num_heads: 32
 
 
@@ -230,7 +231,7 @@ bse2p_num_heads: 32
 
 ### Brain-State Predictor (BSP) ###
 
-continue_existing_training: True
+continue_existing_training: False
 cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/stinkbug_sheldrake_Sat_May_24_00_36_21_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
@@ -271,7 +272,7 @@ bsp_recent_display_iters: 5
 
 # BSP to BSE decoder (BSP2E)
 
-bsp2e_time_dims: [2,4,8,16,32,64,128,256,512]
+bsp2e_time_dims: [64,128,256,512]
 bsp2e_full_dims: [1024, 1024]
 
 
@@ -279,11 +280,11 @@ bsp2e_full_dims: [1024, 1024]
 
 ### Brain-State Visualizer (BSV) ###
 
-bsv_dims: [1024, 1024, 512, 512, 256, 256, 128, 128, 64, 64, 32, 32, 16, 16, 8, 8, 4, 4, 2, 2]
+bsv_dims: [1024, 1024, 512, 2]
 
-bsv_LR: kwargs['bsv_LR'] = 1e-6
+bsv_LR: kwargs['bsv_LR'] = 1e-5
 
-bsv_kld_weight: 100
+bsv_kld_weight: 10
 
 bsv_weight_decay: 0.1
 bsv_adamW_beta1: 0.9

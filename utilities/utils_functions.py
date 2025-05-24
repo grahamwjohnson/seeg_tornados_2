@@ -32,6 +32,8 @@ mpl.use('agg')
 # Local imports
 from models.BSE import bse_print_models_flow
 from models.BSP import bsp_print_models_flow
+from utilities import manifold_utilities
+from collections import defaultdict
 
 
 # PREPROCESSING 
@@ -503,6 +505,7 @@ def bsp_initialize_directories(
         kwargs['running_bsv_mu_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_mu.pkl'
         kwargs['running_bsv_logvar_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_logvar.pkl'
         kwargs['running_bsv_filenames_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_filenames.pkl'
+        kwargs['running_bsv_startidxs_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_start_idxs.pkl'
 
         # Set the start epoch 1 greater than max trained
         kwargs['start_epoch'] = (max_epoch + 1) 
@@ -2558,30 +2561,195 @@ def print_BSP_attention_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, scores_b
 
     pl.close('all')
 
-def print_BSV_2D_embeddings(gpu_id, embeddings, filenames, epoch, iter_curr, savedir, **kwargs):
+def extract_datetime_from_filename(filename):
+    """Extract datetime from filename format like:
+    Epat13_11092018_16542109_to_11092018_17112509_bipole_scaled_filtered_data.pkl"""
+    try:
+        time_part = filename.split("_")[2]  # e.g., 16542109
+        date_part = filename.split("_")[1]  # e.g., 11092018
+        dt_str = date_part + time_part[:6]  # 11092018165421
+        return datetime.datetime.strptime(dt_str, "%m%d%Y%H%M%S")
+    except Exception as e:
+        print(f"ERROR parsing datetime from filename {filename}: {e}")
+        return None
+
+def extract_patient_id(filename):
+    """Extract patient ID from filename, e.g., Epat13"""
+    return os.path.basename(filename).split("_")[0]
+
+def print_BSV_2D_embeddings(
+    gpu_id, embeddings, filenames, start_idx_offset, epoch, iter_curr, savedir,
+    atd_file, sleep_file, FS, transformer_seq_length, pre_ictal_hours=1, **kwargs):
+
     print("Plotting 2D embeddings...")
 
-    # Flatten batch and token dimensions if needed
+    # Move tensors to CPU and convert to numpy
     embeddings = embeddings.detach().cpu().numpy()
-    embeddings = embeddings.reshape(embeddings.shape[0] * embeddings.shape[1], embeddings.shape[2])
+    start_idx_offset = start_idx_offset.detach().cpu().numpy()
 
-    # Check dimensionality
-    assert embeddings.shape[1] == 2, f"Expected 2D embeddings, got shape {embeddings.shape}"
+    B, T, D = embeddings.shape[0], embeddings.shape[1], embeddings.shape[2]
+    embeddings = embeddings.reshape(B * T, D)
+    assert D == 2, f"Expected 2D embeddings, got shape {embeddings.shape}"
 
-    # Create scatter plot
+    # Parse datetime and patient ID from filenames
+    file_times = [extract_datetime_from_filename(os.path.basename(f)) for f in filenames]
+    pat_ids = [extract_patient_id(os.path.basename(f)) for f in filenames]
+
+    # Gather seizure and sleep info per patient
+    seizure_info = {}
+    sleep_info = {}
+    for pid in set(pat_ids):
+        seiz_starts, seiz_ends, seiz_type = manifold_utilities.get_pat_seiz_datetimes(pid, atd_file)
+        sleep_starts, sleep_ends, sleep_type = manifold_utilities.get_pat_sleep_datetimes(pid, sleep_file)
+        seizure_info[pid] = list(zip(seiz_starts, seiz_ends, seiz_type))
+        sleep_info[pid] = list(zip(sleep_starts, sleep_ends, sleep_type))
+
+    # Determine timestamps for each coarse sequence
+    seconds_per_token = transformer_seq_length / FS
+    colors = []
+    for b in range(B):
+        pid = pat_ids[b]
+        base_time = file_times[b]
+        if base_time is None:
+            colors.extend(['black'] * T)
+            continue
+
+        base_offset_seconds = start_idx_offset[b] / FS
+        token_times = [
+            base_time + datetime.timedelta(seconds=base_offset_seconds + i * seconds_per_token)
+            for i in range(T)
+        ]
+
+        seiz_ranges = seizure_info[pid]
+        sleep_ranges = sleep_info[pid]
+
+        for tt in token_times:
+            is_preictal = any([(s_start - datetime.timedelta(hours=pre_ictal_hours)) <= tt < s_start for s_start, s_end, _ in seiz_ranges])
+            if is_preictal:
+                colors.append('red')
+                continue
+            is_sleep = any([start <= tt <= end for start, end, _ in sleep_ranges])
+            if is_sleep:
+                colors.append('blue')
+                continue
+            colors.append('grey')
+
+    # Plot
     fig, ax = pl.subplots(figsize=(6, 6))
-    ax.scatter(embeddings[:, 0], embeddings[:, 1], s=5, alpha=0.7)
+    ax.scatter(embeddings[:, 0], embeddings[:, 1], c=colors, s=5, alpha=0.5)
     ax.set_title(f"2D Embeddings - Epoch {epoch}, Iter {iter_curr}, GPU {gpu_id}")
     ax.set_xlabel("Dim 1")
     ax.set_ylabel("Dim 2")
     ax.grid(True)
 
-    # Save plot
+    # Legend
+    legend_elements = [
+        pl.Line2D([0], [0], marker='o', color='w', label='Pre-Ictal', markerfacecolor='red', markersize=5),
+        pl.Line2D([0], [0], marker='o', color='w', label='Sleep', markerfacecolor='blue', markersize=5),
+        pl.Line2D([0], [0], marker='o', color='w', label='Baseline', markerfacecolor='grey', markersize=5),
+        pl.Line2D([0], [0], marker='o', color='w', label='Unparsed', markerfacecolor='black', markersize=5)
+    ]
+    ax.legend(handles=legend_elements, loc='upper right')
+
+    # Save
     os.makedirs(savedir, exist_ok=True)
-    savename_jpg = f"{savedir}/Embeddings_Epoch{epoch}_iter{iter_curr}_GPU{gpu_id}.jpg"
-    pl.savefig(savename_jpg, dpi=200)
+    savename = f"{savedir}/Embeddings_Epoch{epoch}_iter{iter_curr}_GPU{gpu_id}.jpg"
+    pl.savefig(savename, dpi=200)
     pl.close(fig)
     pl.close('all')
+
+
+# def print_BSV_2D_embeddings(
+#     gpu_id, embeddings, filenames, start_idx_offset, epoch, iter_curr, savedir,
+#     atd_file, sleep_file, FS, transformer_seq_length, pre_ictal_hours=1, **kwargs):
+
+#     print("Plotting 2D embeddings...")
+
+#     # Flatten batch and token dims
+#     embeddings = embeddings.detach().cpu().numpy()
+#     B, T, D = embeddings.shape[0] // len(filenames), embeddings.shape[1], embeddings.shape[2]
+#     embeddings = embeddings.reshape(embeddings.shape[0] * embeddings.shape[1], embeddings.shape[2])
+#     assert D == 2, f"Expected 2D embeddings, got shape {embeddings.shape}"
+
+#     # Parse datetimes and patient IDs
+#     file_times = [extract_datetime_from_filename(f.split("/")[-1]) for f in filenames]
+#     pat_ids = [extract_patient_id(f.split("/")[-1]) for f in filenames]
+
+#     # Gather seizure and sleep info per patient
+#     seizure_info = {}
+#     sleep_info = {}
+#     for pid in set(pat_ids):
+#         seiz_starts, seiz_ends, seiz_type = manifold_utilities.get_pat_seiz_datetimes(pid, atd_file)
+#         sleep_starts, sleep_ends, sleep_type = manifold_utilities.get_pat_sleep_datetimes(pid, sleep_file)
+#         seizure_info[pid] = list(zip(seiz_starts, seiz_ends, seiz_type))
+#         sleep_info[pid] = list(zip(sleep_starts, sleep_ends, sleep_type))
+
+#     # Assign colors per embedding
+#     colors = []
+#     for fname, ft, pid in zip(filenames, file_times, pat_ids):
+#         if ft is None:
+#             color = 'black'
+#         else:
+#             seiz_starts = seizure_info[pid]
+#             sleep_ranges = sleep_info[pid]
+#             is_preictal = any([(s[0] - datetime.timedelta(hours=pre_ictal_hours)) <= ft < s for s in seiz_starts])
+#             if is_preictal:
+#                 color = 'red'
+#             elif any([start <= ft <= end for start, end, sleep_type in sleep_ranges]):
+#                 color = 'blue'
+#             else:
+#                 color = 'grey'
+#         # Repeat color T times (one per token)
+#         colors.extend([color] * T)
+
+#     # Plot
+#     fig, ax = pl.subplots(figsize=(6, 6))
+#     ax.scatter(embeddings[:, 0], embeddings[:, 1], c=colors, s=5, alpha=0.7)
+#     ax.set_title(f"2D Embeddings - Epoch {epoch}, Iter {iter_curr}, GPU {gpu_id}")
+#     ax.set_xlabel("Dim 1")
+#     ax.set_ylabel("Dim 2")
+#     ax.grid(True)
+
+#     # Legend
+#     legend_elements = [
+#         pl.Line2D([0], [0], marker='o', color='w', label='Pre-Ictal', markerfacecolor='red', markersize=5),
+#         pl.Line2D([0], [0], marker='o', color='w', label='Sleep', markerfacecolor='blue', markersize=5),
+#         pl.Line2D([0], [0], marker='o', color='w', label='Baseline', markerfacecolor='grey', markersize=5),
+#         pl.Line2D([0], [0], marker='o', color='w', label='Unparsed', markerfacecolor='black', markersize=5)
+#     ]
+#     ax.legend(handles=legend_elements, loc='upper right')
+
+#     # Save
+#     os.makedirs(savedir, exist_ok=True)
+#     savename = f"{savedir}/Embeddings_Epoch{epoch}_iter{iter_curr}_GPU{gpu_id}.jpg"
+#     pl.savefig(savename, dpi=200)
+#     pl.close(fig)
+#     pl.close('all')
+
+# def print_BSV_2D_embeddings(gpu_id, embeddings, filenames, epoch, iter_curr, savedir, atd_file, **kwargs):
+#     print("Plotting 2D embeddings...")
+
+#     # Flatten batch and token dimensions if needed
+#     embeddings = embeddings.detach().cpu().numpy()
+#     embeddings = embeddings.reshape(embeddings.shape[0] * embeddings.shape[1], embeddings.shape[2])
+
+#     # Check dimensionality
+#     assert embeddings.shape[1] == 2, f"Expected 2D embeddings, got shape {embeddings.shape}"
+
+#     # Create scatter plot
+#     fig, ax = pl.subplots(figsize=(6, 6))
+#     ax.scatter(embeddings[:, 0], embeddings[:, 1], s=5, alpha=0.7)
+#     ax.set_title(f"2D Embeddings - Epoch {epoch}, Iter {iter_curr}, GPU {gpu_id}")
+#     ax.set_xlabel("Dim 1")
+#     ax.set_ylabel("Dim 2")
+#     ax.grid(True)
+
+#     # Save plot
+#     os.makedirs(savedir, exist_ok=True)
+#     savename_jpg = f"{savedir}/Embeddings_Epoch{epoch}_iter{iter_curr}_GPU{gpu_id}.jpg"
+#     pl.savefig(savename_jpg, dpi=200)
+#     pl.close(fig)
+#     pl.close('all')
 
 def print_BSP_recon_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, z, post_bsp2e, savedir, **kwargs):
 
@@ -2608,19 +2776,19 @@ def print_BSP_recon_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, z, post_bsp2
 
         fig, axes = pl.subplots(2, 2, figsize=(10, 8))
 
-        im00 = axes[0, 0].imshow(post_first, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        im00 = axes[0, 0].imshow(z_first, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
         axes[0, 0].set_title(f'Patient {pat_idxs[b]} - Original (First)')
         axes[0, 0].set_ylabel('Latent Dim')
 
-        im01 = axes[0, 1].imshow(z_first, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        im01 = axes[0, 1].imshow(post_first, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
         axes[0, 1].set_title(f'Patient {pat_idxs[b]} - Reconstructed (First)')
 
-        im10 = axes[1, 0].imshow(post_last, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        im10 = axes[1, 0].imshow(z_last, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
         axes[1, 0].set_title(f'Patient {pat_idxs[b]} - Original (Last)')
         axes[1, 0].set_ylabel('Latent Dim')
         axes[1, 0].set_xlabel('Sequence')
 
-        im11 = axes[1, 1].imshow(z_last, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        im11 = axes[1, 1].imshow(post_last, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
         axes[1, 1].set_title(f'Patient {pat_idxs[b]} - Reconstructed (Last)')
         axes[1, 1].set_xlabel('Sequence')
 
@@ -2635,7 +2803,6 @@ def print_BSP_recon_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, z, post_bsp2
         pl.close(fig)
 
     pl.close('all')
-
 
 def print_BSV_recon_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, post_bse2p, bsv_dec, savedir, **kwargs):
     import numpy as np
@@ -2691,7 +2858,6 @@ def print_BSV_recon_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, post_bse2p, 
     pl.savefig(savename_jpg, dpi=200)
     pl.close(fig)
     pl.close('all')
-
 
 
 # POST-HOC PROCESSING

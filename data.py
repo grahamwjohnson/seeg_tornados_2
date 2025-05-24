@@ -476,7 +476,7 @@ class SEEG_BSP_Dataset(Dataset):
         # [seq, padded_channels, FS] --> [seq, FS, padded_channel, 1]
         out = padded.permute(0, 2, 1).unsqueeze(3)
 
-        return out, rand_filename, rand_pat_idx
+        return out, rand_filename, rand_pat_idx, rand_start_idx
 
 
 

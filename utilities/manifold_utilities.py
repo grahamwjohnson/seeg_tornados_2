@@ -1492,8 +1492,6 @@ def plot_mog_histograms(
         fig3.savefig(f"{savedir}/tier1B_components.jpg")
         fig4.savefig(f"{savedir}/tier1B_weighted_means.jpg")
 
-
-
 def compute_histograms(data, min_val, max_val, B):
     """
     Compute histogram bin counts for each dimension of a 2D array.

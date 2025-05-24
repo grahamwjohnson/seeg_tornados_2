@@ -117,6 +117,7 @@ def main(
     running_bsv_mu_path = [],
     running_bsv_logvar_path = [],
     running_bsv_filenames_path = [],
+    running_bsv_startidxs_path = [],
 
     **kwargs):
 
@@ -167,10 +168,15 @@ def main(
         with open(running_bsv_filenames_path, "rb") as f: bsv_epoch_filenames = pickle.load(f)
         print(f"[GPU{gpu_id}] Running Filenames loaded from checkpoints")
 
+        # Load running start idx offsets for BSV
+        with open(running_bsv_startidxs_path, "rb") as f: bsv_epoch_start_idx_offset = pickle.load(f)
+        print(f"[GPU{gpu_id}] Running Start Idx Offsets loaded from checkpoints")
+
     else:
         bsv_epoch_mu = []
         bsv_epoch_logvar = []
         bsv_epoch_filenames = []
+        bsv_epoch_start_idx_offset = []
 
     # Create the trainer object
     trainer = Trainer(
@@ -186,6 +192,7 @@ def main(
         bsv_epoch_mu=bsv_epoch_mu,
         bsv_epoch_logvar=bsv_epoch_logvar,
         bsv_epoch_filenames=bsv_epoch_filenames,
+        bsv_epoch_start_idx_offset=bsv_epoch_start_idx_offset,
         wandb_run=wandb_run,
         **kwargs)
 
@@ -227,6 +234,7 @@ class Trainer:
         bsv_epoch_mu,
         bsv_epoch_logvar,
         bsv_epoch_filenames,
+        bsv_epoch_start_idx_offset,
         wandb_run,
         model_dir: str,
         transformer_seq_length: int, # BSE
@@ -269,6 +277,10 @@ class Trainer:
             self.bsv_epoch_filenames = [""] * (len(self.train_dataloader) * self.train_dataloader.batch_size)
         else: self.bsv_epoch_filenames = bsv_epoch_filenames
 
+        if bsv_epoch_start_idx_offset == []:
+            self.bsv_epoch_start_idx_offset = torch.ones((len(self.train_dataloader) * self.train_dataloader.batch_size), dtype=torch.int64).to(self.gpu_id)
+        else: self.bsv_epoch_start_idx_offset = bsv_epoch_start_idx_offset.to(self.gpu_id)
+
         # Watch with WandB
         wandb.watch(self.bsp)
         wandb.watch(self.bsv)
@@ -293,7 +305,7 @@ class Trainer:
         iter_curr = 0
         total_iters = len(dataloader_curr)
 
-        for x, filename, pat_idxs in dataloader_curr: 
+        for x, filename, pat_idxs, start_idx_offset in dataloader_curr: 
 
             # BSE
             with torch.inference_mode():
@@ -319,6 +331,7 @@ class Trainer:
             self.bsv_epoch_mu[iter_curr*dataloader_curr.batch_size:iter_curr*dataloader_curr.batch_size + dataloader_curr.batch_size, :, :] = mu
             self.bsv_epoch_logvar[iter_curr*dataloader_curr.batch_size:iter_curr*dataloader_curr.batch_size + dataloader_curr.batch_size, :, :] = logvar
             self.bsv_epoch_filenames[iter_curr*dataloader_curr.batch_size:iter_curr*dataloader_curr.batch_size + dataloader_curr.batch_size] = filename
+            self.bsv_epoch_start_idx_offset[iter_curr*dataloader_curr.batch_size:iter_curr*dataloader_curr.batch_size + dataloader_curr.batch_size] = start_idx_offset
 
             # Loss
             bsp_pred_loss = loss_functions.mse_loss(post_bse2p[:, :-1, :], post_bsp[:, 1:, :]) # Opoosite 1-shifted
@@ -408,6 +421,7 @@ class Trainer:
             gpu_id=self.gpu_id,
             embeddings=self.bsv_epoch_mu,
             filenames=self.bsv_epoch_filenames,
+            start_idx_offset=self.bsv_epoch_start_idx_offset,
             epoch=self.epoch,
             iter_curr=iter_curr,
             savedir=self.model_dir + f"/plots/{dataset_string}/bsv_embeddings",
@@ -460,6 +474,13 @@ class Trainer:
         pickle.dump(self.bsv_epoch_filenames, output_obj)
         output_obj.close()
         print("Saved running filenames")
+
+        filename_path = check_epoch_dir + "/checkpoint_epoch" +str(epoch) + "_running_bsv_start_idxs.pkl"
+        output_obj = open(filename_path, 'wb')
+        pickle.dump(self.bsv_epoch_start_idx_offset, output_obj)
+        output_obj.close()
+        print("Saved running start offset idxs")
+
 
         print(f"Epoch {epoch} | Training checkpoint saved at {check_epoch_dir}")
 
