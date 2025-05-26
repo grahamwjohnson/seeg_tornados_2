@@ -191,6 +191,7 @@ class BSE2P(nn.Module): # A Growing Transformer
     def __init__(
         self, 
         gpu_id,
+        bsp_transformer_seq_length,
         bsp2e_growingtransformer_dims, 
         bse2p_attention_layers_per_stage,
         bse2p_num_heads,
@@ -199,6 +200,7 @@ class BSE2P(nn.Module): # A Growing Transformer
         super(BSE2P, self).__init__()
 
         self.gpu_id = gpu_id
+        self.bsp_transformer_seq_length = bsp_transformer_seq_length
         self.dims = bsp2e_growingtransformer_dims
         self.bse2p_attention_layers_per_stage = bse2p_attention_layers_per_stage
         self.bse2p_num_heads = bse2p_num_heads
@@ -216,11 +218,41 @@ class BSE2P(nn.Module): # A Growing Transformer
             if i + 1 < len(self.dims):
                 self.blocks.append(nn.Linear(self.dims[i], self.dims[i + 1]))
 
+        self.bse2p_mlp = nn.Sequential(
+            nn.Linear(self.dims[-1], self.dims[-1]*4),
+            RMSNorm(self.dims[-1]*4),
+            nn.SiLU(),
+            nn.Linear(self.dims[-1]*4, self.dims[-1]*4),
+            RMSNorm(self.dims[-1]*4),
+            nn.SiLU())
+        
+        self.bse2p_mu = nn.Linear(self.dims[-1]*4, self.dims[-1])
+        self.bse2p_logvar = nn.Linear(self.dims[-1]*4, self.dims[-1])
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
     def forward(self, x):
+
+        # Reshape input to pseudobatch the transformer sequence dimension
+        # Converts [batch, TransSeq, FS, BSE latnet dim] --> [batch * TransSeq, FS, BSE latnet dim]
+        x = x.reshape(x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
+
         for block in self.blocks:
             x = block(x)
-        return x
 
+        # Re-shape back to [Batch, TransSeq, FS, BSP latent dim]
+        # Take last token
+        x = x.reshape(-1, self.bsp_transformer_seq_length, x.shape[1], x.shape[2])
+        x = x[:,:,-1,:]
+
+        x = self.bse2p_mlp(x)
+        mu, logvar = self.bse2p_mu(x), self.bse2p_logvar(x)
+        z = self.reparameterize(mu, logvar)
+
+        return mu, logvar, z
 
 class BSP2E(nn.Module):
     def __init__(self, gpu_id, bsp2e_time_dims, bsp2e_full_dims, bsp2e_growingtransformer_dims, **kwargs):
@@ -289,7 +321,6 @@ class BSP(nn.Module):
 
         self.gpu_id = gpu_id
 
-
         # Build the BSE2P
         self.bse2p = BSE2P(gpu_id=self.gpu_id, **kwargs)
 
@@ -321,28 +352,18 @@ class BSP(nn.Module):
 
     def forward(self, x):
 
-        # Reshape input to pseudobatch the transformer sequence dimension
-        # Converts [batch, TransSeq, FS, BSE latnet dim] --> [batch * TransSeq, FS, BSE latnet dim]
-        x_pseudobatch = x.reshape(x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
-
         # Run through BSE2P
-        post_bse2p_pseudobatch = self.bse2p(x_pseudobatch)
-        
-        # Re-shape back to [Batch, TransSeq, FS, BSP latent dim]
-        # Take last token
-        post_bse2p = post_bse2p_pseudobatch.reshape(x.shape[0], x.shape[1], x.shape[2], -1)
-        post_bse2p = post_bse2p[:,:,-1,:]
+        post_bse2p_mu, post_bse2p_logvar, post_bse2p_z = self.bse2p(x)
 
         # Run through BSP
-        post_bsp, bsp_attW = self.transformer(post_bse2p, start_pos=self.bsp_transformer_start_pos, return_attW=True, causal_mask_bool=True, self_mask=False)
+        post_bsp, bsp_attW = self.transformer(post_bse2p_z, start_pos=self.bsp_transformer_start_pos, return_attW=True, causal_mask_bool=True, self_mask=False)
 
         # Run through BSP2E to decode back to post BSE size
         post_bsp_pseudobatch = post_bsp.reshape(post_bsp.shape[0]*post_bsp.shape[1], post_bsp.shape[2])
-
         post_bsp2e = self.bsp2e(post_bsp_pseudobatch)
         post_bsp2e = post_bsp2e.reshape(x.shape[0], x.shape[1], x.shape[2], x.shape[3])
 
-        return post_bse2p, post_bsp, bsp_attW, post_bsp2e
+        return post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e
 
 def bsp_print_models_flow(x, **kwargs):
     '''
@@ -358,10 +379,10 @@ def bsp_print_models_flow(x, **kwargs):
     bsp = BSP(gpu_id='cpu', **kwargs) 
 
     print(f"INPUT\n"f"x:{x.shape}")
-    post_bse2p, post_bsp, bsp_attW, post_bsp2e = bsp(x)  
+    post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e = bsp(x)  
     summary(bsp, input_size=(x.shape), depth=999, device="cpu")
     print(
-        f"post_bse2p:{post_bse2p.shape}\n",
+        f"post_bse2p:{post_bse2p_mu.shape}\n",
         f"post_bsp:{post_bsp.shape}\n",
         f"attW:{bsp_attW.shape}\n",
         f"post_bsp2e:{post_bsp2e.shape}\n")
@@ -369,8 +390,8 @@ def bsp_print_models_flow(x, **kwargs):
     # Build the BSV
     bsv = BSV(gpu_id='cpu', **kwargs)
 
-    bsv_dec, mu, logvar, _ = bsv(post_bse2p.detach())
-    summary(bsv, input_size=(post_bse2p.shape), depth=999, device="cpu")
+    bsv_dec, mu, logvar, _ = bsv(post_bse2p_z.detach())
+    summary(bsv, input_size=(post_bse2p_z.shape), depth=999, device="cpu")
     print(
         f"mu: {mu.shape}\n",
         f"logvar: {logvar.shape}\n"

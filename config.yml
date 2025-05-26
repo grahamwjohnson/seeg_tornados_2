@@ -226,13 +226,15 @@ bsp2e_growingtransformer_dims: [1024]
 bse2p_attention_layers_per_stage: 2
 bse2p_num_heads: 32
 
+bse2p_running_kld_length: 64
+
 
 ### ----------------------------------- ###
 
 ### Brain-State Predictor (BSP) ###
 
 continue_existing_training: False
-cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/stinkbug_sheldrake_Sat_May_24_00_36_21_2025' 
+cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/adamsstaghornedbeetle_sheldrake_Sat_May_24_14_19_05_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
 bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/train_pats/*/scaled_data_epochs/all_epochs_woSPES'
@@ -260,6 +262,7 @@ bsp_attention_dropout: 0.0
 
 # BSP Training
 bsp_LR: kwargs['bsp_LR'] = 1e-6
+bsp_kld_weight: 0.01
 bsp_loss_weight: 1
 bsp_transformer_start_pos: 0 # hardcode to 0
 bsp_epoch_dataset_size: kwargs['bsp_epoch_dataset_size'] = 1024 * kwargs['bsp_batchsize']

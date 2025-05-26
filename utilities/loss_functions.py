@@ -316,3 +316,22 @@ def bsv_kld_loss(mu, logvar, bsv_kld_weight, **kwargs):
     """
     kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
     return kld.mean() * bsv_kld_weight
+
+def bsp_kld_loss(mu, logvar, bsp_kld_weight, **kwargs):
+    """
+    Compute the KL divergence between N(mu, sigma^2) and N(0, I)
+    for inputs of shape (B, S, D), where:
+        B = batch size,
+        S = sequence length,
+        D = latent dimension.
+
+    Args:
+        mu (Tensor): Mean tensor from the encoder (B, S, D)
+        logvar (Tensor): Log-variance tensor from the encoder (B, S, D)
+        bsv_kld_weight (float): Weighting factor for the KL divergence.
+
+    Returns:
+        Tensor: Scalar KLD loss
+    """
+    kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)  # (B, S)
+    return kld.mean() * bsp_kld_weight  # Average over batch and sequence
