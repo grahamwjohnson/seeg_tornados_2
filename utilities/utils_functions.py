@@ -503,15 +503,15 @@ def bsp_initialize_directories(
         kwargs['bsv_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_bsv.pt'
         kwargs['bsv_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_bsv_opt.pt'
 
-        kwargs['running_bsv_mu_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_mu.pkl'
-        kwargs['running_bsv_logvar_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_logvar.pkl'
-        kwargs['running_bsv_filenames_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_filenames.pkl'
-        kwargs['running_bsv_startidxs_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_start_idxs.pkl'
-
         kwargs['running_bsp_mu_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsp_mu.pkl'
         kwargs['running_bsp_logvar_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsp_logvar.pkl'
         kwargs['running_bsp_filenames_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsp_filenames.pkl'
         kwargs['running_bsp_startidxs_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsp_start_idxs.pkl'
+
+        kwargs['running_bsv_mu_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_mu.pkl'
+        kwargs['running_bsv_logvar_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_logvar.pkl'
+        kwargs['running_bsv_filenames_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_filenames.pkl'
+        kwargs['running_bsv_startidxs_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_start_idxs.pkl'
 
         # Set the start epoch 1 greater than max trained
         kwargs['start_epoch'] = (max_epoch + 1) 

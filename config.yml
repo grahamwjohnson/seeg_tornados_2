@@ -233,8 +233,8 @@ bse2p_running_kld_length: 64
 
 ### Brain-State Predictor (BSP) ###
 
-continue_existing_training: False
-cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/adamsstaghornedbeetle_sheldrake_Sat_May_24_14_19_05_2025' 
+continue_existing_training: True
+cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/warbler_sheldrake_Mon_May_26_15_55_58_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
 bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/train_pats/*/scaled_data_epochs/all_epochs_woSPES'

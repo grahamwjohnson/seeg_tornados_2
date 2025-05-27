@@ -218,10 +218,10 @@ def main(
         start_epoch=start_epoch,
         train_dataloader=train_dataloader,
 
-        bsp_epoch_mu=bsv_epoch_mu,
-        bsp_epoch_logvar=bsv_epoch_logvar,
-        bsp_epoch_filenames=bsv_epoch_filenames,
-        bsp_epoch_start_idx_offset=bsv_epoch_start_idx_offset,
+        bsp_epoch_mu=bsp_epoch_mu,
+        bsp_epoch_logvar=bsp_epoch_logvar,
+        bsp_epoch_filenames=bsp_epoch_filenames,
+        bsp_epoch_start_idx_offset=bsp_epoch_start_idx_offset,
 
         bsv_epoch_mu=bsv_epoch_mu,
         bsv_epoch_logvar=bsv_epoch_logvar,
@@ -313,7 +313,7 @@ class Trainer:
         # Just assume that we will start verwriting the BSP embeddings at beginning
         self.running_bsp_index = 0
 
-        # Initialize the BSV emebeddings for the epoch, running over epochs
+        # Initialize the BSP/BSV emebeddings for the epoch
         if bsv_epoch_mu == []:
             self.bsp_epoch_mu = torch.randn(self.bse2p_running_kld_length * self.train_dataloader.batch_size, self.bsp_transformer_seq_length, self.bsp_dim).to(self.gpu_id) 
             self.bsp_epoch_logvar = torch.randn(self.bse2p_running_kld_length * self.train_dataloader.batch_size, self.bsp_transformer_seq_length, self.bsp_dim).to(self.gpu_id) 
