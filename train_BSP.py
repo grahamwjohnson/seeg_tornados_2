@@ -310,7 +310,7 @@ class Trainer:
         self.bsv = DDP(bsv, device_ids=[gpu_id])
         self.opt_bsv = opt_bsv
 
-        # Just assume that we will start verwriting the BSP embeddings at beginning
+        # Just assume that we will start overwriting the BSP embeddings at beginning
         self.running_bsp_index = 0
 
         # Initialize the BSP/BSV emebeddings for the epoch
@@ -339,7 +339,6 @@ class Trainer:
         # Watch with WandB
         wandb.watch(self.bsp)
         wandb.watch(self.bsv)
-
 
     def _set_to_train(self):
         self.bsp.train()
@@ -406,23 +405,23 @@ class Trainer:
 
             # BSE
             with torch.inference_mode():
-                x_pseudobatch = x.reshape(x.shape[0]*x.shape[1], x.shape[2], x.shape[3], x.shape[4])
-                x_pseudobatch = x_pseudobatch.to(self.gpu_id)
-                z_pseudopseudobatch, _, _, _, _ = self.bse(x_pseudobatch, reverse=False) 
+                x = x.to(self.gpu_id)
+                post_bse_z = torch.zeros(x.shape[0], self.bsp_transformer_seq_length, x.shape[2], self.bse.latent_dim, dtype=torch.float32).to(self.gpu_id)
+                for b in range(x.shape[0]):
+                    x_in = x[b, :, :, :, :]
+                    z_pseudobatch, _, _, _, _ = self.bse(x_in, reverse=False) 
 
-                # Reshape variables back to token level 
-                z_pseudo = z_pseudopseudobatch.split(self.bse_transformer_seq_length, dim=0)
-                z_pseudo = torch.stack(z_pseudo, dim=0)
-                z = z_pseudo.split(self.bsp_transformer_seq_length, dim=0)
-                z = torch.stack(z, dim=0)
+                    # Reshape variables back to token level 
+                    z_split = z_pseudobatch.split(self.bse_transformer_seq_length, dim=0)
+                    post_bse_z[b, :, :, :] = torch.stack(z_split, dim=0)
 
             ### BSP ###
-            post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e = self.bsp(z) # Not 1-shifted
+            post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e = self.bsp(post_bse_z) # Not 1-shifted
             self.store_BSP_embeddings(dataloader_curr, post_bse2p_mu, post_bse2p_logvar, filename, start_idx_offset)
  
             # BSP Loss
-            bsp_pred_loss = loss_functions.mse_loss(post_bse2p_z[:, :-1, :], post_bsp[:, 1:, :]) # Opoosite 1-shifted
-            bsp_recon_loss = loss_functions.mse_loss(z[:,:-1,:,:].clone().detach().requires_grad_(True), post_bsp2e[:,1:,:,:])
+            bsp_pred_loss = loss_functions.mse_loss(post_bse2p_z[:, 1:, :], post_bsp) # Opposite 1-shifted
+            bsp_recon_loss = loss_functions.mse_loss(post_bse_z[:,1:,:,:].clone().detach().requires_grad_(True), post_bsp2e)
             bsp_mu_reshaped = self.bsp_epoch_mu.reshape(self.bsp_epoch_mu.shape[0]*self.bsp_epoch_mu.shape[1], -1)
             bsp_logvar_reshaped = self.bsp_epoch_logvar.reshape(self.bsp_epoch_logvar.shape[0]*self.bsp_epoch_logvar.shape[1], -1)
             bsp_kld_loss = loss_functions.bsp_kld_loss(bsp_mu_reshaped, bsp_logvar_reshaped, **kwargs)
@@ -493,8 +492,8 @@ class Trainer:
                     epoch = self.epoch, 
                     iter_curr = iter_curr,
                     pat_idxs = pat_idxs, 
-                    z = z[:,1:,:,:], 
-                    post_bsp2e = post_bsp2e[:,1:,:,:],
+                    z = post_bse_z[:,1:,:,:], 
+                    post_bsp2e = post_bsp2e,
                     savedir = self.model_dir + f"/plots/{dataset_string}/bsp_recon", 
                     **kwargs)
                 

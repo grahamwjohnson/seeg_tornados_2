@@ -355,13 +355,13 @@ class BSP(nn.Module):
         # Run through BSE2P
         post_bse2p_mu, post_bse2p_logvar, post_bse2p_z = self.bse2p(x)
 
-        # Run through BSP
-        post_bsp, bsp_attW = self.transformer(post_bse2p_z, start_pos=self.bsp_transformer_start_pos, return_attW=True, causal_mask_bool=True, self_mask=False)
+        # Run through BSP (1-shifted)
+        post_bsp, bsp_attW = self.transformer(post_bse2p_z[:, :-1, :], start_pos=self.bsp_transformer_start_pos, return_attW=True, causal_mask_bool=True, self_mask=False)
 
         # Run through BSP2E to decode back to post BSE size
         post_bsp_pseudobatch = post_bsp.reshape(post_bsp.shape[0]*post_bsp.shape[1], post_bsp.shape[2])
         post_bsp2e = self.bsp2e(post_bsp_pseudobatch)
-        post_bsp2e = post_bsp2e.reshape(x.shape[0], x.shape[1], x.shape[2], x.shape[3])
+        post_bsp2e = post_bsp2e.reshape(x.shape[0], -1, x.shape[2], x.shape[3])
 
         return post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e
 

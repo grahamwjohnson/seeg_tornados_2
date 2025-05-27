@@ -226,14 +226,14 @@ bsp2e_growingtransformer_dims: [1024]
 bse2p_attention_layers_per_stage: 2
 bse2p_num_heads: 32
 
-bse2p_running_kld_length: 64
+bse2p_running_kld_length: 128
 
 
 ### ----------------------------------- ###
 
 ### Brain-State Predictor (BSP) ###
 
-continue_existing_training: True
+continue_existing_training: False
 cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/warbler_sheldrake_Mon_May_26_15_55_58_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
