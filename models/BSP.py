@@ -161,73 +161,52 @@ class BSV(nn.Module):
 #         decoded = self.decode(encoded)
 #         return encoded, decoded
 
-
-class TransformerBlock(nn.Module):
-    def __init__(self, dim, heads, dropout):
-        super().__init__()
-        self.norm1 = RMSNorm(dim)
-        self.attn = nn.MultiheadAttention(embed_dim=dim, num_heads=heads, dropout=dropout, batch_first=True)
-        self.norm2 = RMSNorm(dim)
-        self.ff = nn.Sequential(
-            nn.Linear(dim, dim * 4),
-            nn.SiLU(),
-            nn.Dropout(dropout),
-            nn.Linear(dim * 4, dim)
-        )
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        residual = x
-        x = self.norm1(x)
-        attn_output, _ = self.attn(x, x, x)
-        x = residual + self.dropout(attn_output)
-
-        residual = x
-        x = self.norm2(x)
-        x = residual + self.dropout(self.ff(x))
-        return x
-
 class BSE2P(nn.Module): # A Growing Transformer
     def __init__(
         self, 
         gpu_id,
         bsp_transformer_seq_length,
-        bsp2e_growingtransformer_dims, 
-        bse2p_attention_layers_per_stage,
+        bsp2e_dim, 
+        bse2p_layers,
         bse2p_num_heads,
+        bsp2e_ffn_dim_multiplier,
+        bsp2e_max_batch_size,
+        bsp2e_transformer_seq_length,
+        bsp2e_transformer_activation,
         dropout=0.1,
         **kwargs):
         super(BSE2P, self).__init__()
 
         self.gpu_id = gpu_id
         self.bsp_transformer_seq_length = bsp_transformer_seq_length
-        self.dims = bsp2e_growingtransformer_dims
-        self.bse2p_attention_layers_per_stage = bse2p_attention_layers_per_stage
+        self.bsp2e_dim = bsp2e_dim
+        self.bse2p_layers = bse2p_layers
         self.bse2p_num_heads = bse2p_num_heads
+        self.bsp2e_ffn_dim_multiplier = bsp2e_ffn_dim_multiplier
+        self.bsp2e_max_batch_size = bsp2e_max_batch_size
+        self.bsp2e_transformer_seq_length = bsp2e_transformer_seq_length
+        self.bsp2e_transformer_activation = bsp2e_transformer_activation
 
-        self.blocks = nn.ModuleList()
-
-        for i in range(len(self.dims)):
-            stage_blocks = nn.Sequential(*[
-                TransformerBlock(dim=self.dims[i], heads=bse2p_num_heads, dropout=dropout)
-                for _ in range(bse2p_attention_layers_per_stage)
-            ])
-            self.blocks.append(stage_blocks)
-
-            # Project to next dimension if not the last stage
-            if i + 1 < len(self.dims):
-                self.blocks.append(nn.Linear(self.dims[i], self.dims[i + 1]))
+        self.bse2p_transformer = Transformer(ModelArgs(
+            device=self.gpu_id, 
+            dim=self.bsp2e_dim, 
+            n_heads=self.bse2p_num_heads,
+            n_layers=self.bse2p_layers,
+            ffn_dim_multiplier=self.bsp2e_ffn_dim_multiplier,
+            max_batch_size=self.bsp2e_max_batch_size,
+            max_seq_len=self.bsp2e_transformer_seq_length,
+            activation=self.bsp2e_transformer_activation))
 
         self.bse2p_mlp = nn.Sequential(
-            nn.Linear(self.dims[-1], self.dims[-1]*4),
-            RMSNorm(self.dims[-1]*4),
+            nn.Linear(self.bsp2e_dim, self.bsp2e_dim*4),
+            RMSNorm(self.bsp2e_dim*4),
             nn.SiLU(),
-            nn.Linear(self.dims[-1]*4, self.dims[-1]*4),
-            RMSNorm(self.dims[-1]*4),
+            nn.Linear(self.bsp2e_dim*4, self.bsp2e_dim*4),
+            RMSNorm(self.bsp2e_dim*4),
             nn.SiLU())
         
-        self.bse2p_mu = nn.Linear(self.dims[-1]*4, self.dims[-1])
-        self.bse2p_logvar = nn.Linear(self.dims[-1]*4, self.dims[-1])
+        self.bse2p_mu = nn.Linear(self.bsp2e_dim*4, self.bsp2e_dim)
+        self.bse2p_logvar = nn.Linear(self.bsp2e_dim*4, self.bsp2e_dim)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -240,8 +219,7 @@ class BSE2P(nn.Module): # A Growing Transformer
         # Converts [batch, TransSeq, FS, BSE latnet dim] --> [batch * TransSeq, FS, BSE latnet dim]
         x = x.reshape(x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
 
-        for block in self.blocks:
-            x = block(x)
+        x = self.bse2p_transformer(x, start_pos=0, causal_mask_bool=False, self_mask=False, return_attW=False)  # No masking
 
         # Re-shape back to [Batch, TransSeq, FS, BSP latent dim]
         # Take last token
@@ -254,55 +232,62 @@ class BSE2P(nn.Module): # A Growing Transformer
 
         return mu, logvar, z
 
-class BSP2E(nn.Module):
-    def __init__(self, gpu_id, bsp2e_time_dims, bsp2e_full_dims, bsp2e_growingtransformer_dims, **kwargs):
+class BSP2E(nn.Module): # A Growing Transformer
+    def __init__(
+        self, 
+        gpu_id,
+        bsp_transformer_seq_length,
+        bsp2e_dim, 
+        bse2p_layers,
+        bse2p_num_heads,
+        bsp2e_ffn_dim_multiplier,
+        bsp2e_max_batch_size,
+        bsp2e_transformer_seq_length,
+        bsp2e_transformer_activation,
+        bsp2e_hidden_dims,
+        dropout=0.1,
+        **kwargs):
         super(BSP2E, self).__init__()
+
         self.gpu_id = gpu_id
-        self.bsp2e_time_dims = bsp2e_time_dims
-        self.bsp2e_full_dims = bsp2e_full_dims
-        self.bsp_dim = bsp2e_growingtransformer_dims[-1]
+        self.bsp_transformer_seq_length = bsp_transformer_seq_length
+        self.bsp2e_dim = bsp2e_dim
+        self.bse2p_layers = bse2p_layers
+        self.bse2p_num_heads = bse2p_num_heads
+        self.bsp2e_ffn_dim_multiplier = bsp2e_ffn_dim_multiplier
+        self.bsp2e_max_batch_size = bsp2e_max_batch_size
+        self.bsp2e_transformer_seq_length = bsp2e_transformer_seq_length
+        self.bsp2e_transformer_activation = bsp2e_transformer_activation
+        self.bsp2e_hidden_dims = bsp2e_hidden_dims
 
-        self.time_layers = nn.ModuleList()
-        self.time_norms = nn.ModuleList()
+        layers = []
+        prev_dim = 1
+        for dim in self.bsp2e_hidden_dims:
+            layers.append(nn.Linear(prev_dim, dim))
+            layers.append(RMSNorm(dim))
+            layers.append(nn.SiLU())
+            prev_dim = dim
+        self.mlp = nn.Sequential(*layers)
 
-        prev = 1
-        for i, dim in enumerate(bsp2e_time_dims):
-            self.time_layers.append(nn.Linear(prev, dim))
-            self.time_norms.append(RMSNorm(dim) if i < len(bsp2e_time_dims) - 1 else None)
-            prev = dim
+        self.bse2p_transformer = Transformer(ModelArgs(
+            device=self.gpu_id, 
+            dim=self.bsp2e_dim, 
+            n_heads=self.bse2p_num_heads,
+            n_layers=self.bse2p_layers,
+            ffn_dim_multiplier=self.bsp2e_ffn_dim_multiplier,
+            max_batch_size=self.bsp2e_max_batch_size,
+            max_seq_len=self.bsp2e_transformer_seq_length,
+            activation=self.bsp2e_transformer_activation))
+        
+    def forward(self, z):
 
-        self.full_layers = nn.ModuleList()
-        self.full_norms = nn.ModuleList()
+        # Reshape input to pseudobatch the transformer sequence dimension
+        # Converts [batch, TransSeq, FS, BSE latnet dim] --> [batch * TransSeq, FS, BSE latnet dim]
+        z = z.unsqueeze(1)
+        z = self.mlp(z.transpose(1,2)).transpose(1,2)
+        z = self.bse2p_transformer(z, start_pos=0, causal_mask_bool=False, self_mask=False, return_attW=False)  # No masking
 
-        prev = self.bsp_dim
-        for i, dim in enumerate(bsp2e_full_dims):
-            self.full_layers.append(nn.Linear(prev, dim))
-            self.full_norms.append(RMSNorm(dim) if i < len(bsp2e_full_dims) - 1 else None)
-            prev = dim
-
-    def forward(self, x):
-        # x: (B, 2048)
-        B, T = x.shape
-
-        # Add channel dim for time FC: (B, T) → (B, T, 1)
-        x = x.unsqueeze(-1)
-
-        for layer, norm in zip(self.time_layers, self.time_norms):
-            x = layer(x)
-            if norm is not None:
-                x = F.silu(x)
-                x = norm(x)
-
-        # x: (B, T, time_out_dim) → (B, time_out_dim, T)
-        x = x.transpose(1, 2)
-
-        for layer, norm in zip(self.full_layers, self.full_norms):
-            x = layer(x)
-            if norm is not None:
-                x = F.silu(x)
-                x = norm(x)
-
-        return x  # shape: (B, 512, 1024) if dims set appropriately
+        return z
 
 class BSP(nn.Module):
     def __init__(

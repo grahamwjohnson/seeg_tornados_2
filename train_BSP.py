@@ -280,12 +280,23 @@ class Trainer:
 
         wandb_run,
         model_dir: str,
-        bsp2e_growingtransformer_dims: int,
+        bsp2e_dim: int,
         transformer_seq_length: int, # BSE
         bsp_transformer_seq_length: int,
         transformer_start_pos: int,
         atd_file: str,
         bsp_recent_display_iters: int,
+
+        bsp_anneal_epochs_to_max, 
+        bsp_anneal_epochs_at_max, 
+        bsp_anneal_max_weight, 
+        bsp_anneal_min_weight,
+
+        bsv_anneal_epochs_to_max, 
+        bsv_anneal_epochs_at_max, 
+        bsv_anneal_max_weight, 
+        bsv_anneal_min_weight,
+        
         **kwargs
     ) -> None:
         self.world_size = world_size
@@ -296,7 +307,7 @@ class Trainer:
         self.bse2p_running_kld_length = bse2p_running_kld_length
         self.wandb_run = wandb_run
         self.model_dir = model_dir
-        self.bsp_dim = bsp2e_growingtransformer_dims[-1]
+        self.bsp_dim = bsp2e_dim
         self.bse_transformer_seq_length = transformer_seq_length
         self.bsp_transformer_seq_length = bsp_transformer_seq_length
         self.transformer_start_pos = transformer_start_pos
@@ -335,6 +346,9 @@ class Trainer:
             self.bsv_epoch_logvar = bsv_epoch_logvar.to(gpu_id)
             self.bsv_epoch_filenames = bsv_epoch_filenames
             self.bsv_epoch_start_idx_offset = bsv_epoch_start_idx_offset.to(self.gpu_id)
+
+        self.bsp_annealer = utils_functions.CyclicalAnnealingWeight(bsp_anneal_epochs_to_max, bsp_anneal_epochs_at_max, bsp_anneal_max_weight, bsp_anneal_min_weight)
+        self.bsv_annealer = utils_functions.CyclicalAnnealingWeight(bsv_anneal_epochs_to_max, bsv_anneal_epochs_at_max, bsv_anneal_max_weight, bsv_anneal_min_weight)
 
         # Watch with WandB
         wandb.watch(self.bsp)
@@ -401,30 +415,35 @@ class Trainer:
         iter_curr = 0
         total_iters = len(dataloader_curr)
 
-        for x, filename, pat_idxs, start_idx_offset in dataloader_curr: 
+        for x, filename, pat_idxs, start_idx_offset in dataloader_curr:  
 
-            # BSE
+            # Update VAE cyclical annealing weights
+            self.bsp_annealer.update_weight(self.epoch, iter_curr, total_iters)
+            self.bsv_annealer.update_weight(self.epoch, iter_curr, total_iters)
+
+            ### BSE ### 
+            # Pretrained
             with torch.inference_mode():
                 x = x.to(self.gpu_id)
                 post_bse_z = torch.zeros(x.shape[0], self.bsp_transformer_seq_length, x.shape[2], self.bse.latent_dim, dtype=torch.float32).to(self.gpu_id)
-                for b in range(x.shape[0]):
+                for b in range(x.shape[0]): # One batch index at a time to not have to double pseudobatch
                     x_in = x[b, :, :, :, :]
                     z_pseudobatch, _, _, _, _ = self.bse(x_in, reverse=False) 
-
-                    # Reshape variables back to token level 
-                    z_split = z_pseudobatch.split(self.bse_transformer_seq_length, dim=0)
+                    z_split = z_pseudobatch.split(self.bse_transformer_seq_length, dim=0) # Reshape variables back to token level 
                     post_bse_z[b, :, :, :] = torch.stack(z_split, dim=0)
 
             ### BSP ###
-            post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e = self.bsp(post_bse_z) # Not 1-shifted
+            post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e = self.bsp(post_bse_z) # Not 1-shifted, but will 1-shift within BSP (i.e. after BSE2P)
             self.store_BSP_embeddings(dataloader_curr, post_bse2p_mu, post_bse2p_logvar, filename, start_idx_offset)
  
             # BSP Loss
-            bsp_pred_loss = loss_functions.mse_loss(post_bse2p_z[:, 1:, :], post_bsp) # Opposite 1-shifted
+            # bsp_pred_loss = loss_functions.mse_loss(post_bse2p_z[:, 1:, :], post_bsp) # Opposite 1-shifted
+            bsp_pred_loss = 0 #########
+
             bsp_recon_loss = loss_functions.mse_loss(post_bse_z[:,1:,:,:].clone().detach().requires_grad_(True), post_bsp2e)
             bsp_mu_reshaped = self.bsp_epoch_mu.reshape(self.bsp_epoch_mu.shape[0]*self.bsp_epoch_mu.shape[1], -1)
             bsp_logvar_reshaped = self.bsp_epoch_logvar.reshape(self.bsp_epoch_logvar.shape[0]*self.bsp_epoch_logvar.shape[1], -1)
-            bsp_kld_loss = loss_functions.bsp_kld_loss(bsp_mu_reshaped, bsp_logvar_reshaped, **kwargs)
+            bsp_kld_loss = loss_functions.bsp_kld_loss(bsp_mu_reshaped, bsp_logvar_reshaped, **kwargs) * self.bsp_annealer.get_weight()
             bsp_loss = bsp_pred_loss + bsp_recon_loss + bsp_kld_loss
 
             ### BSV ###
@@ -435,7 +454,7 @@ class Trainer:
             bsv_recon_loss = loss_functions.mse_loss(post_bse2p_z.detach(), bsv_dec)
             bsv_mu_reshaped = self.bsv_epoch_mu.reshape(self.bsv_epoch_mu.shape[0]*self.bsv_epoch_mu.shape[1], -1)
             bsv_logvar_reshaped = self.bsv_epoch_logvar.reshape(self.bsv_epoch_logvar.shape[0]*self.bsv_epoch_logvar.shape[1], -1)
-            bsv_kld_loss = loss_functions.bsv_kld_loss(bsv_mu_reshaped, bsv_logvar_reshaped, **kwargs)
+            bsv_kld_loss = loss_functions.bsv_kld_loss(bsv_mu_reshaped, bsv_logvar_reshaped, **kwargs) * self.bsv_annealer.get_weight()
             bsv_loss = bsv_recon_loss + bsv_kld_loss
 
             # Step optimizers
@@ -466,9 +485,11 @@ class Trainer:
                     train_bsp_recon_loss=bsp_recon_loss,
                     train_bsp_kld_loss=bsp_kld_loss,
                     train_bsp_loss=bsp_loss,
+                    train_bsp_kld_weight=self.bsp_annealer.get_weight(),
                     train_bsv_recon_loss=bsv_recon_loss,
                     train_bsv_kld_loss=bsv_kld_loss,
                     train_bsv_loss=bsv_loss,
+                    train_bsv_kld_weight=self.bsv_annealer.get_weight(),
                     train_LR_bsp=self.opt_bsp.param_groups[0]['lr'], 
                     train_LR_bsv=self.opt_bsv.param_groups[0]['lr'], 
                     train_epoch=self.epoch)

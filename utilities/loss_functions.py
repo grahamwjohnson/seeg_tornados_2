@@ -303,7 +303,7 @@ def mse_loss(a, b, reduction='mean'):
     loss = F.mse_loss(a, b, reduction=reduction)
     return loss
 
-def bsv_kld_loss(mu, logvar, bsv_kld_weight, **kwargs):
+def bsv_kld_loss(mu, logvar, **kwargs):
     """
     Compute the KL divergence between N(mu, sigma^2) and N(0, I).
     
@@ -315,9 +315,9 @@ def bsv_kld_loss(mu, logvar, bsv_kld_weight, **kwargs):
         Tensor: Scalar KLD loss
     """
     kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
-    return kld.mean() * bsv_kld_weight
+    return kld.mean()
 
-def bsp_kld_loss(mu, logvar, bsp_kld_weight, **kwargs):
+def bsp_kld_loss(mu, logvar, **kwargs):
     """
     Compute the KL divergence between N(mu, sigma^2) and N(0, I)
     for inputs of shape (B, S, D), where:
@@ -334,4 +334,4 @@ def bsp_kld_loss(mu, logvar, bsp_kld_weight, **kwargs):
         Tensor: Scalar KLD loss
     """
     kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)  # (B, S)
-    return kld.mean() * bsp_kld_weight  # Average over batch and sequence
+    return kld.mean()  # Average over batch and sequence

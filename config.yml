@@ -220,21 +220,27 @@ inference_batch_perpat_override: 1 # Set to -1 for no override. Use with caution
 
 ### ----------------------------------- ###
 
-### Brain-State Embedder to Brain-State Predictor (BSE2P) ###
+### Brain-State Embedder to Brain-State Predictor (BSE2P) & Brain-State Predictor to Brain-State Embedder (BSP2E) ###
 
-bsp2e_growingtransformer_dims: [1024]
-bse2p_attention_layers_per_stage: 2
-bse2p_num_heads: 32
+bsp2e_dim: kwargs['bsp2e_dim'] = kwargs['transformer_dim']
+bse2p_layers: 2
+bse2p_num_heads: 16
+
+bsp2e_ffn_dim_multiplier: 1.0
+bsp2e_max_batch_size: kwargs['bsp2e_max_batch_size'] = kwargs['bsp_batchsize'] * kwargs['bsp_transformer_seq_length']
+bsp2e_transformer_seq_length: kwargs['bsp2e_transformer_seq_length'] = kwargs['transformer_seq_length']
+bsp2e_transformer_activation: "silu"
 
 bse2p_running_kld_length: 128
 
+bsp2e_hidden_dims: kwargs['bsp2e_hidden_dims'] = [64,128,256, kwargs['bsp2e_transformer_seq_length']]
 
 ### ----------------------------------- ###
 
 ### Brain-State Predictor (BSP) ###
 
 continue_existing_training: False
-cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/warbler_sheldrake_Mon_May_26_15_55_58_2025' 
+cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/orca_sheldrake_Thu_May_29_17_07_50_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
 bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/train_pats/*/scaled_data_epochs/all_epochs_woSPES'
@@ -251,9 +257,9 @@ bsp_epochs_to_train: 99999
 
 # BSP
 bsp_transformer_seq_length: 32
-bsp_latent_dim: kwargs['bsp_latent_dim'] = kwargs['bsp2e_growingtransformer_dims'][-1]
+bsp_latent_dim: kwargs['bsp_latent_dim'] = kwargs['bsp2e_dim']
 bsp_n_heads: 32
-bsp_n_layers: 16
+bsp_n_layers: 8
 bsp_ffn_dim_multiplier: 1.0
 bsp_max_batch_size: kwargs['bsp_max_batch_size'] = kwargs['bsp_batchsize']
 bsp_max_seq_len: kwargs['bsp_max_seq_len'] = kwargs['bsp_transformer_seq_length']
@@ -262,7 +268,6 @@ bsp_attention_dropout: 0.0
 
 # BSP Training
 bsp_LR: kwargs['bsp_LR'] = 1e-6
-bsp_kld_weight: 0.01
 bsp_loss_weight: 1
 bsp_transformer_start_pos: 0 # hardcode to 0
 bsp_epoch_dataset_size: kwargs['bsp_epoch_dataset_size'] = 1024 * kwargs['bsp_batchsize']
@@ -271,23 +276,24 @@ bsp_autoregressive_plot_steps: 64
 bsp_autogressive_subbatch_to_plot: 4 # How many of the batch index should be plotted? Slow if too many
 bsp_recent_display_iters: 5
 
-### ----------------------------------- ###
-
-# BSP to BSE decoder (BSP2E)
-
-bsp2e_time_dims: [64,128,256,512]
-bsp2e_full_dims: [1024, 1024]
+bsp_anneal_epochs_to_max: 10
+bsp_anneal_epochs_at_max: 10
+bsp_anneal_max_weight: 0.1
+bsp_anneal_min_weight: 0
 
 
 ### ----------------------------------- ###
 
 ### Brain-State Visualizer (BSV) ###
 
-bsv_dims: [1024, 1024, 512, 2]
+bsv_dims: [1024, 512, 256, 2]
 
-bsv_LR: kwargs['bsv_LR'] = 1e-5
+bsv_LR: kwargs['bsv_LR'] = 1e-6
 
-bsv_kld_weight: 10
+bsv_anneal_epochs_to_max: 5
+bsv_anneal_epochs_at_max: 5
+bsv_anneal_max_weight: 10
+bsv_anneal_min_weight: 0
 
 bsv_weight_decay: 0.1
 bsv_adamW_beta1: 0.9
@@ -295,7 +301,7 @@ bsv_adamW_beta2: 0.95
 
 ### ----------------------------------- ###
 
-# SOM for autoregression plotting
-som_precomputed_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.8777decay0.010000min_sigma38.4with0.8855decay1.0min_numfeatures1027140_dims1024_batchsize64_epochs30_rolled_v50_h-10.pt'
-som_plot_data_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/overlay_figure_object.pkl'
+# # SOM for autoregression plotting
+# som_precomputed_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.8777decay0.010000min_sigma38.4with0.8855decay1.0min_numfeatures1027140_dims1024_batchsize64_epochs30_rolled_v50_h-10.pt'
+# som_plot_data_path: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/overlay_figure_object.pkl'
 

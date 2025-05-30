@@ -1627,6 +1627,30 @@ def LR_and_weight_schedules(
 
     return  temp, mean_match_val, logvar_match_val, mse_val, KL_divergence_val, gp_weight_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, mogpred_diversity_val, classifier_weight, classifier_val
 
+class CyclicalAnnealingWeight:
+    def __init__(self, epochs_to_max, epochs_at_max, max_weight=1.0, min_weight=0.0):
+        self.epochs_to_max = epochs_to_max
+        self.epochs_at_max = epochs_at_max
+        self.max_weight = max_weight
+        self.min_weight = min_weight
+        self.current_weight = min_weight
+
+        self.cycle_length = epochs_to_max + epochs_at_max
+
+    def update_weight(self, current_epoch, current_iter, iters_per_epoch):
+        cycle_epoch = current_epoch % self.cycle_length
+        cycle_progress = (current_iter + cycle_epoch * iters_per_epoch) / (self.epochs_to_max * iters_per_epoch)
+
+        if cycle_epoch < self.epochs_to_max:
+            # Linear ramp up
+            self.current_weight = self.min_weight + (self.max_weight - self.min_weight) * min(cycle_progress, 1.0)
+        else:
+            # Hold at max
+            self.current_weight = self.max_weight
+
+    def get_weight(self):
+        return self.current_weight
+
 
 # DECODER HASHING
 

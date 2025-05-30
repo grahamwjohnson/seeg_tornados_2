@@ -51,10 +51,12 @@ class ModelArgs:
         self.ffn_dim_multiplier = ffn_dim_multiplier
         self.norm_eps = norm_eps
         self.rope_theta = rope_theta
+
         # Hardware limitations
         self.max_batch_size = max_batch_size
         self.max_seq_len = max_seq_len
         self.device = device
+
         self.activation = activation
 
 class RMSNorm(torch.nn.Module):
@@ -385,6 +387,8 @@ class Transformer(nn.Module):
         ):
         # _bsz, seqlen = tokens.shape
         # h = self.tok_embeddings(tokens)
+
+        assert start_pos>=0, "ERROR: Start position less than 0"
 
         # h = self.input_mlp(h_in_vae)
         h = h_in_vae
