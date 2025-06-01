@@ -444,7 +444,8 @@ class Trainer:
             bsp_mu_reshaped = self.bsp_epoch_mu.reshape(self.bsp_epoch_mu.shape[0]*self.bsp_epoch_mu.shape[1], -1)
             bsp_logvar_reshaped = self.bsp_epoch_logvar.reshape(self.bsp_epoch_logvar.shape[0]*self.bsp_epoch_logvar.shape[1], -1)
             bsp_kld_loss = loss_functions.bsp_kld_loss(bsp_mu_reshaped, bsp_logvar_reshaped, **kwargs) * self.bsp_annealer.get_weight()
-            bsp_loss = bsp_pred_loss + bsp_recon_loss + bsp_kld_loss
+            bsp_gp_loss = loss_functions.gp_prior_loss(post_bse2p_z, **kwargs) # GP prior KLD
+            bsp_loss = bsp_pred_loss + bsp_recon_loss + bsp_kld_loss + bsp_gp_loss
 
             ### BSV ###
             bsv_dec, bsv_mu, bsv_logvar, _ = self.bsv(post_bse2p_z.detach())
@@ -484,6 +485,7 @@ class Trainer:
                     train_bsp_pred_loss=bsp_pred_loss,
                     train_bsp_recon_loss=bsp_recon_loss,
                     train_bsp_kld_loss=bsp_kld_loss,
+                    train_bsp_gp_loss = bsp_gp_loss,
                     train_bsp_loss=bsp_loss,
                     train_bsp_kld_weight=self.bsp_annealer.get_weight(),
                     train_bsv_recon_loss=bsv_recon_loss,
@@ -498,6 +500,7 @@ class Trainer:
                 except Exception as e:
                     print(f"An error occurred during WandB logging': {e}")
 
+            # Plotting
             if (self.gpu_id == 0) & ((iter_curr + 1) % bsp_singlebatch_printing_interval_train == 0):
                 utils_functions.print_BSP_attention_singlebatch(
                     gpu_id=self.gpu_id,
@@ -526,6 +529,16 @@ class Trainer:
                     post_bse2p = post_bse2p_z,
                     bsv_dec = bsv_dec,
                     savedir = self.model_dir + f"/plots/{dataset_string}/bsv_recon", 
+                    **kwargs)
+                
+                utils_functions.print_BSV_recon_singlebatch( # Same as above, but printing prediction of BSP (i.e. not BSV)
+                    gpu_id=self.gpu_id,
+                    epoch = self.epoch, 
+                    iter_curr = iter_curr,
+                    pat_idxs = pat_idxs, 
+                    post_bse2p = post_bse2p_z,
+                    bsv_dec = post_bsp,
+                    savedir = self.model_dir + f"/plots/{dataset_string}/bsp_prediction", 
                     **kwargs)
 
             iter_curr = iter_curr + 1

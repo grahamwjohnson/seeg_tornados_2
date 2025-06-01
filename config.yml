@@ -231,7 +231,7 @@ bsp2e_max_batch_size: kwargs['bsp2e_max_batch_size'] = kwargs['bsp_batchsize'] *
 bsp2e_transformer_seq_length: kwargs['bsp2e_transformer_seq_length'] = kwargs['transformer_seq_length']
 bsp2e_transformer_activation: "silu"
 
-bse2p_running_kld_length: 128
+bse2p_running_kld_length: kwargs['bse2p_running_kld_length'] =  256  * kwargs['bsp_batchsize']  ######################################### ####### #### # # # # # # # # # # # # # #  # # # # # # # #  #  #   #  #   #  #      #       #  
 
 bsp2e_hidden_dims: kwargs['bsp2e_hidden_dims'] = [64,128,256, kwargs['bsp2e_transformer_seq_length']]
 
@@ -239,8 +239,8 @@ bsp2e_hidden_dims: kwargs['bsp2e_hidden_dims'] = [64,128,256, kwargs['bsp2e_tran
 
 ### Brain-State Predictor (BSP) ###
 
-continue_existing_training: False
-cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/orca_sheldrake_Thu_May_29_17_07_50_2025' 
+continue_existing_training: True
+cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/springtail_sheldrake_Sat_May_31_21_08_29_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
 bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/train_pats/*/scaled_data_epochs/all_epochs_woSPES'
@@ -278,15 +278,20 @@ bsp_recent_display_iters: 5
 
 bsp_anneal_epochs_to_max: 10
 bsp_anneal_epochs_at_max: 10
-bsp_anneal_max_weight: 0.1
+bsp_anneal_max_weight: 0 # 0.1
 bsp_anneal_min_weight: 0
+
+# BSP GP prior
+bsp_variance: 1.0 
+bsp_lengthscale: 8.0
+bsp_gp_weight: 0.0001
 
 
 ### ----------------------------------- ###
 
 ### Brain-State Visualizer (BSV) ###
 
-bsv_dims: [1024, 512, 256, 2]
+bsv_dims: [1024, 4096, 1024, 512, 256, 128, 2]
 
 bsv_LR: kwargs['bsv_LR'] = 1e-6
 

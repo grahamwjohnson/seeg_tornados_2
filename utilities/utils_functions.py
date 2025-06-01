@@ -2608,16 +2608,31 @@ def extract_patient_id(filename):
     return os.path.basename(filename).split("_")[0]
 
 def print_BSV_2D_embeddings(
-    gpu_id, embeddings, filenames, start_idx_offset, epoch, iter_curr, savedir,
-    atd_file, sleep_file, FS, transformer_seq_length, pre_ictal_hours=1, **kwargs):
-
+    gpu_id,
+    embeddings,
+    filenames,
+    start_idx_offset,
+    epoch,
+    iter_curr,
+    savedir,
+    atd_file,
+    sleep_file,
+    FS,
+    transformer_seq_length,
+    pre_ictal_hours=1,
+    show_pre_ictal=True,
+    show_sleep=False,
+    show_baseline=False,  # background off by default
+    show_unparsed=False,
+    **kwargs,
+):
     print("Plotting 2D embeddings...")
 
     # Move tensors to CPU and convert to numpy
     embeddings = embeddings.detach().cpu().numpy()
     start_idx_offset = start_idx_offset.detach().cpu().numpy()
 
-    B, T, D = embeddings.shape[0], embeddings.shape[1], embeddings.shape[2]
+    B, T, D = embeddings.shape
     embeddings = embeddings.reshape(B * T, D)
     assert D == 2, f"Expected 2D embeddings, got shape {embeddings.shape}"
 
@@ -2634,14 +2649,16 @@ def print_BSV_2D_embeddings(
         seizure_info[pid] = list(zip(seiz_starts, seiz_ends, seiz_type))
         sleep_info[pid] = list(zip(sleep_starts, sleep_ends, sleep_type))
 
-    # Determine timestamps for each coarse sequence
+    # Determine timestamps and colors
     seconds_per_token = transformer_seq_length / FS
     colors = []
+    categories = []  # To track types for KDE
     for b in range(B):
         pid = pat_ids[b]
         base_time = file_times[b]
         if base_time is None:
             colors.extend(['black'] * T)
+            categories.extend(['unparsed'] * T)
             continue
 
         base_offset_seconds = start_idx_offset[b] / FS
@@ -2657,29 +2674,82 @@ def print_BSV_2D_embeddings(
             is_preictal = any([(s_start - datetime.timedelta(hours=pre_ictal_hours)) <= tt < s_start for s_start, s_end, _ in seiz_ranges])
             if is_preictal:
                 colors.append('red')
+                categories.append('pre-ictal')
                 continue
             is_sleep = any([start <= tt <= end for start, end, _ in sleep_ranges])
             if is_sleep:
                 colors.append('blue')
+                categories.append('sleep')
                 continue
             colors.append('grey')
+            categories.append('baseline')
 
-    # Plot
-    fig, ax = pl.subplots(figsize=(6, 6))
-    ax.scatter(embeddings[:, 0], embeddings[:, 1], c=colors, s=5, alpha=0.5)
-    ax.set_title(f"2D Embeddings - Epoch {epoch}, Iter {iter_curr}, GPU {gpu_id}")
-    ax.set_xlabel("Dim 1")
-    ax.set_ylabel("Dim 2")
-    ax.grid(True)
+    # Prepare color-specific embeddings
+    color_map = {
+        'pre-ictal': 'red',
+        'sleep': 'blue',
+        'baseline': 'grey',
+        'unparsed': 'black'
+    }
 
-    # Legend
+    categorized_embeddings = {
+        'pre-ictal': [],
+        'sleep': [],
+        'baseline': [],
+        'unparsed': []
+    }
+
+    for emb, cat in zip(embeddings, categories):
+        categorized_embeddings[cat].append(emb)
+
+    for key in categorized_embeddings:
+        categorized_embeddings[key] = np.array(categorized_embeddings[key])
+
+    # Plot setup
+    fig = pl.figure(figsize=(12, 6))
+    gs = gridspec.GridSpec(1, 2, width_ratios=[1, 1])
+
+    # Scatter plot
+    ax0 = fig.add_subplot(gs[0])
+    ax0.scatter(embeddings[:, 0], embeddings[:, 1], c=colors, s=5, alpha=0.5)
+    ax0.set_title(f"2D Embeddings - Epoch {epoch}, Iter {iter_curr}, GPU {gpu_id}")
+    ax0.set_xlabel("Dim 1")
+    ax0.set_ylabel("Dim 2")
+    ax0.grid(True)
+
     legend_elements = [
         pl.Line2D([0], [0], marker='o', color='w', label='Pre-Ictal', markerfacecolor='red', markersize=5),
         pl.Line2D([0], [0], marker='o', color='w', label='Sleep', markerfacecolor='blue', markersize=5),
         pl.Line2D([0], [0], marker='o', color='w', label='Baseline', markerfacecolor='grey', markersize=5),
         pl.Line2D([0], [0], marker='o', color='w', label='Unparsed', markerfacecolor='black', markersize=5)
     ]
-    ax.legend(handles=legend_elements, loc='upper right')
+    ax0.legend(handles=legend_elements, loc='upper right')
+
+    # KDE plot
+    ax1 = fig.add_subplot(gs[1])
+    for cat, data in categorized_embeddings.items():
+        if data.shape[0] > 1:
+            if (
+                (cat == 'pre-ictal' and show_pre_ictal) or
+                (cat == 'sleep' and show_sleep) or
+                (cat == 'baseline' and show_baseline) or
+                (cat == 'unparsed' and show_unparsed)
+            ):
+                sns.kdeplot(
+                    x=data[:, 0],
+                    y=data[:, 1],
+                    ax=ax1,
+                    fill=True,
+                    alpha=0.6,
+                    levels=5,
+                    label=cat,
+                    color=color_map[cat]
+                )
+    ax1.set_title("KDE by Category")
+    ax1.set_xlabel("Dim 1")
+    ax1.set_ylabel("Dim 2")
+    ax1.grid(True)
+    ax1.legend(loc='upper right')
 
     # Save
     os.makedirs(savedir, exist_ok=True)
@@ -2687,6 +2757,219 @@ def print_BSV_2D_embeddings(
     pl.savefig(savename, dpi=200)
     pl.close(fig)
     pl.close('all')
+
+
+# def print_BSV_2D_embeddings(
+#     gpu_id, embeddings, filenames, start_idx_offset, epoch, iter_curr, savedir,
+#     atd_file, sleep_file, FS, transformer_seq_length, pre_ictal_hours=1, **kwargs):
+
+#     print("Plotting 2D embeddings...")
+
+#     # Move tensors to CPU and convert to numpy
+#     embeddings = embeddings.detach().cpu().numpy()
+#     start_idx_offset = start_idx_offset.detach().cpu().numpy()
+
+#     B, T, D = embeddings.shape
+#     embeddings = embeddings.reshape(B * T, D)
+#     assert D == 2, f"Expected 2D embeddings, got shape {embeddings.shape}"
+
+#     # Parse datetime and patient ID from filenames
+#     file_times = [extract_datetime_from_filename(os.path.basename(f)) for f in filenames]
+#     pat_ids = [extract_patient_id(os.path.basename(f)) for f in filenames]
+
+#     # Gather seizure and sleep info per patient
+#     seizure_info = {}
+#     sleep_info = {}
+#     for pid in set(pat_ids):
+#         seiz_starts, seiz_ends, seiz_type = manifold_utilities.get_pat_seiz_datetimes(pid, atd_file)
+#         sleep_starts, sleep_ends, sleep_type = manifold_utilities.get_pat_sleep_datetimes(pid, sleep_file)
+#         seizure_info[pid] = list(zip(seiz_starts, seiz_ends, seiz_type))
+#         sleep_info[pid] = list(zip(sleep_starts, sleep_ends, sleep_type))
+
+#     # Determine timestamps and colors
+#     seconds_per_token = transformer_seq_length / FS
+#     colors = []
+#     categories = []  # To track types for KDE
+#     for b in range(B):
+#         pid = pat_ids[b]
+#         base_time = file_times[b]
+#         if base_time is None:
+#             colors.extend(['black'] * T)
+#             categories.extend(['unparsed'] * T)
+#             continue
+
+#         base_offset_seconds = start_idx_offset[b] / FS
+#         token_times = [
+#             base_time + datetime.timedelta(seconds=base_offset_seconds + i * seconds_per_token)
+#             for i in range(T)
+#         ]
+
+#         seiz_ranges = seizure_info[pid]
+#         sleep_ranges = sleep_info[pid]
+
+#         for tt in token_times:
+#             is_preictal = any([(s_start - datetime.timedelta(hours=pre_ictal_hours)) <= tt < s_start for s_start, s_end, _ in seiz_ranges])
+#             if is_preictal:
+#                 colors.append('red')
+#                 categories.append('pre-ictal')
+#                 continue
+#             is_sleep = any([start <= tt <= end for start, end, _ in sleep_ranges])
+#             if is_sleep:
+#                 colors.append('blue')
+#                 categories.append('sleep')
+#                 continue
+#             colors.append('grey')
+#             categories.append('baseline')
+
+#     # Prepare color-specific embeddings
+#     color_map = {
+#         'pre-ictal': 'red',
+#         'sleep': 'blue',
+#         'baseline': 'grey',
+#         'unparsed': 'black'
+#     }
+
+#     categorized_embeddings = {
+#         'pre-ictal': [],
+#         'sleep': [],
+#         'baseline': [],
+#         'unparsed': []
+#     }
+
+#     for emb, cat in zip(embeddings, categories):
+#         categorized_embeddings[cat].append(emb)
+
+#     for key in categorized_embeddings:
+#         categorized_embeddings[key] = np.array(categorized_embeddings[key])
+
+#     # Plot setup
+#     fig = pl.figure(figsize=(12, 6))
+#     gs = gridspec.GridSpec(1, 2, width_ratios=[1, 1])
+
+#     # Scatter plot
+#     ax0 = fig.add_subplot(gs[0])
+#     ax0.scatter(embeddings[:, 0], embeddings[:, 1], c=colors, s=5, alpha=0.5)
+#     ax0.set_title(f"2D Embeddings - Epoch {epoch}, Iter {iter_curr}, GPU {gpu_id}")
+#     ax0.set_xlabel("Dim 1")
+#     ax0.set_ylabel("Dim 2")
+#     ax0.grid(True)
+
+#     legend_elements = [
+#         pl.Line2D([0], [0], marker='o', color='w', label='Pre-Ictal', markerfacecolor='red', markersize=5),
+#         pl.Line2D([0], [0], marker='o', color='w', label='Sleep', markerfacecolor='blue', markersize=5),
+#         pl.Line2D([0], [0], marker='o', color='w', label='Baseline', markerfacecolor='grey', markersize=5),
+#         pl.Line2D([0], [0], marker='o', color='w', label='Unparsed', markerfacecolor='black', markersize=5)
+#     ]
+#     ax0.legend(handles=legend_elements, loc='upper right')
+
+#     # KDE plot
+#     ax1 = fig.add_subplot(gs[1])
+#     for cat, data in categorized_embeddings.items():
+#         if data.shape[0] > 1:
+#             sns.kdeplot(
+#                 x=data[:, 0],
+#                 y=data[:, 1],
+#                 ax=ax1,
+#                 fill=True,
+#                 alpha=0.3,
+#                 levels=10,
+#                 label=cat,
+#                 color=color_map[cat]
+#             )
+#     ax1.set_title("KDE by Category")
+#     ax1.set_xlabel("Dim 1")
+#     ax1.set_ylabel("Dim 2")
+#     ax1.grid(True)
+#     ax1.legend(loc='upper right')
+
+#     # Save
+#     os.makedirs(savedir, exist_ok=True)
+#     savename = f"{savedir}/Embeddings_Epoch{epoch}_iter{iter_curr}_GPU{gpu_id}.jpg"
+#     pl.savefig(savename, dpi=200)
+#     pl.close(fig)
+#     pl.close('all')
+
+
+# def print_BSV_2D_embeddings(
+#     gpu_id, embeddings, filenames, start_idx_offset, epoch, iter_curr, savedir,
+#     atd_file, sleep_file, FS, transformer_seq_length, pre_ictal_hours=1, **kwargs):
+
+#     print("Plotting 2D embeddings...")
+
+#     # Move tensors to CPU and convert to numpy
+#     embeddings = embeddings.detach().cpu().numpy()
+#     start_idx_offset = start_idx_offset.detach().cpu().numpy()
+
+#     B, T, D = embeddings.shape[0], embeddings.shape[1], embeddings.shape[2]
+#     embeddings = embeddings.reshape(B * T, D)
+#     assert D == 2, f"Expected 2D embeddings, got shape {embeddings.shape}"
+
+#     # Parse datetime and patient ID from filenames
+#     file_times = [extract_datetime_from_filename(os.path.basename(f)) for f in filenames]
+#     pat_ids = [extract_patient_id(os.path.basename(f)) for f in filenames]
+
+#     # Gather seizure and sleep info per patient
+#     seizure_info = {}
+#     sleep_info = {}
+#     for pid in set(pat_ids):
+#         seiz_starts, seiz_ends, seiz_type = manifold_utilities.get_pat_seiz_datetimes(pid, atd_file)
+#         sleep_starts, sleep_ends, sleep_type = manifold_utilities.get_pat_sleep_datetimes(pid, sleep_file)
+#         seizure_info[pid] = list(zip(seiz_starts, seiz_ends, seiz_type))
+#         sleep_info[pid] = list(zip(sleep_starts, sleep_ends, sleep_type))
+
+#     # Determine timestamps for each coarse sequence
+#     seconds_per_token = transformer_seq_length / FS
+#     colors = []
+#     for b in range(B):
+#         pid = pat_ids[b]
+#         base_time = file_times[b]
+#         if base_time is None:
+#             colors.extend(['black'] * T)
+#             continue
+
+#         base_offset_seconds = start_idx_offset[b] / FS
+#         token_times = [
+#             base_time + datetime.timedelta(seconds=base_offset_seconds + i * seconds_per_token)
+#             for i in range(T)
+#         ]
+
+#         seiz_ranges = seizure_info[pid]
+#         sleep_ranges = sleep_info[pid]
+
+#         for tt in token_times:
+#             is_preictal = any([(s_start - datetime.timedelta(hours=pre_ictal_hours)) <= tt < s_start for s_start, s_end, _ in seiz_ranges])
+#             if is_preictal:
+#                 colors.append('red')
+#                 continue
+#             is_sleep = any([start <= tt <= end for start, end, _ in sleep_ranges])
+#             if is_sleep:
+#                 colors.append('blue')
+#                 continue
+#             colors.append('grey')
+
+#     # Plot
+#     fig, ax = pl.subplots(figsize=(6, 6))
+#     ax.scatter(embeddings[:, 0], embeddings[:, 1], c=colors, s=5, alpha=0.5)
+#     ax.set_title(f"2D Embeddings - Epoch {epoch}, Iter {iter_curr}, GPU {gpu_id}")
+#     ax.set_xlabel("Dim 1")
+#     ax.set_ylabel("Dim 2")
+#     ax.grid(True)
+
+#     # Legend
+#     legend_elements = [
+#         pl.Line2D([0], [0], marker='o', color='w', label='Pre-Ictal', markerfacecolor='red', markersize=5),
+#         pl.Line2D([0], [0], marker='o', color='w', label='Sleep', markerfacecolor='blue', markersize=5),
+#         pl.Line2D([0], [0], marker='o', color='w', label='Baseline', markerfacecolor='grey', markersize=5),
+#         pl.Line2D([0], [0], marker='o', color='w', label='Unparsed', markerfacecolor='black', markersize=5)
+#     ]
+#     ax.legend(handles=legend_elements, loc='upper right')
+
+#     # Save
+#     os.makedirs(savedir, exist_ok=True)
+#     savename = f"{savedir}/Embeddings_Epoch{epoch}_iter{iter_curr}_GPU{gpu_id}.jpg"
+#     pl.savefig(savename, dpi=200)
+#     pl.close(fig)
+#     pl.close('all')
 
 def print_BSP_recon_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, z, post_bsp2e, savedir, **kwargs):
 
