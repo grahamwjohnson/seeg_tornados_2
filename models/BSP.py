@@ -197,22 +197,6 @@ class BSE2P(nn.Module): # A Growing Transformer
             max_seq_len=self.bsp2e_transformer_seq_length,
             activation=self.bsp2e_transformer_activation))
 
-        self.bse2p_mlp = nn.Sequential(
-            nn.Linear(self.bsp2e_dim, self.bsp2e_dim*4),
-            RMSNorm(self.bsp2e_dim*4),
-            nn.SiLU(),
-            nn.Linear(self.bsp2e_dim*4, self.bsp2e_dim*4),
-            RMSNorm(self.bsp2e_dim*4),
-            nn.SiLU())
-        
-        self.bse2p_mu = nn.Linear(self.bsp2e_dim*4, self.bsp2e_dim)
-        self.bse2p_logvar = nn.Linear(self.bsp2e_dim*4, self.bsp2e_dim)
-
-    def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
-
     def forward(self, x):
 
         # Reshape input to pseudobatch the transformer sequence dimension
@@ -226,11 +210,7 @@ class BSE2P(nn.Module): # A Growing Transformer
         x = x.reshape(-1, self.bsp_transformer_seq_length, x.shape[1], x.shape[2])
         x = x[:,:,-1,:]
 
-        x = self.bse2p_mlp(x)
-        mu, logvar = self.bse2p_mu(x), self.bse2p_logvar(x)
-        z = self.reparameterize(mu, logvar)
-
-        return mu, logvar, z
+        return x
 
 class BSP2E(nn.Module): # A Growing Transformer
     def __init__(
@@ -267,7 +247,7 @@ class BSP2E(nn.Module): # A Growing Transformer
             layers.append(RMSNorm(dim))
             layers.append(nn.SiLU())
             prev_dim = dim
-        self.mlp = nn.Sequential(*layers)
+        self.mlp_token_expander = nn.Sequential(*layers)
 
         self.bse2p_transformer = Transformer(ModelArgs(
             device=self.gpu_id, 
@@ -279,15 +259,45 @@ class BSP2E(nn.Module): # A Growing Transformer
             max_seq_len=self.bsp2e_transformer_seq_length,
             activation=self.bsp2e_transformer_activation))
         
-    def forward(self, z):
+        self.mlp_post_transformer = nn.Sequential(
+            nn.Linear(self.bsp2e_dim, self.bsp2e_dim * 4),
+            RMSNorm(self.bsp2e_dim * 4),
+            nn.SiLU(),
+            nn.Linear(self.bsp2e_dim * 4, self.bsp2e_dim * 4),
+            RMSNorm(self.bsp2e_dim * 4),
+            nn.SiLU(),
+            nn.Linear(self.bsp2e_dim * 4, self.bsp2e_dim * 4),
+            RMSNorm(self.bsp2e_dim * 4),
+            nn.SiLU(),
+            nn.Linear(self.bsp2e_dim * 4, self.bsp2e_dim)
+        )
+
+        # self.bsp2e_mlp = nn.Sequential(
+        #     nn.Linear(self.bsp2e_dim, self.bsp2e_dim*4),
+        #     RMSNorm(self.bsp2e_dim*4),
+        #     nn.SiLU(),
+        #     nn.Linear(self.bsp2e_dim*4, self.bsp2e_dim*4),
+        #     RMSNorm(self.bsp2e_dim*4),
+        #     nn.SiLU())
+        
+    #     self.bsp2e_mu = nn.Linear(self.bsp2e_dim*4, self.bsp2e_dim)
+    #     self.bsp2e_logvar = nn.Linear(self.bsp2e_dim*4, self.bsp2e_dim)
+
+    # def reparameterize(self, mu, logvar):
+    #     std = torch.exp(0.5 * logvar)
+    #     eps = torch.randn_like(std)
+    #     return mu + eps * std
+        
+    def forward(self, x):
 
         # Reshape input to pseudobatch the transformer sequence dimension
-        # Converts [batch, TransSeq, FS, BSE latnet dim] --> [batch * TransSeq, FS, BSE latnet dim]
-        z = z.unsqueeze(1)
-        z = self.mlp(z.transpose(1,2)).transpose(1,2)
-        z = self.bse2p_transformer(z, start_pos=0, causal_mask_bool=False, self_mask=False, return_attW=False)  # No masking
+        # Converts [batch, TransSeq, FS, BSE latent dim] --> [batch * TransSeq, FS, BSE latent dim]
+        x = x.unsqueeze(1)
+        x = self.mlp_token_expander(x.transpose(1,2)).transpose(1,2)
+        x = self.bse2p_transformer(x, start_pos=0, causal_mask_bool=False, self_mask=False, return_attW=False)  # No masking
+        x = self.mlp_post_transformer(x)
 
-        return z
+        return x
 
 class BSP(nn.Module):
     def __init__(
@@ -331,24 +341,23 @@ class BSP(nn.Module):
             max_seq_len=self.bsp_max_seq_len,
             activation=self.bsp_transformer_activation))
         
-
         # Build the BSP2E to undo the transformer embedding
         self.bsp2e = BSP2E(gpu_id=gpu_id, **kwargs)
 
-    def forward(self, x):
+    def forward(self, x): # Input is from weighted mu output of BSE
 
         # Run through BSE2P
-        post_bse2p_mu, post_bse2p_logvar, post_bse2p_z = self.bse2p(x)
+        post_bse2p = self.bse2p(x)
 
         # Run through BSP (1-shifted)
-        post_bsp, bsp_attW = self.transformer(post_bse2p_z[:, :-1, :], start_pos=self.bsp_transformer_start_pos, return_attW=True, causal_mask_bool=True, self_mask=False)
+        post_bsp, bsp_attW = self.transformer(post_bse2p[:, :-1, :], start_pos=self.bsp_transformer_start_pos, return_attW=True, causal_mask_bool=True, self_mask=False)
 
         # Run through BSP2E to decode back to post BSE size
         post_bsp_pseudobatch = post_bsp.reshape(post_bsp.shape[0]*post_bsp.shape[1], post_bsp.shape[2])
         post_bsp2e = self.bsp2e(post_bsp_pseudobatch)
         post_bsp2e = post_bsp2e.reshape(x.shape[0], -1, x.shape[2], x.shape[3])
 
-        return post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e
+        return post_bse2p, post_bsp, bsp_attW, post_bsp2e
 
 def bsp_print_models_flow(x, **kwargs):
     '''
@@ -364,10 +373,10 @@ def bsp_print_models_flow(x, **kwargs):
     bsp = BSP(gpu_id='cpu', **kwargs) 
 
     print(f"INPUT\n"f"x:{x.shape}")
-    post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e = bsp(x)  
+    post_bse2p, post_bsp, bsp_attW, post_bsp2e = bsp(x)  
     summary(bsp, input_size=(x.shape), depth=999, device="cpu")
     print(
-        f"post_bse2p:{post_bse2p_mu.shape}\n",
+        f"post_bse2p:{post_bse2p.shape}\n",
         f"post_bsp:{post_bsp.shape}\n",
         f"attW:{bsp_attW.shape}\n",
         f"post_bsp2e:{post_bsp2e.shape}\n")
@@ -375,8 +384,8 @@ def bsp_print_models_flow(x, **kwargs):
     # Build the BSV
     bsv = BSV(gpu_id='cpu', **kwargs)
 
-    bsv_dec, mu, logvar, _ = bsv(post_bse2p_z.detach())
-    summary(bsv, input_size=(post_bse2p_z.shape), depth=999, device="cpu")
+    bsv_dec, mu, logvar, _ = bsv(post_bse2p.detach())
+    summary(bsv, input_size=(post_bse2p.shape), depth=999, device="cpu")
     print(
         f"mu: {mu.shape}\n",
         f"logvar: {logvar.shape}\n"

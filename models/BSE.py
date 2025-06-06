@@ -994,7 +994,7 @@ class BSE(nn.Module):
             latent_dim = self.latent_dim,
             decoder_base_dims = self.decoder_base_dims,
             output_channels = self.padded_channels,
-            decode_samples = self.encode_token_samples)
+            decode_samples = self.encode_token_samples) 
 
         # Adversarial Classifier
         self.adversarial_classifier = AdversarialClassifier(latent_dim=self.latent_dim, **kwargs) # the name 'adversarial_classifier' is tied to model parameter search to create seperate optimizer for classifier
@@ -1082,6 +1082,34 @@ class BSE(nn.Module):
         z = torch.clamp(z, min=self.mean_lims[0], max=self.mean_lims[1])
         
         return z, component_weights
+
+    def sample_weighted_mu_from_posterior(self, encoder_means, encoder_mogpreds):
+        """
+        Differentiably compute the weighted posterior mean (mu) from a MoG using Gumbel-Softmax.
+
+        Args:
+            encoder_means:     [batch, components, latent_dim] - Means of each MoG component.
+            encoder_mogpreds:  [batch, components] - Logits for MoG component weights.
+
+        Returns:
+            weighted_mu:       [batch, latent_dim] - Differentiable weighted average of the means.
+            component_weights: [batch, components] - Soft assignment via Gumbel-Softmax.
+        """
+        # Step 1: Gumbel-Softmax for soft, differentiable component weights
+        component_weights = F.gumbel_softmax(
+            encoder_mogpreds,
+            tau=self.gumbel_softmax_temperature,
+            hard=False
+        )  # [batch, components]
+
+        # Step 2: Weighted sum of component means
+        weighted_mu = torch.sum(encoder_means * component_weights.unsqueeze(-1), dim=1)  # [batch, latent_dim]
+
+        # Optional: Clamp to match valid latent mean range
+        weighted_mu = torch.clamp(weighted_mu, min=self.mean_lims[0], max=self.mean_lims[1])
+
+        return weighted_mu, component_weights
+
 
     def set_temp(self, gumbel_softmax_temperature):
         self.gumbel_softmax_temperature = gumbel_softmax_temperature # Controls posterior sampling
