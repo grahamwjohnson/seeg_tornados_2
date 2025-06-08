@@ -1175,6 +1175,15 @@ def rewindow_data_filewise(
 
     return rewin_means, rewin_logvars, rewin_mogpreds
 
+def circular_slice_tensor(tensor: torch.Tensor, start: int, stop: int) -> torch.Tensor:
+    length = tensor.size(0)
+    start = start % length
+    stop = stop % length
+
+    if start < stop:
+        return tensor[start:stop]
+    else:
+        return torch.cat((tensor[start:], tensor[:stop]), dim=0)
 
 # LEARNING RATES & LOSS WEIGHTS
 
@@ -2716,6 +2725,7 @@ def print_BSV_1D_embeddings(
 
     for i in range(D):
         ax = axes[i]
+        # Plot histograms first
         if show_baseline and np.any(is_baseline):
             sns.histplot(
                 embeddings[is_baseline, i],
@@ -2749,11 +2759,21 @@ def print_BSV_1D_embeddings(
                 alpha=0.4,
                 ax=ax,
             )
+        # Plot the KDE line last to be on top
+        if show_baseline and np.any(is_baseline):
+            sns.kdeplot(
+                embeddings[is_baseline, i],
+                color="black",
+                linewidth=1.5,
+                label="Baseline KDE",
+                ax=ax,
+            )
+
         ax.set_title(f"Dimension {i}")
         ax.legend()
 
     plt.tight_layout()
-    save_path = os.path.join(savedir, f"epoch{epoch:03d}_iter{iter_curr:05d}_1D_hist.png")
+    save_path = os.path.join(savedir, f"epoch{epoch:03d}_iter{iter_curr:05d}_1D_hist_GPU{gpu_id}.png")
     fig.savefig(save_path)
     plt.close(fig)
 

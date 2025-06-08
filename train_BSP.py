@@ -274,6 +274,7 @@ class Trainer:
         bsp_epoch_filenames,
         bsp_epoch_start_idx_offset,
 
+        bsv_running_kld_length,
         bsv_epoch_mu,
         bsv_epoch_logvar,
         bsv_epoch_filenames,
@@ -308,6 +309,7 @@ class Trainer:
         self.epoch = start_epoch
         self.train_dataloader = train_dataloader
         self.bse2p_running_kld_length = bse2p_running_kld_length
+        self.bsv_running_kld_length = bsv_running_kld_length
         self.wandb_run = wandb_run
         self.model_dir = model_dir
         self.bsp_dim = bsp2e_dim
@@ -446,15 +448,16 @@ class Trainer:
             bsp_loss = bsp_recon_loss
 
             ### BSV ###
-            # bsv_dec, bsv_mu, bsv_logvar, _ = self.bsv(post_bse2p_z.detach()) 
-            bsv_dec, bsv_mu, bsv_logvar, _ = self.bsv(post_bsp.detach())
+            bsv_dec, bsv_mu, bsv_logvar, _ = self.bsv(post_bse2p[:, 1:, :].detach())
             self.store_BSV_embeddings(bsv_mu, bsv_logvar, filename, start_idx_offset + self.bse_transformer_seq_length * self.bse_encode_token_samples) # 1-sifted
 
-            # BSV Loss
-            # bsv_recon_loss = loss_functions.mse_loss(post_bse2p_z.detach(), bsv_dec)
-            bsv_recon_loss = loss_functions.mse_loss(post_bsp.detach(), bsv_dec)
-            bsv_mu_reshaped = self.bsv_epoch_mu.reshape(self.bsv_epoch_mu.shape[0]*self.bsv_epoch_mu.shape[1], -1)
-            bsv_logvar_reshaped = self.bsv_epoch_logvar.reshape(self.bsv_epoch_logvar.shape[0]*self.bsv_epoch_logvar.shape[1], -1)
+            # BSV Loss 
+            # For KLD: only pull out N most recent based on 'bsv_running_kld_length'
+            bsv_recon_loss = loss_functions.mse_loss(post_bse2p[:, 1:, :].detach(), bsv_dec)
+            bsv_mu_recent = utils_functions.circular_slice_tensor(self.bsv_epoch_mu, self.running_bsv_index - self.bsv_running_kld_length, self.running_bsv_index)
+            bsv_logvar_recent = utils_functions.circular_slice_tensor(self.bsv_epoch_logvar, self.running_bsv_index - self.bsv_running_kld_length, self.running_bsv_index)
+            bsv_mu_reshaped = bsv_mu_recent.reshape(bsv_mu_recent.shape[0] * bsv_mu_recent.shape[1], -1)
+            bsv_logvar_reshaped = bsv_logvar_recent.reshape(bsv_logvar_recent.shape[0] * bsv_logvar_recent.shape[1], -1)
             bsv_kld_loss = loss_functions.bsv_kld_loss(bsv_mu_reshaped, bsv_logvar_reshaped, **kwargs) * self.bsv_annealer.get_weight()
             bsv_loss = bsv_recon_loss + bsv_kld_loss
 

@@ -249,15 +249,15 @@ class BSP2E(nn.Module): # A Growing Transformer
             prev_dim = dim
         self.mlp_token_expander = nn.Sequential(*layers)
 
-        self.bse2p_transformer = Transformer(ModelArgs(
-            device=self.gpu_id, 
-            dim=self.bsp2e_dim, 
-            n_heads=self.bse2p_num_heads,
-            n_layers=self.bse2p_layers,
-            ffn_dim_multiplier=self.bsp2e_ffn_dim_multiplier,
-            max_batch_size=self.bsp2e_max_batch_size,
-            max_seq_len=self.bsp2e_transformer_seq_length,
-            activation=self.bsp2e_transformer_activation))
+        # self.bse2p_transformer = Transformer(ModelArgs(
+        #     device=self.gpu_id, 
+        #     dim=self.bsp2e_dim, 
+        #     n_heads=self.bse2p_num_heads,
+        #     n_layers=self.bse2p_layers,
+        #     ffn_dim_multiplier=self.bsp2e_ffn_dim_multiplier,
+        #     max_batch_size=self.bsp2e_max_batch_size,
+        #     max_seq_len=self.bsp2e_transformer_seq_length,
+        #     activation=self.bsp2e_transformer_activation))
         
         self.mlp_post_transformer = nn.Sequential(
             nn.Linear(self.bsp2e_dim, self.bsp2e_dim * 4),
@@ -294,7 +294,7 @@ class BSP2E(nn.Module): # A Growing Transformer
         # Converts [batch, TransSeq, FS, BSE latent dim] --> [batch * TransSeq, FS, BSE latent dim]
         x = x.unsqueeze(1)
         x = self.mlp_token_expander(x.transpose(1,2)).transpose(1,2)
-        x = self.bse2p_transformer(x, start_pos=0, causal_mask_bool=False, self_mask=False, return_attW=False)  # No masking
+        # x = self.bse2p_transformer(x, start_pos=0, causal_mask_bool=False, self_mask=False, return_attW=False)  # No masking
         x = self.mlp_post_transformer(x)
 
         return x

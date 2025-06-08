@@ -222,7 +222,7 @@ inference_batch_perpat_override: 1 # Set to -1 for no override. Use with caution
 ### Brain-State Embedder to Brain-State Predictor (BSE2P) & Brain-State Predictor to Brain-State Embedder (BSP2E) ###
 
 bsp2e_dim: kwargs['bsp2e_dim'] = kwargs['transformer_dim']
-bse2p_layers: 1
+bse2p_layers: 4
 bse2p_num_heads: 32
 
 bsp2e_ffn_dim_multiplier: 1.0
@@ -230,7 +230,7 @@ bsp2e_max_batch_size: kwargs['bsp2e_max_batch_size'] = kwargs['bsp_batchsize'] *
 bsp2e_transformer_seq_length: kwargs['bsp2e_transformer_seq_length'] = kwargs['transformer_seq_length']
 bsp2e_transformer_activation: "silu"
 
-bse2p_running_kld_length: kwargs['bse2p_running_kld_length'] =  256  * kwargs['bsp_batchsize']  ######################################### ####### #### # # # # # # # # # # # # # #  # # # # # # # #  #  #   #  #   #  #      #       #  
+bse2p_running_kld_length: 256  ######################################### ####### #### # # # # # # # # # # # # # #  # # # # # # # #  #  #   #  #   #  #      #       #  
 
 bsp2e_hidden_dims: kwargs['bsp2e_hidden_dims'] = [64,128,256, kwargs['bsp2e_transformer_seq_length']]
 
@@ -239,7 +239,7 @@ bsp2e_hidden_dims: kwargs['bsp2e_hidden_dims'] = [64,128,256, kwargs['bsp2e_tran
 ### Brain-State Predictor (BSP) ###
 
 continue_existing_training: False
-cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/antarcticgiantpetrel_sheldrake_Tue_Jun__3_12_24_54_2025' 
+cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/massasauga_sheldrake_Sat_Jun__7_20_48_00_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
 bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/train_pats/*/scaled_data_epochs/all_epochs_woSPES'
@@ -255,10 +255,10 @@ bsp_singlebatch_printing_interval_train: 128 ##################### 128
 bsp_epochs_to_train: 99999
 
 # BSP
-bsp_transformer_seq_length: 32
+bsp_transformer_seq_length: 8
 bsp_latent_dim: kwargs['bsp_latent_dim'] = kwargs['bsp2e_dim']
 bsp_n_heads: 32
-bsp_n_layers: 16
+bsp_n_layers: 32
 bsp_ffn_dim_multiplier: 1.0
 bsp_max_batch_size: kwargs['bsp_max_batch_size'] = kwargs['bsp_batchsize']
 bsp_max_seq_len: kwargs['bsp_max_seq_len'] = kwargs['bsp_transformer_seq_length']
@@ -271,19 +271,19 @@ bsp_loss_weight: 1
 bsp_transformer_start_pos: 0 # hardcode to 0
 bsp_epoch_dataset_size: kwargs['bsp_epoch_dataset_size'] = 1024 * kwargs['bsp_batchsize'] ################## 1024 ####################
 bsp_batchsize: 1
-bsp_autoregressive_plot_steps: 64
+bsp_autoregressive_plot_steps: 64 # NOT CURRENTLY USED
 bsp_autogressive_subbatch_to_plot: 4 # How many of the batch index should be plotted? Slow if too many
 bsp_recent_display_iters: 5
 
-bsp_anneal_epochs_to_max: 10
-bsp_anneal_epochs_at_max: 10
-bsp_anneal_max_weight: 0 # 0.1
-bsp_anneal_min_weight: 0
+bsp_anneal_epochs_to_max: 10 # NOT CURRENTLY USED
+bsp_anneal_epochs_at_max: 10  # NOT CURRENTLY USED
+bsp_anneal_max_weight: 0 # 0.1 # NOT CURRENTLY USED
+bsp_anneal_min_weight: 0 # NOT CURRENTLY USED
 
 # BSP GP prior
-bsp_variance: 1.0 
-bsp_lengthscale: 8.0
-bsp_gp_weight: 0 # 0.001
+bsp_variance: 1.0  # NOT CURRENTLY USED
+bsp_lengthscale: 8.0 # NOT CURRENTLY USED
+bsp_gp_weight: 0 # 0.001  # NOT CURRENTLY USED
 
 
 ### ----------------------------------- ###
@@ -293,6 +293,8 @@ bsp_gp_weight: 0 # 0.001
 bsv_dims: kwargs['bsv_dims'] = [1024, 4096, 1024, 512, 256, 128, kwargs['prior_mog_components']]
 
 bsv_LR: kwargs['bsv_LR'] = 1e-6
+
+bsv_running_kld_length: 4 # Will be multiplied times batchsize
 
 bsv_anneal_epochs_to_max: 5
 bsv_anneal_epochs_at_max: 5
