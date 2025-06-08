@@ -448,12 +448,12 @@ class Trainer:
             bsp_loss = bsp_recon_loss
 
             ### BSV ###
-            bsv_dec, bsv_mu, bsv_logvar, _ = self.bsv(post_bse2p[:, 1:, :].detach())
+            bsv_dec, bsv_mu, bsv_logvar, _ = self.bsv(post_bse2p[:, :-1, :].detach())
             self.store_BSV_embeddings(bsv_mu, bsv_logvar, filename, start_idx_offset + self.bse_transformer_seq_length * self.bse_encode_token_samples) # 1-sifted
 
             # BSV Loss 
             # For KLD: only pull out N most recent based on 'bsv_running_kld_length'
-            bsv_recon_loss = loss_functions.mse_loss(post_bse2p[:, 1:, :].detach(), bsv_dec)
+            bsv_recon_loss = loss_functions.mse_loss(post_bse2p[:, :-1, :].detach(), bsv_dec)
             bsv_mu_recent = utils_functions.circular_slice_tensor(self.bsv_epoch_mu, self.running_bsv_index - self.bsv_running_kld_length, self.running_bsv_index)
             bsv_logvar_recent = utils_functions.circular_slice_tensor(self.bsv_epoch_logvar, self.running_bsv_index - self.bsv_running_kld_length, self.running_bsv_index)
             bsv_mu_reshaped = bsv_mu_recent.reshape(bsv_mu_recent.shape[0] * bsv_mu_recent.shape[1], -1)
@@ -529,7 +529,7 @@ class Trainer:
                     epoch = self.epoch, 
                     iter_curr = iter_curr,
                     pat_idxs = pat_idxs, 
-                    post_bse2p = post_bse2p[:, 1:, :],
+                    post_bse2p = post_bse2p[:, :-1, :],
                     post_bsp = post_bsp,
                     bsv_dec = bsv_dec,
                     savedir = self.model_dir + f"/plots/{dataset_string}/bsv_recon", 
