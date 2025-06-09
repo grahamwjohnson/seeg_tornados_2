@@ -239,7 +239,7 @@ bsp2e_hidden_dims: kwargs['bsp2e_hidden_dims'] = [64,128,256, kwargs['bsp2e_tran
 ### Brain-State Predictor (BSP) ###
 
 continue_existing_training: True
-cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/kiwi_sheldrake_Sun_Jun__8_14_48_17_2025' 
+cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/purplemarten_sheldrake_Sun_Jun__8_19_04_21_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
 bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/train_pats/*/scaled_data_epochs/all_epochs_woSPES'
@@ -251,7 +251,7 @@ bsp_adamW_beta1: 0.9
 bsp_adamW_beta2: 0.95 
 
 bsp_singlebatch_latent_printing: True
-bsp_singlebatch_printing_interval_train: 128 ##################### 128
+bsp_singlebatch_printing_interval_train: 256 ##################### 128
 bsp_epochs_to_train: 99999
 
 # BSP
@@ -266,7 +266,7 @@ bsp_transformer_activation: "silu"
 bsp_attention_dropout: 0.0
 
 # BSP Training
-bsp_LR: kwargs['bsp_LR'] = 1e-6
+bsp_LR: kwargs['bsp_LR'] = 5e-6
 bsp_loss_weight: 1
 bsp_transformer_start_pos: 0 # hardcode to 0
 bsp_epoch_dataset_size: kwargs['bsp_epoch_dataset_size'] = 1024 * kwargs['bsp_batchsize'] ################## 1024 ####################
@@ -286,19 +286,19 @@ bsp_lengthscale: 8.0 # NOT CURRENTLY USED
 bsp_gp_weight: 0 # 0.001  # NOT CURRENTLY USED
 
 
-### ----------------------------------- ###
+### ----------------------------------- ### 
 
 ### Brain-State Visualizer (BSV) ###
 
-bsv_dims: kwargs['bsv_dims'] = [1024, 4096, 1024, 512, 256, 128, kwargs['prior_mog_components']]
+bsv_dims: kwargs['bsv_dims'] = [1024, 512, 256, 128, kwargs['prior_mog_components']]
 
-bsv_LR: kwargs['bsv_LR'] = 1e-6
+bsv_LR: kwargs['bsv_LR'] = 5e-6
 
-bsv_running_kld_length: 4 # Will be multiplied by batchsize
+bsv_running_kld_length: 128 # Will be multiplied by batchsize
 
 bsv_anneal_epochs_to_max: 5
 bsv_anneal_epochs_at_max: 5
-bsv_anneal_max_weight: 10
+bsv_anneal_max_weight: 0.1
 bsv_anneal_min_weight: 0
 
 bsv_weight_decay: 0.1
