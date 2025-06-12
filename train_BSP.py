@@ -268,7 +268,8 @@ class Trainer:
 
         prior_mog_components,
 
-        bse2p_running_kld_length,
+        bsp_latent_dim,
+        bsp_running_kld_length,
         bsp_epoch_mu,
         bsp_epoch_logvar,
         bsp_epoch_filenames,
@@ -282,7 +283,6 @@ class Trainer:
 
         wandb_run,
         model_dir: str,
-        bsp2e_dim: int,
         transformer_seq_length: int, # BSE
         encode_token_samples: int,
         bsp_transformer_seq_length: int,
@@ -308,11 +308,11 @@ class Trainer:
         self.bse_prior_mog_components = prior_mog_components
         self.epoch = start_epoch
         self.train_dataloader = train_dataloader
-        self.bse2p_running_kld_length = bse2p_running_kld_length
+        self.bsp_latent_dim = bsp_latent_dim
+        self.bsp_running_kld_length = bsp_running_kld_length
         self.bsv_running_kld_length = bsv_running_kld_length
         self.wandb_run = wandb_run
         self.model_dir = model_dir
-        self.bsp_dim = bsp2e_dim
         self.bse_transformer_seq_length = transformer_seq_length
         self.bse_encode_token_samples = encode_token_samples
         self.bsp_transformer_seq_length = bsp_transformer_seq_length
@@ -334,10 +334,10 @@ class Trainer:
 
         # Initialize the BSP/BSV emebeddings for the epoch
         if bsv_epoch_mu == []:
-            self.bsp_epoch_mu = torch.randn(self.bse2p_running_kld_length * self.train_dataloader.batch_size, self.bsp_transformer_seq_length, self.bsp_dim).to(self.gpu_id) 
-            self.bsp_epoch_logvar = torch.randn(self.bse2p_running_kld_length * self.train_dataloader.batch_size, self.bsp_transformer_seq_length, self.bsp_dim).to(self.gpu_id) 
-            self.bsp_epoch_filenames = [""] * (self.bse2p_running_kld_length * self.train_dataloader.batch_size)
-            self.bsp_epoch_start_idx_offset = torch.ones((self.bse2p_running_kld_length * self.train_dataloader.batch_size), dtype=torch.int64).to(self.gpu_id)            
+            self.bsp_epoch_mu = torch.randn(self.bsp_running_kld_length * self.train_dataloader.batch_size, self.bsp_transformer_seq_length, self.bsp_latent_dim).to(self.gpu_id) 
+            self.bsp_epoch_logvar = torch.randn(self.bsp_running_kld_length * self.train_dataloader.batch_size, self.bsp_transformer_seq_length, self.bsp_latent_dim).to(self.gpu_id) 
+            self.bsp_epoch_filenames = [""] * (self.bsp_running_kld_length * self.train_dataloader.batch_size)
+            self.bsp_epoch_start_idx_offset = torch.ones((self.bsp_running_kld_length * self.train_dataloader.batch_size), dtype=torch.int64).to(self.gpu_id)            
             
             self.bsv_epoch_mu = torch.randn(len(self.train_dataloader) * self.train_dataloader.batch_size, self.bsp_transformer_seq_length - 1, self.bsv_output_dim).to(self.gpu_id) 
             self.bsv_epoch_logvar = torch.randn(len(self.train_dataloader) * self.train_dataloader.batch_size, self.bsp_transformer_seq_length - 1, self.bsv_output_dim).to(self.gpu_id) 
@@ -369,6 +369,43 @@ class Trainer:
     def _set_to_eval(self):
         self.bsp.eval()
         self.bsv.eval()
+
+    def store_BSP_embeddings(self, bsp_mu, bsp_logvar, filename, start_idx_offset):
+        self.bsp_epoch_mu = self.bsp_epoch_mu.detach()
+        self.bsp_epoch_logvar = self.bsp_epoch_logvar.detach()
+
+        batch_size = bsp_mu.shape[0]
+        total_capacity = len(self.bsp_epoch_filenames)  # Could optionally replace with a fixed total_capacity
+
+        # Compute start and end indices with wraparound
+        start_idx = self.running_bsp_index % total_capacity
+        end_idx = start_idx + batch_size
+
+        if end_idx <= total_capacity:
+            # Normal write
+            self.bsp_epoch_mu[start_idx:end_idx, :, :] = bsp_mu
+            self.bsp_epoch_logvar[start_idx:end_idx, :, :] = bsp_logvar
+            self.bsp_epoch_filenames[start_idx:end_idx] = filename
+            self.bsp_epoch_start_idx_offset[start_idx:end_idx] = start_idx_offset
+        else:
+            # Wraparound case
+            overflow = end_idx - total_capacity
+            part1 = batch_size - overflow
+
+            # First segment
+            self.bsp_epoch_mu[start_idx:total_capacity, :, :] = bsp_mu[:part1]
+            self.bsp_epoch_logvar[start_idx:total_capacity, :, :] = bsp_logvar[:part1]
+            self.bsp_epoch_filenames[start_idx:total_capacity] = filename[:part1]
+            self.bsp_epoch_start_idx_offset[start_idx:total_capacity] = start_idx_offset[:part1]
+
+            # Wrapped segment
+            self.bsp_epoch_mu[0:overflow, :, :] = bsp_mu[part1:]
+            self.bsp_epoch_logvar[0:overflow, :, :] = bsp_logvar[part1:]
+            self.bsp_epoch_filenames[0:overflow] = filename[part1:]
+            self.bsp_epoch_start_idx_offset[0:overflow] = start_idx_offset[part1:]
+
+        # Update index counter
+        self.running_bsp_index += batch_size
 
     def store_BSV_embeddings(self, bsv_mu, bsv_logvar, filename, start_idx_offset):
         self.bsv_epoch_mu = self.bsv_epoch_mu.detach()
@@ -426,7 +463,7 @@ class Trainer:
 
             ### BSE ### 
             # Pretrained
-            with torch.inference_mode():
+            with torch.no_grad():
                 x = x.to(self.gpu_id)
                 post_bse_mu = torch.zeros(x.shape[0], self.bsp_transformer_seq_length, x.shape[2], self.bse.latent_dim, dtype=torch.float32).to(self.gpu_id)
                 for b in range(x.shape[0]): # One batch index at a time to not have to double pseudobatch
@@ -441,19 +478,25 @@ class Trainer:
                     post_bse_mu[b, :, :, :] = torch.stack(mu_split, dim=0)
 
             ### BSP ###
-            post_bse2p, post_bsp, bsp_attW, post_bsp2e = self.bsp(post_bse_mu) # Not 1-shifted, but will 1-shift within BSP (i.e. after BSE2P)
- 
+            post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e = self.bsp(post_bse_mu) # Not 1-shifted, but will 1-shift within BSP (i.e. after BSE2P)
+            self.store_BSP_embeddings(post_bse2p_mu, post_bse2p_logvar, filename, start_idx_offset + self.bse_transformer_seq_length * self.bse_encode_token_samples) 
+
             # BSP Loss
-            bsp_recon_loss = loss_functions.mse_loss(post_bse_mu[:,1:,:,:].clone().detach().requires_grad_(True), post_bsp2e)
-            bsp_loss = bsp_recon_loss
+            bsp_recon_loss = loss_functions.mse_loss(post_bse_mu[:,1:,:,:], post_bsp2e)
+            bsp_mu_recent = utils_functions.circular_slice_tensor(self.bsp_epoch_mu, self.running_bsp_index - self.bsp_running_kld_length, self.running_bsp_index)
+            bsp_logvar_recent = utils_functions.circular_slice_tensor(self.bsp_epoch_logvar, self.running_bsp_index - self.bsp_running_kld_length, self.running_bsp_index)
+            bsp_mu_reshaped = bsp_mu_recent.reshape(bsp_mu_recent.shape[0] * bsp_mu_recent.shape[1], -1)
+            bsp_logvar_reshaped = bsp_logvar_recent.reshape(bsp_logvar_recent.shape[0] * bsp_logvar_recent.shape[1], -1)
+            bsp_kld_loss = loss_functions.bsp_kld_loss(bsp_mu_reshaped, bsp_logvar_reshaped, **kwargs) * self.bsp_annealer.get_weight()
+            bsp_loss = bsp_recon_loss + bsp_kld_loss
 
             ### BSV ###
-            bsv_dec, bsv_mu, bsv_logvar, _ = self.bsv(post_bse2p[:, :-1, :].detach())
+            bsv_dec, bsv_mu, bsv_logvar, _ = self.bsv(post_bse2p_mu[:, :-1, :].detach())
             self.store_BSV_embeddings(bsv_mu, bsv_logvar, filename, start_idx_offset + self.bse_transformer_seq_length * self.bse_encode_token_samples) # 1-sifted
 
             # BSV Loss 
             # For KLD: only pull out N most recent based on 'bsv_running_kld_length'
-            bsv_recon_loss = loss_functions.mse_loss(post_bse2p[:, :-1, :].detach(), bsv_dec)
+            bsv_recon_loss = loss_functions.mse_loss(post_bse2p_mu[:, :-1, :].detach(), bsv_dec)
             bsv_mu_recent = utils_functions.circular_slice_tensor(self.bsv_epoch_mu, self.running_bsv_index - self.bsv_running_kld_length, self.running_bsv_index)
             bsv_logvar_recent = utils_functions.circular_slice_tensor(self.bsv_epoch_logvar, self.running_bsv_index - self.bsv_running_kld_length, self.running_bsv_index)
             bsv_mu_reshaped = bsv_mu_recent.reshape(bsv_mu_recent.shape[0] * bsv_mu_recent.shape[1], -1)
@@ -487,10 +530,10 @@ class Trainer:
                 metrics = dict(
                     # train_bsp_pred_loss=bsp_pred_loss,
                     train_bsp_recon_loss=bsp_recon_loss,
-                    # train_bsp_kld_loss=bsp_kld_loss,
+                    train_bsp_kld_loss=bsp_kld_loss,
                     # train_bsp_gp_loss = bsp_gp_loss,
                     train_bsp_loss=bsp_loss,
-                    # train_bsp_kld_weight=self.bsp_annealer.get_weight(),
+                    train_bsp_kld_weight=self.bsp_annealer.get_weight(),
                     train_bsv_recon_loss=bsv_recon_loss,
                     train_bsv_kld_loss=bsv_kld_loss,
                     train_bsv_loss=bsv_loss,
@@ -529,7 +572,7 @@ class Trainer:
                     epoch = self.epoch, 
                     iter_curr = iter_curr,
                     pat_idxs = pat_idxs, 
-                    post_bse2p = post_bse2p[:, :-1, :],
+                    post_bse2p = post_bse2p_mu[:, :-1, :],
                     post_bsp = post_bsp,
                     bsv_dec = bsv_dec,
                     savedir = self.model_dir + f"/plots/{dataset_string}/bsv_recon", 
