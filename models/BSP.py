@@ -214,42 +214,25 @@ class BSP2E(nn.Module): # A Growing Transformer
             layers.append(nn.SiLU())
             prev_dim = dim
         self.mlp_token_expander = nn.Sequential(*layers)
-
-        # self.bse2p_transformer = Transformer(ModelArgs(
-        #     device=self.gpu_id, 
-        #     dim=self.bsp_latent_dim, 
-        #     n_heads=self.bse2p_num_heads,
-        #     n_layers=self.bse2p_layers,
-        #     ffn_dim_multiplier=self.bsp2e_ffn_dim_multiplier,
-        #     max_batch_size=self.bsp2e_max_batch_size,
-        #     max_seq_len=self.bsp2e_transformer_seq_length,
-        #     activation=self.bsp2e_transformer_activation))
         
-        self.mlp_post_transformer = nn.Sequential(
+        self.mlp_latentdim = nn.Sequential(
             nn.Linear(self.bsp_latent_dim, self.bsp_latent_dim * 4),
             RMSNorm(self.bsp_latent_dim * 4),
             nn.SiLU(),
             nn.Linear(self.bsp_latent_dim * 4, self.bse_latent_dim * 4),
             RMSNorm(self.bse_latent_dim * 4),
             nn.SiLU(),
-            nn.Linear(self.bse_latent_dim * 4, self.bse_latent_dim)
-        )
+            nn.Linear(self.bse_latent_dim * 4, self.bse_latent_dim))
 
-        # self.bsp2e_mlp = nn.Sequential(
-        #     nn.Linear(self.bsp_latent_dim, self.bsp_latent_dim*4),
-        #     RMSNorm(self.bsp_latent_dim*4),
-        #     nn.SiLU(),
-        #     nn.Linear(self.bsp_latent_dim*4, self.bsp_latent_dim*4),
-        #     RMSNorm(self.bsp_latent_dim*4),
-        #     nn.SiLU())
-        
-    #     self.bsp2e_mu = nn.Linear(self.bsp_latent_dim*4, self.bsp_latent_dim)
-    #     self.bsp2e_logvar = nn.Linear(self.bsp_latent_dim*4, self.bsp_latent_dim)
-
-    # def reparameterize(self, mu, logvar):
-    #     std = torch.exp(0.5 * logvar)
-    #     eps = torch.randn_like(std)
-    #     return mu + eps * std
+        self.time_dim = self.bsp2e_hidden_dims[-1]
+        self.mlp_timedim = nn.Sequential(
+            nn.Linear(self.time_dim, self.time_dim * 4),
+            RMSNorm(self.time_dim * 4),
+            nn.SiLU(),
+            nn.Linear(self.time_dim * 4, self.time_dim * 4),
+            RMSNorm(self.time_dim * 4),
+            nn.SiLU(),
+            nn.Linear(self.time_dim * 4, self.time_dim))
         
     def forward(self, x):
 
@@ -257,8 +240,10 @@ class BSP2E(nn.Module): # A Growing Transformer
         # Converts [batch, TransSeq, FS, BSE latent dim] --> [batch * TransSeq, FS, BSE latent dim]
         x = x.unsqueeze(1)
         x = self.mlp_token_expander(x.transpose(1,2)).transpose(1,2)
-        # x = self.bse2p_transformer(x, start_pos=0, causal_mask_bool=False, self_mask=False, return_attW=False)  # No masking
-        x = self.mlp_post_transformer(x)
+        x = self.mlp_latentdim(x)
+        x = x.transpose(1,2)
+        x = self.mlp_timedim(x)
+        x = x.transpose(1,2)
 
         return x
 
