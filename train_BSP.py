@@ -106,7 +106,6 @@ def main(
     timestamp_id,
     run_name,
     start_epoch,
-    bsp_autoregressive_plot_steps,
 
     bsp_epochs_to_train = 99999,
     bsp_state_dict_prev_path = [],
@@ -239,7 +238,6 @@ def main(
         trainer._run_train_epoch(
             dataloader_curr = trainer.train_dataloader, 
             dataset_string = "train",
-            bsp_autoregressive_plot_steps = bsp_autoregressive_plot_steps,
             **kwargs)
         
         # CHECKPOINT
@@ -449,7 +447,6 @@ class Trainer:
         dataloader_curr,
         dataset_string,
         bsp_singlebatch_printing_interval_train,
-        bsp_autoregressive_plot_steps,
         **kwargs):
 
         iter_curr = 0

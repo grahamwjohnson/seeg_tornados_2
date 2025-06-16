@@ -96,10 +96,10 @@ class BSE2P(nn.Module): # A Growing Transformer
         bsp_latent_dim, 
         bse2p_layers,
         bse2p_num_heads,
-        bsp2e_ffn_dim_multiplier,
-        bsp2e_max_batch_size,
-        bsp2e_transformer_seq_length,
-        bsp2e_transformer_activation,
+        bse2p_ffn_dim_multiplier,
+        bse2p_max_batch_size,
+        bse2p_transformer_seq_length,
+        bse2p_transformer_activation,
         dropout=0.1,
         **kwargs):
         super(BSE2P, self).__init__()
@@ -114,10 +114,10 @@ class BSE2P(nn.Module): # A Growing Transformer
         self.bse2p_num_heads = bse2p_num_heads
 
         self.bsp_latent_dim = bsp_latent_dim
-        self.bsp2e_ffn_dim_multiplier = bsp2e_ffn_dim_multiplier
-        self.bsp2e_max_batch_size = bsp2e_max_batch_size
-        self.bsp2e_transformer_seq_length = bsp2e_transformer_seq_length
-        self.bsp2e_transformer_activation = bsp2e_transformer_activation
+        self.bse2p_ffn_dim_multiplier = bse2p_ffn_dim_multiplier
+        self.bse2p_max_batch_size = bse2p_max_batch_size
+        self.bse2p_transformer_seq_length = bse2p_transformer_seq_length
+        self.bse2p_transformer_activation = bse2p_transformer_activation
 
         self.bse2p_mlp = LinearDimStepper(self.bse_transformer_dim, self.bse2p_transformer_dim)
         
@@ -126,10 +126,10 @@ class BSE2P(nn.Module): # A Growing Transformer
             dim=self.bse2p_transformer_dim, 
             n_heads=self.bse2p_num_heads,
             n_layers=self.bse2p_layers,
-            ffn_dim_multiplier=self.bsp2e_ffn_dim_multiplier,
-            max_batch_size=self.bsp2e_max_batch_size,
-            max_seq_len=self.bsp2e_transformer_seq_length,
-            activation=self.bsp2e_transformer_activation))
+            ffn_dim_multiplier=self.bse2p_ffn_dim_multiplier,
+            max_batch_size=self.bse2p_max_batch_size,
+            max_seq_len=self.bse2p_transformer_seq_length,
+            activation=self.bse2p_transformer_activation))
 
         self.pre_vae_hidden_dim = max(4 * self.bse_transformer_dim, 4 * self.bsp_latent_dim)
         self.num_sampled_tokens = self.pre_vae_hidden_dim / self.bse2p_transformer_dim
@@ -176,76 +176,142 @@ class BSE2P(nn.Module): # A Growing Transformer
 
         return mu, logvar, z
 
-class BSP2E(nn.Module): # A Growing Transformer
-    def __init__(
-        self, 
-        gpu_id,
-        bsp_transformer_seq_length,
-        latent_dim,
-        bsp_latent_dim, 
-        bse2p_layers,
-        bse2p_num_heads,
-        bsp2e_ffn_dim_multiplier,
-        bsp2e_max_batch_size,
-        bsp2e_transformer_seq_length,
-        bsp2e_transformer_activation,
-        bsp2e_hidden_dims,
-        dropout=0.1,
-        **kwargs):
-        super(BSP2E, self).__init__()
+import torch
+import torch.nn as nn
+import math
 
-        self.gpu_id = gpu_id
-        self.bse_latent_dim = latent_dim
-        self.bsp_transformer_seq_length = bsp_transformer_seq_length
-        self.bsp_latent_dim = bsp_latent_dim
-        self.bse2p_layers = bse2p_layers
-        self.bse2p_num_heads = bse2p_num_heads
-        self.bsp2e_ffn_dim_multiplier = bsp2e_ffn_dim_multiplier
-        self.bsp2e_max_batch_size = bsp2e_max_batch_size
-        self.bsp2e_transformer_seq_length = bsp2e_transformer_seq_length
-        self.bsp2e_transformer_activation = bsp2e_transformer_activation
-        self.bsp2e_hidden_dims = bsp2e_hidden_dims
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=512):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
+        )
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)  # shape: [1, max_len, d_model]
+        self.register_buffer("pe", pe)
 
-        layers = []
-        prev_dim = 1
-        for dim in self.bsp2e_hidden_dims:
-            layers.append(nn.Linear(prev_dim, dim))
-            layers.append(RMSNorm(dim))
-            layers.append(nn.SiLU())
-            prev_dim = dim
-        self.mlp_token_expander = nn.Sequential(*layers)
-        
-        self.mlp_latentdim = nn.Sequential(
-            nn.Linear(self.bsp_latent_dim, self.bsp_latent_dim * 4),
-            RMSNorm(self.bsp_latent_dim * 4),
-            nn.SiLU(),
-            nn.Linear(self.bsp_latent_dim * 4, self.bse_latent_dim * 4),
-            RMSNorm(self.bse_latent_dim * 4),
-            nn.SiLU(),
-            nn.Linear(self.bse_latent_dim * 4, self.bse_latent_dim))
-
-        self.time_dim = self.bsp2e_hidden_dims[-1]
-        self.mlp_timedim = nn.Sequential(
-            nn.Linear(self.time_dim, self.time_dim * 4),
-            RMSNorm(self.time_dim * 4),
-            nn.SiLU(),
-            nn.Linear(self.time_dim * 4, self.time_dim * 4),
-            RMSNorm(self.time_dim * 4),
-            nn.SiLU(),
-            nn.Linear(self.time_dim * 4, self.time_dim))
-        
     def forward(self, x):
+        # x: [B, T, D]
+        return x + self.pe[:, :x.size(1)]
 
-        # Reshape input to pseudobatch the transformer sequence dimension
-        # Converts [batch, TransSeq, FS, BSE latent dim] --> [batch * TransSeq, FS, BSE latent dim]
-        x = x.unsqueeze(1)
-        x = self.mlp_token_expander(x.transpose(1,2)).transpose(1,2)
-        x = self.mlp_latentdim(x)
-        x = x.transpose(1,2)
-        x = self.mlp_timedim(x)
-        x = x.transpose(1,2)
+
+class BSP2E(nn.Module):
+    def __init__(
+        self,
+        bsp_latent_dim,
+        transformer_seq_length,
+        bsp2e_num_transformer_layers,
+        bsp2e_num_transformer_heads,
+        **kwargs
+    ):
+        super().__init__()
+        self.temporal_len = transformer_seq_length
+        self.latent_dim = bsp_latent_dim
+        
+        dim_feedforward = 2 * bsp_latent_dim
+
+        self.pos_enc = PositionalEncoding(d_model=self.latent_dim, max_len=self.temporal_len)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=self.latent_dim,
+            nhead=bsp2e_num_transformer_heads,
+            dim_feedforward=dim_feedforward,
+            batch_first=True
+        )
+        self.temporal_transformer = nn.TransformerEncoder(
+            encoder_layer, num_layers=bsp2e_num_transformer_layers
+        )
+
+    def forward(self, z_token):  # [B, D]
+        B, D = z_token.shape
+        assert D == self.latent_dim, f"Expected latent_dim {self.latent_dim}, got {D}"
+
+        # Repeat token across time dimension: [B, 512, D]
+        x = z_token.unsqueeze(1).expand(B, self.temporal_len, D)
+
+        # Add temporal structure
+        x = self.pos_enc(x)
+
+        # Apply temporal transformer
+        x = self.temporal_transformer(x)  # [B, 512, D]
 
         return x
+
+
+
+# class BSP2E(nn.Module): # A Growing Transformer
+#     def __init__(
+#         self, 
+#         gpu_id,
+#         bsp_transformer_seq_length,
+#         latent_dim,
+#         bsp_latent_dim, 
+#         bse2p_layers,
+#         bse2p_num_heads,
+#         bsp2e_ffn_dim_multiplier,
+#         bsp2e_max_batch_size,
+#         bsp2e_transformer_seq_length,
+#         bsp2e_transformer_activation,
+#         bsp2e_hidden_dims,
+#         dropout=0.1,
+#         **kwargs):
+#         super(BSP2E, self).__init__()
+
+#         self.gpu_id = gpu_id
+#         self.bse_latent_dim = latent_dim
+#         self.bsp_transformer_seq_length = bsp_transformer_seq_length
+#         self.bsp_latent_dim = bsp_latent_dim
+#         self.bse2p_layers = bse2p_layers
+#         self.bse2p_num_heads = bse2p_num_heads
+#         self.bsp2e_ffn_dim_multiplier = bsp2e_ffn_dim_multiplier
+#         self.bsp2e_max_batch_size = bsp2e_max_batch_size
+#         self.bsp2e_transformer_seq_length = bsp2e_transformer_seq_length
+#         self.bsp2e_transformer_activation = bsp2e_transformer_activation
+#         self.bsp2e_hidden_dims = bsp2e_hidden_dims
+
+#         layers = []
+#         prev_dim = 1
+#         for dim in self.bsp2e_hidden_dims:
+#             layers.append(nn.Linear(prev_dim, dim))
+#             layers.append(RMSNorm(dim))
+#             layers.append(nn.SiLU())
+#             prev_dim = dim
+#         self.mlp_token_expander = nn.Sequential(*layers)
+        
+#         self.mlp_latentdim = nn.Sequential(
+#             nn.Linear(self.bsp_latent_dim, self.bsp_latent_dim * 4),
+#             RMSNorm(self.bsp_latent_dim * 4),
+#             nn.SiLU(),
+#             nn.Linear(self.bsp_latent_dim * 4, self.bse_latent_dim * 4),
+#             RMSNorm(self.bse_latent_dim * 4),
+#             nn.SiLU(),
+#             nn.Linear(self.bse_latent_dim * 4, self.bse_latent_dim))
+
+#         self.time_dim = self.bsp2e_hidden_dims[-1]
+#         self.mlp_timedim = nn.Sequential(
+#             nn.Linear(self.time_dim, self.time_dim * 4),
+#             RMSNorm(self.time_dim * 4),
+#             nn.SiLU(),
+#             nn.Linear(self.time_dim * 4, self.time_dim * 4),
+#             RMSNorm(self.time_dim * 4),
+#             nn.SiLU(),
+#             nn.Linear(self.time_dim * 4, self.time_dim))
+        
+#     def forward(self, x):
+
+#         # Reshape input to pseudobatch the transformer sequence dimension
+#         # Converts [batch, TransSeq, FS, BSE latent dim] --> [batch * TransSeq, FS, BSE latent dim]
+#         x = x.unsqueeze(1)
+#         x = self.mlp_token_expander(x.transpose(1,2)).transpose(1,2)
+#         x = self.mlp_latentdim(x)
+#         x = x.transpose(1,2)
+#         x = self.mlp_timedim(x)
+#         x = x.transpose(1,2)
+
+#         return x
 
 class BSP(nn.Module):
     def __init__(

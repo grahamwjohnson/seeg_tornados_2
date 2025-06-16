@@ -1,12 +1,12 @@
 import torch
 from models.BSE import BSE
-# from models.BSP import BSP
-from models.ToroidalSOM import ToroidalSOM
+from models.BSP import BSP, BSV
 
 dependencies = ['torch', 'numpy']
 
 CONFIGS = {
-    'sheldrake': {
+    'midge_sheldrake': {
+
         # BSE Params
         'encode_token_samples': 1,
         'padded_channels': 256,
@@ -44,34 +44,42 @@ CONFIGS = {
         'classifier_num_pats': 45, 
         'classifier_dropout': 0.1,
 
-        # Kohonen/SOM Params
-        'som_pca_init': False,
-        'reduction': 'mean',
-        'som_device': 'cpu',
-        'som_epochs': 30,
-        'som_batch_size': 64,
-        'som_lr': 0.5,
-        'som_lr_min': 0.01,
-        'som_lr_epoch_decay': (0.01 / 0.5)**(1 / 30),
-        'som_gridsize': 128,
-        'som_sigma': 0.3 * 128,
-        'som_sigma_min': 1.0,
-        'som_sigma_epoch_decay': (1 / 0.3 * 128)**(1 / 30),
-
         # BSP Params
+        'bse2p_transformer_dim': 64,
+        'bse2p_layers': 8,
+        'bse2p_num_heads': 8,
+        'bsp2e_ffn_dim_multiplier': 1.0,
+        'bsp2e_max_batch_size': 32,
+        'bsp2e_hidden_dims': [64,128,256, 512],
+        'bsp_transformer_seq_length': 32,
+        'bsp_latent_dim': 1024,
+        'bsp_n_heads': 32,
+        'bsp_n_layers': 16,
+        'bsp_ffn_dim_multiplier': 0.8,
+        'bsp_max_batch_size': 1,
+        'bsp_max_seq_len': 32,
+        'bsp_transformer_activation': "silu",
+        'bsp_attention_dropout': 0.0,
+        'bsp_transformer_start_pos': 0,
+
+        # BSV Params
+        'bsv_dims': [1024, 512, 256, 128, 8],
+
+        # PaCMAP Params
 
 
         # Weight files
         'bse_weight_file': 'bse_weights.pth',
-        'som_dict_file': 'som_dict.pth',
         'bsp_weight_file': 'bsp_weights.pth',
+        'bsv_weight_file': 'bsv_weights.pth',
+        'pacmap_base': 'pacmap_2d',
         'release_tag': 'v0.8-alpha'
     }
 }
 
-def _load_models(codename='sheldrake', pretrained=True, load_bse=True, load_som=True, load_bsp=True, **kwargs):
+def _load_models(codename='midge_sheldrake', pretrained=True, load_bse=True, load_bsp=True, load_bsv=True, load_pacmap=True, **kwargs):
     """
-    Loads the BSE model & BSP model with specified configuration and optionally pretrained weights.
+    Loads the BSE, BSP, BSV, & 2D-PaCMAP model with specified configuration and optionally pretrained weights.
 
     Args:
         codename (str): The codename of the training run to load (e.g., 'sheldrake').
@@ -79,7 +87,7 @@ def _load_models(codename='sheldrake', pretrained=True, load_bse=True, load_som=
         **kwargs: Additional parameters to override default configuration.
 
     Returns:
-        Pretrained BSE & BSP models with the specified configuration.
+        Pretrained BSE, BSP, BSV, & PaCMAP models with the specified configuration.
     """
     if codename not in CONFIGS:
         raise ValueError(f"Codenam '{codename}' not found in available configurations: {list(CONFIGS.keys())}")
@@ -106,55 +114,71 @@ def _load_models(codename='sheldrake', pretrained=True, load_bse=True, load_som=
         elif pretrained:
             print(f"No BSE weight file or release tag specified for codename '{codename}'. Continuing with randomly initialized BSE model.")
 
-    # *** Kohonen/Self-Organizing Map (SOM) ***
-    if load_som:
-        som = ToroidalSOM(grid_size=(config['som_gridsize'], config['som_gridsize']), input_dim=config['latent_dim'], batch_size=config['som_batch_size'],
-                    lr=config['som_lr'], lr_epoch_decay=config['som_lr_epoch_decay'], sigma=config['som_sigma'],
-                    sigma_epoch_decay=config['som_sigma_epoch_decay'], sigma_min=config['som_sigma_min'], device=config['som_device'])
-        
-        if pretrained and config.get('som_dict_file') and config.get('release_tag'):
-            weight_file = config['som_dict_file']
-            release_tag = config['release_tag']
-            checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{weight_file}'
-            try:
-                checkpoint = torch.hub.load_state_dict_from_url(checkpoint_url)   
-                som.load_state_dict(checkpoint['model_state_dict'])
-                som.weights = checkpoint['weights']
-                som.reset_device(config['som_device'])
-            except Exception as e:
-                print(f"Error loading pretrained SOM weights for codename '{codename}': {e}")
-                print("Continuing with randomly initialized SOM model.")
-        elif pretrained:
-            print(f"No SOM weight file or release tag specified for codename '{codename}'. Continuing with randomly initialized SOM model.")
 
-    else:
-        som = None
 
     # *** Brain-Sate Predictor (BSP) ***
     bsp = None
-    # if load_bsp:
-    #     bsp = BSP(**config)
+    if load_bsp:
+        bsp = BSP(**config)
 
-    #     # BSP: Load pretrained weights if requested
-    #     if pretrained and config.get('bsp_weight_file') and config.get('release_tag'):
-    #         weight_file = config['bsp_weight_file']
-    #         release_tag = config['release_tag']
-    #         checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{weight_file}'
-    #         try:
-    #             state_dict = torch.hub.load_state_dict_from_url(checkpoint_url, progress=True, map_location='cpu')
-    #             bsp.load_state_dict(state_dict)
-    #         except Exception as e:
-    #             print(f"Error loading pretrained weights for codename '{codename}': {e}")
-    #             print("Continuing with randomly initialized model.")
-    #     elif pretrained:
-    #         print(f"No weight file or release tag specified for codename '{codename}'. Continuing with randomly initialized model.")
-
-    return bse, som, bsp
+        # BSP: Load pretrained weights if requested
+        if pretrained and config.get('bsp_weight_file') and config.get('release_tag'):
+            weight_file = config['bsp_weight_file']
+            release_tag = config['release_tag']
+            checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{weight_file}'
+            try:
+                state_dict = torch.hub.load_state_dict_from_url(checkpoint_url, progress=True, map_location='cpu')
+                bsp.load_state_dict(state_dict)
+            except Exception as e:
+                print(f"Error loading pretrained BSP weights for codename '{codename}': {e}")
+                print("Continuing with randomly initialized model.")
+        elif pretrained:
+            print(f"No weight file or release tag specified for codename '{codename}'. Continuing with randomly initialized model.")
 
 
-def load_lbm(codename='sheldrake', pretrained=True, load_bse=True, load_som=True, load_bsp=True, **kwargs):
+    # *** Brain-Sate Visualizer (BSV) ***
+    bsv = None
+    if load_bsv:
+        bsv = BSV(**config)
+
+        # BSV: Load pretrained weights if requested
+        if pretrained and config.get('bsv_weight_file') and config.get('release_tag'):
+            weight_file = config['bsv_weight_file']
+            release_tag = config['release_tag']
+            checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{weight_file}'
+            try:
+                state_dict = torch.hub.load_state_dict_from_url(checkpoint_url, progress=True, map_location='cpu')
+                bsv.load_state_dict(state_dict)
+            except Exception as e:
+                print(f"Error loading pretrained BSV for codename '{codename}': {e}")
+                print("Continuing with randomly initialized model.")
+        elif pretrained:
+            print(f"No weight file or release tag specified for codename '{codename}'. Continuing with randomly initialized model.")
+
+
+    # *** 2D PaCMAP ***
+    pacmap = None
+    if load_pacmap:
+        try:
+            print("Attempting to load pretrained pacmap model for 2D visualization of BSV")
+
+
+
+            # TODO 
+
+
+
+        except Exception as e:
+            print(f"Error loading pacmap for codename '{codename}': {e}")
+            print("Returning empty variable")
+
+
+    return bse, bsp, bsv, pacmap
+
+
+def load_lbm(codename='midge_sheldrake', pretrained=True, load_bse=True, load_bsp=True, load_bsv=True, load_pacmap=True, **kwargs):
     """
-    Loads the BSE, Kohonen, & BSP models with a specific training run's configuration
+    Loads the BSE, BSP, BSV, & PaCMAP models with a specific training run's configuration
     and optionally pretrained weights.
 
     Args:
@@ -163,8 +187,8 @@ def load_lbm(codename='sheldrake', pretrained=True, load_bse=True, load_som=True
         **kwargs: Additional parameters to override default configuration.
 
     Returns:
-        Pretrained BSE, Kohonen, & BSP models with the specified configuration.
+        Pretrained BSE, BSP, BSV, & PaCMAP models with the specified configuration.
     """
-    return _load_models(codename=codename, pretrained=pretrained, load_bse=load_bse, load_som=load_som, load_bsp=load_bsp, **kwargs)
+    return _load_models(codename=codename, pretrained=pretrained, load_bse=load_bse, load_bsp=load_bsp, load_bsv=load_bsv, load_pacmap=load_pacmap **kwargs)
 
 
