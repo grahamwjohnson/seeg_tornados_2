@@ -148,7 +148,7 @@ class BSE2P(nn.Module): # A Growing Transformer
     def forward(self, x):
 
         # Reshape input to pseudobatch the transformer sequence dimension
-        # Converts [batch, TransSeq, FS, BSE latnet dim] --> [batch * TransSeq, FS, BSE latnet dim]
+        # Converts [batch, TransSeq, FS, BSE latnet dim] --> [batch * TransSeq, FS, BSE latent dim]
         x = x.reshape(x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
 
         # Shrink latent dim
@@ -158,7 +158,6 @@ class BSE2P(nn.Module): # A Growing Transformer
         x = self.bse2p_transformer(x, start_pos=0, causal_mask_bool=False, self_mask=False, return_attW=False)  # No masking
 
         # Re-shape back to [Batch, TransSeq, FS, BSP latent dim]
-        # Take last token
         x = x.reshape(-1, self.bsp_transformer_seq_length, x.shape[1], x.shape[2])
 
         # Get evenly spaced indices

@@ -221,9 +221,9 @@ inference_batch_perpat_override: 1 # Set to -1 for no override. Use with caution
 
 ### Brain-State Embedder to Brain-State Predictor (BSE2P) & Brain-State Predictor to Brain-State Embedder (BSP2E) ###
 
-bse2p_transformer_dim: 64
-bse2p_layers: 8
-bse2p_num_heads: 8
+bse2p_transformer_dim: 1024
+bse2p_layers: 2
+bse2p_num_heads: 32
 bse2p_ffn_dim_multiplier: 1.0
 bse2p_max_batch_size: kwargs['bse2p_max_batch_size'] = kwargs['bsp_batchsize'] * kwargs['bsp_transformer_seq_length']
 bse2p_transformer_seq_length: kwargs['bse2p_transformer_seq_length'] = kwargs['transformer_seq_length']
@@ -237,7 +237,7 @@ bsp_running_kld_length: 64  ######################################### ####### ##
 ### Brain-State Predictor (BSP) ###
 
 continue_existing_training: True
-cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/flyingfish_sheldrake_Mon_Jun_16_11_38_27_2025' 
+cont_train_model_dir: '/media/glommy1/tornados/bsp_trained_models/pekingese_sheldrake_Mon_Jun_16_15_08_32_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
 bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/train_pats/*/scaled_data_epochs/all_epochs_woSPES'
@@ -266,8 +266,8 @@ bsp_attention_dropout: 0.0
 
 ### ----------------------------------- ###
 ### BSP2E ###
-bsp2e_num_transformer_layers: 6
-bsp2e_num_transformer_heads: 16
+bsp2e_num_transformer_layers: 2
+bsp2e_num_transformer_heads: 32
 
 
 ### ----------------------------------- ###
