@@ -414,14 +414,6 @@ def prepare_NonDdp_dataloader(dataset: Dataset, batch_size: int, droplast=False,
         persistent_workers=persistent_workers
     )
 
-def get_training_dir_name(train_val_pat_perc, **kwargs):
-    
-    train_str = str(train_val_pat_perc[0]*100)
-    val_str = str(train_val_pat_perc[1]*100)
-    run_params_dir_name = "dataset_train" + train_str + "_val" + val_str 
-
-    return run_params_dir_name
-
 def bse_initialize_directories(
         run_notes,
         cont_train_model_dir,
@@ -465,7 +457,7 @@ def bse_initialize_directories(
 
     else:
         # Make run directories
-        kwargs['model_dir'] = append_timestamp(kwargs['root_save_dir'] + '/trained_models/' + kwargs['run_params_dir_name'] + '/' + run_notes + '_')
+        kwargs['model_dir'] = append_timestamp(kwargs['root_save_dir'] + '/trained_models/' + run_notes + '_')
         os.makedirs(kwargs['model_dir'])
         kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs'
         os.makedirs(kwargs['pic_dataset_dir'])
@@ -479,14 +471,14 @@ def bse_initialize_directories(
 
 def bsp_initialize_directories(
         run_notes,
-        cont_train_model_dir,
+        cont_train_model_dir_BSP,
         **kwargs):
 
     # *** CONTINUE EXISTING RUN initialization ***
 
     if kwargs['continue_existing_training']:
 
-        kwargs['model_dir'] = cont_train_model_dir
+        kwargs['model_dir'] = cont_train_model_dir_BSP
         kwargs['log_dir'] =  kwargs['model_dir'] + '/data_logs'
 
         # Find the epoch to start training
@@ -543,9 +535,6 @@ def bse_run_setup(**kwargs):
     for t in tmp_dirs: 
         shutil.rmtree(t)
         print(f"Deleted tmp directory: {t}")
-
-    # All Time Data file to get event timestamps
-    kwargs['run_params_dir_name'] = get_training_dir_name(**kwargs)
 
     # Set world size to number of GPUs in system available to CUDA
     world_size = torch.cuda.device_count()
@@ -2140,7 +2129,7 @@ def print_latent_singlebatch(mean, logvar, mogpreds, prior_means, prior_logvars,
     plt.savefig(f"{savedir}/RealtimeLatents_epoch{epoch}_iter{iter_curr}.jpg", dpi=200)
     plt.close(fig)
 
-def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_singlebatch_channels_recon, num_recon_samples, save_svg=False, **kwargs):
+def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_singlebatch_channels_recon, num_recon_samples, save_svg=False, max_batchsize=8, **kwargs):
 
     gpu_id = x.device
 
@@ -2156,7 +2145,7 @@ def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_
     x_hat_fused = x_hat_fused.reshape(x_hat_fused.shape[0], x_hat_fused.shape[1] * x_hat_fused.shape[2], x_hat_fused.shape[3])
     x_hat_fused = np.moveaxis(x_hat_fused, 1, 2)
 
-    batchsize = x_hat.shape[0]
+    batchsize = min(x_hat.shape[0], max_batchsize)
 
     np.random.seed(seed=None) 
     r = np.arange(0,x_hat_fused.shape[1])
@@ -2169,7 +2158,7 @@ def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_
     else:
         # sqrt_num = int(np.ceil(np.sqrt(batchsize * num_singlebatch_channels_recon)))
         # gs = gridspec.GridSpec(sqrt_num, sqrt_num) 
-        gs = gridspec.GridSpec(batchsize, num_singlebatch_channels_recon)
+        gs = gridspec.GridSpec(batchsize * len(random_ch_idxs), 1)
         subplot_iter = 0
 
     fig = pl.figure(figsize=(24, 24))
@@ -2194,7 +2183,8 @@ def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_
 
                     ax = fig.add_subplot(gs[b, c*2 + seq]) 
                     sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
-                    ax.set_title(f"Ch:{random_ch_idxs[c]}\n{file_name[b]}, {title_str}", fontdict={'fontsize': 12, 'fontweight': 'medium'})
+                    if file_name != None: ax.set_title(f"Ch:{random_ch_idxs[c]}\n{file_name[b]}, {title_str}", fontdict={'fontsize': 12, 'fontweight': 'medium'})
+                    else: ax.set_title(f"Ch:{random_ch_idxs[c]}, {title_str}", fontdict={'fontsize': 12, 'fontweight': 'medium'})
 
                     pl.ylim(-1, 1) # Set y-axis limit -1 to 1
 
@@ -2213,7 +2203,8 @@ def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_
                 col = 0
                 ax = fig.add_subplot(gs[row, col]) 
                 sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
-                ax.set_title(f"{file_name[b]}", fontdict={'fontsize': 8, 'fontweight': 'medium'})
+                if file_name != None: ax.set_title(f"{file_name[b]}", fontdict={'fontsize': 8, 'fontweight': 'medium'})
+                else: ax.set_title(f"No file name", fontdict={'fontsize': 8, 'fontweight': 'medium'})
 
                 pl.ylim(-1, 1) # Set y-axis limit -1 to 1
                 subplot_iter = subplot_iter + 1

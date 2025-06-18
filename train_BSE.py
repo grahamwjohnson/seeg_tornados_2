@@ -47,11 +47,8 @@ def ddp_setup(gpu_id, world_size):
 def load_train_objs(
     gpu_id,  
     pat_dir, 
-    train_val_pat_perc, 
     intrapatient_dataset_style, 
-    train_hour_dataset_range, 
-    val_finetune_hour_dataset_range, 
-    val_unseen_hour_dataset_range, 
+    train_hour_dataset_range,  
     num_dataloader_workers,
 
     # GM-VAE Optimizer
@@ -70,26 +67,18 @@ def load_train_objs(
     classifier_adamW_beta2,
 
     train_num_rand_hashes,
-    val_num_rand_hashes,
-
     train_forward_passes,
-    valfinetune_forward_passes,
-    valunseen_forward_passes,
 
     **kwargs):
 
     """
     Initializes training objects, including datasets, dataloaders, the GM-VAE model, and its optimizer.
-    Splits patient data into training and validation sets, configures datasets, and sets up the model and optimizer.
 
     Args:
         gpu_id (int): GPU ID for training.
         pat_dir (str): Directory containing patient data.
-        train_val_pat_perc (list): Percentage split for training and validation patients.
         intrapatient_dataset_style (list): Dataset style and split (e.g., [1, 0] for all data, train split).
         train_hour_dataset_range (list): Time range for training data.
-        val_finetune_hour_dataset_range (list): Time range for validation finetune data.
-        val_unseen_hour_dataset_range (list): Time range for validation unseen data.
         num_dataloader_workers (int): Number of workers for dataloaders.
         posterior_weight_decay (float): Weight decay for posterior parameters.
         adamW_beta1, adamW_beta2 (float): AdamW optimizer parameters for posterior.
@@ -98,16 +87,11 @@ def load_train_objs(
         classifier_weight_decay (float): Weight decay for classifier parameters.
         classifier_adamW_beta1, classifier_adamW_beta2 (float): AdamW optimizer parameters for classifier.
         train_num_rand_hashes (int): Random hashes for training dataset.
-        val_num_rand_hashes (int): Random hashes for validation dataset.
         train_forward_passes (int): Forward passes for training dataset.
-        valfinetune_forward_passes (int): Forward passes for validation finetune dataset.
-        valunseen_forward_passes (int): Forward passes for validation unseen dataset.
         **kwargs: Additional arguments for dataset and model configuration.
 
     Returns:
         train_dataset, train_dataloader: Training dataset and dataloader.
-        valfinetune_dataset, valfinetune_dataloader: Validation finetune dataset and dataloader.
-        valunseen_dataset, valunseen_dataloader: Validation unseen dataset and dataloader.
         bse: Initialized GM-VAE model.
         opt_bse: Optimizer for the GM-VAE model.
     """
@@ -115,58 +99,8 @@ def load_train_objs(
     # Split pats into train and test
     all_pats_dirs = glob.glob(f"{pat_dir}/*pat*")
     all_pats_list = [x.split('/')[-1] for x in all_pats_dirs]
-
-    # If validation patients indicated
-    if train_val_pat_perc[1] > 0:
-        val_pats_count = int(np.ceil(train_val_pat_perc[1] * len(all_pats_list)))
-        val_pats_dirs = all_pats_dirs[-val_pats_count:]
-        val_pats_list = all_pats_list[-val_pats_count:]
-
-        train_pats_dirs = all_pats_dirs[:-val_pats_count]
-        train_pats_list = all_pats_list[:-val_pats_count]
-
-        print(f"[GPU{str(gpu_id)}] Generating VALIDATION FINETUNE dataset")
-        kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs/Val_Grouped_Finetune'
-        valfinetune_dataset = SEEG_Tornado_Dataset(
-            gpu_id=gpu_id, 
-            pat_list=val_pats_list,
-            pat_dirs=val_pats_dirs,
-            intrapatient_dataset_style=intrapatient_dataset_style, 
-            hour_dataset_range=val_finetune_hour_dataset_range,
-            num_rand_hashes=val_num_rand_hashes,
-            num_forward_passes=valfinetune_forward_passes,
-            data_logger_enabled=True,
-            data_logger_file=f"{kwargs['log_dir']}/data_forward_pass_log_Valfinetune_GPU{gpu_id}.jsonl.gz",
-            **kwargs)
-
-        print(f"[GPU{str(gpu_id)}] Generating VALIDATION UNSEEN dataset")
-        kwargs['dataset_pic_dir'] = kwargs['model_dir'] + '/dataset_bargraphs/Val_Grouped_Unseen'
-        valunseen_dataset = SEEG_Tornado_Dataset(
-            gpu_id=gpu_id, 
-            pat_list=val_pats_list,
-            pat_dirs=val_pats_dirs,
-            intrapatient_dataset_style=intrapatient_dataset_style, 
-            hour_dataset_range=val_unseen_hour_dataset_range,
-            num_rand_hashes=val_num_rand_hashes,
-            num_forward_passes=valunseen_forward_passes,
-            data_logger_enabled=True,
-            data_logger_file=f"{kwargs['log_dir']}/data_forward_pass_log_Valunseen_GPU{gpu_id}.jsonl.gz",
-            **kwargs)
-
-        # Random Dataloaders for Validation #
-        valfinetune_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
-        valfinetune_dataloader, _ = utils_functions.prepare_ddp_dataloader(valfinetune_dataset, batch_size=None, num_workers=num_dataloader_workers)
-
-        valunseen_dataset.set_pat_curr(-1) # -1 sets to random generation and starts data generation subpocess
-        valunseen_dataloader, _ = utils_functions.prepare_ddp_dataloader(valunseen_dataset, batch_size=None, num_workers=num_dataloader_workers)
-
-    else: # If no val, just make a train dataset
-        train_pats_dirs = all_pats_dirs
-        train_pats_list = all_pats_list
-        valfinetune_dataset = None
-        valunseen_dataset = None
-        valfinetune_dataloader = None
-        valunseen_dataloader = None
+    train_pats_dirs = all_pats_dirs
+    train_pats_list = all_pats_list
 
     # Sequential dataset used to run inference on train data 
     print(f"[GPU{str(gpu_id)}] Generating TRAIN dataset")
@@ -219,7 +153,7 @@ def load_train_objs(
     opt_bse = torch.optim.AdamW(param_groups)
     opt_disc = torch.optim.AdamW(disc.parameters())
 
-    return train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, bse, disc, opt_bse, opt_disc
+    return train_dataset, train_dataloader, bse, disc, opt_bse, opt_disc
 
 def main(  
     # Ordered variables
@@ -231,14 +165,6 @@ def main(
     run_name: str,
     timestamp_id: int,
     start_epoch: int,
-    LR_val_bse: float,
-    LR_val_prior: float,
-    LR_val_cls: float,
-    LR_val_disc: float,
-    val_finetine_bool: bool,
-    finetune_inference: bool, 
-    finetune_inference_epochs: int,
-    singlebatch_printing_interval_val,
     singlebatch_printing_interval_train,
     bse_state_dict_prev_path = [],
     bse_opt_state_dict_prev_path = [],
@@ -265,7 +191,6 @@ def main(
     - Initializes WandB for experiment tracking.
     - Handles multi-GPU distributed training with DDP setup.
     - Loads and saves model checkpoints during training.
-    - Supports fine-tuning on validation datasets before inference.
     - Exports embeddings for multiple datasets after training.
     - Manages the training and validation loops, including dynamic learning rate adjustments.
     - Handles data generators and ensures that the model continues training from previous states when necessary.
@@ -301,7 +226,7 @@ def main(
     ddp_setup(gpu_id, world_size)
 
     print(f"[GPU{str(gpu_id)}] Loading training objects (datasets, models, optimizers)")
-    train_dataset, train_dataloader, valfinetune_dataset, valfinetune_dataloader, valunseen_dataset, valunseen_dataloader, bse, disc, opt_bse, opt_disc = load_train_objs(gpu_id=gpu_id, **kwargs) 
+    train_dataset, train_dataloader, bse, disc, opt_bse, opt_disc = load_train_objs(gpu_id=gpu_id, **kwargs) 
     
     # Load the model/opt states if not first epoch & if in training mode
     if (start_epoch > 0):
@@ -359,12 +284,7 @@ def main(
         start_epoch=start_epoch,
         train_dataset=train_dataset, 
         train_dataloader=train_dataloader,
-        valfinetune_dataset=valfinetune_dataset,
-        valfinetune_dataloader=valfinetune_dataloader,
-        valunseen_dataset=valunseen_dataset,
-        valunseen_dataloader=valunseen_dataloader,
         wandb_run=wandb_run,
-        finetune_inference=finetune_inference,
         accumulated_mean=accumulated_mean,
         accumulated_logvar=accumulated_logvar,
         accumulated_zmeaned=accumulated_zmeaned,
@@ -372,12 +292,6 @@ def main(
         accumulated_patidxs=accumulated_patidxs,
         **kwargs)
 
-    # Kill the val data generators if val_every is set artificially high
-    if (kwargs['val_every'] > 999) & (kwargs['inference_every'] > 999) & (trainer.valfinetune_dataset != None) & (trainer.valunseen_dataset != None):
-        print(f"[GPU{str(trainer.gpu_id)}] WARNING: val_every is {kwargs['val_every']}, which is over arbitrary limit of 999, thus going to kill val generators")
-        trainer.valfinetune_dataset.kill_generator()
-        trainer.valunseen_dataset.kill_generator()
-    
     # Main loop through all epochs
     for epoch in range(start_epoch, epochs_to_train):
         trainer.epoch = epoch
@@ -387,8 +301,6 @@ def main(
         trainer._run_train_epoch(
             dataloader_curr = trainer.train_dataloader, 
             dataset_string = "train",
-            val_finetune = False,
-            val_unseen = False,
             singlebatch_printing_interval = singlebatch_printing_interval_train,
             **kwargs)
         
@@ -397,59 +309,6 @@ def main(
         if trainer.gpu_id == 0: trainer._save_checkpoint(trainer.epoch, **kwargs)
         print(f"GPU{str(trainer.gpu_id)} at post checkpoint save barrier")
         barrier()
-
-        # VALIDATE 
-        if ((trainer.epoch + 1) % trainer.val_every == 0):
-            
-            if val_finetine_bool:
-                # Save pre-finetune model/opt weights
-                bse_dict = trainer.bse.module.state_dict()
-                disc_dict = trainer.disc.module.state_dict()
-                bse_opt_dict = trainer.opt_bse.state_dict()
-                disc_opt_dict = trainer.opt_disc.state_dict()
-                accumulated_mean = trainer.accumulated_mean
-                accumulated_logvar = trainer.accumulated_logvar
-                accumulated_zmeaned = trainer.accumulated_zmeaned
-                accumulated_mogpreds = trainer.accumulated_mogpreds
-                accumulated_patidxs = trainer.accumulated_patidxs
-
-                # FINETUNE on beginning of validation patients (currently only one epoch)
-                # Set to train and change LR to validate settings
-                trainer._set_to_train()
-                trainer.opt_bse.param_groups[0]['lr'] = LR_val_bse
-                trainer.opt_bse.param_groups[1]['lr'] = LR_val_prior
-                trainer.opt_bse.param_groups[2]['lr'] = LR_val_cls
-                trainer.opt_disc['lr'] = LR_val_disc
-                trainer._run_train_epoch(
-                    dataloader_curr = trainer.valfinetune_dataloader, 
-                    dataset_string = "valfinetune",
-                    val_finetune = True,
-                    val_unseen = False,
-                    singlebatch_printing_interval = singlebatch_printing_interval_val,
-                    **kwargs)
-
-            # UNSEEN portion of validation patients 
-            trainer._set_to_eval()
-            with torch.inference_mode():
-                trainer._run_train_epoch(
-                    dataloader_curr = trainer.valunseen_dataloader, 
-                    dataset_string = "valunseen",
-                    val_finetune = False,
-                    val_unseen = True,
-                    singlebatch_printing_interval = singlebatch_printing_interval_val,
-                    **kwargs)
-
-            # Restore model/opt weights to pre-finetune
-            if val_finetine_bool:
-                trainer.bse.module.load_state_dict(bse_dict)
-                trainer.disc.module.load_state_dict(disc_dict)
-                trainer.opt_bse.load_state_dict(bse_opt_dict)
-                trainer.opt_disc.load_state_dict(disc_opt_dict)
-                trainer.accumulated_mean = accumulated_mean
-                trainer.accumulated_logvar = accumulated_logvar
-                trainer.accumulated_zmeaned = accumulated_zmeaned
-                trainer.accumulated_mogpreds = accumulated_mogpreds
-                trainer.accumulated_patidxs = accumulated_patidxs
 
     # Kill the process after training loop completes
     print(f"[GPU{gpu_id}]: End of train loop, killing 'main' subprocess")
@@ -465,18 +324,11 @@ class Trainer:
         disc: torch.nn.Module,
         start_epoch: int,
         train_dataset: SEEG_Tornado_Dataset,
-        valfinetune_dataset: SEEG_Tornado_Dataset,
-        valunseen_dataset: SEEG_Tornado_Dataset,
         train_dataloader: DataLoader,
-        valfinetune_dataloader: DataLoader,
-        valunseen_dataloader: DataLoader,
         opt_bse: torch.optim.Optimizer,
         opt_disc: torch.optim.Optimizer,
         wandb_run,
         model_dir: str,
-        val_every: int,
-        inference_every: int,
-        finetune_inference: bool,
         latent_dim: int,
         prior_mog_components: int,
         encode_token_samples: int,
@@ -505,17 +357,10 @@ class Trainer:
         self.disc = disc
         self.start_epoch = start_epoch
         self.train_dataset = train_dataset
-        self.valfinetune_dataset = valfinetune_dataset
-        self.valunseen_dataset = valunseen_dataset
         self.train_dataloader = train_dataloader
-        self.valfinetune_dataloader = valfinetune_dataloader
-        self.valunseen_dataloader = valunseen_dataloader
         self.opt_bse = opt_bse
         self.opt_disc = opt_disc
         self.model_dir = model_dir
-        self.val_every = val_every
-        self.inference_every = inference_every
-        self.finetune_inference = finetune_inference
         self.latent_dim = latent_dim
         self.prior_mog_components = prior_mog_components
         self.encode_token_samples = encode_token_samples
@@ -554,7 +399,7 @@ class Trainer:
         - Distributed training setup with DDP.
         - Model and optimization state (GM-VAE, optimizer).
         - Guassian Process prior for temporal regularization across sequential tokens
-        - Training and validation datasets, dataloaders, and sampling strategies.
+        - Training and dataset, dataloader, and sampling strategies.
         - Accumulated statistics for latent data and prior distribution.
         - Integration with WandB for model monitoring.
 
@@ -812,8 +657,6 @@ class Trainer:
         dataloader_curr, 
         dataset_string,
         attention_dropout,
-        val_finetune,
-        val_unseen,
         singlebatch_latent_printing,
         singlebatch_printing_interval,
         **kwargs):
@@ -845,8 +688,6 @@ class Trainer:
           of data containing input tensors, file names, class labels, channel orders, and patient embeddings.
         - dataset_string: A string identifying the dataset being used (for logging and file saving purposes).
         - attention_dropout: A dropout rate applied during attention mechanisms to regularize the model.
-        - val_finetune: A boolean indicating whether the model is being fine-tuned on validation data.
-        - val_unseen: A boolean indicating whether the model is being evaluated on unseen data.
         - singlebatch_latent_printing: A boolean flag that determines whether latent representations for a single batch 
           should be printed.
         - singlebatch_printing_interval: The frequency (in terms of iterations) at which latent printing occurs.
@@ -874,15 +715,11 @@ class Trainer:
             self.gumbel_softmax_temp, self.mean_match_weight, self.logvar_match_weight, self.mse_weight, self.kl_weight, self.gp_weight, self.curr_LR_posterior, self.curr_LR_prior, self.curr_LR_cls, self.posterior_mogpreds_entropy_weight, self.posterior_mogpreds_intersequence_diversity_weight, self.classifier_weight, self.classifier_alpha = utils_functions.LR_and_weight_schedules(
                 epoch=self.epoch, iter_curr=iter_curr, iters_per_epoch=total_iters, **self.kwargs)
             
-            if (not val_finetune) & (not val_unseen): 
-                self.opt_bse.param_groups[0]['lr'] = self.curr_LR_posterior
-                self.opt_bse.param_groups[1]['lr'] = self.curr_LR_prior
-                self.opt_bse.param_groups[2]['lr'] = self.curr_LR_cls
+            self.opt_bse.param_groups[0]['lr'] = self.curr_LR_posterior
+            self.opt_bse.param_groups[1]['lr'] = self.curr_LR_prior
+            self.opt_bse.param_groups[2]['lr'] = self.curr_LR_cls
 
-                self.opt_disc.param_groups[0]['lr'] = self.curr_LR_discriminator
-            else: 
-                self.classifier_alpha = 0 # For validation, do not consider classifier
-                self.opt_bse.param_groups[2]['lr'] = 0
+            self.opt_disc.param_groups[0]['lr'] = self.curr_LR_discriminator
 
             # Set the temperature in the model itself
             self.bse.module.set_temp(self.gumbel_softmax_temp)
@@ -913,7 +750,7 @@ class Trainer:
             # GM-VAE ENCODER: 
             z_pseudobatch, mean_pseudobatch, logvar_pseudobatch, mogpreds_pseudobatch, attW = self.bse(x, reverse=False) # No 1-shift because not causal masking
 
-            # Reshape variables back to token level 
+            # Reshape variables back to token level  
             z_token = z_pseudobatch.split(self.transformer_seq_length, dim=0)
             z_token = torch.stack(z_token, dim=0)
             mogpreds = mogpreds_pseudobatch.split(self.transformer_seq_length, dim=0)
@@ -989,19 +826,15 @@ class Trainer:
             logvar_tokenmeaned = torch.mean(logvar, dim=1)
             mogpreds_logsofmaxed_tokenmeaned = torch.mean(mogpreds, dim=1)
 
-            # Do not backprop for pure validation (i.e. val unseen), but do for training & finetuning
-            if not val_unseen: 
-                self.opt_bse.zero_grad()
-                loss.backward()    
-                torch.nn.utils.clip_grad_norm_(self.bse.module.parameters(), max_norm=1.0)
-                self.opt_bse.step()
-                self._update_reg_window(mean_tokenmeaned, logvar_tokenmeaned, z_tokenmeaned, mogpreds_logsofmaxed_tokenmeaned, file_class_label) # Update the buffers & detach() 
+            self.opt_bse.zero_grad()
+            loss.backward()    
+            torch.nn.utils.clip_grad_norm_(self.bse.module.parameters(), max_norm=1.0)
+            self.opt_bse.step()
+            self._update_reg_window(mean_tokenmeaned, logvar_tokenmeaned, z_tokenmeaned, mogpreds_logsofmaxed_tokenmeaned, file_class_label) # Update the buffers & detach() 
 
             # Realtime terminal info and WandB 
             if (iter_curr%self.recent_display_iters==0):
-                if val_finetune: state_str = "VAL FINETUNE"
-                elif val_unseen: state_str = "VAL UNSEEN"
-                else: state_str = "TRAIN"
+                state_str = "TRAIN"
                 now_str = datetime.datetime.now().strftime("%I:%M%p-%B/%d/%Y")
                 if (self.gpu_id == 0):
                     sys.stdout.write(
@@ -1013,67 +846,37 @@ class Trainer:
                 wandb.define_metric('Steps')
                 wandb.define_metric("*", step_metric="Steps")
                 train_step = self.epoch * int(total_iters) + iter_curr
-                if (not val_finetune) & (not val_unseen):
-                    metrics = dict(
-                        train_attention_dropout=attention_dropout,
-                        train_loss=loss,
-                        train_recon_MSE_loss=mse_loss, 
-                        train_discriminator_combined_loss=disc_loss,
-                        train_discriminator_fake_loss=disc_fake_loss,
-                        train_discriminator_real_loss=disc_real_loss,
-                        train_bse_adversarial_loss=bse_adversarial_loss,
-                        train_neg_gp_log_prob = neg_gp_log_prob,
-                        train_neg_gp_weight = self.gp_weight,
-                        train_mean_match_loss = mean_match_loss,
-                        train_logvar_match_loss = logvar_match_loss,
-                        train_mean_match_weight = self.mean_match_weight,
-                        train_logvar_match_weight = self.logvar_match_weight,
-                        train_posterior_mogpreds_entropy_loss=posterior_mogpreds_entropy_loss,
-                        train_posterior_mogpreds_intersequence_diversity_weight = self.posterior_mogpreds_intersequence_diversity_weight,
-                        train_posterior_mogpreds_entropy_weight = self.posterior_mogpreds_entropy_weight,
-                        train_posterior_mogpreds_intersequence_diversity_loss = posterior_mogpreds_intersequence_diversity_loss,
-                        train_gumbel_softmax_temperature=self.gumbel_softmax_temp, # TODO: probably should schedule an annealing pattern
-                        train_prior_entropy_loss=prior_entropy,
-                        train_prior_repulsion_loss=prior_repulsion,
-                        train_patient_adversarial_loss=patient_adversarial_loss,
-                        train_patient_adversarial_alpha=self.classifier_alpha,
-                        train_LR_bse=self.opt_bse.param_groups[0]['lr'], 
-                        train_LR_disc=self.opt_disc.param_groups[0]['lr'], 
-                        train_LR_prior=self.opt_bse.param_groups[1]['lr'], 
-                        train_LR_classifier=self.opt_bse.param_groups[2]['lr'],
-                        train_KL_weight=self.kl_weight, 
-                        train_ReconMSE_Weight=self.mse_weight,
-                        train_epoch=self.epoch)
-
-                elif val_finetune:
-                    metrics = dict(
-                        val_finetune_attention_dropout=attention_dropout,
-                        val_finetune_loss=loss, 
-                        val_finetune_recon_MSE_loss=mse_loss, 
-                        val_finetune_neg_gp_weight = self.gp_weight,
-                        val_finetune_neg_gp_log_prob = neg_gp_log_prob,
-                        val_finetune_LR_bse=self.opt_bse.param_groups[0]['lr'], 
-                        val_finetune_LR_disc=self.opt_disc.param_groups[0]['lr'], 
-                        val_finetune_LR_prior=self.opt_bse.param_groups[1]['lr'], 
-                        val_finetune_LR_classifier=self.opt_bse.param_groups[2]['lr'],
-                        val_finetune_KL_weight=self.kl_weight, 
-                        val_finetune_ReconMSE_Weight=self.mse_weight,
-                        val_finetune_epoch=self.epoch)
-
-                elif val_unseen:
-                    metrics = dict(
-                        val_unseen_attention_dropout=attention_dropout,
-                        val_unseen_loss=loss, 
-                        val_unseen_recon_MSE_loss=mse_loss, 
-                        val_unseen_neg_gp_weight = self.gp_weight,
-                        val_unseen_neg_gp_log_prob = neg_gp_log_prob,
-                        val_unseen_LR_bse=self.opt_bse.param_groups[0]['lr'], 
-                        val_unseen_LR_disc=self.opt_disc.param_groups[0]['lr'], 
-                        val_unseen_LR_prior=self.opt_bse.param_groups[1]['lr'],
-                        val_unseen_LR_classifier=self.opt_bse.param_groups[2]['lr'],
-                        val_unseen_KL_weight=self.kl_weight, 
-                        val_unseen_ReconMSE_Weight=self.mse_weight,
-                        val_unseen_epoch=self.epoch)
+                
+                metrics = dict(
+                    train_attention_dropout=attention_dropout,
+                    train_loss=loss,
+                    train_recon_MSE_loss=mse_loss, 
+                    train_discriminator_combined_loss=disc_loss,
+                    train_discriminator_fake_loss=disc_fake_loss,
+                    train_discriminator_real_loss=disc_real_loss,
+                    train_bse_adversarial_loss=bse_adversarial_loss,
+                    train_neg_gp_log_prob = neg_gp_log_prob,
+                    train_neg_gp_weight = self.gp_weight,
+                    train_mean_match_loss = mean_match_loss,
+                    train_logvar_match_loss = logvar_match_loss,
+                    train_mean_match_weight = self.mean_match_weight,
+                    train_logvar_match_weight = self.logvar_match_weight,
+                    train_posterior_mogpreds_entropy_loss=posterior_mogpreds_entropy_loss,
+                    train_posterior_mogpreds_intersequence_diversity_weight = self.posterior_mogpreds_intersequence_diversity_weight,
+                    train_posterior_mogpreds_entropy_weight = self.posterior_mogpreds_entropy_weight,
+                    train_posterior_mogpreds_intersequence_diversity_loss = posterior_mogpreds_intersequence_diversity_loss,
+                    train_gumbel_softmax_temperature=self.gumbel_softmax_temp, # TODO: probably should schedule an annealing pattern
+                    train_prior_entropy_loss=prior_entropy,
+                    train_prior_repulsion_loss=prior_repulsion,
+                    train_patient_adversarial_loss=patient_adversarial_loss,
+                    train_patient_adversarial_alpha=self.classifier_alpha,
+                    train_LR_bse=self.opt_bse.param_groups[0]['lr'], 
+                    train_LR_disc=self.opt_disc.param_groups[0]['lr'], 
+                    train_LR_prior=self.opt_bse.param_groups[1]['lr'], 
+                    train_LR_classifier=self.opt_bse.param_groups[2]['lr'],
+                    train_KL_weight=self.kl_weight, 
+                    train_ReconMSE_Weight=self.mse_weight,
+                    train_epoch=self.epoch)
 
             try:
                 wandb.log({**metrics, 'Steps': train_step})
@@ -1113,26 +916,23 @@ class Trainer:
                                 scores_byLayer_meanHeads = attW, 
                                 savedir = self.model_dir + f"/plots/{dataset_string}/attention", 
                                 **kwargs)
-
-                            # NOTE: for finetuning, will still be guess the training patients, and TODO: idxs in dataset are wrong for class labels anyway
-                            if (not val_unseen) & (not val_finetune): # Will not have accumulated for val_unseen
-                                utils_functions.print_classprobs_singlebatch(
-                                    class_probs = class_probs_mean_of_latent,
-                                    class_labels = file_class_label,
-                                    savedir = self.model_dir + f"/plots/{dataset_string}/classprobs",
-                                    epoch = self.epoch,
-                                    iter_curr = iter_curr,
-                                    file_name = file_name,
-                                    **kwargs)
-
-                                utils_functions.print_patposteriorweights_cumulative( 
-                                    mogpreds = self.accumulated_mogpreds.cpu().detach().numpy(),
-                                    patidxs = self.accumulated_patidxs.cpu().detach().numpy(),
-                                    patname_list = dataloader_curr.dataset.pat_ids,
-                                    savedir = self.model_dir + f"/plots/{dataset_string}/patposteriorweights",
-                                    epoch = self.epoch,
-                                    iter_curr = iter_curr,
-                                    **kwargs)
+                            utils_functions.print_classprobs_singlebatch(
+                                class_probs = class_probs_mean_of_latent,
+                                class_labels = file_class_label,
+                                savedir = self.model_dir + f"/plots/{dataset_string}/classprobs",
+                                epoch = self.epoch,
+                                iter_curr = iter_curr,
+                                file_name = file_name,
+                                **kwargs)
+                            utils_functions.print_patposteriorweights_cumulative( 
+                                mogpreds = self.accumulated_mogpreds.cpu().detach().numpy(),
+                                patidxs = self.accumulated_patidxs.cpu().detach().numpy(),
+                                patname_list = dataloader_curr.dataset.pat_ids,
+                                savedir = self.model_dir + f"/plots/{dataset_string}/patposteriorweights",
+                                epoch = self.epoch,
+                                iter_curr = iter_curr,
+                                **kwargs)
+                            
                 except Exception as e:
                     print(f"An error occurred during realtime plotting': {e}")
                                 

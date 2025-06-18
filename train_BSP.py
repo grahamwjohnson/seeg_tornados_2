@@ -452,7 +452,7 @@ class Trainer:
         iter_curr = 0
         total_iters = len(dataloader_curr)
 
-        for x, filename, pat_idxs, start_idx_offset in dataloader_curr:  
+        for x, filename, pat_idxs, start_idx_offset, rand_ch_orders in dataloader_curr:  
 
             # Update VAE cyclical annealing weights
             self.bsp_annealer.update_weight(self.epoch, iter_curr, total_iters)
@@ -477,9 +477,18 @@ class Trainer:
             ### BSP ###
             post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e = self.bsp(post_bse_mu) # Not 1-shifted, but will 1-shift within BSP (i.e. after BSE2P)
             self.store_BSP_embeddings(post_bse2p_mu, post_bse2p_logvar, filename, start_idx_offset + self.bse_transformer_seq_length * self.bse_encode_token_samples) 
+            
+            # Reconstruct back to raw SEEG
+            # with torch.no_grad():
+            post_bsp2e_pseudobatch = post_bsp2e.reshape(post_bsp2e.shape[0] * post_bsp2e.shape[1], post_bsp2e.shape[2], post_bsp2e.shape[3])
+            x_hat_pseudobatch = self.bse(post_bsp2e_pseudobatch, reverse=True)
+            x_hat = x_hat_pseudobatch.split(post_bsp2e.shape[1], dim=0)
+            x_hat = torch.stack(x_hat, dim=0)
+            x_shift_pseudobatch = x[:, 1:, :, :, :].reshape(x.shape[0] * x.shape[1]-1, -1, x.shape[3], x.shape[4]) # For loss and plotting
 
             # BSP Loss
-            bsp_recon_loss = loss_functions.mse_loss(post_bse_mu[:,1:,:,:], post_bsp2e)
+            # bsp_recon_loss = loss_functions.mse_loss(post_bse_mu[:,1:,:,:], post_bsp2e)
+            bsp_recon_loss = loss_functions.mse_loss(x_shift_pseudobatch, x_hat_pseudobatch)
             bsp_mu_recent = utils_functions.circular_slice_tensor(self.bsp_epoch_mu, self.running_bsp_index - self.bsp_running_kld_length, self.running_bsp_index)
             bsp_logvar_recent = utils_functions.circular_slice_tensor(self.bsp_epoch_logvar, self.running_bsp_index - self.bsp_running_kld_length, self.running_bsp_index)
             bsp_mu_reshaped = bsp_mu_recent.reshape(bsp_mu_recent.shape[0] * bsp_mu_recent.shape[1], -1)
@@ -553,7 +562,6 @@ class Trainer:
                     scores_byLayer_meanHeads = bsp_attW, 
                     savedir = self.model_dir + f"/plots/{dataset_string}/attention", 
                     **kwargs)
-
                 utils_functions.print_BSP_recon_singlebatch(
                     gpu_id=self.gpu_id,
                     epoch = self.epoch, 
@@ -563,7 +571,6 @@ class Trainer:
                     post_bsp2e = post_bsp2e,
                     savedir = self.model_dir + f"/plots/{dataset_string}/bsp_recon", 
                     **kwargs)
-                
                 utils_functions.print_BSV_recon_singlebatch(
                     gpu_id=self.gpu_id,
                     epoch = self.epoch, 
@@ -573,6 +580,14 @@ class Trainer:
                     post_bsp = post_bsp,
                     bsv_dec = bsv_dec,
                     savedir = self.model_dir + f"/plots/{dataset_string}/bsv_recon", 
+                    **kwargs)
+                utils_functions.print_recon_singlebatch(
+                    x=x_shift_pseudobatch, 
+                    x_hat=x_hat_pseudobatch, 
+                    savedir = self.model_dir + f"/plots/{dataset_string}/seeg_recon",
+                    epoch = self.epoch,
+                    iter_curr = iter_curr,
+                    file_name = None,
                     **kwargs)
 
             iter_curr = iter_curr + 1

@@ -436,6 +436,17 @@ class SEEG_BSP_Dataset(Dataset):
 
         print(f"Num Pats in Dataset: {self.num_pats}, Num Total Little Pickles in Dataset: {sum(self.numfiles_bypat)} (range per pat: {min(self.numfiles_bypat)}-{max(self.numfiles_bypat)})")
 
+
+    def make_ch_index_vec(self, padded_positions, shuffled_channel_indices):
+        """
+        Returns a vector of length self.padded_channels where:
+        - Entries at padded_positions are filled with shuffled_channel_indices.
+        - All other entries are 0.
+        """
+        ch_index_vec = torch.zeros(self.padded_channels, dtype=torch.long, device=padded_positions.device)
+        ch_index_vec[padded_positions] = shuffled_channel_indices
+        return ch_index_vec
+
     def __len__(self):
         return self.bsp_epoch_dataset_size
     
@@ -464,19 +475,27 @@ class SEEG_BSP_Dataset(Dataset):
         padded = torch.zeros(self.bsp_transformer_seq_length, self.padded_channels, self.bse_samples, dtype=torch.float32)
 
         # Randomize channel mapping for each time step independently
-        for t in range(self.bsp_transformer_seq_length):
-            shuffled_channel_indices = torch.randperm(actual_channels)
-            padded_positions = torch.randperm(self.padded_channels)[:actual_channels]
+        rand_ch_orders = torch.zeros(self.bsp_transformer_seq_length, self.padded_channels)
 
+        # Shuffle ONCE per sequence, so each BSP token has same channel order
+        shuffled_channel_indices = torch.randperm(actual_channels)
+        padded_positions = torch.randperm(self.padded_channels)[:actual_channels]
+
+        # Assign tokens
+        for t in range(self.bsp_transformer_seq_length):
+
+            # Assign channel orders to variable 
+            rand_ch_orders[t, :] = self.make_ch_index_vec(padded_positions, shuffled_channel_indices)
+
+            # Assign data to variable
             for src_idx, dst_pos in zip(shuffled_channel_indices, padded_positions):
                 padded[t, dst_pos, :] = x[src_idx, t, :]  # use the corresponding time step
-
 
         # Unsqueeze a dimension and transpose to be ready for BSE
         # [seq, padded_channels, FS] --> [seq, FS, padded_channel, 1]
         out = padded.permute(0, 2, 1).unsqueeze(3)
 
-        return out, rand_filename, rand_pat_idx, rand_start_idx
+        return out, rand_filename, rand_pat_idx, rand_start_idx, rand_ch_orders
 
 
 
