@@ -86,7 +86,7 @@ def get_bse(bse_codename, bsp_transformer_seq_length, bsp_batchsize, **kwargs):
     torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
 
     # Load the BSE model with pretrained weights from GitHub
-    bse, disc, _, _ = torch.hub.load(
+    bse, disc, _, _, _ = torch.hub.load(
         'grahamwjohnson/seeg_tornados_2',
         'load_lbm',
         codename=bse_codename,
@@ -98,7 +98,7 @@ def get_bse(bse_codename, bsp_transformer_seq_length, bsp_batchsize, **kwargs):
         load_pacmap=False,
         trust_repo='check',
         max_batch_size=bsp_transformer_seq_length*bsp_batchsize, # update for pseudobatching
-        force_reload=True
+        # force_reload=True
     )
 
     return bse, disc
@@ -295,6 +295,7 @@ class Trainer:
         atd_file: str,
         bsp_recent_display_iters: int,
 
+        bsp_disc_weight,
         bsp_loss_weight,
         seeg_loss_weight,
 
@@ -328,6 +329,7 @@ class Trainer:
         self.transformer_start_pos = transformer_start_pos
         self.atd_file = atd_file
         self.recent_display_iters = bsp_recent_display_iters
+        self.bsp_disc_weight = bsp_disc_weight
         self.seeg_loss_weight = seeg_loss_weight
         self.bsp_loss_weight = bsp_loss_weight
         self.bsv_output_dim = kwargs['bsv_dims'][-1]
@@ -505,7 +507,7 @@ class Trainer:
                 post_bse_z = torch.zeros(x.shape[0], self.bsp_transformer_seq_length, x.shape[2], self.bse.latent_dim, dtype=torch.float32).to(self.gpu_id)
                 for b in range(x.shape[0]): # One batch index at a time to not have to double pseudobatch
                     x_in = x[b, :, :, :, :]
-                    z_pseudobatch, _, _, _, _ = self.bse(x_in, reverse=False) 
+                    z_pseudobatch, _, _, mogpreds_pseudobatch_softmax, _ = self.bse(x_in, reverse=False) 
                     z_split = z_pseudobatch.split(self.bse_transformer_seq_length, dim=0) # Reshape variables back to token level 
                     post_bse_z[b, :, :, :] = torch.stack(z_split, dim=0)
 
@@ -513,8 +515,12 @@ class Trainer:
             post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e = self.bsp(post_bse_z) # Not 1-shifted, but will 1-shift within BSP (i.e. after BSE2P)
             self.store_BSP_embeddings(post_bse2p_mu, post_bse2p_logvar, filename, start_idx_offset + self.bse_transformer_seq_length * self.bse_encode_token_samples) 
             
-            # Discriminator to encourage decoded BSP2E to be on same manifold of post BSE
-
+            # Discriminator to encourage decoded BSP2E to be on same manifold as post BSE 
+            self.disc.eval()
+            post_bsp2e_pseudopseudobatch = post_bsp2e.reshape(post_bsp2e.shape[0]*post_bsp2e.shape[1]*post_bsp2e.shape[2], post_bsp2e.shape[3])
+            z_prior = self.bse.prior.sample_prior(post_bsp2e_pseudopseudobatch.shape[0], mog_weights=mogpreds_pseudobatch_softmax)
+            _, _, disc_fake_loss = loss_functions.discriminator_loss(post_bsp2e_pseudopseudobatch.detach(), z_prior.detach(), self.disc) 
+            disc_fake_loss = disc_fake_loss * self.bsp_disc_weight
 
             # Reconstruct back to raw SEEG by using pretrained BSE decoder
             post_bsp2e_pseudobatch = post_bsp2e.reshape(post_bsp2e.shape[0] * post_bsp2e.shape[1], post_bsp2e.shape[2], post_bsp2e.shape[3])
@@ -541,7 +547,7 @@ class Trainer:
             bsp_mu_reshaped = bsp_mu_recent.reshape(bsp_mu_recent.shape[0] * bsp_mu_recent.shape[1], -1)
             bsp_logvar_reshaped = bsp_logvar_recent.reshape(bsp_logvar_recent.shape[0] * bsp_logvar_recent.shape[1], -1)
             bsp_kld_loss = loss_functions.bsp_kld_loss(bsp_mu_reshaped, bsp_logvar_reshaped, **kwargs) * self.bsp_annealer.get_weight()
-            bsp_loss = bsp_recon_loss + bsp_kld_loss + seeg_recon_loss
+            bsp_loss = bsp_recon_loss + bsp_kld_loss + seeg_recon_loss + disc_fake_loss
 
             ### BSV ###
             bsv_dec, bsv_mu, bsv_logvar, _ = self.bsv(post_bse2p_z[:, :-1, :].detach())
@@ -585,6 +591,8 @@ class Trainer:
                     train_bsp_recon_loss=bsp_recon_loss,
                     train_bsp_kld_loss=bsp_kld_loss,
                     # train_bsp_gp_loss = bsp_gp_loss,
+                    train_disc_fake_loss = disc_fake_loss,
+                    train_bsp_disc_weight = self.bsp_disc_weight,
                     train_bsp_loss=bsp_loss,
                     train_bsp_loss_weight=self.bsp_loss_weight,
                     train_bsp_seeg_recon_loss=seeg_recon_loss,

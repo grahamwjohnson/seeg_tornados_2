@@ -261,6 +261,8 @@ bsp_max_seq_len: kwargs['bsp_max_seq_len'] = kwargs['bsp_transformer_seq_length'
 bsp_transformer_activation: "silu"
 bsp_attention_dropout: 0.0
 
+# Discriminator (encourage outputs to be on same manifold as BSE)
+bsp_disc_weight: 10
 
 ### ----------------------------------- ###
 ### BSP2E ###

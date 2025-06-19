@@ -144,7 +144,8 @@ class MoGPrior(nn.Module):
         
         else: # Use custom weights (e.g. from posterior's sampling)
             # Ensure mog_weights has the correct shape
-            assert mog_weights.shape == (batch_size, self.K), f"Expected mog_weights shape to be ({batch_size}, {self.K}), but got {mog_weights.shape}"
+            # assert mog_weights.shape == (batch_size, self.K), f"Expected mog_weights shape to be ({batch_size}, {self.K}), but got {mog_weights.shape}"
+            assert mog_weights.shape[1] == self.K, f"Expected mog_weights shape to be 2D with dim=1 shape {self.K}), but got {len(mog_weights.shape)} dims with dim1 shape of {mog_weights.shape[1]}"
 
             # Apply Gumbel-Softmax to the external logits
             gumbel_noise = -torch.log(-torch.log(torch.rand_like(mog_weights) + 1e-20) + 1e-20)
