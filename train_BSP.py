@@ -288,6 +288,9 @@ class Trainer:
         atd_file: str,
         bsp_recent_display_iters: int,
 
+        bsp_loss_weight,
+        seeg_loss_weight,
+
         bsp_anneal_epochs_to_max, 
         bsp_anneal_epochs_at_max, 
         bsp_anneal_max_weight, 
@@ -317,6 +320,8 @@ class Trainer:
         self.transformer_start_pos = transformer_start_pos
         self.atd_file = atd_file
         self.recent_display_iters = bsp_recent_display_iters
+        self.seeg_loss_weight = seeg_loss_weight
+        self.bsp_loss_weight = bsp_loss_weight
         self.bsv_output_dim = kwargs['bsv_dims'][-1]
         self.kwargs = kwargs
 
@@ -442,6 +447,32 @@ class Trainer:
         # Update index counter
         self.running_bsv_index += batch_size
 
+    def _remove_padded_channels(self, x: torch.Tensor, hash_channel_order):
+        """
+        Removes padded channels (-1) from x for each sample in the batch.
+        
+        Args:
+            x: Input tensor of shape [batch, tokens, max_channels, seq_len].
+            hash_channel_order: 2D tensor where -1 indicates padded channels.
+        
+        Returns:
+            List of tensors with padded channels removed (one per batch sample).
+        """
+
+        # Convert hash_channel_order to list of lists
+        hash_channel_order = hash_channel_order.to(torch.int).tolist()
+
+        # Convert hash_channel_order to a tensor
+        channel_order_tensor = torch.tensor(hash_channel_order, dtype=torch.long).to(self.gpu_id)  # [batch, max_channels]
+        valid_mask = (channel_order_tensor != -1)  # [batch, max_channels]
+
+        # Filter out padded channels per sample
+        x_nopad = []
+        for i in range(x.shape[0]):  # Loop over batch
+            x_nopad.append(x[i, :, valid_mask[i], :])  # [tokens, valid_channels, seq_len]
+
+        return x_nopad
+
     def _run_train_epoch(
         self,
         dataloader_curr,
@@ -461,40 +492,45 @@ class Trainer:
             ### BSE ### 
             # Pretrained
             with torch.no_grad():
+                self.bse.eval()
                 x = x.to(self.gpu_id)
-                post_bse_mu = torch.zeros(x.shape[0], self.bsp_transformer_seq_length, x.shape[2], self.bse.latent_dim, dtype=torch.float32).to(self.gpu_id)
+                post_bse_z = torch.zeros(x.shape[0], self.bsp_transformer_seq_length, x.shape[2], self.bse.latent_dim, dtype=torch.float32).to(self.gpu_id)
                 for b in range(x.shape[0]): # One batch index at a time to not have to double pseudobatch
                     x_in = x[b, :, :, :, :]
-                    _, mu_pseudobatch, _, mogpreds_pseudobatch_softmax, _ = self.bse(x_in, reverse=False) 
-
-                    # Weight the mu by MoG preds
-                    mu_pseudobatch_weighted, _ = self.bse.sample_weighted_mu_from_posterior(mu_pseudobatch, mogpreds_pseudobatch_softmax)
-
-                    # Split back into bse tokens
-                    mu_split = mu_pseudobatch_weighted.split(self.bse_transformer_seq_length, dim=0) # Reshape variables back to token level 
-                    post_bse_mu[b, :, :, :] = torch.stack(mu_split, dim=0)
+                    z_pseudobatch, _, _, _, _ = self.bse(x_in, reverse=False) 
+                    z_split = z_pseudobatch.split(self.bse_transformer_seq_length, dim=0) # Reshape variables back to token level 
+                    post_bse_z[b, :, :, :] = torch.stack(z_split, dim=0)
 
             ### BSP ###
-            post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e = self.bsp(post_bse_mu) # Not 1-shifted, but will 1-shift within BSP (i.e. after BSE2P)
+            post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e = self.bsp(post_bse_z) # Not 1-shifted, but will 1-shift within BSP (i.e. after BSE2P)
             self.store_BSP_embeddings(post_bse2p_mu, post_bse2p_logvar, filename, start_idx_offset + self.bse_transformer_seq_length * self.bse_encode_token_samples) 
             
-            # Reconstruct back to raw SEEG
-            # with torch.no_grad():
+            # Reconstruct back to raw SEEG by using pretrained BSE decoder
             post_bsp2e_pseudobatch = post_bsp2e.reshape(post_bsp2e.shape[0] * post_bsp2e.shape[1], post_bsp2e.shape[2], post_bsp2e.shape[3])
             x_hat_pseudobatch = self.bse(post_bsp2e_pseudobatch, reverse=True)
-            x_hat = x_hat_pseudobatch.split(post_bsp2e.shape[1], dim=0)
-            x_hat = torch.stack(x_hat, dim=0)
-            x_shift_pseudobatch = x[:, 1:, :, :, :].reshape(x.shape[0] * x.shape[1]-1, -1, x.shape[3], x.shape[4]) # For loss and plotting
+
+            # Reconstruct short-circuit BSE output to raw SEEG for comparison
+            with torch.no_grad():
+                post_bse_z_pseudobatch = post_bse_z[:,1:,:,:].reshape(post_bse_z.shape[0] * (post_bse_z.shape[1]-1), post_bse_z.shape[2], post_bse_z.shape[3])
+                x_hat_shortcircuit_pseudobatch = self.bse(post_bse_z_pseudobatch, reverse=True)
+
+            # Reshape original x for loss and plotting
+            x_shift_pseudobatch = x[:, 1:, :, :, :].reshape(x.shape[0] * x.shape[1]-1, -1, x.shape[3], x.shape[4]) 
+
+            # REMOVE PADDING - otherwise would reward recon loss for patients with fewer channels
+            ch_order_pseudobatch = rand_ch_orders[:, 1:, :].reshape(rand_ch_orders.shape[0] * (rand_ch_orders.shape[1] -1), rand_ch_orders.shape[2])
+            x_nopad_list = self._remove_padded_channels(x_shift_pseudobatch, ch_order_pseudobatch) 
+            x_hat_nopad_list = self._remove_padded_channels(x_hat_pseudobatch, ch_order_pseudobatch) 
 
             # BSP Loss
-            # bsp_recon_loss = loss_functions.mse_loss(post_bse_mu[:,1:,:,:], post_bsp2e)
-            bsp_recon_loss = loss_functions.mse_loss(x_shift_pseudobatch, x_hat_pseudobatch)
+            bsp_recon_loss = loss_functions.mse_loss(post_bse_z[:,1:,:,:], post_bsp2e) * self.bsp_loss_weight
+            seeg_recon_loss = loss_functions.recon_loss(x=x_nopad_list, x_hat=x_hat_nopad_list, mse_weight=self.seeg_loss_weight)
             bsp_mu_recent = utils_functions.circular_slice_tensor(self.bsp_epoch_mu, self.running_bsp_index - self.bsp_running_kld_length, self.running_bsp_index)
             bsp_logvar_recent = utils_functions.circular_slice_tensor(self.bsp_epoch_logvar, self.running_bsp_index - self.bsp_running_kld_length, self.running_bsp_index)
             bsp_mu_reshaped = bsp_mu_recent.reshape(bsp_mu_recent.shape[0] * bsp_mu_recent.shape[1], -1)
             bsp_logvar_reshaped = bsp_logvar_recent.reshape(bsp_logvar_recent.shape[0] * bsp_logvar_recent.shape[1], -1)
             bsp_kld_loss = loss_functions.bsp_kld_loss(bsp_mu_reshaped, bsp_logvar_reshaped, **kwargs) * self.bsp_annealer.get_weight()
-            bsp_loss = bsp_recon_loss + bsp_kld_loss
+            bsp_loss = bsp_recon_loss + bsp_kld_loss + seeg_recon_loss
 
             ### BSV ###
             bsv_dec, bsv_mu, bsv_logvar, _ = self.bsv(post_bse2p_mu[:, :-1, :].detach())
@@ -539,6 +575,9 @@ class Trainer:
                     train_bsp_kld_loss=bsp_kld_loss,
                     # train_bsp_gp_loss = bsp_gp_loss,
                     train_bsp_loss=bsp_loss,
+                    train_bsp_loss_weight=self.bsp_loss_weight,
+                    train_bsp_seeg_recon_loss=seeg_recon_loss,
+                    train_bsp_seeg_loss_weight=self.seeg_loss_weight,
                     train_bsp_kld_weight=self.bsp_annealer.get_weight(),
                     train_bsv_recon_loss=bsv_recon_loss,
                     train_bsv_kld_loss=bsv_kld_loss,
@@ -567,7 +606,7 @@ class Trainer:
                     epoch = self.epoch, 
                     iter_curr = iter_curr,
                     pat_idxs = pat_idxs, 
-                    mu = post_bse_mu[:,1:,:,:], 
+                    mu = post_bse_z[:,1:,:,:], 
                     post_bsp2e = post_bsp2e,
                     savedir = self.model_dir + f"/plots/{dataset_string}/bsp_recon", 
                     **kwargs)
@@ -587,8 +626,19 @@ class Trainer:
                     savedir = self.model_dir + f"/plots/{dataset_string}/seeg_recon",
                     epoch = self.epoch,
                     iter_curr = iter_curr,
-                    file_name = None,
+                    file_name = None, # TODO: modify plotting function for BSP
                     **kwargs)
+                utils_functions.print_recon_singlebatch(
+                    x=x_shift_pseudobatch, 
+                    x_hat=x_hat_shortcircuit_pseudobatch, 
+                    savedir = self.model_dir + f"/plots/{dataset_string}/seeg_recon_shortcircuit",
+                    epoch = self.epoch,
+                    iter_curr = iter_curr,
+                    file_name = None, # TODO: modify plotting function for BSP
+                    **kwargs)
+
+
+                x_hat_shortcircuit_pseudobatch
 
             iter_curr = iter_curr + 1
 

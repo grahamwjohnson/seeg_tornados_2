@@ -457,7 +457,7 @@ def bse_initialize_directories(
 
     else:
         # Make run directories
-        kwargs['model_dir'] = append_timestamp(kwargs['root_save_dir'] + '/trained_models/' + run_notes + '_')
+        kwargs['model_dir'] = append_timestamp(kwargs['root_save_dir'] + '/bse_trained_models/' + run_notes + '_')
         os.makedirs(kwargs['model_dir'])
         kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs'
         os.makedirs(kwargs['pic_dataset_dir'])

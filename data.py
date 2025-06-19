@@ -441,9 +441,9 @@ class SEEG_BSP_Dataset(Dataset):
         """
         Returns a vector of length self.padded_channels where:
         - Entries at padded_positions are filled with shuffled_channel_indices.
-        - All other entries are 0.
+        - All other entries are -1.
         """
-        ch_index_vec = torch.zeros(self.padded_channels, dtype=torch.long, device=padded_positions.device)
+        ch_index_vec = torch.ones(self.padded_channels, dtype=torch.long, device=padded_positions.device) * -1
         ch_index_vec[padded_positions] = shuffled_channel_indices
         return ch_index_vec
 
@@ -477,14 +477,14 @@ class SEEG_BSP_Dataset(Dataset):
         # Randomize channel mapping for each time step independently
         rand_ch_orders = torch.zeros(self.bsp_transformer_seq_length, self.padded_channels)
 
-        # Shuffle ONCE per sequence, so each BSP token has same channel order
+        # Shuffle ONCE per entire token sequence, so each BSP token has same channel order
         shuffled_channel_indices = torch.randperm(actual_channels)
         padded_positions = torch.randperm(self.padded_channels)[:actual_channels]
 
         # Assign tokens
         for t in range(self.bsp_transformer_seq_length):
 
-            # Assign channel orders to variable 
+            # Assign channel orders to variable (done within FOR loop to ensure it is clear that they all have the same channel order)
             rand_ch_orders[t, :] = self.make_ch_index_vec(padded_positions, shuffled_channel_indices)
 
             # Assign data to variable

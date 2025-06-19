@@ -235,7 +235,7 @@ bsp_running_kld_length: 64  ######################################### ####### ##
 ### Brain-State Predictor (BSP) ###
 
 continue_existing_training: False
-cont_train_model_dir_BSP: '/media/glommy1/tornados/bsp_trained_models/atlasmoth_sheldrake_Tue_Jun_17_19_41_32_2025' 
+cont_train_model_dir_BSP: '/media/glommy1/tornados/bsp_trained_models/isopod_sheldrake_Wed_Jun_18_20_18_04_2025' 
 
 bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
 bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/train_pats/*/scaled_data_epochs/all_epochs_woSPES'
@@ -278,8 +278,9 @@ bsp2e_transformer_activation: "silu"
 
 ### ----------------------------------- ###
 # BSP Training
-bsp_LR: kwargs['bsp_LR'] = 1e-6
-bsp_loss_weight: 1
+bsp_LR: kwargs['bsp_LR'] = 1e-7
+bsp_loss_weight: 0.2
+seeg_loss_weight: 1.5
 bsp_transformer_start_pos: 0 # hardcode to 0
 bsp_epoch_dataset_size: kwargs['bsp_epoch_dataset_size'] = 1024 * kwargs['bsp_batchsize'] ################## 1024 ####################
 bsp_batchsize: 1
@@ -302,7 +303,7 @@ bsp_anneal_min_weight: 0
 
 bsv_dims: kwargs['bsv_dims'] = [1024, 512, 256, 128, kwargs['prior_mog_components']]
 
-bsv_LR: kwargs['bsv_LR'] = 1e-6
+bsv_LR: kwargs['bsv_LR'] = 1e-7
 
 bsv_running_kld_length: 64 # Will be multiplied by batchsize
 
