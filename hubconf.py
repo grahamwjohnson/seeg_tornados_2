@@ -44,6 +44,9 @@ CONFIGS = {
         'classifier_num_pats': 45, 
         'classifier_dropout': 0.1,
 
+        # Discriminator Params
+        'disc_hidden_dims': [4096, 2048, 1024, 512, 256],
+
         # BSP Params
         'bse2p_transformer_dim': 64,
         'bse2p_layers': 8,
@@ -118,7 +121,7 @@ def _load_models(codename='midge_sheldrake', pretrained=True, load_bse=True, loa
     # *** KLD Discriminator for post-BSE manifold***
     disc = None
     if load_discriminator:
-        disc = Discriminator(**config)
+        disc = Discriminator(gpu_id='cpu', **config)
         
         # Discriinator: Load pretrained weights if requested
         if pretrained and config.get('disc_weight_file') and config.get('release_tag'):
