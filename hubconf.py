@@ -5,7 +5,7 @@ from models.BSP import BSP, BSV
 dependencies = ['torch', 'numpy']
 
 CONFIGS = {
-    'midge_sheldrake': {
+    'sheldrake': {
 
         # BSE Params
         'encode_token_samples': 1,
