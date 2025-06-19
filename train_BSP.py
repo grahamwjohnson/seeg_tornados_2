@@ -62,11 +62,14 @@ def load_train_objs(
     train_dataloader, _ = utils_functions.prepare_ddp_dataloader(train_dataset, batch_size=bsp_batchsize, num_workers=num_dataloader_workers)
 
     # Load the pretrained Brain-State Embedder (BSE) from GitHub and put on GPU, and initialize DDP
-    bse = get_bse(bsp_batchsize=bsp_batchsize, **kwargs)
+    bse, disc = get_bse(bsp_batchsize=bsp_batchsize, **kwargs)
     bse = bse.to(gpu_id) 
     bse.gpu_id = gpu_id
     bse.transformer_encoder.freqs_cis = bse.transformer_encoder.freqs_cis.to(gpu_id)
     DDP(bse, device_ids=[gpu_id])
+
+    disc = disc.to(gpu_id)
+    DDP(disc, device_ids=[gpu_id])
 
     # Load the BSP, BSV & optimizers for each
     bsp = BSP(gpu_id=gpu_id, **kwargs) 
@@ -77,26 +80,28 @@ def load_train_objs(
     opt_bsp = torch.optim.AdamW(bsp.parameters(), lr=bsp_LR, betas=(bsp_adamW_beta1, bsp_adamW_beta2), weight_decay=bsp_weight_decay)
     opt_bsv = torch.optim.AdamW(bsv.parameters(), lr=bsv_LR, betas=(bsv_adamW_beta1, bsv_adamW_beta2), weight_decay=bsv_weight_decay)
 
-    return train_dataloader, bse, bsp, bsv, opt_bsp, opt_bsv 
+    return train_dataloader, bse, disc, bsp, bsv, opt_bsp, opt_bsv 
 
 def get_bse(bse_codename, bsp_transformer_seq_length, bsp_batchsize, **kwargs):
     torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
 
     # Load the BSE model with pretrained weights from GitHub
-    bse, _, _ = torch.hub.load(
+    bse, disc, _, _ = torch.hub.load(
         'grahamwjohnson/seeg_tornados_2',
         'load_lbm',
         codename=bse_codename,
         pretrained=True,
         load_bse=True, 
-        load_som=False, 
+        load_discriminator=True,
         load_bsp=False,
+        load_bsv=False,
+        load_pacmap=False,
         trust_repo='check',
-        max_batch_size=bsp_transformer_seq_length*bsp_batchsize # update for pseudobatching
-        # force_reload=True
+        max_batch_size=bsp_transformer_seq_length*bsp_batchsize, # update for pseudobatching
+        force_reload=True
     )
 
-    return bse
+    return bse, disc
         
 def main(
     gpu_id,
@@ -141,7 +146,7 @@ def main(
     ddp_setup(gpu_id, world_size)
 
     # Load the BSP and BSV, as well as optimizers for each
-    train_dataloader, bse, bsp, bsv, opt_bsp, opt_bsv  = load_train_objs(gpu_id, **kwargs)
+    train_dataloader, bse, disc, bsp, bsv, opt_bsp, opt_bsv  = load_train_objs(gpu_id, **kwargs)
 
     # Load the Brain-State Predictor (BSP) model/opt states if not first epoch & if in training mode
     if (start_epoch > 0):
@@ -209,6 +214,7 @@ def main(
         world_size=world_size,
         gpu_id=gpu_id, 
         bse=bse, 
+        disc=disc,
         bsp=bsp,
         bsv=bsv,
         opt_bsp=opt_bsp,
@@ -257,6 +263,7 @@ class Trainer:
         world_size: int,
         gpu_id: int,
         bse: torch.nn.Module,
+        disc: torch.nn.Module,
         bsp: torch.nn.Module,
         bsv: torch.nn.Module,
         opt_bsp: torch.optim.Optimizer,
@@ -306,6 +313,7 @@ class Trainer:
         self.world_size = world_size
         self.gpu_id = gpu_id
         self.bse = bse
+        self.disc = disc
         self.bse_prior_mog_components = prior_mog_components
         self.epoch = start_epoch
         self.train_dataloader = train_dataloader
@@ -505,6 +513,9 @@ class Trainer:
             post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e = self.bsp(post_bse_z) # Not 1-shifted, but will 1-shift within BSP (i.e. after BSE2P)
             self.store_BSP_embeddings(post_bse2p_mu, post_bse2p_logvar, filename, start_idx_offset + self.bse_transformer_seq_length * self.bse_encode_token_samples) 
             
+            # Discriminator to encourage decoded BSP2E to be on same manifold of post BSE
+
+
             # Reconstruct back to raw SEEG by using pretrained BSE decoder
             post_bsp2e_pseudobatch = post_bsp2e.reshape(post_bsp2e.shape[0] * post_bsp2e.shape[1], post_bsp2e.shape[2], post_bsp2e.shape[3])
             x_hat_pseudobatch = self.bse(post_bsp2e_pseudobatch, reverse=True)
@@ -533,12 +544,12 @@ class Trainer:
             bsp_loss = bsp_recon_loss + bsp_kld_loss + seeg_recon_loss
 
             ### BSV ###
-            bsv_dec, bsv_mu, bsv_logvar, _ = self.bsv(post_bse2p_mu[:, :-1, :].detach())
+            bsv_dec, bsv_mu, bsv_logvar, _ = self.bsv(post_bse2p_z[:, :-1, :].detach())
             self.store_BSV_embeddings(bsv_mu, bsv_logvar, filename, start_idx_offset + self.bse_transformer_seq_length * self.bse_encode_token_samples) # 1-sifted
 
             # BSV Loss 
             # For KLD: only pull out N most recent based on 'bsv_running_kld_length'
-            bsv_recon_loss = loss_functions.mse_loss(post_bse2p_mu[:, :-1, :].detach(), bsv_dec)
+            bsv_recon_loss = loss_functions.mse_loss(post_bse2p_z[:, :-1, :].detach(), bsv_dec)
             bsv_mu_recent = utils_functions.circular_slice_tensor(self.bsv_epoch_mu, self.running_bsv_index - self.bsv_running_kld_length, self.running_bsv_index)
             bsv_logvar_recent = utils_functions.circular_slice_tensor(self.bsv_epoch_logvar, self.running_bsv_index - self.bsv_running_kld_length, self.running_bsv_index)
             bsv_mu_reshaped = bsv_mu_recent.reshape(bsv_mu_recent.shape[0] * bsv_mu_recent.shape[1], -1)
@@ -615,7 +626,7 @@ class Trainer:
                     epoch = self.epoch, 
                     iter_curr = iter_curr,
                     pat_idxs = pat_idxs, 
-                    post_bse2p = post_bse2p_mu[:, :-1, :],
+                    post_bse2p = post_bse2p_z[:, :-1, :],
                     post_bsp = post_bsp,
                     bsv_dec = bsv_dec,
                     savedir = self.model_dir + f"/plots/{dataset_string}/bsv_recon", 

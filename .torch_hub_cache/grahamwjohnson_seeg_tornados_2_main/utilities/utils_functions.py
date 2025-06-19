@@ -7,6 +7,8 @@ Developed between 2023-2025
 import chardet, codecs, datetime, gc, glob, hashlib, json
 import multiprocessing as mp, os, pandas as pd, pickle, pyedflib, random
 import shutil, string, subprocess, sys, time
+import scipy.stats as st
+from datetime import timedelta
 
 import matplotlib as mpl
 import matplotlib.gridspec as gridspec
@@ -31,6 +33,8 @@ mpl.use('agg')
 # Local imports
 from models.BSE import bse_print_models_flow
 from models.BSP import bsp_print_models_flow
+from utilities import manifold_utilities
+from collections import defaultdict
 
 
 # PREPROCESSING 
@@ -369,7 +373,29 @@ def run_script_from_shell(env_python_path, script_path, *args):
     except FileNotFoundError:
         return -1, "", "File not found"
 
-def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_workers=0):
+def prepare_ddp_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_workers=0):
+
+    if num_workers > 0:
+        persistent_workers=True
+        print("WARNING: num workers >0, have experienced odd errors...")
+
+    else:
+        persistent_workers=False
+
+    sampler = DistributedSampler(dataset, shuffle=True)
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,    
+        pin_memory=True,
+        shuffle=False,
+        sampler=sampler,
+        drop_last=droplast,
+        persistent_workers=persistent_workers
+    ), sampler
+
+def prepare_NonDdp_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_workers=0):
 
     if num_workers > 0:
         persistent_workers=True
@@ -383,19 +409,10 @@ def prepare_dataloader(dataset: Dataset, batch_size: int, droplast=False, num_wo
         batch_size=batch_size,
         num_workers=num_workers,    
         pin_memory=True,
-        shuffle=False,
-        sampler=DistributedSampler(dataset),
+        shuffle=True,
         drop_last=droplast,
         persistent_workers=persistent_workers
     )
-
-def get_training_dir_name(train_val_pat_perc, **kwargs):
-    
-    train_str = str(train_val_pat_perc[0]*100)
-    val_str = str(train_val_pat_perc[1]*100)
-    run_params_dir_name = "dataset_train" + train_str + "_val" + val_str 
-
-    return run_params_dir_name
 
 def bse_initialize_directories(
         run_notes,
@@ -440,7 +457,7 @@ def bse_initialize_directories(
 
     else:
         # Make run directories
-        kwargs['model_dir'] = append_timestamp(kwargs['root_save_dir'] + '/trained_models/' + kwargs['run_params_dir_name'] + '/' + run_notes + '_')
+        kwargs['model_dir'] = append_timestamp(kwargs['root_save_dir'] + '/bse_trained_models/' + run_notes + '_')
         os.makedirs(kwargs['model_dir'])
         kwargs['pic_dataset_dir'] = kwargs['model_dir'] + '/dataset_bargraphs'
         os.makedirs(kwargs['pic_dataset_dir'])
@@ -454,18 +471,18 @@ def bse_initialize_directories(
 
 def bsp_initialize_directories(
         run_notes,
-        cont_train_model_dir,
+        cont_train_model_dir_BSP,
         **kwargs):
 
     # *** CONTINUE EXISTING RUN initialization ***
 
     if kwargs['continue_existing_training']:
 
-        kwargs['model_dir'] = cont_train_model_dir
+        kwargs['model_dir'] = cont_train_model_dir_BSP
         kwargs['log_dir'] =  kwargs['model_dir'] + '/data_logs'
 
         # Find the epoch to start training
-        check_dir = kwargs['model_dir'] + "/checkpoints"
+        check_dir = kwargs['model_dir'] + "/bsp_checkpoints"
         epoch_dirs = glob.glob(check_dir + '/Epoch*')
         epoch_nums = [int(f.split("/")[-1].replace("Epoch_","")) for f in epoch_dirs]
 
@@ -474,13 +491,24 @@ def bsp_initialize_directories(
         print(f"Resuming training after saved epoch: {str(max_epoch)}")
         
         # Construct the proper file names to get CORE state dicts
-        kwargs['bsp_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/bsp_checkpoints/checkpoint_epoch{str(max_epoch)}_bsp.pt'
-        kwargs['bsp_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/bsp_checkpoints/checkpoint_epoch{str(max_epoch)}_bsp_opt.pt'
+        kwargs['bsp_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_bsp.pt'
+        kwargs['bsp_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_bsp_opt.pt'
+        kwargs['bsv_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_bsv.pt'
+        kwargs['bsv_opt_state_dict_prev_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_bsv_opt.pt'
+
+        kwargs['running_bsp_mu_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsp_mu.pkl'
+        kwargs['running_bsp_logvar_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsp_logvar.pkl'
+        kwargs['running_bsp_filenames_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsp_filenames.pkl'
+        kwargs['running_bsp_startidxs_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsp_start_idxs.pkl'
+
+        kwargs['running_bsv_mu_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_mu.pkl'
+        kwargs['running_bsv_logvar_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_logvar.pkl'
+        kwargs['running_bsv_filenames_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_filenames.pkl'
+        kwargs['running_bsv_startidxs_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_start_idxs.pkl'
 
         # Set the start epoch 1 greater than max trained
         kwargs['start_epoch'] = (max_epoch + 1) 
         
-
     # *** NEW RUN initialization ***  
 
     else:
@@ -507,9 +535,6 @@ def bse_run_setup(**kwargs):
     for t in tmp_dirs: 
         shutil.rmtree(t)
         print(f"Deleted tmp directory: {t}")
-
-    # All Time Data file to get event timestamps
-    kwargs['run_params_dir_name'] = get_training_dir_name(**kwargs)
 
     # Set world size to number of GPUs in system available to CUDA
     world_size = torch.cuda.device_count()
@@ -566,7 +591,7 @@ def bsp_run_setup(**kwargs):
     kwargs = bsp_initialize_directories(run_notes=run_notes, **kwargs)
 
     # Print the model forward pass sizes
-    fake_data = torch.rand(kwargs['bsp_batchsize'], kwargs['bsp_transformer_seq_length'], kwargs['bsp_latent_dim'])                           
+    fake_data = torch.rand(kwargs['bsp_batchsize'], kwargs['bsp_transformer_seq_length'], kwargs['FS'], kwargs['latent_dim'])                           
     bsp_print_models_flow(x=fake_data, **kwargs)
 
     # Get the timestamp ID for this run (will be used to resume wandb logging if this is a restarted training)
@@ -1139,6 +1164,15 @@ def rewindow_data_filewise(
 
     return rewin_means, rewin_logvars, rewin_mogpreds
 
+def circular_slice_tensor(tensor: torch.Tensor, start: int, stop: int) -> torch.Tensor:
+    length = tensor.size(0)
+    start = start % length
+    stop = stop % length
+
+    if start < stop:
+        return tensor[start:stop]
+    else:
+        return torch.cat((tensor[start:], tensor[:stop]), dim=0)
 
 # LEARNING RATES & LOSS WEIGHTS
 
@@ -1591,6 +1625,30 @@ def LR_and_weight_schedules(
         LR_rise_first=LR_rise_first)
 
     return  temp, mean_match_val, logvar_match_val, mse_val, KL_divergence_val, gp_weight_val, LR_val_posterior, LR_val_prior, LR_val_cls, mogpred_entropy_val, mogpred_diversity_val, classifier_weight, classifier_val
+
+class CyclicalAnnealingWeight:
+    def __init__(self, epochs_to_max, epochs_at_max, max_weight=1.0, min_weight=0.0):
+        self.epochs_to_max = epochs_to_max
+        self.epochs_at_max = epochs_at_max
+        self.max_weight = max_weight
+        self.min_weight = min_weight
+        self.current_weight = min_weight
+
+        self.cycle_length = epochs_to_max + epochs_at_max
+
+    def update_weight(self, current_epoch, current_iter, iters_per_epoch):
+        cycle_epoch = current_epoch % self.cycle_length
+        cycle_progress = (current_iter + cycle_epoch * iters_per_epoch) / (self.epochs_to_max * iters_per_epoch)
+
+        if cycle_epoch < self.epochs_to_max:
+            # Linear ramp up
+            self.current_weight = self.min_weight + (self.max_weight - self.min_weight) * min(cycle_progress, 1.0)
+        else:
+            # Hold at max
+            self.current_weight = self.max_weight
+
+    def get_weight(self):
+        return self.current_weight
 
 
 # DECODER HASHING
@@ -2071,7 +2129,9 @@ def print_latent_singlebatch(mean, logvar, mogpreds, prior_means, prior_logvars,
     plt.savefig(f"{savedir}/RealtimeLatents_epoch{epoch}_iter{iter_curr}.jpg", dpi=200)
     plt.close(fig)
 
-def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_singlebatch_channels_recon, num_recon_samples, **kwargs):
+def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_singlebatch_channels_recon, num_recon_samples, save_svg=False, max_batchsize=8, **kwargs):
+
+    gpu_id = x.device
 
     x_hat = x_hat.detach().cpu().numpy()
     x = x.detach().cpu().numpy()
@@ -2085,7 +2145,7 @@ def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_
     x_hat_fused = x_hat_fused.reshape(x_hat_fused.shape[0], x_hat_fused.shape[1] * x_hat_fused.shape[2], x_hat_fused.shape[3])
     x_hat_fused = np.moveaxis(x_hat_fused, 1, 2)
 
-    batchsize = x_hat.shape[0]
+    batchsize = min(x_hat.shape[0], max_batchsize)
 
     np.random.seed(seed=None) 
     r = np.arange(0,x_hat_fused.shape[1])
@@ -2096,8 +2156,9 @@ def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_
     if x_fused.shape[2] > num_recon_samples:
         gs = gridspec.GridSpec(batchsize, num_singlebatch_channels_recon * 2) # *2 because beginning and end of transformer sequence
     else:
-        sqrt_num = int(np.ceil(np.sqrt(batchsize * num_singlebatch_channels_recon)))
-        gs = gridspec.GridSpec(sqrt_num, sqrt_num) 
+        # sqrt_num = int(np.ceil(np.sqrt(batchsize * num_singlebatch_channels_recon)))
+        # gs = gridspec.GridSpec(sqrt_num, sqrt_num) 
+        gs = gridspec.GridSpec(batchsize * len(random_ch_idxs), 1)
         subplot_iter = 0
 
     fig = pl.figure(figsize=(24, 24))
@@ -2122,7 +2183,8 @@ def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_
 
                     ax = fig.add_subplot(gs[b, c*2 + seq]) 
                     sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
-                    ax.set_title(f"Ch:{random_ch_idxs[c]}\n{file_name[b]}, {title_str}", fontdict={'fontsize': 12, 'fontweight': 'medium'})
+                    if file_name != None: ax.set_title(f"Ch:{random_ch_idxs[c]}\n{file_name[b]}, {title_str}", fontdict={'fontsize': 12, 'fontweight': 'medium'})
+                    else: ax.set_title(f"Ch:{random_ch_idxs[c]}, {title_str}", fontdict={'fontsize': 12, 'fontweight': 'medium'})
 
                     pl.ylim(-1, 1) # Set y-axis limit -1 to 1
 
@@ -2135,19 +2197,24 @@ def print_recon_singlebatch(x, x_hat, savedir, epoch, iter_curr, file_name, num_
                     "Prediction": x_hat_plot
                 })
 
-                row = int(subplot_iter/sqrt_num)
-                col = subplot_iter - (row * sqrt_num)
+                # row = int(subplot_iter/sqrt_num)
+                # col = subplot_iter - (row * sqrt_num)
+                row = subplot_iter
+                col = 0
                 ax = fig.add_subplot(gs[row, col]) 
                 sns.lineplot(data=df, palette=palette, linewidth=1.5, dashes=False, ax=ax)
-                ax.set_title(f"{file_name[b]}", fontdict={'fontsize': 8, 'fontweight': 'medium'})
+                if file_name != None: ax.set_title(f"{file_name[b]}", fontdict={'fontsize': 8, 'fontweight': 'medium'})
+                else: ax.set_title(f"No file name", fontdict={'fontsize': 8, 'fontweight': 'medium'})
 
                 pl.ylim(-1, 1) # Set y-axis limit -1 to 1
                 subplot_iter = subplot_iter + 1
             
     fig.suptitle(f"Batches 0:{batchsize-1}, Ch:{random_ch_idxs}")
     if not os.path.exists(savedir): os.makedirs(savedir)
-    savename_jpg = f"{savedir}/RealtimeRecon_epoch{epoch}_iter{iter_curr}_allbatch.jpg"
+    savename_jpg = f"{savedir}/RealtimeRecon_epoch{epoch}_iter{iter_curr}_allbatch_{gpu_id}.jpg"
+    savename_svg = f"{savedir}/RealtimeRecon_epoch{epoch}_iter{iter_curr}_allbatch_{gpu_id}.svg"
     pl.savefig(savename_jpg, dpi=200)
+    if save_svg: pl.savefig(savename_svg)
     pl.close(fig)   
 
     pl.close('all') 
@@ -2466,7 +2533,7 @@ def print_dataset_bargraphs(pat_id, curr_file_list, curr_fpaths, dataset_pic_dir
 
 # BSP PLOTTING
 
-def print_BSP_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, **kwargs):
+def print_BSP_attention_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, scores_byLayer_meanHeads, savedir, **kwargs):
     """
     Plot attention weights with CAUSAL masking.
     """
@@ -2519,9 +2586,736 @@ def print_BSP_attention_singlebatch(epoch, iter_curr, pat_idxs, scores_byLayer_m
 
         fig.suptitle(f"Attention Weights - Batch:{b}")
         os.makedirs(savedir, exist_ok=True)
-        savename_jpg = f"{savedir}/ByLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_{pat_idxs[b]}.jpg"
+        savename_jpg = f"{savedir}/ByLayer_MeanHead_Attention_epoch{epoch}_iter{iter_curr}_batch{b}_{pat_idxs[b]}_GPU{gpu_id}.jpg"
         pl.savefig(savename_jpg, dpi=200)
         pl.close(fig)   
 
     pl.close('all')
 
+def extract_datetime_from_filename(filename):
+    """Extract datetime from filename format like:
+    Epat13_11092018_16542109_to_11092018_17112509_bipole_scaled_filtered_data.pkl"""
+    try:
+        time_part = filename.split("_")[2]  # e.g., 16542109
+        date_part = filename.split("_")[1]  # e.g., 11092018
+        dt_str = date_part + time_part[:6]  # 11092018165421
+        return datetime.datetime.strptime(dt_str, "%m%d%Y%H%M%S")
+    except Exception as e:
+        print(f"ERROR parsing datetime from filename {filename}: {e}")
+        return None
+
+def extract_patient_id(filename):
+    """Extract patient ID from filename, e.g., Epat13"""
+    return os.path.basename(filename).split("_")[0]
+
+def print_BSV_1D_embeddings(
+    gpu_id,
+    embeddings,  # shape (B, T, D)
+    filenames,  # shape (B,)
+    start_idx_offset,  # shape (B,)
+    epoch,
+    iter_curr,
+    savedir,
+    atd_file,
+    FS,
+    sleep_file,
+    show_pre_ictal=True,
+    show_sleep=True,
+    show_baseline=True,
+    pre_ictal_hours=1,
+    encode_token_samples=1,
+    transformer_seq_length=1,
+    show_unparsed=False,
+    **kwargs,
+):
+    import os
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from datetime import timedelta
+
+    os.makedirs(savedir, exist_ok=True)
+
+    B, T, D = embeddings.shape
+    embeddings = embeddings.reshape(B * T, D)
+    embeddings = embeddings.detach().cpu().numpy()
+    start_idx_offset = start_idx_offset.detach().cpu().numpy()
+
+    seconds_per_token = (encode_token_samples * transformer_seq_length) / FS
+    start_offsets_seconds = start_idx_offset / FS
+
+    filenames_expanded = np.repeat(filenames, T)
+    start_offsets_expanded = np.repeat(start_offsets_seconds, T)
+    token_offsets = np.tile(np.arange(T), B) * seconds_per_token
+    full_offsets = start_offsets_expanded + token_offsets
+
+    file_times = [
+        extract_datetime_from_filename(os.path.basename(f)) + timedelta(seconds=offset)
+        for f, offset in zip(filenames_expanded, full_offsets)
+    ]
+    pat_ids = [extract_patient_id(os.path.basename(f)) for f in filenames_expanded]
+
+    seizure_info = {}
+    sleep_info = {}
+    for pid in set(pat_ids):
+        seiz_starts, seiz_ends, seiz_type = manifold_utilities.get_pat_seiz_datetimes(pid, atd_file)
+        sleep_starts, sleep_ends, sleep_type = manifold_utilities.get_pat_sleep_datetimes(pid, sleep_file)
+        seizure_info[pid] = list(zip(seiz_starts, seiz_ends, seiz_type))
+        sleep_info[pid] = list(zip(sleep_starts, sleep_ends, sleep_type))
+
+    window_dur = timedelta(seconds=seconds_per_token)
+
+    is_preictal = np.zeros(B * T, dtype=bool)
+    is_sleep = np.zeros(B * T, dtype=bool)
+
+    for i in range(B * T):
+        pid = pat_ids[i]
+        time = file_times[i]
+        end_time = time + window_dur
+
+        for start, end, _ in seizure_info.get(pid, []):
+            if time >= start - timedelta(hours=pre_ictal_hours) and end_time <= end:
+                is_preictal[i] = True
+                break
+
+        for start, end, _ in sleep_info.get(pid, []):
+            if time >= start and end_time <= end:
+                is_sleep[i] = True
+                break
+
+    is_baseline = ~(is_preictal | is_sleep)
+
+    labels = np.full(B * T, "unparsed", dtype=object)
+    labels[is_baseline] = "baseline"
+    labels[is_sleep] = "sleep"
+    labels[is_preictal] = "preictal"
+
+    total_tokens = len(labels)
+    for category in ["preictal", "sleep", "baseline", "unparsed"]:
+        count = np.sum(labels == category)
+        pct = 100 * count / total_tokens
+        print(f"{category.capitalize()} tokens: {count} ({pct:.2f}%)")
+
+    mask = (
+        (labels == "preictal") & show_pre_ictal |
+        (labels == "sleep") & show_sleep |
+        (labels == "baseline") & show_baseline |
+        (labels == "unparsed") & show_unparsed
+    )
+
+    embeddings = embeddings[mask]
+    labels = labels[mask]
+
+    is_preictal = labels == "preictal"
+    is_sleep = labels == "sleep"
+    is_baseline = labels == "baseline"
+
+    fig, axes = plt.subplots(D, 1, figsize=(6, 3 * D))
+    if D == 1:
+        axes = [axes]
+
+    for i in range(D):
+        ax = axes[i]
+        # Plot histograms first
+        if show_baseline and np.any(is_baseline):
+            sns.histplot(
+                embeddings[is_baseline, i],
+                kde=False,
+                bins=50,
+                color="gray",
+                label="Baseline",
+                stat="density",
+                alpha=0.3,
+                ax=ax,
+            )
+        if show_sleep and np.any(is_sleep):
+            sns.histplot(
+                embeddings[is_sleep, i],
+                kde=False,
+                bins=50,
+                color="blue",
+                label="Sleep",
+                stat="density",
+                alpha=0.4,
+                ax=ax,
+            )
+        if show_pre_ictal and np.any(is_preictal):
+            sns.histplot(
+                embeddings[is_preictal, i],
+                kde=False,
+                bins=50,
+                color="red",
+                label="Preictal",
+                stat="density",
+                alpha=0.4,
+                ax=ax,
+            )
+        # Plot the KDE line last to be on top
+        if show_baseline and np.any(is_baseline):
+            sns.kdeplot(
+                embeddings[is_baseline, i],
+                color="black",
+                linewidth=1.5,
+                label="Baseline KDE",
+                ax=ax,
+            )
+
+        ax.set_title(f"Dimension {i}")
+        ax.legend()
+
+    plt.tight_layout()
+    save_path = os.path.join(savedir, f"epoch{epoch:03d}_iter{iter_curr:05d}_1D_hist_GPU{gpu_id}.png")
+    fig.savefig(save_path)
+    plt.close(fig)
+
+def print_BSV_ND_embeddings(
+    gpu_id,
+    embeddings,  # shape (B, T, D)
+    filenames,  # shape (B,)
+    start_idx_offset,  # shape (B,)
+    epoch,
+    iter_curr,
+    savedir,
+    atd_file,
+    sleep_file,
+    FS,
+    transformer_seq_length,
+    encode_token_samples,
+    pre_ictal_hours=1,
+    show_pre_ictal=True,
+    show_sleep=True,
+    show_baseline=True,
+    show_unparsed=False,
+    **kwargs,
+):
+    os.makedirs(savedir, exist_ok=True)
+
+    B, T, D = embeddings.shape
+    embeddings = embeddings.reshape(B * T, D)
+    embeddings = embeddings.detach().cpu().numpy()
+    start_idx_offset = start_idx_offset.detach().cpu().numpy()
+
+    # Compute correct per-token duration in seconds
+    seconds_per_token = (encode_token_samples * transformer_seq_length) / FS
+    start_offsets_seconds = start_idx_offset / FS
+
+    # Expand filenames and compute full offsets
+    filenames_expanded = np.repeat(filenames, T)
+    start_offsets_expanded = np.repeat(start_offsets_seconds, T)
+    token_offsets = np.tile(np.arange(T), B) * seconds_per_token
+    full_offsets = start_offsets_expanded + token_offsets
+
+    # Get per-token times and patient IDs
+    file_times = [
+        extract_datetime_from_filename(os.path.basename(f)) + timedelta(seconds=offset)
+        for f, offset in zip(filenames_expanded, full_offsets)
+    ]
+    pat_ids = [extract_patient_id(os.path.basename(f)) for f in filenames_expanded]
+
+    # Load seizure and sleep intervals per patient
+    seizure_info = {}
+    sleep_info = {}
+    for pid in set(pat_ids):
+        seiz_starts, seiz_ends, seiz_type = manifold_utilities.get_pat_seiz_datetimes(pid, atd_file)
+        sleep_starts, sleep_ends, sleep_type = manifold_utilities.get_pat_sleep_datetimes(pid, sleep_file)
+        seizure_info[pid] = list(zip(seiz_starts, seiz_ends, seiz_type))
+        sleep_info[pid] = list(zip(sleep_starts, sleep_ends, sleep_type))
+
+    window_dur = timedelta(seconds=seconds_per_token)
+
+    # Label each token
+    is_preictal = np.zeros(B * T, dtype=bool)
+    is_sleep = np.zeros(B * T, dtype=bool)
+
+    for i in range(B * T):
+        pid = pat_ids[i]
+        time = file_times[i]
+        end_time = time + window_dur
+
+        for start, end, _ in seizure_info.get(pid, []):
+            if time >= start - timedelta(hours=pre_ictal_hours) and end_time <= end:
+                is_preictal[i] = True
+                break
+
+        for start, end, _ in sleep_info.get(pid, []):
+            if time >= start and end_time <= end:
+                is_sleep[i] = True
+                break
+
+    is_baseline = ~(is_preictal | is_sleep)
+
+    # Assign one label per sample: preictal > sleep > baseline > unparsed
+    labels = np.full(B * T, "unparsed", dtype=object)
+    labels[is_baseline] = "baseline"
+    labels[is_sleep] = "sleep"
+    labels[is_preictal] = "preictal"  # overwrite lower-priority labels
+
+    # PRINT percentages of each category
+    total_tokens = len(labels)
+    for category in ["preictal", "sleep", "baseline", "unparsed"]:
+        count = np.sum(labels == category)
+        pct = 100 * count / total_tokens
+        print(f"{category.capitalize()} tokens: {count} ({pct:.2f}%)")
+
+    # Now mask based on which labels to include
+    mask = (
+        (labels == "preictal") & show_pre_ictal |
+        (labels == "sleep") & show_sleep |
+        (labels == "baseline") & show_baseline |
+        (labels == "unparsed") & show_unparsed
+    )
+
+    # Apply mask
+    embeddings = embeddings[mask]
+    labels = labels[mask]
+
+    # Update group indicators for plotting
+    is_preictal = labels == "preictal"
+    is_sleep = labels == "sleep"
+    is_baseline = labels == "baseline"
+
+    def make_subplot_grid(title, plot_func, filename_suffix):
+        fig, axes = plt.subplots(D, D, figsize=(3 * D, 3 * D))
+        fig.suptitle(title, fontsize=16)
+
+        for i in range(D):
+            for j in range(D):
+                ax = axes[i, j]
+                if i == j:
+                    ax.axis("off")
+                    continue
+                plot_func(ax, i, j)
+                if i == D - 1:
+                    ax.set_xlabel(f"dim {j}")
+                if j == 0:
+                    ax.set_ylabel(f"dim {i}")
+
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.92)
+        save_path = os.path.join(
+            savedir, f"epoch{epoch:03d}_iter{iter_curr:05d}_{filename_suffix}.png"
+        )
+        fig.savefig(save_path)
+        plt.close(fig)
+
+    # Plotting logic
+    def scatter_func(ax, i, j):
+        if show_baseline and np.any(is_baseline):
+            ax.scatter(embeddings[is_baseline, j], embeddings[is_baseline, i], s=5, alpha=0.3, color="gray", label="Baseline")
+        if show_sleep and np.any(is_sleep):
+            ax.scatter(embeddings[is_sleep, j], embeddings[is_sleep, i], s=5, alpha=0.5, color="blue", label="Sleep")
+        if show_pre_ictal and np.any(is_preictal):
+            ax.scatter(embeddings[is_preictal, j], embeddings[is_preictal, i], s=5, alpha=0.5, color="red", label="Preictal")
+        if i == 0 and j == 1:
+            ax.legend(fontsize=6)
+
+    def kde_preictal(ax, i, j):
+        if show_baseline and np.sum(is_baseline) > 1:
+            sns.kdeplot(
+                x=embeddings[is_baseline, j],
+                y=embeddings[is_baseline, i],
+                fill=True,
+                cmap="Greys",
+                thresh=0.01,
+                levels=50,
+                alpha=0.15,
+                ax=ax,
+            )
+        if show_pre_ictal and np.sum(is_preictal) > 1:
+            sns.kdeplot(
+                x=embeddings[is_preictal, j],
+                y=embeddings[is_preictal, i],
+                fill=True,
+                cmap="Reds",
+                thresh=0.01,
+                levels=50,
+                ax=ax,
+            )
+        else:
+            ax.axis("off")
+
+    def kde_sleep(ax, i, j):
+        if show_baseline and np.sum(is_baseline) > 1:
+            sns.kdeplot(
+                x=embeddings[is_baseline, j],
+                y=embeddings[is_baseline, i],
+                fill=True,
+                cmap="Greys",
+                thresh=0.01,
+                levels=50,
+                alpha=0.15,
+                ax=ax,
+            )
+        if show_sleep and np.sum(is_sleep) > 1:
+            sns.kdeplot(
+                x=embeddings[is_sleep, j],
+                y=embeddings[is_sleep, i],
+                fill=True,
+                cmap="Blues",
+                thresh=0.01,
+                levels=50,
+                ax=ax,
+            )
+        else:
+            ax.axis("off")
+
+
+    make_subplot_grid("Scatter: Baseline / Sleep / Preictal", scatter_func, "scatter")
+    make_subplot_grid("KDE: Preictal", kde_preictal, "kde_preictal")
+    make_subplot_grid("KDE: Sleep", kde_sleep, "kde_sleep")
+
+
+
+# def print_BSV_2D_embeddings(
+#     gpu_id,
+#     embeddings,
+#     filenames,
+#     start_idx_offset,
+#     epoch,
+#     iter_curr,
+#     savedir,
+#     atd_file,
+#     sleep_file,
+#     FS,
+#     transformer_seq_length,
+#     pre_ictal_hours=1,
+#     show_pre_ictal=True,
+#     show_sleep=True,
+#     show_baseline=True,
+#     show_unparsed=False,
+#     **kwargs,
+# ):
+#     print("Plotting 2D embeddings...")
+
+#     embeddings = embeddings.detach().cpu().numpy()
+#     start_idx_offset = start_idx_offset.detach().cpu().numpy()
+
+#     B, T, D = embeddings.shape
+#     embeddings = embeddings.reshape(B * T, D)
+#     assert D == 2, f"Expected 2D embeddings, got shape {embeddings.shape}"
+
+#     file_times = [extract_datetime_from_filename(os.path.basename(f)) for f in filenames]
+#     pat_ids = [extract_patient_id(os.path.basename(f)) for f in filenames]
+
+#     seizure_info = {}
+#     sleep_info = {}
+#     for pid in set(pat_ids):
+#         seiz_starts, seiz_ends, seiz_type = manifold_utilities.get_pat_seiz_datetimes(pid, atd_file)
+#         sleep_starts, sleep_ends, sleep_type = manifold_utilities.get_pat_sleep_datetimes(pid, sleep_file)
+#         seizure_info[pid] = list(zip(seiz_starts, seiz_ends, seiz_type))
+#         sleep_info[pid] = list(zip(sleep_starts, sleep_ends, sleep_type))
+
+#     seconds_per_token = transformer_seq_length / FS
+#     colors = []
+#     categories = []
+#     for b in range(B):
+#         pid = pat_ids[b]
+#         base_time = file_times[b]
+#         if base_time is None:
+#             colors.extend(['black'] * T)
+#             categories.extend(['unparsed'] * T)
+#             continue
+
+#         base_offset_seconds = start_idx_offset[b] / FS
+#         token_times = [
+#             base_time + datetime.timedelta(seconds=base_offset_seconds + i * seconds_per_token)
+#             for i in range(T)
+#         ]
+
+#         seiz_ranges = seizure_info[pid]
+#         sleep_ranges = sleep_info[pid]
+
+#         for tt in token_times:
+#             is_preictal = any([(s_start - datetime.timedelta(hours=pre_ictal_hours)) <= tt < s_start for s_start, s_end, _ in seiz_ranges])
+#             if is_preictal:
+#                 colors.append('red')
+#                 categories.append('pre-ictal')
+#                 continue
+#             is_sleep = any([start <= tt <= end for start, end, _ in sleep_ranges])
+#             if is_sleep:
+#                 colors.append('blue')
+#                 categories.append('sleep')
+#                 continue
+#             colors.append('grey')
+#             categories.append('baseline')
+
+#     color_map = {
+#         'pre-ictal': 'red',
+#         'sleep': 'blue',
+#         'baseline': 'grey',
+#         'unparsed': 'black'
+#     }
+
+#     categorized_embeddings = {
+#         'pre-ictal': [],
+#         'sleep': [],
+#         'baseline': [],
+#         'unparsed': []
+#     }
+
+#     for emb, cat in zip(embeddings, categories):
+#         categorized_embeddings[cat].append(emb)
+
+#     for key in categorized_embeddings:
+#         categorized_embeddings[key] = np.array(categorized_embeddings[key])
+
+#     # Determine global axis limits
+#     all_selected = np.concatenate([
+#         categorized_embeddings[cat] for cat in ['pre-ictal', 'sleep', 'baseline', 'unparsed']
+#         if categorized_embeddings[cat].shape[0] > 0
+#     ], axis=0)
+
+#     x_min, y_min = all_selected.min(axis=0)
+#     x_max, y_max = all_selected.max(axis=0)
+
+#     show_flags = {
+#         'pre-ictal': show_pre_ictal,
+#         'sleep': show_sleep,
+#         'unparsed': show_unparsed
+#     }
+#     selected_cats = [cat for cat, flag in show_flags.items() if flag and categorized_embeddings[cat].shape[0] > 1]
+
+#     # Plot count: 1 (scatter) + len(selected KDE plots)
+#     n_plots = 1 + len(selected_cats)
+#     cols = min(3, n_plots)
+#     rows = int(np.ceil(n_plots / cols))
+
+#     fig, axes = pl.subplots(rows, cols, figsize=(cols * 5, rows * 5), squeeze=False)
+
+#     # Plot 0: Scatter plot
+#     ax_scatter = axes[0][0]
+#     ax_scatter.scatter(embeddings[:, 0], embeddings[:, 1], c=colors, s=5, alpha=0.5)
+#     ax_scatter.set_title(f"2D Embeddings - Epoch {epoch}, Iter {iter_curr}, GPU {gpu_id}")
+#     ax_scatter.set_xlabel("Dim 1")
+#     ax_scatter.set_ylabel("Dim 2")
+#     ax_scatter.set_xlim(x_min, x_max)
+#     ax_scatter.set_ylim(y_min, y_max)
+#     ax_scatter.grid(False)
+
+#     legend_elements = [
+#         pl.Line2D([0], [0], marker='o', color='w', label='Pre-Ictal', markerfacecolor='red', markersize=5),
+#         pl.Line2D([0], [0], marker='o', color='w', label='Sleep', markerfacecolor='blue', markersize=5),
+#         pl.Line2D([0], [0], marker='o', color='w', label='Baseline', markerfacecolor='grey', markersize=5),
+#         pl.Line2D([0], [0], marker='o', color='w', label='Unparsed', markerfacecolor='black', markersize=5)
+#     ]
+#     ax_scatter.legend(handles=legend_elements, loc='upper right')
+
+#     # KDE subplots
+#     for i, cat in enumerate(selected_cats):
+#         r, c = divmod(i + 1, cols)  # +1 to skip scatter plot
+#         ax = axes[r][c]
+
+#         if show_baseline and categorized_embeddings['baseline'].shape[0] > 1:
+#             sns.kdeplot(
+#                 x=categorized_embeddings['baseline'][:, 0],
+#                 y=categorized_embeddings['baseline'][:, 1],
+#                 ax=ax,
+#                 fill=True,
+#                 alpha=0.6,
+#                 levels=5,
+#                 color=color_map['baseline']
+#             )
+
+#         sns.kdeplot(
+#             x=categorized_embeddings[cat][:, 0],
+#             y=categorized_embeddings[cat][:, 1],
+#             ax=ax,
+#             fill=True,
+#             alpha=0.4,
+#             levels=5,
+#             color=color_map[cat]
+#         )
+#         ax.set_title(f"{cat} KDE")
+#         ax.set_xlabel("Dim 1")
+#         ax.set_ylabel("Dim 2")
+#         ax.set_xlim(x_min, x_max)
+#         ax.set_ylim(y_min, y_max)
+#         ax.grid(False)
+
+#     # Hide unused subplots
+#     for i in range(n_plots, rows * cols):
+#         r, c = divmod(i, cols)
+#         fig.delaxes(axes[r][c])
+
+#     os.makedirs(savedir, exist_ok=True)
+#     out_path = f"{savedir}/FullPlot_Epoch{epoch}_iter{iter_curr}_GPU{gpu_id}.jpg"
+#     pl.tight_layout()
+#     pl.savefig(out_path, dpi=200)
+#     pl.close(fig)
+#     pl.close('all')
+
+
+
+def print_BSP_recon_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, mu, post_bsp2e, savedir, **kwargs):
+
+    # Convert tensors to numpy
+    mu =mu.detach().cpu().numpy()  # shape: [B, C, F, D]
+    post_bsp2e = post_bsp2e.detach().cpu().numpy()  # shape: [B, C, F, D]
+
+    batch_size =mu.shape[0]
+    first_idx = 0
+    last_idx =mu.shape[1] - 1
+
+    os.makedirs(savedir, exist_ok=True)
+
+    for b in range(batch_size):
+        mu_first =mu[b, first_idx].T  # shape: [D, F]
+        mu_last =mu[b, last_idx].T
+
+        post_first = post_bsp2e[b, first_idx].T
+        post_last = post_bsp2e[b, last_idx].T
+
+        # Determine shared color scale
+        vmin = min(mu_first.min(),mu_last.min(), post_first.min(), post_last.min())
+        vmax = max(mu_first.max(),mu_last.max(), post_first.max(), post_last.max())
+
+        fig, axes = pl.subplots(2, 2, figsize=(10, 8))
+
+        im00 = axes[0, 0].imshow(mu_first, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        axes[0, 0].set_title(f'Patient {pat_idxs[b]} - Original (First)')
+        axes[0, 0].set_ylabel('Latent Dim')
+
+        im01 = axes[0, 1].imshow(post_first, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        axes[0, 1].set_title(f'Patient {pat_idxs[b]} - Reconstructed (First)')
+
+        im10 = axes[1, 0].imshow(mu_last, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        axes[1, 0].set_title(f'Patient {pat_idxs[b]} - Original (Last)')
+        axes[1, 0].set_ylabel('Latent Dim')
+        axes[1, 0].set_xlabel('Sequence')
+
+        im11 = axes[1, 1].imshow(post_last, aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        axes[1, 1].set_title(f'Patient {pat_idxs[b]} - Reconstructed (Last)')
+        axes[1, 1].set_xlabel('Sequence')
+
+        # Add colorbar to the right of the plots
+        fig.tight_layout(rect=[0, 0, 0.95, 1])
+        cbar_ax = fig.add_axes([0.96, 0.15, 0.015, 0.7])
+        fig.colorbar(im11, cax=cbar_ax)
+
+        # Save figure
+        savename_jpg = f"{savedir}/BSP_Recon_Epoch{epoch}_Iter{iter_curr}_GPU{gpu_id}_Batch{b}_Pat{pat_idxs[b]}.jpg"
+        pl.savefig(savename_jpg, dpi=200)
+        pl.close(fig)
+
+    pl.close('all')
+
+def print_BSV_recon_singlebatch(gpu_id, epoch, iter_curr, pat_idxs, post_bse2p, post_bsp, bsv_dec, savedir, **kwargs):
+    import numpy as np
+    import os
+    import matplotlib.pyplot as pl
+
+    # Convert tensors to NumPy arrays
+    post_bse2p = post_bse2p.detach().cpu().numpy()
+    post_bsp = post_bsp.detach().cpu().numpy()
+    bsv_dec = bsv_dec.detach().cpu().numpy()
+
+    # Transpose for plotting: (B, latent_dim, seq_len)
+    post_bse2p = post_bse2p.transpose(0, 2, 1)
+    post_bsp = post_bsp.transpose(0, 2, 1)
+    bsv_dec = bsv_dec.transpose(0, 2, 1)
+
+    # Determine common vmin and vmax for consistent color scaling
+    vmin = min(post_bse2p.min(), post_bsp.min(), bsv_dec.min())
+    vmax = max(post_bse2p.max(), post_bsp.max(), bsv_dec.max())
+
+    # Create figure and axes
+    num_patients = post_bsp.shape[0]
+    fig, axes = pl.subplots(num_patients, 3, figsize=(15, 4 * num_patients))
+    if num_patients == 1:
+        axes = np.expand_dims(axes, 0)  # Ensure axes is always 2D
+
+    # Track one of the images for colorbar use
+    img_for_cbar = None
+
+    for i in range(num_patients):
+        ax0 = axes[i, 0]
+        ax1 = axes[i, 1]
+        ax2 = axes[i, 2]
+
+        im0 = ax0.imshow(post_bse2p[i], aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        ax0.set_title(f'Patient {pat_idxs[i]} - Post_E2P')
+        ax0.set_xlabel('Sequence')
+        ax0.set_ylabel('Latent Dim')
+
+        im1 = ax1.imshow(post_bsp[i], aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        ax1.set_title(f'Patient {pat_idxs[i]} - Post_BSP')
+        ax1.set_xlabel('Sequence')
+        ax1.set_ylabel('Latent Dim')
+
+        im2 = ax2.imshow(bsv_dec[i], aspect='auto', cmap='viridis', vmin=vmin, vmax=vmax)
+        ax2.set_title(f'Patient {pat_idxs[i]} - BSV_Recon')
+        ax2.set_xlabel('Sequence')
+        ax2.set_ylabel('Latent Dim')
+
+        img_for_cbar = im2  # Just use the last image for colorbar reference
+
+    fig.tight_layout(rect=[0, 0, 0.95, 1])  # Leave space on right for colorbar
+
+    # Add colorbar
+    cbar_ax = fig.add_axes([0.96, 0.15, 0.015, 0.7])
+    fig.colorbar(img_for_cbar, cax=cbar_ax)
+
+    # Save plot
+    os.makedirs(savedir, exist_ok=True)
+    savename_jpg = f"{savedir}/BSV_Recon_Epoch{epoch}_iter{iter_curr}_GPU{gpu_id}.jpg"
+    pl.savefig(savename_jpg, dpi=200)
+    pl.close(fig)
+    pl.close('all')
+
+# POST-HOC PROCESSING
+
+def get_loss_statistics(loss_dir):
+    """
+    Calculates the mean loss and 95% confidence interval for losses across patients.
+
+    This function calculates the mean loss per patient from loss files within a specified directory,
+    and then computes the overall mean loss and 95% confidence interval across all patients
+    using the t-distribution.
+
+    Args:
+        loss_dir (str): Path to the directory containing patient subdirectories.
+                          Each patient subdirectory should contain .pkl files,
+                          where each .pkl file contains a dictionary with
+                          a 'files_recon_batchloss' key holding an array of loss values.
+
+    Returns:
+        tuple: A tuple containing:
+            - mean (float): The mean loss across all patients.
+            - lower_bound (float): The lower bound of the 95% confidence interval.
+            - upper_bound (float): The upper bound of the 95% confidence interval.
+            - Num subject directories (int)
+    """
+    pat_dirs = [name for name in os.listdir(loss_dir) if os.path.isdir(os.path.join(loss_dir, name))]
+
+    pat_losses = np.ones(len(pat_dirs))
+
+    for i in range(len(pat_dirs)):
+        dir_curr = f"{loss_dir}/{pat_dirs[i]}"
+        loss_files = glob.glob(f"{dir_curr}/*.pkl")
+        cum_loss = 0
+        for j in range(len(loss_files)):
+            with open(loss_files[j], "rb") as f:
+                file_data = pickle.load(f)
+            cum_loss += np.mean(file_data['files_recon_batchloss'])
+
+        pat_losses[i] = cum_loss / (len(loss_files))
+
+    def confidence_interval_t(data, confidence=0.95):
+        """Calculates the confidence interval using the t-distribution.
+
+        Args:
+            data (array-like): Sample data.
+            confidence (float, optional): Confidence level between 0 and 1. Defaults to 0.95.
+
+        Returns:
+            tuple: A tuple containing the lower and upper bounds of the confidence interval.
+        """
+        a = 1.0 * np.array(data)
+        n = len(a)
+        mean, sem, h = np.mean(a), st.sem(a), st.t.ppf((1 + confidence) / 2., n - 1) * st.sem(a)
+        return mean - h, mean + h
+
+    mean = np.mean(pat_losses)
+    lower_bound, upper_bound = confidence_interval_t(pat_losses, confidence=0.95)
+
+    return mean, lower_bound, upper_bound, len(pat_losses)

@@ -255,8 +255,137 @@ def patient_adversarial_loss_function(probs, labels, classifier_weight):
     return classifier_weight * adversarial_loss
 
 
-# BSP LOSS
-def bsp_loss(x, x_pred, bsp_loss_weight, **kwargs):
-    mse_loss = nn.MSELoss(reduction='mean')
-    loss = mse_loss(x, x_pred)
-    return bsp_loss_weight * loss
+# Prediction loss for BSP
+def cosine_loss(a: torch.Tensor, b: torch.Tensor, reduction='mean') -> torch.Tensor:
+    """
+    Compute cosine loss between two embeddings of shape 
+    [batch, big_seq, fine_seq, latent_dim].
+
+    Args:
+        a (torch.Tensor): First embedding tensor.
+        b (torch.Tensor): Second embedding tensor.
+        reduction (str): 'mean', 'sum', or 'none'.
+
+    Returns:
+        torch.Tensor: Scalar loss if reduced, else tensor of per-element losses.
+    """
+    # Flatten all but the last dimension using reshape for non-contiguous tensors
+    a_flat = a.reshape(-1, a.size(-1))
+    b_flat = b.reshape(-1, b.size(-1))
+
+    # Compute cosine similarity and convert to loss
+    cosine_sim = F.cosine_similarity(a_flat, b_flat, dim=-1)
+    loss = 1 - cosine_sim  # cosine loss = 1 - cosine similarity
+
+    # Apply reduction
+    if reduction == 'mean':
+        return loss.mean()
+    elif reduction == 'sum':
+        return loss.sum()
+    elif reduction == 'none':
+        return loss.reshape(*a.shape[:-1])
+    else:
+        raise ValueError(f"Invalid reduction type: {reduction}")
+
+# Recon Losses for BSP & BSV
+def mse_loss(a, b, reduction='mean'):
+    """
+    Computes mean squared error (MSE) between tensors a and b.
+
+    Args:
+        a (Tensor): Predicted tensor.
+        b (Tensor): Target tensor.
+        reduction (str): 'mean', 'sum', or 'none'.
+
+    Returns:
+        Tensor: The computed loss.
+    """
+    loss = F.mse_loss(a, b, reduction=reduction)
+    return loss
+
+def bsv_kld_loss(mu, logvar, **kwargs):
+    """
+    Compute the KL divergence between N(mu, sigma^2) and N(0, I).
+    
+    Args:
+        mu (Tensor): Mean tensor from the encoder (B, D)
+        logvar (Tensor): Log-variance tensor from the encoder (B, D)
+        
+    Returns:
+        Tensor: Scalar KLD loss
+    """
+    kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
+    return kld.mean()
+
+def bsp_kld_loss(mu, logvar, **kwargs):
+    """
+    Compute the KL divergence between N(mu, sigma^2) and N(0, I)
+    for inputs of shape (B, S, D), where:
+        B = batch size,
+        S = sequence length,
+        D = latent dimension.
+
+    Args:
+        mu (Tensor): Mean tensor from the encoder (B, S, D)
+        logvar (Tensor): Log-variance tensor from the encoder (B, S, D)
+        bsv_kld_weight (float): Weighting factor for the KL divergence.
+
+    Returns:
+        Tensor: Scalar KLD loss
+    """
+    kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)  # (B, S)
+    return kld.mean()  # Average over batch and sequence
+
+
+def rbf_kernel_matrix(t, lengthscale, variance):
+    """
+    Compute the RBF kernel matrix for time points `t` of shape [T].
+    Returns [T, T] kernel matrix.
+    """
+    T = t.shape[0]
+    t = t.view(-1, 1)  # [T, 1]
+    dists = (t - t.T) ** 2  # [T, T]
+    K = variance * torch.exp(-0.5 * dists / (lengthscale**2))
+    return K
+
+def gp_prior_loss(z, bsp_lengthscale, bsp_variance, bsp_gp_weight, noise=1e-4, **kwargs):
+    """
+    z: [B, T, D]
+    Vectorized GP prior loss over all latent dimensions and batch elements.
+    """
+    B, T, D = z.shape
+    device = z.device
+    dtype = z.dtype
+
+    # Compute kernel matrix [T, T], same for all batch since time points are identical
+    t = torch.arange(T, dtype=dtype, device=device)
+    K = rbf_kernel_matrix(t, bsp_lengthscale, bsp_variance)
+    K += noise * torch.eye(T, device=device)
+
+    # Cholesky decomposition [T, T]
+    L = torch.linalg.cholesky(K)
+
+    # We need to solve for each batch and each latent dim:
+    # For that, reshape z to [T, B*D] so cholesky_solve can batch solve
+    z_reshaped = z.permute(1, 0, 2).reshape(T, B * D)  # [T, B*D]
+
+    # Solve linear system for each column independently
+    solve1 = torch.cholesky_solve(z_reshaped, L)  # [T, B*D]
+
+    # Compute Mahalanobis term for each batch and dim: sum over T for each column
+    mahalanobis = (z_reshaped * solve1).sum(dim=0)  # [B*D]
+
+    # Reshape back to [B, D]
+    mahalanobis = mahalanobis.view(B, D)  # [B, D]
+
+    # Log determinant is scalar, same for all batch/dim
+    log_det_K = 2.0 * torch.sum(torch.log(torch.diagonal(L)))
+
+    # Compute per-batch GP loss: sum over dims
+    loss_per_batch = 0.5 * (mahalanobis.sum(dim=1) + D * log_det_K + D * T * torch.log(torch.tensor(2 * torch.pi, device=device, dtype=dtype)))
+
+    # Average over batch, normalize over D and T (optional)
+    loss = loss_per_batch.mean() / (D * T)
+
+    return loss * bsp_gp_weight
+

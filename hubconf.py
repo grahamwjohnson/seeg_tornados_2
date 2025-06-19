@@ -1,5 +1,5 @@
 import torch
-from models.BSE import BSE
+from models.BSE import BSE, Discriminator
 from models.BSP import BSP, BSV
 
 dependencies = ['torch', 'numpy']
@@ -70,6 +70,7 @@ CONFIGS = {
 
         # Weight files
         'bse_weight_file': 'bse_weights.pth',
+        'disc_weight_file': 'disc_weights.pth',
         'bsp_weight_file': 'bsp_weights.pth',
         'bsv_weight_file': 'bsv_weights.pth',
         'pacmap_base': 'pacmap_2d',
@@ -77,7 +78,7 @@ CONFIGS = {
     }
 }
 
-def _load_models(codename='midge_sheldrake', pretrained=True, load_bse=True, load_bsp=True, load_bsv=True, load_pacmap=True, **kwargs):
+def _load_models(codename='midge_sheldrake', pretrained=True, load_bse=True, load_discriminator=True, load_bsp=True, load_bsv=True, load_pacmap=True, **kwargs):
     """
     Loads the BSE, BSP, BSV, & 2D-PaCMAP model with specified configuration and optionally pretrained weights.
 
@@ -112,8 +113,26 @@ def _load_models(codename='midge_sheldrake', pretrained=True, load_bse=True, loa
                 print(f"Error loading pretrained BSE weights for codename '{codename}': {e}")
                 print("Continuing with randomly initialized BSE model.")
         elif pretrained:
-            print(f"No BSE weight file or release tag specified for codename '{codename}'. Continuing with randomly initialized BSE model.")
+            print(f"No BSE weight file or release tag specified for BSE codename '{codename}'. Continuing with randomly initialized BSE model.")
 
+    # *** KLD Discriminator for post-BSE manifold***
+    disc = None
+    if load_discriminator:
+        disc = Discriminator(**config)
+        
+        # Discriinator: Load pretrained weights if requested
+        if pretrained and config.get('disc_weight_file') and config.get('release_tag'):
+            weight_file = config['disc_weight_file']
+            release_tag = config['release_tag']
+            checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{weight_file}'
+            try:
+                state_dict = torch.hub.load_state_dict_from_url(checkpoint_url, progress=True, map_location='cpu')
+                disc.load_state_dict(state_dict)
+            except Exception as e:
+                print(f"Error loading pretrained Disc weights for codename '{codename}': {e}")
+                print("Continuing with randomly initialized model.")
+        elif pretrained:
+            print(f"No weight file or release tag specified for Disc codename '{codename}'. Continuing with randomly initialized model.")
 
 
     # *** Brain-Sate Predictor (BSP) ***
@@ -173,10 +192,10 @@ def _load_models(codename='midge_sheldrake', pretrained=True, load_bse=True, loa
             print("Returning empty variable")
 
 
-    return bse, bsp, bsv, pacmap
+    return bse, disc, bsp, bsv, pacmap
 
 
-def load_lbm(codename='midge_sheldrake', pretrained=True, load_bse=True, load_bsp=True, load_bsv=True, load_pacmap=True, **kwargs):
+def load_lbm(codename='midge_sheldrake', pretrained=True, load_bse=True, load_discriminator=True, load_bsp=True, load_bsv=True, load_pacmap=True, **kwargs):
     """
     Loads the BSE, BSP, BSV, & PaCMAP models with a specific training run's configuration
     and optionally pretrained weights.
@@ -189,6 +208,6 @@ def load_lbm(codename='midge_sheldrake', pretrained=True, load_bse=True, load_bs
     Returns:
         Pretrained BSE, BSP, BSV, & PaCMAP models with the specified configuration.
     """
-    return _load_models(codename=codename, pretrained=pretrained, load_bse=load_bse, load_bsp=load_bsp, load_bsv=load_bsv, load_pacmap=load_pacmap **kwargs)
+    return _load_models(codename=codename, pretrained=pretrained, load_bse=load_bse, load_discriminator=load_discriminator, load_bsp=load_bsp, load_bsv=load_bsv, load_pacmap=load_pacmap, **kwargs)
 
 
