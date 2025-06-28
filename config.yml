@@ -324,5 +324,6 @@ bsv_adamW_beta2: 0.95
 
 
 
-### BSV INFERENCE ###
+### BSV INFERENCE (builds off variables from BSE Inference section)###
 models_codename: 'commongonolek_sheldrake'
+bsv_inference_save_dir: '/media/glommy1/tornados/bsv_inference/commongonolek_epoch295_sheldrake_epoch1138_train45'

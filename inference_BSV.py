@@ -55,7 +55,7 @@ def load_dataset(
     # Split pats into train and test
     all_pats_dirs = glob.glob(f"{inference_pat_dir}/*pat*")
     all_pats_list = [x.split('/')[-1] for x in all_pats_dirs]
-    kwargs['dataset_pic_dir'] = kwargs['inference_save_dir'] + '/dataset_bargraphs'
+    kwargs['dataset_pic_dir'] = kwargs['bsv_inference_save_dir'] + '/dataset_bargraphs'
     inference_dataset = SEEG_Tornado_Dataset(
         gpu_id=gpu_id, 
         pat_list=all_pats_list,
@@ -86,7 +86,7 @@ def get_models(models_codename, bsp_transformer_seq_length, bsp_batchsize, **kwa
         load_pacmap=False,
         trust_repo='check',
         max_batch_size=bsp_transformer_seq_length*bsp_batchsize, # update for pseudobatching
-        # force_reload=True
+        force_reload=True
     )
 
     return bse, bsp, bsv
@@ -133,7 +133,7 @@ def bsv_export_embeddings(
     hash_output_range,
     inference_window_sec_list,
     inference_stride_sec_list,
-    inference_save_dir,
+    bsv_inference_save_dir,
     FS,
     **kwargs):
 
@@ -147,7 +147,7 @@ def bsv_export_embeddings(
         _, pat_id_curr, _, _ = dataset_curr.get_pat_curr()
 
         # Check which files have already been processed and update file list accordingly before building dataloader
-        dataset_curr.update_pat_inference_status(inference_save_dir, inference_window_sec_list, inference_stride_sec_list)
+        dataset_curr.update_pat_inference_status(bsv_inference_save_dir, inference_window_sec_list, inference_stride_sec_list)
         dataloader_curr, _ =  utils_functions.prepare_ddp_dataloader(dataset_curr, batch_size=max_batch_size, num_workers=num_dataloader_workers)
 
         file_count = 0
@@ -253,7 +253,7 @@ def bsv_export_embeddings(
                 # Save each windowed latent in a pickle for each file
                 for b in range(data_tensor.shape[0]):
                     filename_curr = file_name[b]
-                    save_dir = f"{inference_save_dir}/latent_files/{win_sec_curr}SecondWindow_{stride_sec_curr}SecondStride"
+                    save_dir = f"{bsv_inference_save_dir}/latent_files/{win_sec_curr}SecondWindow_{stride_sec_curr}SecondStride"
                     if not os.path.exists(save_dir): os.makedirs(save_dir)
                     output_obj = open(f"{save_dir}/{filename_curr}_latent_{win_sec_curr}secWindow_{stride_sec_curr}secStride.pkl", 'wb')
                     save_dict = {

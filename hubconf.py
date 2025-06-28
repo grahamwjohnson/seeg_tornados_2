@@ -103,7 +103,7 @@ def _load_models(codename='commongonolek_sheldrake', pretrained=True, load_bse=T
     # *** Brain-State Embedder (BSE) ***
 
     if load_bse:
-        bse = BSE(**config)
+        bse = BSE(gpu_id='cpu', **config)
 
         if pretrained and config.get('bse_weight_file') and config.get('release_tag'):
             weight_file = config['bse_weight_file']
@@ -141,7 +141,7 @@ def _load_models(codename='commongonolek_sheldrake', pretrained=True, load_bse=T
     # *** Brain-Sate Predictor (BSP) ***
     bsp = None
     if load_bsp:
-        bsp = BSP(**config)
+        bsp = BSP(gpu_id='cpu', **config)
 
         # BSP: Load pretrained weights if requested
         if pretrained and config.get('bsp_weight_file') and config.get('release_tag'):
@@ -161,7 +161,7 @@ def _load_models(codename='commongonolek_sheldrake', pretrained=True, load_bse=T
     # *** Brain-Sate Visualizer (BSV) ***
     bsv = None
     if load_bsv:
-        bsv = BSV(**config)
+        bsv = BSV(gpu_id='cpu', **config)
 
         # BSV: Load pretrained weights if requested
         if pretrained and config.get('bsv_weight_file') and config.get('release_tag'):

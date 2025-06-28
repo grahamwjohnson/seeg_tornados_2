@@ -503,6 +503,7 @@ def bsp_initialize_directories(
 
         kwargs['running_bsv_mu_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_mu.pkl'
         kwargs['running_bsv_logvar_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_logvar.pkl'
+        kwargs['running_bsv_z_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_z.pkl'
         kwargs['running_bsv_filenames_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_filenames.pkl'
         kwargs['running_bsv_startidxs_path'] = check_dir + f'/Epoch_{str(max_epoch)}/checkpoint_epoch{str(max_epoch)}_running_bsv_start_idxs.pkl'
 
