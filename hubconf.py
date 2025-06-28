@@ -48,6 +48,11 @@ CONFIGS = {
         'disc_hidden_dims': [4096, 2048, 1024, 512, 256],
 
         # BSP Params
+        'bse2p_chunk_size': 16*2*1024,
+        'bse2p_ffn_dim_multiplier': 1.0,
+        'bse2p_max_batch_size': 32,
+        'bse2p_transformer_seq_length': 512,
+        'bsp2e_transformer_activation': "silu",
         'bse2p_transformer_dim': 64,
         'bse2p_layers': 8,
         'bse2p_num_heads': 8,
