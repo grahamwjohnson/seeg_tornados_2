@@ -67,31 +67,21 @@ class BSE2P(nn.Module): # A Growing Transformer
     def __init__(
         self, 
         gpu_id,
-        transformer_dim,
         bse2p_chunk_size,
         bsp_transformer_seq_length,
-        bsp_latent_dim, 
-        bse2p_ffn_dim_multiplier,
-        bse2p_max_batch_size,
         bse2p_transformer_seq_length,
-        bse2p_transformer_activation,
-        dropout=0.1,
+        bsp_latent_dim, 
         **kwargs):
         super(BSE2P, self).__init__()
 
         self.gpu_id = gpu_id
-        self.bse_transformer_dim = transformer_dim
 
         self.bsp_transformer_seq_length = bsp_transformer_seq_length
 
         self.bsp_latent_dim = bsp_latent_dim
-        self.bse2p_ffn_dim_multiplier = bse2p_ffn_dim_multiplier
-        self.bse2p_max_batch_size = bse2p_max_batch_size
-        self.bse2p_transformer_seq_length = bse2p_transformer_seq_length
-        self.bse2p_transformer_activation = bse2p_transformer_activation
 
         self.chunk_size = bse2p_chunk_size
-        self.num_chunks = int(self.bse2p_transformer_seq_length * self.bsp_latent_dim / self.chunk_size)
+        self.num_chunks = int(bse2p_transformer_seq_length * self.bsp_latent_dim / self.chunk_size)
         self.pre_vae_hidden_dim = 2 * self.bsp_latent_dim
 
         self.encoder1 = nn.Sequential(

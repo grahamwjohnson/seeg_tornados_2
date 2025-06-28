@@ -86,7 +86,7 @@ CONFIGS = {
     }
 }
 
-def _load_models(codename='commongonolek_sheldrake', pretrained=True, load_bse=True, load_discriminator=True, load_bsp=True, load_bsv=True, load_pacmap=True, **kwargs):
+def _load_models(codename='commongonolek_sheldrake', gpu_id='cpu', pretrained=True, load_bse=True, load_discriminator=True, load_bsp=True, load_bsv=True, load_pacmap=True, **kwargs):
     """
     Loads the BSE, BSP, BSV, & 2D-PaCMAP model with specified configuration and optionally pretrained weights.
 
@@ -99,7 +99,7 @@ def _load_models(codename='commongonolek_sheldrake', pretrained=True, load_bse=T
         Pretrained BSE, BSP, BSV, & PaCMAP models with the specified configuration.
     """
     if codename not in CONFIGS:
-        raise ValueError(f"Codenam '{codename}' not found in available configurations: {list(CONFIGS.keys())}")
+        raise ValueError(f"Codename '{codename}' not found in available configurations: {list(CONFIGS.keys())}")
 
     config = CONFIGS[codename].copy()
     config.update(kwargs)  # Override with any user-provided kwargs
@@ -108,7 +108,7 @@ def _load_models(codename='commongonolek_sheldrake', pretrained=True, load_bse=T
     # *** Brain-State Embedder (BSE) ***
 
     if load_bse:
-        bse = BSE(gpu_id='cpu', **config)
+        bse = BSE(gpu_id=gpu_id, **config)
 
         if pretrained and config.get('bse_weight_file') and config.get('release_tag'):
             weight_file = config['bse_weight_file']
@@ -126,7 +126,7 @@ def _load_models(codename='commongonolek_sheldrake', pretrained=True, load_bse=T
     # *** KLD Adversarial Discriminator for BSE posterior vs. prior ***
     disc = None
     if load_discriminator:
-        disc = Discriminator(gpu_id='cpu', **config)
+        disc = Discriminator(gpu_id=gpu_id, **config)
         
         # Discriinator: Load pretrained weights if requested
         if pretrained and config.get('disc_weight_file') and config.get('release_tag'):
@@ -146,7 +146,7 @@ def _load_models(codename='commongonolek_sheldrake', pretrained=True, load_bse=T
     # *** Brain-Sate Predictor (BSP) ***
     bsp = None
     if load_bsp:
-        bsp = BSP(gpu_id='cpu', **config)
+        bsp = BSP(gpu_id=gpu_id, **config)
 
         # BSP: Load pretrained weights if requested
         if pretrained and config.get('bsp_weight_file') and config.get('release_tag'):
@@ -166,7 +166,7 @@ def _load_models(codename='commongonolek_sheldrake', pretrained=True, load_bse=T
     # *** Brain-Sate Visualizer (BSV) ***
     bsv = None
     if load_bsv:
-        bsv = BSV(gpu_id='cpu', **config)
+        bsv = BSV(gpu_id=gpu_id, **config)
 
         # BSV: Load pretrained weights if requested
         if pretrained and config.get('bsv_weight_file') and config.get('release_tag'):

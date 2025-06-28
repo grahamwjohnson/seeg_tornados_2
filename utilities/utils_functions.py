@@ -586,7 +586,7 @@ def bsp_run_setup(**kwargs):
     world_size = torch.cuda.device_count()
         
     # Random animal name
-    run_notes = f"{random_animal(**kwargs)}_{kwargs['bsp_bse_codename']}"
+    run_notes = f"{random_animal(**kwargs)}_{kwargs['models_codename']}"
 
     # Call the initialization script to start new run or continue existing run
     kwargs = bsp_initialize_directories(run_notes=run_notes, **kwargs)

@@ -62,13 +62,11 @@ def load_train_objs(
     train_dataloader, _ = utils_functions.prepare_ddp_dataloader(train_dataset, batch_size=bsp_batchsize, num_workers=num_dataloader_workers)
 
     # Load the pretrained Brain-State Embedder (BSE) from GitHub and put on GPU, and initialize DDP
-    bse, disc = get_bse(bsp_batchsize=bsp_batchsize, **kwargs)
-    bse = bse.to(gpu_id) 
-    bse.gpu_id = gpu_id
-    bse.transformer_encoder.freqs_cis = bse.transformer_encoder.freqs_cis.to(gpu_id)
+    bse, disc = get_bse(gpu_id=gpu_id, bsp_batchsize=bsp_batchsize, **kwargs)
+    # bse = bse.to(gpu_id) 
+    # bse.gpu_id = gpu_id
+    # bse.transformer_encoder.freqs_cis = bse.transformer_encoder.freqs_cis.to(gpu_id)
     DDP(bse, device_ids=[gpu_id])
-
-    disc = disc.to(gpu_id)
     DDP(disc, device_ids=[gpu_id])
 
     # Load the BSP, BSV & optimizers for each
@@ -82,14 +80,15 @@ def load_train_objs(
 
     return train_dataloader, bse, disc, bsp, bsv, opt_bsp, opt_bsv 
 
-def get_bse(bse_codename, bsp_transformer_seq_length, bsp_batchsize, **kwargs):
+def get_bse(models_codename, gpu_id, bsp_transformer_seq_length, bsp_batchsize, **kwargs):
     torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
 
     # Load the BSE model with pretrained weights from GitHub
     bse, disc, _, _, _ = torch.hub.load(
         'grahamwjohnson/seeg_tornados_2',
         'load_lbm',
-        codename=bse_codename,
+        codename=models_codename,
+        gpu_id=gpu_id,
         pretrained=True,
         load_bse=True, 
         load_discriminator=True,

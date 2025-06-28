@@ -198,7 +198,6 @@ recent_display_iters: 5 # How often to print to console when training & how ofte
 inference_pat_dir: '/media/glommy1/data/vanderbilt_seeg/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/DurStr_1024s896s_epoched_datasets/train45'
 # inference_pat_dir: '/media/glommy1/data/vanderbilt_seeg/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/DurStr_1024s896s_epoched_datasets/val13'
 inference_save_dir: '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138_train45_wDecode'
-bse_codename: 'sheldrake'
 inference_intrapatient_dataset_style: 1 # 1 all data (no SPES), 2 all data (with SPES), 3 ONLY SPES
 inference_hour_dataset_range: kwargs['inference_hour_dataset_range'] = [-1, -1] 
 inference_num_rand_hashes: kwargs['inference_num_rand_hashes'] = 2**20
@@ -218,15 +217,7 @@ inference_batch_perpat_override: 1 # Set to -1 for no override. Use with caution
 
 
 bse2p_chunk_size: kwargs['bse2p_chunk_size'] = kwargs['diag_mask_buffer_tokens'] * 2 * kwargs['transformer_dim']
-
-bse2p_transformer_dim: 64
-bse2p_layers: 16
-bse2p_num_heads: 8
-bse2p_ffn_dim_multiplier: 1.0
-bse2p_max_batch_size: kwargs['bse2p_max_batch_size'] = kwargs['bsp_batchsize'] * kwargs['bsp_transformer_seq_length']
 bse2p_transformer_seq_length: kwargs['bse2p_transformer_seq_length'] = kwargs['transformer_seq_length']
-bse2p_transformer_activation: "silu"
-
 bsp_running_kld_length: 64  ######################################### ####### #### # # # # # # # # # # # # # #  # # # # # # # #  #  #   #  #   #  #      #       #  
 
 
@@ -237,7 +228,6 @@ bsp_running_kld_length: 64  ######################################### ####### ##
 continue_existing_training: True
 cont_train_model_dir_BSP: '/media/glommy1/tornados/bsp_trained_models/commongonolek_sheldrake_Thu_Jun_19_17_54_44_2025' 
 
-bsp_bse_codename: 'sheldrake' # The BSE that made the embeddings for training
 bsp_source_dir: '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/preprocessed_data/Bipole_datasets/By_Channel_Scale/HistEqualScale/data_normalized_to_first_24_hours/wholeband/train_pats/*/scaled_data_epochs/all_epochs_woSPES'
 bsp_num_dataloader_workers: 0 # observed to be unstable if not set to 0
 
@@ -268,14 +258,7 @@ bsp_disc_weight: 0
 ### BSP2E ###
 
 bsp2e_chunk_size: kwargs['bsp2e_chunk_size'] = kwargs['bse2p_chunk_size']
-
-bsp2e_transformer_dim: 64
-bsp2e_num_transformer_layers: 16
-bsp2e_num_transformer_heads: 8
-bsp2e_ffn_dim_multiplier: 1.0
-bsp2e_max_batch_size: kwargs['bsp2e_max_batch_size'] = kwargs['bsp_batchsize'] * kwargs['bsp_transformer_seq_length']
 bsp2e_transformer_seq_length: kwargs['bsp2e_transformer_seq_length'] = kwargs['transformer_seq_length']
-bsp2e_transformer_activation: "silu"
 
 
 ### ----------------------------------- ###
@@ -294,12 +277,6 @@ bsp_anneal_epochs_to_max: 10
 bsp_anneal_epochs_at_max: 10  
 bsp_anneal_max_weight: 0.00001 
 bsp_anneal_min_weight: 0 
-
-# # BSP GP prior
-# bsp_variance: 1.0  # NOT CURRENTLY USED
-# bsp_lengthscale: 8.0 # NOT CURRENTLY USED
-# bsp_gp_weight: 0 # 0.001  # NOT CURRENTLY USED
-
 
 ### ----------------------------------- ### 
 
