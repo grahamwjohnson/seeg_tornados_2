@@ -322,3 +322,7 @@ bsv_weight_decay: 0.1
 bsv_adamW_beta1: 0.9
 bsv_adamW_beta2: 0.95 
 
+
+
+### BSV INFERENCE ###
+models_codename: 'commongonolek_sheldrake'

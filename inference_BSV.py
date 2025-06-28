@@ -70,14 +70,14 @@ def load_dataset(
     
     return inference_dataset
 
-def get_models(bse_codename, bsp_transformer_seq_length, bsp_batchsize, **kwargs):
+def get_models(models_codename, bsp_transformer_seq_length, bsp_batchsize, **kwargs):
     torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
 
     # Load the BSE model with pretrained weights from GitHub
     bse, _, bsp, bsv, _ = torch.hub.load(
         'grahamwjohnson/seeg_tornados_2',
-        'load_lbm',
-        codename=bse_codename,
+        'load_lbm', # entry function in hubconfig.py
+        codename=models_codename,
         pretrained=True,
         load_bse=True, 
         load_discriminator=False,
@@ -134,7 +134,6 @@ def bsv_export_embeddings(
     inference_window_sec_list,
     inference_stride_sec_list,
     inference_save_dir,
-    inference_decode,
     FS,
     **kwargs):
 
@@ -170,10 +169,6 @@ def bsv_export_embeddings(
             files_means = torch.zeros([data_tensor.shape[0], num_windows_in_file, bsv_latent_dim]).to(gpu_id)
             files_logvars = torch.zeros([data_tensor.shape[0], num_windows_in_file, bsv_latent_dim]).to(gpu_id)
             files_z = torch.zeros([data_tensor.shape[0], num_windows_in_file, bsv_latent_dim]).to(gpu_id)
-
-            # Prep the recon loss if decoding
-            if inference_decode:
-                files_recon_batchloss = torch.zeros([num_windows_in_file]).to(gpu_id)
 
             # Put whole file on GPU now for speed of iterating over all windows
             data_tensor = data_tensor.to(gpu_id)

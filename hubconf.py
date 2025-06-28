@@ -5,7 +5,7 @@ from models.BSP import BSP, BSV
 dependencies = ['torch', 'numpy']
 
 CONFIGS = {
-    'sheldrake': {
+    'commongonolek_sheldrake': {
 
         # BSE Params
         'encode_token_samples': 1,
@@ -81,7 +81,7 @@ CONFIGS = {
     }
 }
 
-def _load_models(codename='midge_sheldrake', pretrained=True, load_bse=True, load_discriminator=True, load_bsp=True, load_bsv=True, load_pacmap=True, **kwargs):
+def _load_models(codename='commongonolek_sheldrake', pretrained=True, load_bse=True, load_discriminator=True, load_bsp=True, load_bsv=True, load_pacmap=True, **kwargs):
     """
     Loads the BSE, BSP, BSV, & 2D-PaCMAP model with specified configuration and optionally pretrained weights.
 
@@ -118,7 +118,7 @@ def _load_models(codename='midge_sheldrake', pretrained=True, load_bse=True, loa
         elif pretrained:
             print(f"No BSE weight file or release tag specified for BSE codename '{codename}'. Continuing with randomly initialized BSE model.")
 
-    # *** KLD Discriminator for post-BSE manifold***
+    # *** KLD Adversarial Discriminator for BSE posterior vs. prior ***
     disc = None
     if load_discriminator:
         disc = Discriminator(gpu_id='cpu', **config)
@@ -198,7 +198,7 @@ def _load_models(codename='midge_sheldrake', pretrained=True, load_bse=True, loa
     return bse, disc, bsp, bsv, pacmap
 
 
-def load_lbm(codename='midge_sheldrake', pretrained=True, load_bse=True, load_discriminator=True, load_bsp=True, load_bsv=True, load_pacmap=True, **kwargs):
+def load_lbm(codename='commongonolek_sheldrake', pretrained=True, load_bse=True, load_discriminator=True, load_bsp=True, load_bsv=True, load_pacmap=True, **kwargs):
     """
     Loads the BSE, BSP, BSV, & PaCMAP models with a specific training run's configuration
     and optionally pretrained weights.
