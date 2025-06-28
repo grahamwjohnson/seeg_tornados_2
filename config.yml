@@ -280,7 +280,7 @@ bsp2e_transformer_activation: "silu"
 
 ### ----------------------------------- ###
 # BSP Training
-bsp_LR: kwargs['bsp_LR'] = 1e-6
+bsp_LR: kwargs['bsp_LR'] = 5e-6
 
 bsp_loss_weight: 1
 seeg_loss_weight: 0
@@ -305,11 +305,11 @@ bsp_anneal_min_weight: 0
 
 ### Brain-State Visualizer (BSV) ###
 
-hard_reset_bsv_opt: True # CAREFUL: will rest optimizer on each restart of script
+hard_reset_bsv_opt: False # CAREFUL: if True, will reset BSV weights and optimizer on each restart of script
 
 bsv_dims: kwargs['bsv_dims'] = [1024, 512, 256, 128, kwargs['prior_mog_components']]
 
-bsv_LR: kwargs['bsv_LR'] = 1e-5
+bsv_LR: kwargs['bsv_LR'] = 1e-6
 
 bsv_running_kld_length: 64 # Will be multiplied by batchsize
 

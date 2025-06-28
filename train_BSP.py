@@ -163,15 +163,14 @@ def main(
         print(f"[GPU{gpu_id}] BSP Model and Opt weights loaded from checkpoints")
 
         # Load in BSV weights and opts
-        bsv_state_dict_prev = torch.load(bsv_state_dict_prev_path, map_location=map_location)
-        bsv.load_state_dict(bsv_state_dict_prev)
-        
         if not hard_reset_bsv_opt:
+            bsv_state_dict_prev = torch.load(bsv_state_dict_prev_path, map_location=map_location)
+            bsv.load_state_dict(bsv_state_dict_prev)
             bsv_opt_state_dict_prev = torch.load(bsv_opt_state_dict_prev_path, map_location=map_location)
             opt_bsv.load_state_dict(bsv_opt_state_dict_prev)
             print(f"[GPU{gpu_id}] BSV Model and Opt weights loaded from checkpoints")
         else:
-            print("WARNING: HARD RESET OF BSV OPTIMIZER")
+            print("WARNING: HARD RESET OF BSV & OPTIMIZER")
 
 
         ### BSP running embeddings
