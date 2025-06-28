@@ -63,9 +63,8 @@ def load_train_objs(
 
     # Load the pretrained Brain-State Embedder (BSE) from GitHub and put on GPU, and initialize DDP
     bse, disc = get_bse(gpu_id=gpu_id, bsp_batchsize=bsp_batchsize, **kwargs)
-    # bse = bse.to(gpu_id) 
-    # bse.gpu_id = gpu_id
-    # bse.transformer_encoder.freqs_cis = bse.transformer_encoder.freqs_cis.to(gpu_id)
+    bse = bse.to(gpu_id) 
+    disc = disc.to(gpu_id)
     DDP(bse, device_ids=[gpu_id])
     DDP(disc, device_ids=[gpu_id])
 
@@ -97,7 +96,7 @@ def get_bse(models_codename, gpu_id, bsp_transformer_seq_length, bsp_batchsize, 
         load_pacmap=False,
         trust_repo='check',
         max_batch_size=bsp_transformer_seq_length*bsp_batchsize, # update for pseudobatching
-        # force_reload=True
+        force_reload=True
     )
 
     return bse, disc

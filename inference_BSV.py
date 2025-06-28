@@ -70,7 +70,7 @@ def load_dataset(
     
     return inference_dataset
 
-def get_models(models_codename, bsp_transformer_seq_length, bsp_batchsize, **kwargs):
+def get_models(models_codename, gpu_id, bsp_transformer_seq_length, bsp_batchsize, **kwargs):
     torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
 
     # Load the BSE model with pretrained weights from GitHub
@@ -78,6 +78,7 @@ def get_models(models_codename, bsp_transformer_seq_length, bsp_batchsize, **kwa
         'grahamwjohnson/seeg_tornados_2',
         'load_lbm', # entry function in hubconfig.py
         codename=models_codename,
+        gpu_id=gpu_id,
         pretrained=True,
         load_bse=True, 
         load_discriminator=False,
@@ -282,14 +283,10 @@ def main(
     inference_dataset = load_dataset(gpu_id, **kwargs)
 
     # Load the pretrained models from GitHub and put on GPU, and initialize DDP
-    bse, bsp, bsv = get_models(**kwargs)
+    bse, bsp, bsv = get_models(gpu_id=gpu_id, **kwargs)
     bse = bse.to(gpu_id) 
     bsp = bsp.to(gpu_id) 
     bsv = bsv.to(gpu_id) 
-    bse.gpu_id = gpu_id
-    bsp.gpu_id = gpu_id
-    bsv.gpu_id = gpu_id
-    bse.transformer_encoder.freqs_cis = bse.transformer_encoder.freqs_cis.to(gpu_id)
     DDP(bse, device_ids=[gpu_id])
     DDP(bsp, device_ids=[gpu_id])
     DDP(bsv, device_ids=[gpu_id])

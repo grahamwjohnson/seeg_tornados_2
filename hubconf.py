@@ -49,16 +49,7 @@ CONFIGS = {
 
         # BSP Params
         'bse2p_chunk_size': 16*2*1024,
-        'bse2p_ffn_dim_multiplier': 1.0,
-        'bse2p_max_batch_size': 32,
         'bse2p_transformer_seq_length': 512,
-        'bse2p_transformer_activation': "silu",
-        'bse2p_transformer_dim': 64,
-        'bse2p_layers': 8,
-        'bse2p_num_heads': 8,
-        'bsp2e_ffn_dim_multiplier': 1.0,
-        'bsp2e_max_batch_size': 32,
-        'bsp2e_hidden_dims': [64,128,256, 512],
         'bsp_transformer_seq_length': 32,
         'bsp_latent_dim': 1024,
         'bsp_n_heads': 32,
@@ -69,6 +60,8 @@ CONFIGS = {
         'bsp_transformer_activation': "silu",
         'bsp_attention_dropout': 0.0,
         'bsp_transformer_start_pos': 0,
+        'bsp2e_chunk_size': 16*2*1024,
+        'bsp2e_transformer_seq_length': 512,
 
         # BSV Params
         'bsv_dims': [1024, 512, 256, 128, 8],
