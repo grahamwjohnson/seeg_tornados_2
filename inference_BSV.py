@@ -71,7 +71,7 @@ def load_dataset(
     return inference_dataset
 
 def get_models(models_codename, gpu_id, bsp_transformer_seq_length, bsp_batchsize, **kwargs):
-    torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
+    # torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
 
     # Load the BSE model with pretrained weights from GitHub
     bse, _, bsp, bsv, _ = torch.hub.load(
@@ -123,7 +123,7 @@ def bsv_export_embeddings(
     dataset_curr, 
     dataset_string,
     num_dataloader_workers,
-    max_batch_size,
+    bsv_infer_max_batch_size,
     padded_channels,
     transformer_seq_length,
     encode_token_samples,
@@ -149,7 +149,7 @@ def bsv_export_embeddings(
 
         # Check which files have already been processed and update file list accordingly before building dataloader
         dataset_curr.update_pat_inference_status(bsv_inference_save_dir, inference_window_sec_list, inference_stride_sec_list)
-        dataloader_curr, _ =  utils_functions.prepare_ddp_dataloader(dataset_curr, batch_size=max_batch_size, num_workers=num_dataloader_workers)
+        dataloader_curr, _ =  utils_functions.prepare_ddp_dataloader(dataset_curr, batch_size=bsv_infer_max_batch_size, num_workers=num_dataloader_workers)
 
         file_count = 0
         batch_count = 0
@@ -174,14 +174,14 @@ def bsv_export_embeddings(
             # Put whole file on GPU now for speed of iterating over all windows
             data_tensor = data_tensor.to(gpu_id)
 
-            for w in range(num_windows_in_file):
+            for w in range(0, num_windows_in_file):
                 
                 # Print Status
                 print_interval = 100
                 if (gpu_id == 0) & (w % print_interval == 0):
                     sys.stdout.write(f"\r{dataset_string}: Pat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/world_size - 1}  * GPUs (DDP), Intrafile Iter {w}/{num_windows_in_file}          ") 
                     sys.stdout.flush() 
-                                
+                
                 # Generate random channel order
                 rand_modifier = int(random.uniform(0, inference_num_rand_hashes - 1))
                 _, hash_channel_order = utils_functions.hash_to_vector(
@@ -204,19 +204,19 @@ def bsv_export_embeddings(
 
                 ### BSE Encoder
                 # Forward pass in stacked batch through BSE encoder
-                # latent, _, _ = self.bse(x[:, :-1, :, :], reverse=False, alpha=self.classifier_alpha)   # 1 shifted just to be aligned with training style
                 z_pseudobatch, _, _, _, _ = bse(x, reverse=False) # No shift if not causal masking
 
                 ### BSP2E
-                post_bse2p_mu, post_bse2p_logvar, post_bse2p_z, post_bsp, bsp_attW, post_bsp2e = bsp(z_pseudobatch)
+                post_bse_z = z_pseudobatch.reshape(-1, transformer_seq_length * encode_token_samples, latent_dim).unsqueeze(1)
+                _, _, post_bse2p_z = bsp.bse2p(post_bse_z)
 
                 ### BSV Encoder
                 _, bsv_mu, bsv_logvar, bsv_z = bsv(post_bse2p_z)
 
                 # Save the results
-                files_means[:, w, :] = bsv_mu
-                files_logvars[:, w, :] = bsv_logvar
-                files_z[:, w, :] = bsv_z 
+                files_means[:, w, :] = bsv_mu.squeeze() # Must change if not doing 1 window at a time
+                files_logvars[:, w, :] = bsv_logvar.squeeze()
+                files_z[:, w, :] = bsv_z.squeeze()
 
             # After file complete, window/stride the file and save each file from batch seperately
             # Seperate directory for each win/stride combination

@@ -96,7 +96,7 @@ def get_bse(models_codename, gpu_id, bsp_transformer_seq_length, bsp_batchsize, 
         load_pacmap=False,
         trust_repo='check',
         max_batch_size=bsp_transformer_seq_length*bsp_batchsize, # update for pseudobatching
-        force_reload=True
+        # force_reload=True
     )
 
     return bse, disc

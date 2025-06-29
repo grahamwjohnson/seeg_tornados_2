@@ -202,7 +202,7 @@ class BSP(nn.Module):
         # Build the BSP2E to undo the transformer embedding
         self.bsp2e = BSP2E(gpu_id=gpu_id, bsp_latent_dim=bsp_latent_dim, **kwargs)
 
-    def forward(self, x): # Input is from weighted mu output of BSE
+    def forward(self, x): # Input is from weighted z output of BSE
 
         # Run through BSE2P
         post_bse2p_mu, post_bse2p_logvar, post_bse2p_z = self.bse2p(x)

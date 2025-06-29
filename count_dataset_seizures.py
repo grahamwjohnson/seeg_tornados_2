@@ -7,10 +7,12 @@ if __name__ == "__main__":
     atd_file = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/all_time_data_01092023_112957.csv'
 
     # dataset_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/latent_files/64SecondWindow_64SecondStride'
-    dataset_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/val13/latent_files/64SecondWindow_64SecondStride'
+    dataset_dir = '/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_train45/latent_files/64SecondWindow_64SecondStride'
 
     all_files = glob.glob(f"{dataset_dir}/*.pkl")
     unique_pats = list(set([x.split("/")[-1].split("_")[0] for x in all_files]))
+
+    print(f"Num pats: {len(unique_pats)}")
 
     seiz_count = 0
 
