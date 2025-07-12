@@ -22,11 +22,16 @@ if __name__ == "__main__":
     subset_override_idxs = [300,301,302,303,304,305]
 
     # if None, will gather files individually 
-    accumulated_data_pickle = None # '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/pacmap/256SecondWindow_256SecondStride/all_pats/allDataGathered_256secWindow_256secStride.pkl'  
+    accumulated_data_pickle = None # '/media/glommy1/tornados/bse_inference/train45/pacmap/256SecondWindow_256SecondStride/all_pats/allDataGathered_256secWindow_256secStride.pkl'  
     
+    # Which patients to plot
+    parent_dir = f'/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_train45'
+    # parent_dir = f'/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_val13'
+    single_pats = [] # ['Spat18'] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats 
+
     # if None, will train a new pacmap
-    pretrained_pacmap_dir = None  # '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/pacmap/256SecondWindow_256SecondStride/all_pats'  
-    pacmap_basename = 'PaCMAP'
+    pretrained_pacmap_dir = None # '/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_train45/pacmap/16SecondWindow_16SecondStride/all_pats'  
+    pacmap_basename = 'PaCMAP' # For loading the pretrained model + ANN tree 
 
     if pretrained_pacmap_dir == None: 
         reducer = []
@@ -39,11 +44,6 @@ if __name__ == "__main__":
     # Master formatted timestamp file - "All Time Data (ATD)"
     atd_file = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/data/all_time_data_01092023_112957.csv'
     
-    # Which patients to plot
-    parent_dir = f'/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_train45'
-    # parent_dir = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_val13'
-    single_pats = [] # ['Spat18'] # ['Epat27', 'Epat28', 'Epat30', 'Epat31', 'Epat33', 'Epat34', 'Epat35', 'Epat37', 'Epat39', 'Epat41'] # [] # 'Spat18' # 'Spat18' # [] #'Epat35'  # if [] will do all pats 
-        
     # SOURCE DATA
     if (subset_override_dir != None) and (accumulated_data_pickle != None):
         raise Exception('subset_override_dir and accumulated_data_pickle cannot both be not None')
@@ -71,8 +71,8 @@ if __name__ == "__main__":
         source_dir = f'{parent_dir}/latent_files/{file_windowseconds}SecondWindow_{file_strideseconds}SecondStride'
 
         # Rewindowing data (Must be multiples of original file duration & stride)
-        rewin_windowseconds = 64
-        rewin_strideseconds = 64
+        rewin_windowseconds = 256
+        rewin_strideseconds = 256
 
         subsample_file_factor = 1 # Not re-windowing, subsampled on a whole file level
     
@@ -111,8 +111,8 @@ if __name__ == "__main__":
     pacmap_LR = 0.1 # 0.1 #0.05
     pacmap_NumIters = (500,500,500) # (1500,1500,1500)
     pacmap_NN = None
-    pacmap_MN_ratio = 7 # 7 # 7 #0.5
-    pacmap_FP_ratio = 11 # 11 # 11 #2.0
+    pacmap_MN_ratio = 22 # 7 #0.5
+    pacmap_FP_ratio = 44 # 11 #2.0
 
     # Plotting variables
     kwargs = {}
@@ -191,15 +191,15 @@ if __name__ == "__main__":
             if (file_windowseconds > rewin_windowseconds) or (file_strideseconds > rewin_strideseconds):
                 raise Exception("ERROR: desired window duration or stride is smaller than raw file duration or stride")
             else:
-                rewin_means_allfiles, rewin_logvars_allfiles, rewin_mogpreds_allfiles = utils_functions.rewindow_data_filewise(
+                rewin_means_allfiles, rewin_logvars_allfiles, rewin_z_allfiles = utils_functions.rewindow_data_filewise(
                     ww_means_allfiles, ww_logvars_allfiles, ww_z_allfiles, file_windowseconds, file_strideseconds, rewin_windowseconds, rewin_strideseconds)
                 print(f"Rewindowed shape of rewin_means: {rewin_means_allfiles.shape}")
                 print(f"Rewindowed shape of rewin_logvars: {rewin_logvars_allfiles.shape}")
-                print(f"Rewindowed shape of rewin_mogpreds: {rewin_mogpreds_allfiles.shape}")
+                print(f"Rewindowed shape of rewin_mogpreds: {rewin_z_allfiles.shape}")
         else:
             rewin_means_allfiles = ww_means_allfiles
             rewin_logvars_allfiles = ww_logvars_allfiles
-            rewin_mogpreds_allfiles = ww_z_allfiles
+            rewin_z_allfiles = ww_z_allfiles
             print("Data NOT re-windowed")
 
         # Save the gathered data to save time for re-plotting
@@ -209,7 +209,7 @@ if __name__ == "__main__":
             save_dict = {
                 'rewin_means_allfiles': rewin_means_allfiles,
                 'rewin_logvars_allfiles': rewin_logvars_allfiles,
-                'rewin_mogpreds_allfiles': rewin_mogpreds_allfiles,
+                'rewin_z_allfiles': rewin_z_allfiles,
                 'build_start_datetimes': build_start_datetimes,
                 'build_stop_datetimes': build_stop_datetimes,
                 'build_pat_ids_list': build_pat_ids_list}
@@ -222,7 +222,7 @@ if __name__ == "__main__":
         with open(accumulated_data_pickle, "rb") as f: data_loaded = pickle.load(f)
         rewin_means_allfiles = data_loaded['rewin_means_allfiles']
         rewin_logvars_allfiles = data_loaded['rewin_logvars_allfiles']
-        rewin_mogpreds_allfiles = data_loaded['rewin_mogpreds_allfiles']
+        rewin_z_allfiles = data_loaded['rewin_z_allfiles']
         build_start_datetimes = data_loaded['build_start_datetimes']
         build_stop_datetimes = data_loaded['build_stop_datetimes']
         build_pat_ids_list = data_loaded['build_pat_ids_list']

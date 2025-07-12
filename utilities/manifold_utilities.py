@@ -2177,3 +2177,18 @@ def save_pacmap_objects(pacmap_dir, axis, reducer, hdb, xy_lims):
     pickle.dump(axis, output_obj10)
     output_obj10.close()
     print("Saved plot axis")
+
+def load_pacmap_objects(pretrained_pacmap_dir, pacmap_basename):
+    PaCMAP_common_prefix = pretrained_pacmap_dir + f"/{pacmap_basename}"
+    reducer = pacmap.load(PaCMAP_common_prefix)
+
+    hdb_file = pretrained_pacmap_dir + f"/hdbscan.pkl"
+    with open(hdb_file, "rb") as f: hdb = pickle.load(f)
+
+    xylims_file = pretrained_pacmap_dir + f"/xy_lims.pkl"
+    with open(xylims_file, "rb") as f: xy_lims = pickle.load(f)
+
+    plotaxis_file = pretrained_pacmap_dir + f"/plotaxis.pkl"
+    with open(plotaxis_file, "rb") as f: plotaxis = pickle.load(f)
+
+    return reducer, hdb, xy_lims, plotaxis

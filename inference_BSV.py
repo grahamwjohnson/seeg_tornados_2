@@ -71,7 +71,7 @@ def load_dataset(
     return inference_dataset
 
 def get_models(models_codename, gpu_id, bsp_transformer_seq_length, bsp_batchsize, **kwargs):
-    # torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
+    torch.hub.set_dir('./.torch_hub_cache') # Set a local cache directory for testing
 
     # Load the BSE model with pretrained weights from GitHub
     bse, _, bsp, bsv, _ = torch.hub.load(
@@ -87,7 +87,7 @@ def get_models(models_codename, gpu_id, bsp_transformer_seq_length, bsp_batchsiz
         load_pacmap=False,
         trust_repo='check',
         max_batch_size=bsp_transformer_seq_length*bsp_batchsize, # update for pseudobatching
-        force_reload=True
+        # force_reload=True
     )
 
     return bse, bsp, bsv
@@ -177,7 +177,7 @@ def bsv_export_embeddings(
             for w in range(0, num_windows_in_file):
                 
                 # Print Status
-                print_interval = 100
+                print_interval = 10
                 if (gpu_id == 0) & (w % print_interval == 0):
                     sys.stdout.write(f"\r{dataset_string}: Pat {pat_idx}/{len(dataset_curr.pat_ids)-1}, File {file_count - len(file_name)}:{file_count}/{len(dataset_curr)/world_size - 1}  * GPUs (DDP), Intrafile Iter {w}/{num_windows_in_file}          ") 
                     sys.stdout.flush() 
@@ -192,13 +192,19 @@ def bsv_export_embeddings(
                     modifier=rand_modifier,
                     hash_output_range=hash_output_range)
 
-                # Now fill the input tensor with random channel order and random zero channels
+                # # Now fill the input tensor with random channel order and random zero channels
                 start_idx = w * num_samples_in_forward
                 end_idx = start_idx + encode_token_samples * transformer_seq_length
-                x = torch.zeros((data_tensor.shape[0], padded_channels, transformer_seq_length * encode_token_samples), device=gpu_id)
-                for i, channel_idx in enumerate(hash_channel_order):
-                    if channel_idx != -1:
-                        x[:, i, :] = data_tensor[:, channel_idx, start_idx:end_idx]
+                # x = torch.zeros((data_tensor.shape[0], padded_channels, transformer_seq_length * encode_token_samples), device=gpu_id)
+                # for i, channel_idx in enumerate(hash_channel_order):
+                #     if channel_idx != -1:
+                #         x[:, i, :] = data_tensor[:, channel_idx, start_idx:end_idx]                
+                x = torch.zeros((data_tensor.shape[0], padded_channels, transformer_seq_length * encode_token_samples), device=gpu_id) # Create a zero tensor on GPU
+                channel_indices = torch.tensor(hash_channel_order, device=gpu_id) # Convert to tensor for advanced indexing
+                valid_mask = channel_indices != -1. # Find valid (non -1) channels
+                valid_channels = channel_indices[valid_mask]
+                target_positions = torch.arange(padded_channels, device=gpu_id)[valid_mask]
+                x[:, target_positions, :] = data_tensor[:, valid_channels, start_idx:end_idx] # Select data in bulk and assign it
                 x = x.reshape(x.shape[0], x.shape[1], transformer_seq_length, encode_token_samples).permute(0, 2, 1, 3)
                 # x should now be shaped [B, seq, channel, encode_sample]
 
