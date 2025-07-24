@@ -76,16 +76,16 @@ if __name__ == "__main__":
 
     # Gather raw data
     else: 
-        file_windowseconds = 1 # Used for directory construction as a string, so must match directory name exactly
-        file_strideseconds = 1
+        file_windowseconds = 64 # Used for directory construction as a string, so must match directory name exactly
+        file_strideseconds = 16
         source_dir = f'{parent_dir}/latent_files/{file_windowseconds}SecondWindow_{file_strideseconds}SecondStride'
 
         # Rewindowing data (Must be multiples of original file duration & stride)
-        rewin_windowseconds = 1
-        rewin_strideseconds = 1
+        rewin_windowseconds = 64
+        rewin_strideseconds = 16
 
-        subsample_file_factor = 1 # Not re-windowing, subsampled on a whole file level
-        subsample_observation_factor = 16 # This will subsample randomly at individual datapoint level (done within the manifold subfunctions after file concatenation)
+        subsample_file_factor = 16 # Not re-windowing, subsampled on a whole file level
+        subsample_observation_factor = 1 # This will subsample randomly at individual datapoint level (done within the manifold subfunctions after file concatenation)
     
 
     # ---- PaCMAP Settings ----

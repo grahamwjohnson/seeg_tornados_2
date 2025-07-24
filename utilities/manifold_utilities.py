@@ -595,6 +595,7 @@ def toroidal_kohonen_subfunction_pytorch(
     start_datetimes_input = [item + datetime.timedelta(seconds=stride_sec * i) for item in start_datetimes_epoch for i in range(latent_means_windowed[0].shape[0])]
     stop_datetimes_input = [item + datetime.timedelta(seconds=stride_sec * i) + datetime.timedelta(seconds=win_sec) for item in start_datetimes_epoch for i in range(latent_means_windowed[0].shape[0])]
 
+
     # TRAINING
 
     if som_object is not None:
@@ -619,10 +620,19 @@ def toroidal_kohonen_subfunction_pytorch(
         batch_size = checkpoint['batch_size']
         cim_kernel_sigma = checkpoint['cim_kernel_sigma']
 
+        # PCA reduce if indicated
+        if pca != None:
+            print("Using existing PCA on input data...")
+            latent_means_reduced = pca.transform(latent_means_input)
+            print(f"PCA complete, new dimensionality of input data is {latent_means_reduced.shape[1]}")
+        else: 
+            latent_means_reduced = latent_means_input
+            print("No PCA applied to input data")
+
         # Create Toroidal SOM instance with same parameters
         som = ToroidalSOM_2(grid_size=(grid_size, grid_size), input_dim=input_dim, batch_size=batch_size,
                            lr=lr, lr_epoch_decay=lr_epoch_decay, cim_kernel_sigma=cim_kernel_sigma, sigma=sigma,
-                           sigma_epoch_decay=sigma_epoch_decay, sigma_min=sigma_min, pca=pca, device=som_device)
+                           sigma_epoch_decay=sigma_epoch_decay, sigma_min=sigma_min, pca=pca, device=som_device, data_for_init=latent_means_reduced)
 
         # Load weights
         som.load_state_dict(checkpoint['model_state_dict'])
@@ -633,6 +643,8 @@ def toroidal_kohonen_subfunction_pytorch(
 
     else:
         # Make new Toroidal SOM and train it
+
+        # PCA reduce if indicated
         if pca_reduce_input and (latent_means_input.shape[1] > pca_dims):
             print("Calculating PCA on input data...")
             pca = PCA(pca_dims, whiten=True)

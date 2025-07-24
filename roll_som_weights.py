@@ -47,7 +47,9 @@ def roll_and_save_som(som_path, save_dir, device, roll_vertical=0, roll_horizont
         'weights': som.weights,
         'grid_size': checkpoint['grid_size'],
         'input_dim': checkpoint['input_dim'],
+        'pca': checkpoint['pca'],
         'lr': checkpoint['lr'],
+        'cim_kernel_sigma': checkpoint['cim_kernel_sigma'],
         'sigma': checkpoint['sigma'],
         'lr_epoch_decay': checkpoint['lr_epoch_decay'],
         'sigma_epoch_decay': checkpoint['sigma_epoch_decay'],
@@ -59,12 +61,12 @@ def roll_and_save_som(som_path, save_dir, device, roll_vertical=0, roll_horizont
     print(f"Rolled SOM saved successfully to {save_path}")
 
 def main():
-    som_precomputed_path = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride32_subsampleFileFactor1_preictalSec3600_gridsize128_lr0.5with0.8777decay0.010000min_sigma102.4with0.8570decay1.0min_numfeatures1027140_dims1024_batchsize64_epochs30.pt'  
-    save_directory = '/media/graham/MOBO_RAID0/Ubuntu_Projects/SEEG_Tornados/bse_inference/train45/kohonen/64SecondWindow_32SecondStride_Reductionmean/all_pats/'
+    som_precomputed_path = '/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_all58/kohonen/64SecondWindow_16SecondStride_Reductionmean/all_pats_64som_LR0.001/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride16_subsampleFileFactor1_preictalSec14400_gridsize64_lr0.5with0.9397decay0.001000min_sigma32.0with0.9659decay1min_numfeatures2743020_dims8_batchsize1024_epochs100.pt'  
+    save_directory = '/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_all58/kohonen/64SecondWindow_16SecondStride_Reductionmean/all_pats_64som_LR0.001'
     device = "cpu"  # or "cuda"
 
-    roll_vertical = -80   # positive = roll down, negative = roll up
-    roll_horizontal = 10  # positive = roll right, negative = roll left
+    roll_vertical = -40   # positive = roll down, negative = roll up
+    roll_horizontal = -3  # positive = roll right, negative = roll left
 
     # Make sure save directory exists
     os.makedirs(save_directory, exist_ok=True)
