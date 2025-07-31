@@ -124,7 +124,7 @@ class ToroidalSOM_2(nn.Module):
 
         # Create the hexagonal coordinates and weights
         self.hex_coords = self._create_hex_grid()
-        self.weights = self._initialize_weights()
+        if data_for_init != None: self.weights = self._initialize_weights()
 
     def _create_hex_grid(self):
         """

@@ -1,6 +1,7 @@
 import torch
 from models.BSE import BSE, Discriminator
 from models.BSP import BSP, BSV
+from models.ToroidalSOM_2 import ToroidalSOM_2
 
 dependencies = ['torch', 'numpy']
 
@@ -66,20 +67,30 @@ CONFIGS = {
         # BSV Params
         'bsv_dims': [1024, 512, 256, 128, 8],
 
-        # PaCMAP Params
-
+        # Kohonen/SOM Params
+        'som_pca_init': False,
+        'reduction': 'mean', # Keep at mean because currently using reparam in SOM training
+        'som_epochs': 100,
+        'som_batch_size': 1024,
+        'som_lr': 0.5,
+        'som_lr_min': 0.001, 
+        'som_lr_epoch_decay': 0.9397455978,
+        'som_gridsize': 64,
+        'som_sigma': 32,
+        'som_sigma_min': 1,
+        'som_sigma_epoch_decay': 0.96593632892,
 
         # Weight files
         'bse_weight_file': 'bse_weights.pth',
         'disc_weight_file': 'disc_weights.pth',
         'bsp_weight_file': 'bsp_weights.pth',
         'bsv_weight_file': 'bsv_weights.pth',
-        'pacmap_base': 'pacmap_2d',
+        'som_file': 'som_file.pth',
         'release_tag': 'v0.8-alpha'
     }
 }
 
-def _load_models(codename='commongonolek_sheldrake', gpu_id='cpu', pretrained=True, load_bse=True, load_discriminator=True, load_bsp=True, load_bsv=True, load_pacmap=True, **kwargs):
+def _load_models(codename='commongonolek_sheldrake', gpu_id='cpu', pretrained=True, load_bse=True, load_discriminator=True, load_bsp=True, load_bsv=True, load_som=True, **kwargs):
     """
     Loads the BSE, BSP, BSV, & 2D-PaCMAP model with specified configuration and optionally pretrained weights.
 
@@ -176,27 +187,54 @@ def _load_models(codename='commongonolek_sheldrake', gpu_id='cpu', pretrained=Tr
             print(f"No weight file or release tag specified for codename '{codename}'. Continuing with randomly initialized model.")
 
 
-    # *** 2D PaCMAP ***
-    pacmap = None
-    if load_pacmap:
+    # *** 2D SOM/Kohonen ***
+    som = None
+    if load_som:
         try:
-            print("Attempting to load pretrained pacmap model for 2D visualization of BSV")
+            print("Attempting to load pretrained som model for 2D visualization of BSV")
+            som_precomputed_path = config['som_file']
+            release_tag = config['release_tag']
+            checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{weight_file}'
 
+            checkpoint = torch.load(som_precomputed_path)
 
+            # Retrieve hyperparameters
+            grid_size = som_gridsize = checkpoint['grid_size']
+            input_dim = checkpoint['input_dim']
+            lr = checkpoint['lr']
+            sigma = checkpoint['sigma']
+            pca = checkpoint['pca']
+            lr_epoch_decay = checkpoint['lr_epoch_decay']
+            sigma_epoch_decay = checkpoint['sigma_epoch_decay']
+            sigma_min = checkpoint['sigma_min']
+            epoch = checkpoint['epoch']
+            batch_size = checkpoint['batch_size']
+            cim_kernel_sigma = checkpoint['cim_kernel_sigma']
+
+            # Create Toroidal SOM instance with same parameters
+            som = ToroidalSOM_2(grid_size=(grid_size, grid_size), input_dim=input_dim, batch_size=batch_size,
+                            lr=lr, lr_epoch_decay=lr_epoch_decay, cim_kernel_sigma=cim_kernel_sigma, sigma=sigma,
+                            sigma_epoch_decay=sigma_epoch_decay, sigma_min=sigma_min, pca=pca, device='cpu', data_for_init=None)
+
+            # Load weights
+            som.load_state_dict(checkpoint['model_state_dict'])
+            som.weights = checkpoint['weights']
+
+            print(f"Toroidal SOM model loaded from {som_precomputed_path}")
 
             # TODO 
 
 
 
         except Exception as e:
-            print(f"Error loading pacmap for codename '{codename}': {e}")
+            print(f"Error loading som for codename '{codename}': {e}")
             print("Returning empty variable")
 
 
-    return bse, disc, bsp, bsv, pacmap
+    return bse, disc, bsp, bsv, som
 
 
-def load_lbm(codename='commongonolek_sheldrake', pretrained=True, load_bse=True, load_discriminator=True, load_bsp=True, load_bsv=True, load_pacmap=True, **kwargs):
+def load_lbm(codename='commongonolek_sheldrake', pretrained=True, load_bse=True, load_discriminator=True, load_bsp=True, load_bsv=True, load_som=True, **kwargs):
     """
     Loads the BSE, BSP, BSV, & PaCMAP models with a specific training run's configuration
     and optionally pretrained weights.
@@ -209,6 +247,6 @@ def load_lbm(codename='commongonolek_sheldrake', pretrained=True, load_bse=True,
     Returns:
         Pretrained BSE, BSP, BSV, & PaCMAP models with the specified configuration.
     """
-    return _load_models(codename=codename, pretrained=pretrained, load_bse=load_bse, load_discriminator=load_discriminator, load_bsp=load_bsp, load_bsv=load_bsv, load_pacmap=load_pacmap, **kwargs)
+    return _load_models(codename=codename, pretrained=pretrained, load_bse=load_bse, load_discriminator=load_discriminator, load_bsp=load_bsp, load_bsv=load_bsv, load_som=load_som, **kwargs)
 
 
