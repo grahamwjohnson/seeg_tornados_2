@@ -357,7 +357,7 @@ def plot_kohonen_prediction(gpu_id, save_dir, som, plot_data_path, context, grou
     radius = 1.0
     height = np.sqrt(3) * radius
     cmap_overlay = cm.get_cmap('flare')
-    norm_overlay = pl.Normalize(vmin=0.0, vmax=1.0)
+    norm_overlay = pl.Normalize(vmin=preictal_overlay_thresh, vmax=1.0)
 
     for i in range(rows):
         for j in range(cols):
@@ -554,7 +554,7 @@ def toroidal_kohonen_subfunction_pytorch(
     sigma_plot=1,
     hits_log_view=True,
     umat_log_view=True,
-    preictal_overlay_thresh = 0.25,
+    preictal_overlay_thresh = 0.5,
     sleep_overlay_thresh = 0.5,
     smooth_map_factor = 1,
     **kwargs):
@@ -919,7 +919,7 @@ def toroidal_kohonen_subfunction_pytorch(
     radius = 1.0
     height = np.sqrt(3) * radius
     cmap_overlay = cm.get_cmap('flare')
-    norm_overlay = pl.Normalize(vmin=0.0, vmax=1.0)
+    norm_overlay = pl.Normalize(vmin=preictal_overlay_thresh, vmax=1.0)
 
     for i in range(rows):
         for j in range(cols):
@@ -976,7 +976,7 @@ def toroidal_kohonen_subfunction_pytorch(
     radius = 1.0
     height = np.sqrt(3) * radius
     cmap_overlay = cm.get_cmap('Purples')
-    norm_overlay = pl.Normalize(vmin=0.0, vmax=1.0)
+    norm_overlay = pl.Normalize(vmin=preictal_overlay_thresh, vmax=1.0)
 
     for i in range(rows):
         for j in range(cols):
@@ -1026,7 +1026,7 @@ def toroidal_kohonen_subfunction_pytorch(
             radius = 1.0
             height = np.sqrt(3) * radius
             cmap_overlay = cm.get_cmap(color_str)
-            norm_overlay = pl.Normalize(vmin=0.0, vmax=1.0)
+            norm_overlay = pl.Normalize(vmin=0.25, vmax=1.0)
 
             for i in range(rows):
                 for j in range(cols):
@@ -1079,7 +1079,7 @@ def toroidal_kohonen_subfunction_pytorch(
         for s_idx in range(len(sleep_strings)):  
             overlay_data = np.clip(sleep_concat[s_idx], 0.0, 1.0)
             cmap_overlay = cm.get_cmap(sleep_colors[s_idx])
-            norm_overlay = pl.Normalize(vmin=0.0, vmax=1.0)
+            norm_overlay = pl.Normalize(vmin=0.25, vmax=1.0)
 
             for i in range(rows):
                 for j in range(cols):

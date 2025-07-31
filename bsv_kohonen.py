@@ -11,15 +11,14 @@ if __name__ == "__main__":
     subset_override_dir = None # '/media/glommy1/tornados/bse_inference/sheldrake_epoch1138/latent_files/1SecondWindow_1SecondStride'
     subset_override_idxs = [300,301,302,303,304,305]
 
-    accumulated_data_pickle = None # Unless overwritten below, 'None' will indicate collecting all files instead of loading from pre-collected pickle
-    # som_precomputed_path = None # Unless overwritten below, 'None' will indicate calculating a new SOM
-    som_precomputed_path = '/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_all58/kohonen/64SecondWindow_16SecondStride_Reductionmean/all_pats_64som_LR0.001/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride16_subsampleFileFactor1_preictalSec14400_gridsize64_lr0.5with0.9397decay0.001000min_sigma32.0with0.9659decay1min_numfeatures2743020_dims8_batchsize1024_epochs100_rolled_v-40_h-3.pt'
+    # Precomputed Model
+    som_precomputed_path = '/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_all58/kohonen/64SecondWindow_16SecondStride_Reductionmean/all_pats/GPU0_ToroidalSOM_ObjectDict_smoothsec64_Stride16_subsampleFileFactor1_preictalSec14400_gridsize64_lr0.5with0.9397decay0.001000min_sigma32.0with0.9659decay1min_numfeatures2743020_dims8_batchsize1024_epochs100_rolled_v-40_h-3.pt'
 
     # DATA 
     # parent_dir = '/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_all58'
     # parent_dir = '/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_val13'
     parent_dir = '/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_train45'
-    # accumulated_data_pickle = None # '/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_all58/kohonen/64SecondWindow_16SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_16secStride.pkl'
+    # accumulated_data_pickle = '/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_all58/kohonen/64SecondWindow_16SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_16secStride.pkl'
     # accumulated_data_pickle = '/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_val13/kohonen/64SecondWindow_16SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_16secStride.pkl'
     accumulated_data_pickle = '/media/glommy1/tornados/bsv_inference/commongonolek_epoch296_sheldrake_epoch1138_train45/kohonen/64SecondWindow_16SecondStride_Reductionmean/all_pats/allDataGathered_subsampleFileFactor1_64secWindow_16secStride.pkl'
 
@@ -70,7 +69,7 @@ if __name__ == "__main__":
         subsample_file_factor = 1 # Not re-windowing, subsampled on a whole file level
 
     # Plotting Settings
-    plot_preictal_color_sec = 60*60*2 #60*60*4
+    plot_preictal_color_sec = 60*60*4 #60*60*4
     plot_postictal_color_sec = 0 #60*10 #60*60*4
 
     # # Kohonen Settings [GPU 0]
