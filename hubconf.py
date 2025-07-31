@@ -1,7 +1,5 @@
 import torch
 import pickle
-from torch.hub import _download_url_to_file
-import os
 from models.BSE import BSE, Discriminator
 from models.BSP import BSP, BSV
 from models.ToroidalSOM_2 import ToroidalSOM_2
@@ -227,12 +225,24 @@ def _load_models(codename='commongonolek_sheldrake', gpu_id='cpu', pretrained=Tr
             release_tag = config['release_tag']
             axis_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{axis_file}'
 
-            # Use PyTorch's hub downloader to get and cache the file
-            cached_file = os.path.join(torch.hub.get_dir(), 'checkpoints', axis_file)
-            _download_url_to_file(axis_url, cached_file, progress=True)
+            # Hack: use load_state_dict_from_url just to get the file (will fail to load, but the file is cached)
+            try:
+                _ = torch.hub.load_state_dict_from_url(axis_url, progress=True, map_location='cpu')
+            except RuntimeError as e:
+                if "PytorchStreamReader" in str(e):
+                    # This is expected since we're not loading a state_dict
+                    pass
+                else:
+                    raise
 
-            # Load with pickle
-            with open(cached_file, 'rb') as f: som.axis_data = pickle.load(f)
+            # Now load the cached file manually
+            from pathlib import Path
+
+            hub_dir = Path(torch.hub.get_dir()) / 'checkpoints'
+            cached_file = hub_dir / axis_file
+
+            with open(cached_file, 'rb') as f:
+                axis_data = pickle.load(f)
 
             print(f"Toroidal SOM model loaded from {checkpoint_url}")
 
