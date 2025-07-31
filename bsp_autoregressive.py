@@ -48,7 +48,6 @@ def autoregress_plot(
     num_rand_plots,
     bsp_autoregressive_plot_steps,
     svae_root,
-    som_plot_data_path,
     bsp_autogressive_subbatch_to_plot,
     **kwargs):
     
@@ -77,8 +76,6 @@ def autoregress_plot(
                     gpu_id=self.gpu_id,
                     save_dir = save_root, 
                     som = som, 
-                    plot_data_path = som_plot_data_path, 
-                    # epoch = epoch,
                     batch_idx = b,
                     pat_id = pat_idxs[b],
                     context = x[b, 0:self.bsp_transformer_seq_length, :], 
@@ -130,6 +127,8 @@ if __name__ == "__main__":
 
     # Get the pretrained models from Torch Hub
     bse, bsp, bsv, som = get_models(gpu_id=gpu_id, **kwargs)
+    
+    # Load models on GPU
     bse = bse.to(gpu_id)
     bsp = bsp.to(gpu_id)
     bsv = bsv.to(gpu_id)

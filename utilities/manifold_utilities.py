@@ -329,7 +329,7 @@ def get_som_rowcol(data, som):
         som_rowcol[i:i + batch_size, 1] = bmu_cols_np
     return som_rowcol
 
-def plot_kohonen_prediction(gpu_id, save_dir, som, plot_data_path, context, ground_truth_future, predictions, undo_log, smoothing_factor, epoch, batch_idx, pat_id, preictal_overlay_thresh=0.25):
+def plot_kohonen_prediction(gpu_id, save_dir, som, context, ground_truth_future, predictions, undo_log, smoothing_factor, epoch, batch_idx, pat_id, preictal_overlay_thresh=0.25):
     """Plots Kohonen/SOM predictions on top of a U-Matrix + Pre-Ictal overlay."""
     # Process context, ground truth, and predictions separately
     context_rowcol = get_som_rowcol(context, som)
@@ -337,11 +337,9 @@ def plot_kohonen_prediction(gpu_id, save_dir, som, plot_data_path, context, grou
     pred_rowcol = get_som_rowcol(predictions, som)
 
     # Load underlay plotting data
-    with open(plot_data_path, "rb") as f:
-        file_data = pickle.load(f)
     grid_size = som.grid_size
-    u_matrix_hex = file_data['u_matrix_hex']
-    overlay_preictal = file_data['rescale_preictal_smoothed']
+    u_matrix_hex = som.u_matrix_hex
+    overlay_preictal = som.rescale_preictal_smoothed
 
     # Create figure
     fig_overlay, ax_overlay = pl.subplots(figsize=(10, 10))
