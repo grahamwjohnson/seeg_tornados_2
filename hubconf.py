@@ -220,7 +220,7 @@ def _load_models(codename='commongonolek_sheldrake', gpu_id='cpu', pretrained=Tr
             som.load_state_dict(checkpoint['model_state_dict'])
             som.weights = checkpoint['weights']
 
-            print(f"Toroidal SOM model loaded from {som_precomputed_path}")
+            print(f"Toroidal SOM model loaded from {checkpoint_url}")
 
         except Exception as e:
             print(f"Error loading som for codename '{codename}': {e}")
