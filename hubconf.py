@@ -192,11 +192,11 @@ def _load_models(codename='commongonolek_sheldrake', gpu_id='cpu', pretrained=Tr
     if load_som:
         try:
             print("Attempting to load pretrained som model for 2D visualization of BSV")
-            som_precomputed_path = config['som_file']
+            weight_file = config['som_file']
             release_tag = config['release_tag']
             checkpoint_url = f'https://github.com/grahamwjohnson/seeg_tornados_2/releases/download/{release_tag}/{weight_file}'
 
-            checkpoint = torch.load(som_precomputed_path)
+            checkpoint = torch.hub.load_state_dict_from_url(checkpoint_url, progress=True, map_location='cpu')
 
             # Retrieve hyperparameters
             grid_size = som_gridsize = checkpoint['grid_size']
@@ -221,10 +221,6 @@ def _load_models(codename='commongonolek_sheldrake', gpu_id='cpu', pretrained=Tr
             som.weights = checkpoint['weights']
 
             print(f"Toroidal SOM model loaded from {som_precomputed_path}")
-
-            # TODO 
-
-
 
         except Exception as e:
             print(f"Error loading som for codename '{codename}': {e}")
