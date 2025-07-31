@@ -311,7 +311,9 @@ def plot_latent(
         #     alpha=0.8,  # Overall transparency of the KDE
         # )
 
-        cbar_levels = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+        cbar_levels = [0.70, 0.80, 0.9, 1.0] 
+        # cbar_levels = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0] 
+        # cbar_levels = [0.9, 0.92, 0.94, 0.96, 0.98, 1.0] 
         # cbar_levels = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
         cmap_preictal = sns.color_palette(palette='flare', as_cmap=True)
         cbar_dict = {'location': 'bottom', 'orientation': 'horizontal', 'label': 'Pre-Ictal Density', 'format': '%.2e', 'ticks': cbar_levels}

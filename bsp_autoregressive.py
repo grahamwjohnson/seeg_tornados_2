@@ -33,13 +33,16 @@ def get_models(models_codename, gpu_id, bsp_transformer_seq_length, bsp_batchsiz
         load_som=True,
         trust_repo='check',
         max_batch_size=bsp_transformer_seq_length*bsp_batchsize, # update for pseudobatching
-        # force_reload=True
+        force_reload=True
     )
 
     return bse, bsp, bsv, som
 
 def autoregress_plot(
     self,
+    bse,
+    bsp,
+    bsv,
     som,
     dataloader_curr,
     num_rand_plots,
@@ -47,7 +50,6 @@ def autoregress_plot(
     svae_root,
     som_plot_data_path,
     bsp_autogressive_subbatch_to_plot,
-    num_autoregress_batches = 1,
     **kwargs):
     
     autoregress_batch_idx = 0
@@ -89,7 +91,7 @@ def autoregress_plot(
 
         # Kill after desired number of batches
         autoregress_batch_idx += 1
-        if autoregress_batch_idx >= num_autoregress_batches: break
+        if autoregress_batch_idx >= num_rand_plots: break
 
 
 if __name__ == "__main__":
@@ -128,9 +130,15 @@ if __name__ == "__main__":
 
     # Get the pretrained models from Torch Hub
     bse, bsp, bsv, som = get_models(gpu_id=gpu_id, **kwargs)
+    bse = bse.to(gpu_id)
+    bsp = bsp.to(gpu_id)
+    bsv = bsv.to(gpu_id)
 
     # Run through autoregressive function and plot
     autoregress_plot(
+        bse=bse,
+        bsp=bsp,
+        bsv=bsv,
         som=som,
         dataloader_curr=dataloader,
         num_rand_plots=num_rand_plots,
