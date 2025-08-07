@@ -81,6 +81,8 @@ CONFIGS = {
         'som_sigma': 32,
         'som_sigma_min': 1,
         'som_sigma_epoch_decay': 0.96593632892,
+        'som_rewin_seconds': 64,
+        'som_stride_seconds': 16,
 
         # Weight files
         'bse_weight_file': 'bse_weights.pth',
