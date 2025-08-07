@@ -519,7 +519,7 @@ class Trainer:
             self.opt_bsp.param_groups[0]['lr'] = bsp_LR
             self.opt_bsv.param_groups[0]['lr'] = bsv_LR
 
-            ### BSE ### 
+            ### BSE ###  
             # Pretrained
             with torch.no_grad():
                 self.bse.eval()

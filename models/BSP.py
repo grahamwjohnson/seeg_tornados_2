@@ -204,7 +204,7 @@ class BSP(nn.Module):
 
     def forward(self, x): # Input is from weighted z output of BSE
 
-        # Run through BSE2P
+        # Run through BSE2P 
         post_bse2p_mu, post_bse2p_logvar, post_bse2p_z = self.bse2p(x)
 
         # Run through BSP (1-shifted)

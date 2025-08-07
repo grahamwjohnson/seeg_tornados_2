@@ -239,7 +239,7 @@ def _load_models(codename='commongonolek_sheldrake', gpu_id='cpu', pretrained=Tr
             print("Returning empty variable")
 
 
-    return bse, disc, bsp, bsv, som
+    return bse, disc, bsp, bsv, som, config
 
 
 def load_lbm(codename='commongonolek_sheldrake', pretrained=True, load_bse=True, load_discriminator=True, load_bsp=True, load_bsv=True, load_som=True, **kwargs):
